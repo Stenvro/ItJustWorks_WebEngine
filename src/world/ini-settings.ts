@@ -12,6 +12,10 @@ export const INI_DEFAULTS = {
   // Death into the ragdoll (src/shell/actor-graph-events.ts): the ragdoll a graph adds to the
   // world (AddRagdollToWorld) is driven by the graph's pose (the engine's built-in default).
   Animation: {
+    // A blow pushes the ragdoll it hits, off in the game (src/shell/actor-bodies.ts).
+    bEnableHavokHit: 0,
+    fHavokHitImpulseMult: 50,
+    fHavokHitTimeSec: 3,
     bDriveRagdollWithGraph: 1,
     bAlwaysDriveRagdoll: 0,
     bFootIK: 1,
@@ -477,9 +481,20 @@ export const INI_DEFAULTS = {
     fImpulseLimit: 15,
   },
   HAVOK: {
+    // How fast a waterfall carries what floats against it (src/physics/water-physics.ts).
+    fDefaultWaterfallCurrentVelocity: 6,
+    // Characters push one another (src/physics/character.ts).
+    bAllowCharacterBumper: 1,
+    // Further than its root (square units) from where it should be, a controller is set there.
+    fCharControllerWarpDistSqr: 6_000_000,
+    // How deep (Havok units) a controller may lie in things at a place it is set down at.
+    fGoodPosCheckDepth: 0.1,
     fInAirFallingCharGravityMult: 1.35,
     // The physics step and the steps a frame takes at most (src/physics/physics-world.ts).
     fMaxTime: 1 / 60,
+    // The same in the engine's complex mode (what turns it on is not known).
+    fMaxTimeComplex: 1 / 30,
+    uMaxNumPhysicsStepsPerUpdateComplex: 1,
     // Bodies this heavy (kg) or heavier are not pushed by characters (src/physics/character.ts).
     fMoveLimitMass: 95,
     // How fast a tilting actor leans to the ground under it, a second (src/world/actor-ground.ts).

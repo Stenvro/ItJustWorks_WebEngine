@@ -60,7 +60,15 @@ import {
 import type { MovementTypes } from '../ai/locomotion.ts';
 import { MovementCatalog, type RaceMovement } from '../ai/movement-types.ts';
 import { parseNif } from '../formats/nif/nif.ts';
-import { CharacterBody, type CharacterShape } from '../physics/character.ts';
+import {
+  ACTOR_MASS,
+  beyondWarp,
+  CharacterBody,
+  jumpHeight,
+  jumpSpeed,
+  type CharacterShape,
+} from '../physics/character.ts';
+import { HAVOK_SCALE } from '../physics/collision-data.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import { TRAP_REACH } from '../scripting/runtime/trap-hits.ts';
@@ -82,19 +90,29 @@ import {
 } from '../world/actor-ground.ts';
 import type { IniSettings } from '../world/ini-settings.ts';
 import { RaceFlag } from '../world/actor-records.ts';
+import { ActorValue, actorValueIndex } from '../world/actor-values.ts';
 import { referenceMatrix } from '../world/cell-loader.ts';
 import { HUMAN_BOUND, skeletonInfo } from '../world/player-body.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ActorMotion } from '../scripting/runtime/runtime.ts';
 import type { StagedActor } from './actor-stage.ts';
 import type { GameSession } from './game-session.ts';
-import { controllerSettings, controllerShape } from './player.ts';
+import {
+  controllerSettings,
+  controllerShape,
+  JUMP_HEIGHT_MIN,
+  JUMP_SWIMMING_MULT,
+} from './player.ts';
 import { actorFell, waterHarmed } from './time-flow.ts';
+import { BREATH_DEFAULTS, BREATH_SETTING_NAMES } from '../gameplay/breath.ts';
 import { floatSpeed, submersion, swims, walksOnWater } from '../gameplay/swimming.ts';
 import { WaterHazard } from '../gameplay/water-hazard.ts';
-import { currentPush, type WaterPhysics } from '../physics/water-physics.ts';
+import { currentPush, type WaterPhysics, type WaterSplash } from '../physics/water-physics.ts';
 import { materialId } from '../world/material-type.ts';
 import type { Terminal } from './terminal.ts';
+
+/** The actor value of how much higher than others an actor jumps (jumpHeight). */
+const JUMPING_BONUS = actorValueIndex('JumpingBonus') ?? 0;
 
 /** The physics world of a play and its fixed steps (PlaySession). */
 export interface MoverWorld {
@@ -102,6 +120,8 @@ export interface MoverWorld {
   readonly stepHooks: Set<(step: number) => void>;
   /** The water's physics (src/physics/water-physics.ts): who swims, who splashes. */
   readonly water?: WaterPhysics | undefined;
+  /** A splash (its sound has been played): its model. */
+  onSplash?: ((splash: WaterSplash) => void) | undefined;
   /** The player: actors go round them and react when they bump into them. */
   readonly player?: {
     readonly character: CharacterBody;
@@ -161,6 +181,10 @@ interface Mover {
   /** What its graph is told it moves: what it wanted, or what its controller made of it. */
   readonly feedback: MotionFeedback;
   readonly race: RaceMovement | undefined;
+  /** It jumped out of the water and has not come down yet (it does not swim meanwhile). */
+  leaping: boolean;
+  /** It pushed off for a jump and has not landed yet: a graph's next jump event is the same. */
+  jumped: boolean;
   /** Its movement types now, and the tagged state they are for. */
   types: MovementTypes | undefined;
   typesFor: string | undefined;
@@ -240,10 +264,14 @@ export interface ActorMoversOptions {
    * Surface package, the water's surface at `top`; asked every step while it does not run.
    */
   readonly surface?: (actor: number, top: number) => void;
+  /** An actor came up after fActorLeaveWaterBreathTimer under water: its Leave Water Breath line. */
+  readonly gasped?: (actor: number) => void;
   /** Whether an actor breathes water (WaterBreathing): it never runs short of breath. */
   readonly breathesWater?: (actor: number) => boolean;
   /** Whether an actor walks on water (WaterWalking above 0): the surface bears it. */
   readonly walksOnWater?: (actor: number) => boolean;
+  /** Whether an actor's bumper is on (its graph's EnableBumper, DisableBumper). */
+  readonly bumper?: (actor: number) => boolean;
   /** An actor took to the water's surface walking on it (ActionWaterwalkStart). */
   readonly waterWalkStarted?: (actor: number) => void;
   readonly terminal: Terminal;
@@ -1124,7 +1152,11 @@ export class ActorMovers {
     mover.character.teleport([x, y, floor.point[2]]);
     mover.character.recover();
     const feet = mover.character.feet;
-    if (Math.abs(feet[2] - floor.point[2]) > UNSTICK_FLOOR / 2) {
+    // No good place to set it down (still deep in something, fGoodPosCheckDepth) stays no place.
+    if (
+      Math.abs(feet[2] - floor.point[2]) > UNSTICK_FLOOR / 2 ||
+      !mover.character.goodPosition(feet)
+    ) {
       mover.character.teleport(before);
       return;
     }
@@ -1533,6 +1565,71 @@ export class ActorMovers {
           ...(now && { performNow: (action, as) => now(reference, action, as) }),
         }
       : undefined;
+  }
+
+  /**
+   * The graph's JumpBegin (the engine's JumpAnimEventHandler, for every actor, observed in the
+   * original): its controller jumps as high as jumpHeight says, whether it is on the ground by
+   * then or not; swimming, fJumpSwimmingMult times as high, and it swims again as it comes down.
+   */
+  jump(reference: number): void {
+    const mover = this.#movers.get(reference);
+    const character = mover?.character;
+    if (!mover || !character || mover.jumped) return;
+    mover.jumped = true;
+    const swimming = character.swimming;
+    if (swimming) {
+      mover.leaping = true;
+      character.swimming = false;
+    }
+    const staged = mover.staged;
+    const gravity = -character.physics.world.gravity.z * HAVOK_SCALE;
+    const go = (settings: { min: number; swimmingMult: number }, jumpingBonus: number): void => {
+      character.jump(
+        jumpSpeed(
+          jumpHeight(settings, { scale: actorScale(staged), jumpingBonus, swimming }),
+          gravity,
+        ),
+      );
+    };
+    const runtime = this.#options.session.scriptsReady;
+    void this.#options.session
+      .settings()
+      .then(async (settings) => {
+        const bonus = runtime && (await runtime.actors.value(reference, JUMPING_BONUS));
+        go(
+          {
+            min: settings.number('fJumpHeightMin') ?? JUMP_HEIGHT_MIN,
+            swimmingMult: settings.number('fJumpSwimmingMult') ?? JUMP_SWIMMING_MULT,
+          },
+          bonus?.current ?? 0,
+        );
+      })
+      .catch(() => undefined);
+  }
+
+  /** Whether an actor could be set down there (CharacterBody.goodPosition); no controller: yes. */
+  goodPosition(reference: number, feet: Vec3): boolean {
+    return this.#movers.get(reference)?.character.goodPosition(feet) ?? true;
+  }
+
+  #leaveWater: number | undefined;
+
+  /** fActorLeaveWaterBreathTimer, from the game settings once read (its default until then). */
+  #leaveWaterTimer(): number {
+    if (this.#leaveWater === undefined) {
+      this.#leaveWater = BREATH_DEFAULTS.leaveWaterTimer;
+      void this.#options.session.settings().then((settings) => {
+        this.#leaveWater =
+          settings.number(BREATH_SETTING_NAMES.leaveWaterTimer) ?? BREATH_DEFAULTS.leaveWaterTimer;
+      });
+    }
+    return this.#leaveWater;
+  }
+
+  /** [HAVOK] fCharControllerWarpDistSqr. */
+  #warpDistanceSquared(): number {
+    return this.#options.session.ini.number('HAVOK', 'fCharControllerWarpDistSqr');
   }
 
   /** A script moved an actor: its controller goes there (no sliding). */
@@ -2250,6 +2347,14 @@ export class ActorMovers {
         this.#options.navmeshes?.()?.locate([x, y, z]) !== undefined;
       // Out of what it stands in (set on the floor, its shape may touch it), as the player.
       if (world.physics.queriesCurrent) character.recover();
+      // What it pushes other characters and moving bodies back with: its Mass by a human's
+      // (TODO(M13): inferred; the character proxy's mass is not documented).
+      void session.scriptsReady?.actors
+        .value(reference, ActorValue.mass)
+        .then((mass) => {
+          if (mass.current > 0) character.mass = ACTOR_MASS * mass.current;
+        })
+        .catch(() => undefined);
       this.#movers.set(reference, {
         staged,
         character,
@@ -2257,6 +2362,8 @@ export class ActorMovers {
         turning: new Turning(),
         feedback: new MotionFeedback(motionFeedbackSettings(session.ini)),
         race,
+        leaping: false,
+        jumped: false,
         types: undefined,
         typesFor: undefined,
         drawn: [...staged.position],
@@ -2402,6 +2509,11 @@ export class ActorMovers {
     const avoiding = this.#avoidanceSettings();
     for (const mover of this.#movers.values()) {
       const staged = mover.staged;
+      // Far from where it should be (whatever set it there), its controller is set there at once.
+      if (beyondWarp(mover.character.feet, staged.position, this.#warpDistanceSquared())) {
+        this.teleport(staged);
+      }
+      mover.character.bumper = this.#options.bumper?.(staged.reference) ?? true;
       mover.headingFrom = staged.heading;
       // Its movement controller steered by a script's override (KeepOffsetFromActor, the
       // player's controls) instead of its AI's wish.
@@ -2515,6 +2627,13 @@ export class ActorMovers {
         );
       }
       mover.character.step(step);
+      if (
+        mover.jumped &&
+        !mover.character.goingUp &&
+        (mover.character.grounded || mover.character.swimming)
+      ) {
+        mover.jumped = false;
+      }
       // Standing on a turning body (a platform, a lift), it turns with it.
       staged.heading += mover.character.carriedTurn;
       // Landed from a fall: the NPCs' falling damage, as the player's (horses too).
@@ -2616,8 +2735,13 @@ export class ActorMovers {
       );
     character.waterFloor = onWater ? at.surface : undefined;
     if (onWater && !wasOn) this.#options.waterWalkStarted?.(reference);
+    if (mover.leaping && !character.goingUp) mover.leaping = false;
     const swimming =
-      canSwim && !onWater && at.surface !== undefined && swims(at.submersion, character.swimming);
+      canSwim &&
+      !onWater &&
+      !mover.leaping &&
+      at.surface !== undefined &&
+      swims(at.submersion, character.swimming);
     character.swimming = swimming;
     // A strong current carries it off (or any current it falls into fast).
     if (at.type !== undefined && at.submersion > 0) {
@@ -2667,6 +2791,7 @@ export class ActorMovers {
           surface(reference, at.surface);
         }
       } else {
+        if (breath && breath.under >= this.#leaveWaterTimer()) this.#options.gasped?.(reference);
         this.#breaths.delete(reference);
       }
     }

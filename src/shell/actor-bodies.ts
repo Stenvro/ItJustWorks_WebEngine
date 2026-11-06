@@ -10,6 +10,7 @@
 
 import type RAPIER from '@dimforge/rapier3d-compat';
 import type { ActorPose } from '../animation/skeleton.ts';
+import { havokHitSpeed, type HavokHitSettings } from '../gameplay/impulses.ts';
 import { Articulation } from '../physics/articulation.ts';
 import {
   blendObjectControl,
@@ -453,6 +454,25 @@ export class ActorBodies {
     this.#physics?.kick(entry.placed, direction, speed);
     return true;
   }
+
+  /**
+   * A blow on a ragdoll, with [Animation] bEnableHavokHit on (it is off in the game): every body
+   * flies off along `direction` (havokHitSpeed). `now`: seconds. Whether it pushed.
+   */
+  havokHit(reference: number, direction: Vec3, settings: HavokHitSettings, now: number): boolean {
+    const entry = this.#bodies.get(reference);
+    if (!entry?.articulation) return false;
+    const mass = entry.placed.bodies.reduce((sum, { body }) => sum + body.mass(), 0);
+    const since = now - (this.#havokHits.get(reference) ?? -Infinity);
+    const speed = havokHitSpeed(settings, mass, since);
+    if (speed <= 0) return false;
+    this.#havokHits.set(reference, now);
+    this.#physics?.kick(entry.placed, direction, speed);
+    return true;
+  }
+
+  /** When a blow last pushed each ragdoll (havokHit, seconds). */
+  readonly #havokHits = new Map<number, number>();
 
   /**
    * Pulls one body of a ragdoll (on `node`) toward a point: its speed set to `gain` × the way

@@ -19,7 +19,7 @@ import {
 } from '../gameplay/breath.ts';
 import { bowZoomStep } from '../gameplay/combat/bow-zoom.ts';
 import { COMBAT_DEFAULTS, DIFFICULTY_SUFFIXES } from '../gameplay/combat/combat-settings.ts';
-import { fallDamage, fallSettings } from '../gameplay/falling.ts';
+import { FALL_LEG_DEFAULTS, fallDamage, fallLegDamage, fallSettings } from '../gameplay/falling.ts';
 import {
   contactDamage,
   PHYSICS_DAMAGE_DEFAULTS,
@@ -80,6 +80,7 @@ export function connectPlayerTime(
         ) => void)
       | undefined;
     walksOnWater?: (() => boolean) | undefined;
+    jumpingBonus?: (() => number) | undefined;
   },
   session: () =>
     | {
@@ -88,6 +89,7 @@ export function connectPlayerTime(
         readonly scriptsReady: ScriptRuntime | undefined;
         readonly ini: { number(section: string, key: string): number };
         readonly soundSystem?: Pick<SoundSystem, 'playNamed'> | undefined;
+        playNamedSound(editorId: string, source: number): unknown;
       }
     | undefined,
   physics?: {
@@ -111,6 +113,20 @@ export function connectPlayerTime(
         .catch(() => undefined);
     }
     return walks.on;
+  };
+  // How much higher they jump (read again once a second old).
+  let bonus = { value: 0, read: -Infinity };
+  player.jumpingBonus = () => {
+    const runtime = session()?.scriptsReady;
+    const now = performance.now();
+    if (runtime && now - bonus.read > 1000) {
+      bonus = { value: bonus.value, read: now };
+      void runtime.actors
+        .value(PLAYER_REF, JUMPING_BONUS)
+        .then((value) => (bonus = { value: value.current, read: now }))
+        .catch(() => undefined);
+    }
+    return bonus.value;
   };
   // The physics world steps at the world's clock's rate (PhysicsWorld.step).
   if (physics) physics.timeScale = () => session()?.time.multiplier ?? 1;
@@ -157,7 +173,7 @@ export function connectPlayerTime(
     const runtime = current?.scriptsReady;
     if (current && runtime) {
       const difficulty = current.ini.number('GamePlay', 'iDifficulty');
-      current.time.breathe(runtime, submersion, seconds, difficulty);
+      current.time.breathe(runtime, submersion, seconds, difficulty, current);
       // Harmful water (none in vanilla): its damage and spell.
       const harmed = hazard.step(water?.type, water?.harm, submersion, seconds);
       if (harmed.damage > 0 || harmed.spell !== undefined) {
@@ -172,6 +188,12 @@ const REFRESH_SECONDS = 0.25;
 
 const BOW_SPEED_BONUS = actorValueIndex('BowSpeedBonus') ?? 0;
 const WATER_BREATHING = actorValueIndex('WaterBreathing') ?? 0;
+const JUMPING_BONUS = actorValueIndex('JumpingBonus') ?? 0;
+const LEFT_MOBILITY = actorValueIndex('LeftMobilityCondition') ?? 0;
+const RIGHT_MOBILITY = actorValueIndex('RightMobilityCondition') ?? 0;
+/** The sound of the player drowning, and how often it is played (seconds). */
+const DROWNING_SOUND = 'NPCHumanDrowning';
+const DROWNING_SOUND_EVERY = 1;
 const WATER_WALKING = actorValueIndex('WaterWalking') ?? 0;
 /** fDiffMultHPToPC's built-in values by difficulty (combat-settings.ts). */
 const DAMAGE_TO_PLAYER = [0.5, 0.75, 1, 1.5, 2, 3];
@@ -196,13 +218,17 @@ export class TimeFlow {
   #slowedPace = 1;
   #wait = 0;
   #asking = false;
+  /** The player came up after a long time under water: their Leave Water Breath line. */
+  gasped: (() => void) | undefined;
+  /** Seconds until the drowning sound is played again. */
+  #drowningSound = 0;
   /** The player's breath (its settings once read), whether they breathe water, their health. */
   #breath: Breath | undefined;
   #breathRead = false;
   #waterBreathing = false;
   #baseHealth = 0;
   #damageToPlayer = DAMAGE_TO_PLAYER;
-  /** The player's breath left (seconds), for the HUD's meter and the cases. */
+  /** The player's breath left (seconds), for the cases (the vanilla HUD has no meter for it). */
   get breath(): Breath | undefined {
     return this.#breath;
   }
@@ -313,17 +339,32 @@ export class TimeFlow {
   /**
    * A step of the player at a submersion (breath.ts): their breath runs down under water and,
    * once gone, each second takes fActorSwimBreathDamage of their base health, through the
-   * difficulty's damage to the player (`difficulty`: iDifficulty). TODO(M13): the drowning
-   * sound (NPCHumanDrowning) and the Leave Water Breath line on coming up are not played.
+   * difficulty's damage to the player (`difficulty`: iDifficulty), with the NPCHumanDrowning
+   * sound; coming up after fActorLeaveWaterBreathTimer they say their Leave Water Breath line.
+   * TODO(M13): how often the sound is played again while they drown is inferred (once a second,
+   * as the damage's second).
    */
-  breathe(runtime: ScriptRuntime, submersion: number, seconds: number, difficulty: number): void {
+  breathe(
+    runtime: ScriptRuntime,
+    submersion: number,
+    seconds: number,
+    difficulty: number,
+    sounds?: { playNamedSound(editorId: string, source: number): unknown },
+  ): void {
     if (!this.#breathRead) {
       this.#breathRead = true;
       void this.#readBreath(runtime);
     }
     const breath = this.#breath;
     if (!breath) return;
-    const { drowning } = breath.step(seconds, submersion, this.#waterBreathing);
+    const { drowning, gasped } = breath.step(seconds, submersion, this.#waterBreathing);
+    if (gasped) this.gasped?.();
+    this.#drowningSound -= seconds;
+    if (drowning <= 0) this.#drowningSound = 0;
+    else if (this.#drowningSound <= 0) {
+      this.#drowningSound = DROWNING_SOUND_EVERY;
+      sounds?.playNamedSound(DROWNING_SOUND, PLAYER_REF);
+    }
     if (drowning <= 0 || this.#baseHealth <= 0) return;
     const mult = this.#damageToPlayer[Math.round(difficulty)] ?? 1;
     const damage = drowningDamage(this.#baseHealth, drowning, breath.settings) * mult;
@@ -378,6 +419,7 @@ export async function actorFell(
   reference: number,
   height: number,
   share = 1,
+  roll: () => number = () => Math.random() * 100,
 ): Promise<number> {
   const npc = reference !== PLAYER_REF;
   const suffix = npc ? 'NPC' : '';
@@ -396,5 +438,19 @@ export async function actorFell(
   if (taken <= 0) return 0;
   if (await runtime.actors.isInvulnerable(reference)) return taken;
   await runtime.actors.damage(reference, ActorValue.health, taken, undefined);
+  // A hard landing may hurt a leg too (fallLegDamage).
+  const setting = async (name: string, fallback: number): Promise<number> => {
+    const value = await runtime.gameSetting(name);
+    return typeof value === 'number' ? value : fallback;
+  };
+  const chance = roll();
+  const leg = fallLegDamage(taken, chance, {
+    mult: await setting('fFallLegDamageMult', FALL_LEG_DEFAULTS.mult),
+    chance: await setting('iFallLegDamageChance', FALL_LEG_DEFAULTS.chance),
+  });
+  if (leg > 0) {
+    const side = Math.trunc(chance) % 2 === 0 ? LEFT_MOBILITY : RIGHT_MOBILITY;
+    await runtime.actors.damage(reference, side, leg, undefined);
+  }
   return taken;
 }

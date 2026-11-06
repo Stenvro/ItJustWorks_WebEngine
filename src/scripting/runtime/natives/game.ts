@@ -371,22 +371,20 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     const a = formOf(args[0]);
     const b = formOf(args[2]);
     if (a === undefined || b === undefined) return false;
-    return (
-      runtime.world.ballAndSocket?.(
-        a,
-        str(args[1]),
-        b,
-        str(args[3]),
-        [num(args[4]), num(args[5]), num(args[6])],
-        [num(args[7]), num(args[8]), num(args[9])],
-      ) ?? false
-    );
+    return runtime.joinScriptConstraint({
+      a,
+      nodeA: str(args[1]),
+      b,
+      nodeB: str(args[3]),
+      offsetA: [num(args[4]), num(args[5]), num(args[6])],
+      offsetB: [num(args[7]), num(args[8]), num(args[9])],
+    });
   });
   // RemoveHavokConstraints(arFirstRef, arFirstRefNodeName, arSecondRef, arSecondRefNodeName).
   n('game.removehavokconstraints', ({ args }) => {
     const a = formOf(args[0]);
     const b = formOf(args[2]);
     if (a === undefined || b === undefined) return false;
-    return runtime.world.removeConstraints?.(a, str(args[1]), b, str(args[3])) ?? false;
+    return runtime.removeScriptConstraint(a, str(args[1]), b, str(args[3]));
   });
 }

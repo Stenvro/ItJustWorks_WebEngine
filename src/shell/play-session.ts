@@ -1167,8 +1167,8 @@ export class PlaySession {
       }
     }
     for (const impact of this.physics.drainImpacts()) this.#onImpact?.(impact);
-    // Splashes sound as impacts against the water. TODO(M13): their model (sSplashParticles at
-    // the splash's scale) is not shown yet.
+    // Splashes sound as impacts against the water; their model (sSplashParticles at the
+    // splash's scale) is shown by onSplash.
     if (this.water) {
       // Splashes and those wading stir the water's displacement field (water-displacement.ts).
       for (const splash of this.water.drainSplashes()) {
