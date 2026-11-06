@@ -6,9 +6,11 @@ import {
   animationRate,
   boneLeftBound,
   startObjectSkeleton,
+  type AnimatedSkeleton,
   type AnimationRate,
 } from './animated-skeleton.ts';
 import type { SkeletalGraph } from './behavior-runtime.ts';
+import type { BehaviorGenerator } from '../formats/hkx/behavior.ts';
 
 describe('boneLeftBound', () => {
   it('is true only beyond the bound sphere of the 3D', () => {
@@ -100,6 +102,103 @@ describe('object skeletons', () => {
     expect(pose.worlds[2 * 16 + 12]).toBeCloseTo(2);
     animateSkeletons([skeleton], 0.3, rate);
     expect(pose.worlds[2 * 16 + 12]).toBeCloseTo(3);
+  });
+
+  describe('told an event together', () => {
+    const still: AnimationBinding = {
+      ...swing,
+      animation: {
+        ...swing.animation,
+        sample: (_, out) => {
+          out.set([0, 0, 0, 0, 0, 0, 1, 1, 1, 1]);
+        },
+      },
+    };
+    const clipNode = (name: string, mode: number): BehaviorGenerator => ({
+      kind: 'clip',
+      name,
+      animation: name,
+      mode,
+      playbackSpeed: 1,
+    });
+    const machine: BehaviorGenerator = {
+      kind: 'state-machine',
+      name: 'Machine',
+      startStateId: { value: 0 },
+      startStateMode: 0,
+      states: [
+        {
+          id: 0,
+          name: 'Waiting',
+          probability: 1,
+          enable: true,
+          generator: clipNode('still', 1),
+          transitions: [
+            { eventId: 0, toStateId: 1, flags: 0, priority: 0, conditional: false, duration: 0 },
+          ],
+        },
+        {
+          id: 1,
+          name: 'Chopping',
+          probability: 1,
+          enable: true,
+          generator: clipNode('chop', 0),
+          transitions: [],
+        },
+      ],
+      wildcardTransitions: [],
+    };
+    const FRAME = 1 / 60;
+    const bladeX = (skeleton: AnimatedSkeleton): number => skeleton.pose.worlds[2 * 16 + 12] ?? 0;
+
+    /** A near graph and a far one, told one event at `at`; how far the far one's clip lags. */
+    function lag(at: number, reading = 0): number {
+      let readFrom = Infinity;
+      let clock = 0;
+      const host = {
+        clip: (name: string) => (name === 'still' ? still : clock >= readFrom ? swing : undefined),
+        clipLoading: (name: string) => name === 'chop' && clock < readFrom,
+        behavior: () => undefined,
+      };
+      const spec: SkeletalGraph = {
+        ...graph,
+        root: { name: 'chop', events: ['Chop'], variables: [], root: machine },
+        host,
+      };
+      const near = startObjectSkeleton(nodes, spec, () => 0.5)?.skeleton;
+      const far = startObjectSkeleton(nodes, spec, () => 0.5)?.skeleton;
+      if (!near || !far) throw new Error('no skeleton');
+      const rate = (animated: AnimatedSkeleton): AnimationRate => ({
+        interval: animated === far ? 0.117 : 0,
+        interpolate: true,
+        slop: 0.25,
+      });
+      let worst = 0;
+      let told = false;
+      for (let frame = 0; frame < 180; frame++) {
+        clock = frame * FRAME;
+        if (!told && clock >= at) {
+          told = true;
+          readFrom = clock + reading;
+          near.behavior?.sendEvent('Chop');
+          far.behavior?.sendEvent('Chop');
+        }
+        animateSkeletons([near, far], clock, rate);
+        // The clip moves the blade 10 units a second; from when both have started and blended.
+        if (told && clock >= at + reading + 0.3) {
+          worst = Math.max(worst, Math.abs(bladeX(far) - bladeX(near)) / 10);
+        }
+      }
+      return worst;
+    }
+
+    it('a far graph starts the clip with a near one, wherever in its interval the event comes', () => {
+      for (let i = 0; i < 8; i++) expect(lag(1 + i * FRAME)).toBeLessThanOrEqual(FRAME);
+    });
+
+    it('a far graph loses no time to a clip still being read', () => {
+      for (let i = 0; i < 8; i++) expect(lag(1 + i * FRAME, 4 * FRAME)).toBeLessThanOrEqual(FRAME);
+    });
   });
 
   it('moves on every frame at the clock’s pace across the updates of a far graph', () => {

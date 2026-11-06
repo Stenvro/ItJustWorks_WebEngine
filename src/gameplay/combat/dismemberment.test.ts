@@ -10,6 +10,8 @@ import {
   pieceShowsPartition,
   redressing,
   rollLimb,
+  SWING_SECONDS,
+  SwingTrail,
   WeaponHitBehavior,
 } from './dismemberment.ts';
 
@@ -46,6 +48,25 @@ describe('dismemberment', () => {
     expect(bent?.[0]).toBeCloseTo(250 / Math.SQRT2);
     expect(bent?.[2]).toBeCloseTo(250 / Math.SQRT2);
     expect(decapitationLaunch([1, 1, 1], [1, 1, 1], undefined, 250)).toBeUndefined();
+  });
+
+  it('reads how a weapon came into the blow from where it was, not from one frame', () => {
+    const trail = new SwingTrail();
+    expect(trail.before(1)).toBeUndefined();
+    // Coming down at 300 a second, stopped dead at 1 s and creeping sideways.
+    for (let frame = 0; frame <= 66; frame++) {
+      const time = frame / 60;
+      const at: [number, number, number] =
+        frame <= 60 ? [0, 0, 300 - 300 * time] : [(frame - 60) * 1, 0, 0];
+      trail.record(time, at);
+    }
+    const before = trail.before(1 - SWING_SECONDS);
+    expect(before?.time).toBeCloseTo(0.9, 1);
+    expect(before?.at[2]).toBeCloseTo(30, -1);
+    // The time asked falls between two: the one before it.
+    expect(trail.before(1 + 0.5 / 60)?.time).toBeCloseTo(1);
+    // Older than it keeps: as far back as is known.
+    expect(trail.before(-5)?.time).toBeCloseTo(66 / 60 - 63 / 60);
   });
 
   it('rolls a killing blow on an explodable part as the engine does', () => {
