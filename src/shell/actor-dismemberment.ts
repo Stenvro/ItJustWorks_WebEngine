@@ -22,6 +22,8 @@ import {
   limbGone,
   pieceShowsPartition,
   redressing,
+  SWING_SECONDS,
+  SwingTrail,
 } from '../gameplay/combat/dismemberment.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { HAVOK_SCALE, type CollisionData } from '../physics/collision-data.ts';
@@ -71,6 +73,11 @@ export interface ActorDismembermentOptions {
    * read where it has no killer yet: the chop decapitates before it kills.
    */
   readonly executioner?: (reference: number) => Promise<number | undefined>;
+  /**
+   * Those who may strike a head off now (in furniture, in a killmove): where their weapons were
+   * is kept for the moment one does.
+   */
+  readonly striking?: () => Iterable<number>;
 }
 
 /** The node a human's right-hand weapon hangs on: the killer's swing is read from it. */
@@ -79,14 +86,28 @@ const WEAPON_NODE = 'weapon';
 const DECAPITATE_BLOOD_TIME = 5;
 const DISMEMBERED_LIMB_VELOCITY = 10;
 
+/**
+ * A blow as it fell: the actor as last shown when its graph raised Decapitate (the update raising
+ * it has not been posed yet), which the head flies from however long its cut takes (its armor's
+ * models may still be read), and who struck. TODO(M13): inferred; the engine queues its cut too,
+ * and whether that reads the pose of the blow or of its turn was not read. Helgen's prisoner's head
+ * drops 1.7 units a frame just past the blow, which at the cut's turn was the difference between
+ * clearing the basket's near rim and skipping off it.
+ */
+interface Blow {
+  readonly time: number;
+  readonly world: Float32Array;
+  readonly worlds: Float32Array;
+  killer: number | undefined;
+}
+
 /** A cut waiting its turn (iActorsDismemberedPerFrame a frame). */
 interface Pending {
   readonly reference: number;
   /** Flung off (a decapitation now), or dropped where it is (a dismembered actor placed again). */
   readonly launch: boolean;
-  /** Where the killer's weapon was as the head was struck, to read its swing from. */
-  readonly weapon:
-    { readonly killer: number; readonly at: Vec3; readonly time: number } | undefined;
+  /** The blow that cut it; none: a dismembered actor placed again. */
+  readonly blow: Blow | undefined;
 }
 
 /** A cut-off head in the world: its draws, its body, and how its body places them. */
@@ -107,6 +128,8 @@ export class ActorDismemberment {
   readonly #options: ActorDismembermentOptions;
   #physics: PhysicsWorld | undefined;
   readonly #queue: Pending[] = [];
+  /** Where the weapons of those who may strike were lately. */
+  readonly #swings = new Map<number, SwingTrail>();
   readonly #pieces = new Map<number, Piece>();
   /** Decapitation armors being put on, with what the actor wears once they are on. */
   readonly #dressing = new Map<number, Promise<readonly number[] | undefined>>();
@@ -145,8 +168,14 @@ export class ActorDismemberment {
     // One at a time: the graph may raise it again while the armor goes on.
     if (limbGone(state.dismembered, HEAD_LIMB) || this.#deciding.has(reference)) return;
     this.#deciding.add(reference);
+    const blow: Blow = {
+      time: this.#clock,
+      world: new Float32Array(body.world),
+      worlds: new Float32Array(body.placed.pose.worlds),
+      killer: undefined,
+    };
     try {
-      await this.#decapitate(reference, body, state);
+      await this.#decapitate(reference, body, state, blow);
     } finally {
       this.#deciding.delete(reference);
     }
@@ -156,6 +185,7 @@ export class ActorDismemberment {
     reference: number,
     body: SeveredBody,
     state: { dismembered?: DismemberedLimb[] },
+    blow: Blow,
   ): Promise<void> {
     const { session } = this.#options;
     const runtime = session.scriptsReady;
@@ -165,7 +195,7 @@ export class ActorDismemberment {
     const race = await placer.race(look.race);
     const armor = race?.decapitateArmors[look.female ? 1 : 0];
     if (armor === undefined) return;
-    const weapon = await this.#weaponAt(reference);
+    blow.killer = await this.#killerOf(reference);
     // Its look changes in place (the stage does not make it again: dressedInPlace).
     const dressing = (async (): Promise<readonly number[] | undefined> => {
       await runtime.equipment.equip(reference, armor, { silent: true, worn: true });
@@ -180,7 +210,7 @@ export class ActorDismemberment {
       ...(state.dismembered ?? []).filter((limb) => limb.limb !== HEAD_LIMB),
       { limb: HEAD_LIMB, worn: worn ?? [] },
     ];
-    this.#queue.push({ reference, launch: true, weapon });
+    this.#queue.push({ reference, launch: true, blow });
   }
 
   /**
@@ -217,7 +247,7 @@ export class ActorDismemberment {
     const cut = this.#sever(reference, placed);
     if (!cut) return;
     if (!this.#pieces.has(reference) && !this.#queue.some((entry) => entry.reference === reference))
-      this.#queue.push({ reference, launch: false, weapon: undefined });
+      this.#queue.push({ reference, launch: false, blow: undefined });
   }
 
   /**
@@ -256,6 +286,7 @@ export class ActorDismemberment {
   /** The queued cuts (iActorsDismemberedPerFrame a frame); the heads follow their bodies. */
   frame(seconds: number): void {
     this.#clock += seconds;
+    this.#followSwings();
     const ini = this.#options.session.ini;
     const perFrame = Math.max(1, ini.number('GamePlay', 'iActorsDismemberedPerFrame'));
     for (let i = 0; i < perFrame && this.#queue.length > 0; i++) {
@@ -272,6 +303,21 @@ export class ActorDismemberment {
       multiply(placement, piece.bodyToDraw, piece.world);
       piece.motion.version++;
     }
+  }
+
+  #followSwings(): void {
+    for (const actor of this.#options.striking?.() ?? []) {
+      const at = this.#weaponOf(actor);
+      if (!at) continue;
+      let trail = this.#swings.get(actor);
+      if (!trail) {
+        trail = new SwingTrail();
+        this.#swings.set(actor, trail);
+      }
+      trail.record(this.#clock, at);
+    }
+    for (const [actor, trail] of this.#swings)
+      if (trail.latest < this.#clock) this.#swings.delete(actor);
   }
 
   *scenes(): Iterable<GpuScene> {
@@ -308,6 +354,7 @@ export class ActorDismemberment {
     this.#queue.length = 0;
     this.#dressing.clear();
     this.#deciding.clear();
+    this.#swings.clear();
   }
 
   // --- The cut -------------------------------------------------------------------------------
@@ -386,11 +433,11 @@ export class ActorDismemberment {
     const skeleton = placed.pose.skeleton;
     const head = skeleton.nodeByName.get((placed.look.headNode ?? '').toLowerCase());
     if (head === undefined) return;
-    // The pose as it is now, kept: the piece is rigid.
+    // The pose as the blow found it (else as it is now), kept: the piece is rigid.
     const pose = new ActorPose(skeleton);
-    pose.worlds.set(placed.pose.worlds);
+    pose.worlds.set(pending.blow?.worlds ?? placed.pose.worlds);
     pose.version++;
-    const world = new Float32Array(body.world);
+    const world = new Float32Array(pending.blow?.world ?? body.world);
     const motion: InstanceMotion = { version: 0 };
     const { severing, look } = placed;
     const instances: ModelInstance[] = [];
@@ -444,7 +491,7 @@ export class ActorDismemberment {
         true,
       );
       bodyToDraw = multiply(restHead, poseInverse);
-      if (pending.launch) this.#launch(body, placedCollision, pose, head, pending);
+      if (pending.launch) this.#launch(world, placedCollision, pose, head, pending);
       else await this.#nudge(body, placedCollision, pose, head);
     }
     if (this.#options.body(body.reference)?.placed !== placed) {
@@ -487,11 +534,11 @@ export class ActorDismemberment {
   }
 
   /**
-   * The head flies off: from the neck through the head, bent the way the killer's weapon moved
-   * since the blow, at fDecapInitialSpeed; spinning about that line.
+   * The head flies off: from the neck through the head, bent the way the killer's weapon came
+   * into the blow (#weaponAt), at fDecapInitialSpeed; spinning about that line.
    */
   #launch(
-    body: SeveredBody,
+    bodyWorld: Mat4,
     collision: PlacedCollision,
     pose: ActorPose,
     head: number,
@@ -500,22 +547,11 @@ export class ActorDismemberment {
     const neck = pose.skeleton.rig.parents[head] ?? -1;
     if (neck < 0) return;
     const at = (node: number): Vec3 => {
-      const world = multiply(body.world, pose.worlds.subarray(node * 16, node * 16 + 16));
+      const world = multiply(bodyWorld, pose.worlds.subarray(node * 16, node * 16 + 16));
       return [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0];
     };
-    let swing: Vec3 | undefined;
-    const weapon = pending.weapon;
-    const now = weapon ? this.#weaponOf(weapon.killer) : undefined;
-    if (weapon && now && this.#clock > weapon.time) {
-      const dt = this.#clock - weapon.time;
-      swing = [
-        (now[0] - weapon.at[0]) / dt,
-        (now[1] - weapon.at[1]) / dt,
-        (now[2] - weapon.at[2]) / dt,
-      ];
-    }
     const speed = this.#options.session.ini.number('Combat', 'fDecapInitialSpeed');
-    const velocity = decapitationLaunch(at(head), at(neck), swing, speed);
+    const velocity = decapitationLaunch(at(head), at(neck), this.#swingInto(pending.blow), speed);
     if (!velocity) return;
     const spin: Vec3 = [
       velocity[0] / HAVOK_SCALE,
@@ -548,18 +584,32 @@ export class ActorDismemberment {
   }
 
   /**
-   * Where the weapon of an actor's killer is now, to read its swing from: its killer's, else
-   * its executioner's. Observed in the original: Helgen's first prisoner's head drops into the
+   * How the killer's weapon came into a blow (SwingTrail); undefined: it is not known to have
+   * moved.
+   */
+  #swingInto(blow: Blow | undefined): Vec3 | undefined {
+    const trail = blow?.killer === undefined ? undefined : this.#swings.get(blow.killer);
+    if (!blow || !trail) return undefined;
+    const to = trail.before(blow.time);
+    const from = trail.before(blow.time - SWING_SECONDS);
+    if (!to || !from || to.time <= from.time) return undefined;
+    const dt = to.time - from.time;
+    return [
+      (to.at[0] - from.at[0]) / dt,
+      (to.at[1] - from.at[1]) / dt,
+      (to.at[2] - from.at[2]) / dt,
+    ];
+  }
+
+  /**
+   * Who struck a blow, whose weapon's swing is read: an actor's killer, else its executioner. Observed in the original: Helgen's first prisoner's head drops into the
    * basket before the block, its flight bent down by the headsman's chop; unbent (he has no
    * killer until his clip's KillActor, 4.8 s after its Decapitate), it flew level at
    * fDecapInitialSpeed over the basket and rolled on down the street. TODO(M13): how the
    * engine knows the executioner (the victim's myKiller is unset at the chop).
    */
-  async #weaponAt(reference: number): Promise<Pending['weapon']> {
-    const killer =
-      this.#options.killer(reference) ?? (await this.#options.executioner?.(reference));
-    const at = killer === undefined ? undefined : this.#weaponOf(killer);
-    return killer === undefined || !at ? undefined : { killer, at, time: this.#clock };
+  async #killerOf(reference: number): Promise<number | undefined> {
+    return this.#options.killer(reference) ?? (await this.#options.executioner?.(reference));
   }
 
   /** Where an actor's right-hand weapon node is in the world. */

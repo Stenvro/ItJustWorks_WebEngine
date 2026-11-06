@@ -959,6 +959,7 @@ export class ActorStage {
         options.session.scriptsReady?.state.actors.get(reference)?.killer ??
         this.combat.killerOf(reference),
       executioner: (reference) => this.#executionerOf(reference),
+      striking: () => this.#striking(),
     });
     this.ambientIdles = new ActorAmbientIdles({
       session: options.session,
@@ -2617,6 +2618,14 @@ export class ActorStage {
       if (user !== reference && (await runtime.hasKeyword(user, IS_EXECUTIONER))) return user;
     }
     return undefined;
+  }
+
+  /** Those who may strike a head off now: Decapitate comes of a chop or of a killmove. */
+  *#striking(): Iterable<number> {
+    for (const reference of this.#actors.keys()) {
+      if (this.furniture.holds(reference) || this.combat.paired(reference)) yield reference;
+    }
+    if (this.combat.paired(PLAYER_REF)) yield PLAYER_REF;
   }
 
   /** The dependents of a reference that are here to animate (actors, the player). */
