@@ -259,7 +259,7 @@ export class CellResets {
 
   /**
    * A cell's reset removes what the game made there: created references lying in it (dropped
-   * items, PlaceAtMe). TODO(M13): observe in the original which created references a reset keeps
+   * items, PlaceAtMe). TODO(M13): observed in the original which created references a reset keeps
    * besides those a quest's alias holds (persistent ones made by scripts).
    */
   #dropCreated(cell: number): void {

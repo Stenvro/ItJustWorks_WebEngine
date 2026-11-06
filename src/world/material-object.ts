@@ -99,8 +99,7 @@ export function parseStaticDirectional(record: RecordSource): StaticDirectional 
  * ProjectedUVParams of the lighting shader for a material laid on at `maxAngle` degrees:
  * x scales the noise, z is the noise texture's repeat per world unit and w the threshold
  * a surface must pass, `dot(normal, up) · vertex alpha − x · noise − w > 0`.
- * The engine computes (1 − a)·r, b and (1 − a)·g + a from an NiColorA (Nukem9's decompiled
- * BSLightingShader::GeometrySetupConstantProjectedUVData). r = falloff scale, g = falloff bias
+ * The engine computes (1 − a)·r, b and (1 − a)·g + a from an NiColorA (Nukem9's * BSLightingShader::GeometrySetupConstantProjectedUVData). r = falloff scale, g = falloff bias
  * and b = 1 / noise UV scale follow from the units; a = cos(max angle) is inferred: at 90° the
  * material's own values apply unchanged, smaller angles raise the threshold towards 1 (only
  * flat tops) and larger ones lower it (see docs/formats/esm.md).

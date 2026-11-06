@@ -502,7 +502,7 @@ worldspaces on screen:
   GetTriggerObjectCount). Moving objects enter them too, but not the clutter a cell places
   inside one as it loads: the game's placed clutter lies inactive until disturbed (an object
   left floating in the editor floats until touched), and its trigger volumes (hkpTriggerVolume,
-  by their class names) hear of a body only from the contacts an active one's simulation makes; ours
+  in the original) hear of a body only from the contacts an active one's simulation makes; ours
   settle at load (the warm start), and a body settling is not looked at
   (`PhysicsWorld.movingInTriggers`). Disturbed later, it enters as it moves. Before, Whiterun's
   clutter entered CWDisableHoldPositionMarkerTrigger at every load, whose script took each for

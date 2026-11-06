@@ -8,7 +8,7 @@
 // - Observed in the original: the confidence modifier is drawn once per fight in
 //   fCombatConfidenceModifierMin .. Max (combat/controller-state.test.ts), not from the odds.
 // - The flee behaviours: the combat tree's Flee context (CombatBehaviorContextFlee: Flee,
-//   Flee To Ally, Flee To Cover, Flee Through Door; class names, docs/ai.md).
+//   Flee To Ally, Flee To Cover, Flee Through Door; names, docs/ai.md).
 
 import { describe, expect, it } from 'vitest';
 import {

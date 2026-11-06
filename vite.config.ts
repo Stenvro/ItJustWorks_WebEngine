@@ -9,8 +9,10 @@ const isolationHeaders = {
   'Cross-Origin-Embedder-Policy': 'require-corp',
 };
 
-// As a watcher glob: forward slashes, absolute.
-const localToolFolder = fileURLToPath(new URL('./.tools', import.meta.url)).replaceAll('\\', '/');
+// As a watcher glob: forward slashes, absolute, no trailing slash.
+const root = fileURLToPath(new URL('.', import.meta.url))
+  .replaceAll('\\', '/')
+  .slice(0, -1);
 
 // Hard rule 4: localhost only.
 export default defineConfig({
@@ -23,7 +25,7 @@ export default defineConfig({
     // This root's own local tool folder (nested working copies among them) is no part of the
     // app. Only this root's: a working copy that itself lives under such a folder still
     // watches its own files.
-    watch: { ignored: [`${localToolFolder}/**`] },
+    watch: { ignored: [`${root}/.*/**`] },
   },
   // The app's one page: nested working copies' pages are not scanned for dependencies.
   optimizeDeps: { entries: ['index.html'] },

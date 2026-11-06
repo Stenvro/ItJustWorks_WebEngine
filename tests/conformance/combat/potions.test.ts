@@ -5,7 +5,7 @@
 // fCombatRestoreHealthRestrictTime (15 s) of the last; magicka below fCombatRestoreMagicka
 // PercentMin (0.25) .. Max (0.4), not within …RestrictTime (10 s); no other value; the tree waits
 // fCombatMagicDrinkPotionWaitTime (3 s) after a potion (CombatBehaviorDrinkPotion,
-// CombatBehaviorTreeUsePotion; class names). the engine's defaults.
+// CombatBehaviorTreeUsePotion). the engine's defaults.
 
 import { describe, expect, it } from 'vitest';
 import { COMBAT_AI_DEFAULTS } from '../../../src/ai/combat-ai.ts';

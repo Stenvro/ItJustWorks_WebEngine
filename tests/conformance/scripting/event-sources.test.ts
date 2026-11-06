@@ -11,7 +11,7 @@
 //   DisarmedEvent, DragonSoulsGained, ItemCrafted, ItemHarvested, ItemsPickpocketed,
 //   LevelIncrease, LocationCleared, LocationDiscovery, LocksPicked, ObjectiveState,
 //   QuestStatus, ShoutAttack, SkillIncrease, SoulsTrapped, SpellsLearned).
-// - The original's class names (original): the event sources with a class of their own besides those
+// - The original: the event sources with a class of their own besides those
 //   (CellAttachDetachEvent, BSMusicEvent, BGSSaveLoadManagerEvent, BGSActorCellEvent,
 //   BGSActorDeathEvent, PositionPlayerEvent, BeamProjectileImpactEvent, BSScript::LogEvent,
 //   SkyrimScript::StatsEvent, BSTransformDeltaEvent, BSAnimationGraphEvent, ...).
@@ -187,11 +187,11 @@ describe('the event sources and the hub', () => {
   it.todo('SpellsLearned: Spells Learned  [CommonLibSSE, UESP]');
 
   // The other sources the original has (original).
-  it.todo('BGSActorCellEvent: an actor (the player) entered or left a cell  [original class names]');
-  it.todo('BGSActorDeathEvent: an actor died (the player’s death handling)  [original class names]');
-  it.todo('PositionPlayerEvent: the player is put somewhere (a load, a teleport)  [original class names]');
-  it.todo('BeamProjectileImpactEvent: a beam projectile struck something  [original class names]');
-  it.todo('BSMusicEvent: the music system’s track changes  [original class names]');
+  it.todo('BGSActorCellEvent: an actor (the player) entered or left a cell  [original]');
+  it.todo('BGSActorDeathEvent: an actor died (the player’s death handling)  [original]');
+  it.todo('PositionPlayerEvent: the player is put somewhere (a load, a teleport)  [original]');
+  it.todo('BeamProjectileImpactEvent: a beam projectile struck something  [original]');
+  it.todo('BSMusicEvent: the music system’s track changes  [original]');
   it.todo('MenuOpenCloseEvent, MenuModeChangeEvent: menus open and close  [CommonLibSSE]');
 });
 

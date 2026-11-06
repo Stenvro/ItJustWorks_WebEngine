@@ -7,7 +7,7 @@
 // - The engine's rule per class, observed in the original (each class's handler functor; docs/
 //   animation.md, "Graph events", and the notes below). StopHorseCameraHandler and
 //   RemoveCharacterControllerHandler are named by the files, but the original has no class of
-//   either name (no class names type), so their events do nothing.
+//   either name (no such type), so their events do nothing.
 // - Our implementations: src/shell/actor-graph-events.ts registers every class (a system's own,
 //   or heard by name from a system's listener: dispatch.heardBy).
 

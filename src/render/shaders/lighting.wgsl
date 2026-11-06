@@ -11,7 +11,7 @@
 // Prepended with frame.wgsl, snow.wgsl and common.wgsl. ASCII only.
 // Notes: docs/rendering.md ("Lighting shader").
 //
-// Parallax (type 3), as the vanilla pixel shader (aers' Skyrim SE shader decompile): the height
+// Parallax (type 3), as the vanilla pixel shader (aers' Skyrim-SE-Shader-Tools): the height
 // map shifts the texture coordinates by (height * 0.08 - 0.04) along the model-space view
 // direction's x and y (not the tangent-space one: a bug of the original, kept).
 

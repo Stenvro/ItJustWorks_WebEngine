@@ -373,7 +373,7 @@ corner button leaves the keyboard's tab order in Play, so Enter always reaches t
 Play starts where the game starts, at its launcher (`src/shell/launcher.ts`): Play, Options,
 Exit. Options keeps what the launcher writes to SkyrimPrefs.ini (in the browser's storage, per
 player): Windowed Mode (off: Play asks for full screen in the click that starts it) and the
-Detail preset. The Graphics Adapter shows the GPU. The launcher's art lives in the launcher itself,
+Detail preset. The Graphics Adapter shows the GPU. The launcher's art lives in its program,
 not in the game's data, so it wears the engine's own look. TODO(M13): the detail presets and the
 Advanced settings (detail, view distance, water) applied by the renderer, which draws at Ultra.
 

@@ -242,7 +242,7 @@ interface Watched {
   seen: number;
 }
 
-/** What one actor is now, as the engine has it. */
+/** What one actor is now, observed in the original. */
 interface ActorNow {
   readonly reference: number;
   readonly subject: QaSubject;

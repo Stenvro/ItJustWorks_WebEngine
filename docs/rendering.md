@@ -427,7 +427,7 @@ and the depth resolve:
 
 BSLightingShaderProperty (`shaders/lighting.wgsl`) follows the engine's lighting pixel shader
 as Community Shaders' near-vanilla Lighting.hlsl (v0.7.4) reproduces it, with the material
-constants of Nukem9's decompiled `BSLightingShader`:
+constants of Nukem9's `BSLightingShader`:
 
 1. Normal: tangent space, or model space stored **x, z, y** (MSN materials and LOD land).
    Specular mask: the normal map's alpha, or with model-space normals the specular map (texture
@@ -509,7 +509,7 @@ constants of Nukem9's decompiled `BSLightingShader`:
 
 Parallax (type 3, 11 vanilla shapes in Markarth): the height map (slot 3) shifts the texture
 coordinates by (height × 0.08 − 0.04) along the x and y of the **model-space** view direction,
-as the vanilla pixel shader does (aers' Skyrim-SE-Shader-Tools decompile; a correct version
+as the vanilla pixel shader does (aers' Skyrim-SE-Shader-Tools; a correct version
 would use the tangent-space direction; the bug is kept). Community Shaders 0.7.4 leaves this
 out (it replaces parallax with its own), so that source is not used here.
 

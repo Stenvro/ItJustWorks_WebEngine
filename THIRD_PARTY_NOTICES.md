@@ -181,8 +181,7 @@ these projects read and write (their layouts, names and constants), not by copyi
 (Papyrus bytecode), hkxcmd / HKX2 / serde-hkx (Havok packfiles and class layouts),
 [hkxparse](https://github.com/exyorha/hkxparse) (MIT; Havok binary tagfiles),
 [HavokLib](https://github.com/PredatorCZ/HavokLib) (GPL-3.0; the spline-compressed animation
-layout and quaternion encodings, written anew here), BSArch, Nukem9's decompiled
-BSLightingShader and aers' Skyrim-SE-Shader-Tools (shader constants), the Creation Kit wiki,
+layout and quaternion encodings, written anew here), BSArch, Nukem9's BSLightingShader and aers' Skyrim-SE-Shader-Tools (shader constants), the Creation Kit wiki,
 and the [Step](https://stepmodifications.org) INI guides and default value lists. LZ4,
 xxHash32 and zlib (inflate) are implemented here from their specifications.
 

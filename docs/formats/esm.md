@@ -620,7 +620,7 @@ lighting shader's parallax.
 Snow, ash, moss, ice and the Falmer glow that the engine lays over the upward-facing parts of
 statics (`src/world/material-object.ts`, `node tools/material-info.ts [editor id]`). Sources:
 CommonLibSSE-NG (`BSMaterialObject::DIRECTIONAL_DATA`, `TESObjectSTATData`), Nukem9's
-observed `BSLightingShader` (constant setup) and Community Shaders' near-vanilla
+`BSLightingShader` (constant setup) and Community Shaders' near-vanilla
 Lighting.hlsl (v0.7.4, the pixel shader).
 
 **STAT DNAM** (8 or 12 bytes): f32 max angle (30–120 in the CK), MATO form id, SSE: u32 flags
@@ -1481,7 +1481,7 @@ Skyrim_Default.ini for both. The INI layer is the VFS's (`Vfs.ini`, docs/formats
 "INI files"): Skyrim_Default.ini < the player's imported Skyrim.ini < SkyrimPrefs.ini < each
 loaded plugin's `<Plugin>.ini`; over it the changes made in the settings menu
 (`src/shell/preferences.ts`). `INI_DEFAULTS` therefore holds the original's defaults,
-never a preset's. Some defaults the original sets as it starts (the dump of its stored values
+never a preset's. Some defaults the original sets as it starts (the list of its stored values
 shows 0 for them): iDifficulty 2, fHUDOpacity 1, bShowFloatingQuestMarkers 1, bSaveOnRest /
 Wait / Travel 1 (bSaveOnPause 0), fAutosaveEveryXMins 15, fLightLODStartFade = fLightLODDefaultStartFade
 (1000). Settings the original names without a section are [MAIN]'s (bCrosshairEnabled,

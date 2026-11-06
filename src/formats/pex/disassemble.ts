@@ -1,5 +1,5 @@
 // Readable listing of a compiled Papyrus script, for tools and for working out what a
-// script does. Not a decompiler: one line per instruction, jump targets as line numbers.
+// script does. One line per instruction, jump targets as line numbers.
 
 import type { PexFunction, PexScript, PexValue } from './pex.ts';
 

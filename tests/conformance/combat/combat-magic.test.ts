@@ -7,7 +7,7 @@
 // concentration spell's on …ConcentrationOffensiveMagicChanceMin (0.25) .. Max (1), rolled every
 // 0.25 s (the Cast Immediate / Concentration Spell Idles); the tree's Magic context
 // (CombatBehaviorContextMagic: Cast Immediate Spell, Cast Concentration Spell, Prepare Dual Cast,
-// Equip Spell; class names). the engine's defaults.
+// Equip Spell). the engine's defaults.
 
 import { describe, expect, it } from 'vitest';
 import { COMBAT_AI_DEFAULTS } from '../../../src/ai/combat-ai.ts';

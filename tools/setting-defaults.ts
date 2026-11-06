@@ -1,12 +1,12 @@
 // Our settings' fallbacks against the engine's built-in defaults: the game settings our code names
 // with a fallback (a tuple or call `'fName', 12.5`) that the load order lacks, and the INI
 // defaults (src/world/ini-settings.ts), each compared with the engine's default. The defaults come
-// from a local dump of the original's setting objects (name, default, ...; tab-separated), made
+// from a local list of the engine's settings (name, default, ...; tab-separated), kept
 // outside the repository and never committed (docs/engine-map.md).
 //
-// The dump reads the setting objects as the original stores them; a setting its start-up code
+// The list holds the settings as the original stores them; a setting its start-up code
 // sets (iDifficulty, fHUDOpacity, the autosaves: stored as 0) is given by a further file of the
-// same form, whose rows replace the dump's. Settings the original names without a section are
+// same form, whose rows replace the list's. Settings the original names without a section are
 // [MAIN]'s (SkyrimPrefs.ini keeps them there).
 //
 //   node tools/setting-defaults.ts <settings.tsv> [<more.tsv> ...]   the differing and unknown
