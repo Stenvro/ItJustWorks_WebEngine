@@ -1051,9 +1051,10 @@ async function playerWithin(run: ProcedureRun, place: PackagePlace): Promise<boo
  * alias) find that one. Without Allow Stealing only what the actor may use. Criteria by object
  * or object type also find items in the inventories within the place (observed in the
  * original: its search looks into each actor's but the player's, living or dead, and each
- * container's), kept after the references (Acquire takes them from their holder). TODO(M13):
- * whether the engine sorts the two together by distance; Allow Already Held (the searcher's own
- * items).
+ * container's), kept after the references (Acquire takes them from their holder). With Allow
+ * Already Held what the searcher carries counts, kept last (the UseWeapon template's fighter with
+ * a weapon of its own needs none from the ground: MQ206's heroes; its Acquire passes over it).
+ * TODO(M13): whether the engine sorts them together by distance, and whether its own come first.
  */
 const find: ProcedureRunner = async (run) => {
   const place = await placeIn(run, 0);
@@ -1069,9 +1070,11 @@ const find: ProcedureRunner = async (run) => {
     let found: readonly FoundObject[];
     if (criteria.type === TargetType.objectId || criteria.type === TargetType.objectType) {
       const steal = run.inputs.bool(4);
+      const own = run.inputs.bool(3) ? await run.mind.carried(run.actor, criteria) : undefined;
       found = [
         ...(await run.mind.search(criteria, place, run.actor, steal)),
         ...((await run.mind.searchHeld?.(criteria, place, run.actor, steal)) ?? []),
+        ...(own === undefined ? [] : [{ holder: run.actor, item: own }]),
       ];
     } else {
       const one = await run.mind.target(criteria, run.actor, run.context);
