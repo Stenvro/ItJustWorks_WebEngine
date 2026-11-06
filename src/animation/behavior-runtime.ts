@@ -1571,6 +1571,19 @@ export class BehaviorRuntime {
     return true;
   }
 
+  /** Whether an event waits for its next update. */
+  get eventsWaiting(): boolean {
+    return this.#queue.length > 0;
+  }
+
+  /**
+   * Whether its last update asked for a clip still being read: that clip's time does not pass
+   * until it is there (#advanceClip).
+   */
+  get awaitingClips(): boolean {
+    return this.#awaitingClips > 0;
+  }
+
   /**
    * Whether an event sent now would move the graph: a transition of an active state machine
    * from the state it is in (or a machine's own events) that the event triggers and whose

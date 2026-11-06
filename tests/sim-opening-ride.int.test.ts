@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { KnockState } from '../src/gameplay/combat/combat-state.ts';
+import { transformPoint } from '../src/render/math.ts';
 import { rideModes, rideState } from '../src/shell/hud-elements.ts';
 import { hasGamedata, loadSim, openSim, PLAYER_REF, type Sim } from './helpers/sim.ts';
 
@@ -231,6 +232,24 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
       expect(await sim.until(() => stage.dismemberment.headAt(prisoner) !== undefined, 60)).toBe(
         true,
       );
+      // The axe is down as the head flies: the headsman's graph, updated less often for being
+      // farther from the camera, hears the chop with the prisoner's and chops in step with it.
+      const flying = stage.dismemberment.headAt(prisoner);
+      const headsman = stage.furniture
+        .usersOf(stage.furnitureOf(prisoner) ?? 0)
+        .map((user) => sim.actor(user))
+        .find((actor) =>
+          actor?.placed.behavior
+            ?.playing()
+            .some(({ animation }) => animation.endsWith('AOExecutionerChop.hkx')),
+        );
+      const axe = headsman?.placed.pose.world('weapon');
+      const standing = headsman?.placed.instances[0]?.world;
+      expect(axe && standing).toBeDefined();
+      if (axe && standing && flying) {
+        const [, , height] = transformPoint(standing, [axe[12] ?? 0, axe[13] ?? 0, axe[14] ?? 0]);
+        expect(height - flying[2], 'the axe down at the cut').toBeLessThan(25);
+      }
       // It comes down at the basket: within its bounds, below its rim's height plus the head's
       // radius, and lies in it. TODO(M13): where the original's flight starts (the chop's moment
       // of the cut) is not known.

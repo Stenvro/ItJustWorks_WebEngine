@@ -411,6 +411,13 @@ animated objects alike.
   update to where it will be an interval on, and its pose blends from the pose before into that
   one as the interval passes (the engine keeps two pose buffers and swaps them at each update).
   Far actors so move smoothly at a fraction of the cost, and nothing lags.
+- **Told an event.** Ours: a far graph hears an event at once, not at the end of its interval; the
+  time it ran ahead and has not shown yet is given back, so what the event starts runs from the
+  clock, and its pose blends on from the one shown. A graph waiting for a clip still being read
+  does not run ahead (that clip's time does not pass meanwhile). Before, graphs told together
+  started up to two intervals apart: Helgen's headsman chopped 7 to 14 frames behind his prisoner,
+  by where in his 0.117 s interval the event came. TODO(M13): inferred from graphs told together
+  being authored in step; what the original does with an event between two updates is not read.
 - **Not past a trigger.** The interval is cut to just short (half a frame) of the next trigger or
   annotation a playing clip passes (the engine walks the active clips' triggers), so that what
   the clips raise (a footstep, a sound) is raised at its moment, not up to a quarter of a second
@@ -1132,23 +1139,37 @@ up again.
 Ours: the body's instances read the cut nodes as its scene is built again (`Severing`: the
 partition rule, the head parts left out); the decapitation armor's models are put on its
 pose in place; the piece is the actor's instances skinned to the head on a still copy of the
-pose, drawn where the head's body (the skeleton model's head body, alone) carries it; the
-weapon's motion is read from the killer's weapon node between the blow and the cut (a frame
-or more; the engine reads its weapon body's velocity), the killer being a killmove's leader
+pose as the blow found it (the pose last shown as the graph raises Decapitate, whenever the cut
+gets its turn: inferred, TODO(M13)), drawn where the head's body (the skeleton model's head body,
+alone) carries it; the weapon's motion is read from where the killer's weapon node was over the
+SWING_SECONDS (0.1 s) coming into the blow (`SwingTrail`; the engine reads its weapon body's
+velocity, and what stretch of the animation that covers was not read: TODO(M13)), the killer
+being a killmove's leader
 before the kill lands (inferred: the victim's myKiller is set by the kill), else, for an actor
 in furniture, its executioner (another user of it with the isExecutioner keyword: the
 headsman). Helgen's prisoner has no killer at his Decapitate (KillActor comes 4.8 s later):
 unbent, his head flew level at 250 units a second over the basket (an open crate, 20 by 30
 units, before the block) and rolled down the street; bent down by the headsman's chop it
 drops into it, as observed in the original. TODO(M13): how the engine knows the executioner.
-The crate, scaled 0.66, leaves the head's capsule (radius 8.6) 1.3 units of play across its
-narrow side. Ours comes down at 45 degrees (250 units a second, the chop bending it down) and
-reaches the rim's height while still over the near wall: it strikes both rims and rolls off
-along the far one (`sim-opening-ride`). TODO(M13): where the original's flight starts (the
-moment of the chop the cut falls on). Not the cause: rolling friction (rollingFrictionMultiplier
-is 0 in every mesh, the skeletons' too), the head's friction 0.8 and restitution 0.8 (read,
-combined with the crate's 0.5 and 0.4 as Havok does), continuous collision (the walls are
-struck at the rim, not passed through). A crate put to sleep while the head still rocked in it
+The crate, scaled 0.66, is five thin boxes on the clutter layer (a bowl, 20 kg), and leaves the
+head's capsule (radius 8.6) 1.3 units of play across its narrow side, which the flight crosses.
+Measured (`tests/head-in-basket.int.test.ts`): from where the blow finds the head, launches
+12 degrees to one side of the flight's -y to 8 to the other, and 32 to 44 degrees down, all stay;
+beyond those edges some do and some do not. Too steep, the head lands on top of the near rim, keeps
+its speed along the flight and strikes the far rim from above, and the bounce (0.57, as read and
+combined) throws it up and over: from the pose a frame past the blow, 41 of 209 launches of a wide
+grid stayed and none steeper than 42 degrees; with no bounce at all, 113 and steep ones too.
+TODO(M13): whether Havok's solver gives a rim strike all of that bounce is not known. Ours now
+launches 5.6 to one side and 37.9 down. Over a sweep of the frame rate (20 to 240 a second), of where the blow falls in a frame
+and of the headsman's graph's update (every frame to 0.25 s, three phases each), 596 of 624
+launches stay: every one at 60 frames a second and more; those that do not are at 50 and below with
+his graph updated every 0.17 s or slower. Before, reading the pose a frame later and the swing over
+that one frame, 45 degrees down was just past the edge. TODO(M13): where the original's flight
+starts (the moment of the chop the cut falls on). Not the cause: rolling friction
+(rollingFrictionMultiplier is 0 in every mesh, the skeletons' too), the head's friction 0.8 and
+restitution 0.8 (read, combined with the crate's 0.5 and 0.4 as Havok does: the square root of the
+product, 0.63 and 0.57), continuous collision (the walls are struck at the rim, not passed
+through). A crate put to sleep while the head still rocked in it
 sank and fell through the street; Havok deactivates such an island as a whole, and so does
 ours now (docs/physics.md, "Deactivation by island"). The head's place is read by `headAt` (its body is made and falls in the headless simulation too,
 with nothing to draw). The ragdoll's
