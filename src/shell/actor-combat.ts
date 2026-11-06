@@ -5048,6 +5048,10 @@ export class ActorCombat implements CombatBridge {
       if (weapon === undefined || (await runtime.equipment.item(weapon))?.type !== 'WEAP') continue;
       // A Can't Drop weapon stays with it (the summons' and bound weapons, Sigdis's bows).
       if (await runtime.equipment.cantDrop(weapon)) continue;
+      // A quest's own item, a reference it was given, stays with it to be taken from the corpse:
+      // MQ303's staff, given to the priest by AddItem (as a new weapon on the ground its alias
+      // lost it, and with it the way into Sovngarde). TODO(M13): inferred from that scene.
+      if (runtime.heldReference(reference, weapon) !== undefined) continue;
       const health = await runtime.removeItem(
         reference,
         runtime.formHandle(weapon),

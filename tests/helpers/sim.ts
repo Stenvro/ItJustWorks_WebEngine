@@ -27,6 +27,7 @@ import { craftingModel, workbenchOf } from '../../src/shell/crafting-models.ts';
 import { openBookUnseen } from '../../src/shell/book-reading.ts';
 import { fastTravelJourney, fastTravelWay } from '../../src/shell/fast-travel-journey.ts';
 import { giftModel } from '../../src/shell/gift-menu.ts';
+import { containerModel } from '../../src/shell/container-menu.ts';
 import { inventoryModel } from '../../src/shell/inventory-menu.ts';
 import {
   LockPick,
@@ -977,6 +978,23 @@ export class Sim {
     const entry = (await model.view()).entries.find((candidate) => candidate.formId === book);
     if (!entry || !model.select) return false;
     await this.#stepUntil(model.select(entry, 0));
+    return true;
+  }
+
+  /**
+   * The player takes an item out of a corpse or a container through the container menu's model
+   * (its entry, moved to them). False if it holds none of it.
+   */
+  async take(holder: number, item: number, count = 1): Promise<boolean> {
+    const inventory = inventoryModel(this.world.session, this.world.terminal, () =>
+      Promise.resolve(),
+    );
+    const model = containerModel(this.world.session, holder, inventory);
+    const entry = (await model.view()).entries.find(
+      (candidate) => candidate.formId === item && candidate.container === true,
+    );
+    if (!entry || !model.transfer) return false;
+    await this.#stepUntil(Promise.resolve(model.transfer(entry, count, true)));
     return true;
   }
 
