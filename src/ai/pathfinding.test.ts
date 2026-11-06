@@ -22,7 +22,6 @@ import {
   straightReach,
   summonPlace,
   type NavmeshSet,
-  type NavPath,
 } from './pathfinding.ts';
 
 type Point = [number, number, number];
@@ -125,7 +124,8 @@ describe('findPath', () => {
       [10, 50, 0],
       [10, 50, 0],
     ]);
-    const follower = new PathFollower(path as NavPath, { gait: 'walk', arrive: 16 });
+    if (!path) throw new Error('no way');
+    const follower = new PathFollower(path, { gait: 'walk', arrive: 16 });
     expect(follower.step([10, 50, 0], 0.1).state).toBe('arrived');
   });
 
