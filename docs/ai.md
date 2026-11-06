@@ -3580,3 +3580,12 @@ to the next guard). In the air it has no controller: detection takes its motion 
   flight settings; `node tools/flight-info.ts csDragon EncDragon01Fire`: a combat style's flight
   section with its times and how often each maneuver is drawn, an actor's shouts with their reach
   and combat ranges; `--perches`: the perch furniture.
+
+## An actor away whose package still has to activate something
+
+An actor away that reaches a Travel's place ends its package there, which is what a scene's package
+action waits for. A package with an Activate later in a Sequence (ActivateInSequence, Travel then
+Activate) does not end so: activations change the world, so they wait until the actor is on the
+stage (`goesOnPast`, src/ai/package-start.ts). What else follows a Travel (a sandbox, a force greet)
+only keeps the actor there, and still ends it. TODO(M13): inferred; what the original's low process
+does with the rest of a tree is not known.

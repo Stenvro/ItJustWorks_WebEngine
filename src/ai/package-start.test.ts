@@ -9,6 +9,7 @@ import {
 } from './package-records.ts';
 import {
   conditionsHold,
+  goesOnPast,
   packageStart,
   scheduleFits,
   withinPlace,
@@ -151,6 +152,36 @@ const schedule = (hour: number, hours: number, dayOfWeek = -1) => ({
   hour,
   minute: 0,
   duration: hours * 60,
+});
+
+describe('goesOnPast', () => {
+  const stacked = (...children: ProcedureBranch[]): ProcedureBranch => ({
+    ...sequence(...children),
+    type: 'Stacked',
+  });
+  const travel = procedure('Travel', [0]);
+
+  it('holds for an activation later in a Sequence, also below a branch', () => {
+    expect(goesOnPast(sequence(travel, procedure('Activate', [1])), travel)).toBe(true);
+    expect(
+      goesOnPast(sequence(travel, stacked(sequence(procedure('Activate', [1])))), travel),
+    ).toBe(true);
+  });
+
+  it('does not for what only keeps the actor there, or a plain travel', () => {
+    expect(goesOnPast(sequence(travel, procedure('Sandbox', [1])), travel)).toBe(false);
+    expect(goesOnPast(sequence(travel), travel)).toBe(false);
+  });
+
+  it('does not where the activation is another child of a Stacked branch, or comes first', () => {
+    expect(goesOnPast(stacked(travel, procedure('Activate', [1])), travel)).toBe(false);
+    expect(goesOnPast(sequence(procedure('Activate', [1]), travel), travel)).toBe(false);
+  });
+
+  it('does not where its success completes the package (FNAM 0x1)', () => {
+    const completes: ProcedureBranch = { ...travel, flags: 0x1 };
+    expect(goesOnPast(sequence(completes, procedure('Activate', [1])), completes)).toBe(false);
+  });
 });
 
 describe('package schedules', () => {

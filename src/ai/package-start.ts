@@ -149,6 +149,8 @@ export type PackageStart =
       readonly kind: 'here';
       readonly package?: number;
       readonly procedure?: string;
+      /** Its tree still has an activation after the first procedure (see goesOnPast). */
+      readonly goesOn?: boolean;
       /** Its place is its editor location (an actor away from it goes back there). */
       readonly editor?: boolean;
       /**
@@ -162,6 +164,8 @@ export type PackageStart =
       readonly kind: 'at';
       readonly package: number;
       readonly procedure: string;
+      /** Its tree still has an activation after the first procedure (see goesOnPast). */
+      readonly goesOn?: boolean;
       readonly reference: number;
       /** It is in the furniture (Sit, Sleep, ...): the furniture holds it, not the ground. */
       readonly furniture: boolean;
@@ -184,6 +188,8 @@ export type PackageStart =
       readonly kind: 'elsewhere';
       readonly package: number;
       readonly procedure: string;
+      /** Its tree still has an activation after the first procedure (see goesOnPast). */
+      readonly goesOn?: boolean;
       readonly reference?: number;
       readonly radius?: number;
     }
@@ -502,7 +508,10 @@ export async function packageStart(
         world,
         pack.ownerQuest ?? template?.ownerQuest,
       );
-      if (start.kind !== 'undecided' || start.reason !== LINK_MISSING) return start;
+      if (start.kind !== 'undecided') {
+        return goesOnPast(tree, procedure) ? { ...start, goesOn: true } : start;
+      }
+      if (start.reason !== LINK_MISSING) return start;
     }
     return start;
   }
@@ -578,6 +587,32 @@ function firstProcedure(
     if (found !== 'none') return found;
   }
   return 'none';
+}
+
+/**
+ * Whether a package still has to activate something once this procedure succeeds: an Activate in
+ * a later child of a Sequence on the way down to it, unless its success completes the package
+ * (FNAM 0x1). An activation changes the world (scripts run on it), so reaching the place does not
+ * end such a package for an actor away; what else follows a Travel (a sandbox, a force greet)
+ * only keeps the actor there. TODO(M13): inferred, what the original's low process does with the
+ * rest of a tree is not known.
+ */
+export function goesOnPast(tree: ProcedureBranch, procedure: ProcedureBranch): boolean {
+  if ((procedure.flags & 0x1) !== 0) return false;
+  const activates = (branch: ProcedureBranch): boolean =>
+    branch.procedure?.toLowerCase() === 'activate' || branch.children.some(activates);
+  const walk = (branch: ProcedureBranch): boolean | undefined => {
+    if (branch === procedure) return false;
+    for (const [index, child] of branch.children.entries()) {
+      const below = walk(child);
+      if (below === undefined) continue;
+      return (
+        below || (branch.type === 'Sequence' && branch.children.slice(index + 1).some(activates))
+      );
+    }
+    return undefined;
+  };
+  return walk(tree) === true;
 }
 
 /** The package's inputs over its template's (the template's values are defaults). */

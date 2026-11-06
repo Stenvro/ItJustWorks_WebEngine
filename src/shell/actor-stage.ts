@@ -631,9 +631,10 @@ export class ActorStage {
       staged: (actor) => this.#actors.has(actor),
       doors: this.doors,
       // The low process: a travel's place reached completes its package (a scene's package
-      // action whose actor went through a door, Haming into his house, is done then).
+      // action whose actor went through a door, Haming into his house, is done then), unless
+      // it still has something to activate there: that waits for the high process.
       reached: (actor, walk) => {
-        if (walk.procedure.toLowerCase() !== 'travel') return;
+        if (walk.procedure.toLowerCase() !== 'travel' || walk.goesOn === true) return;
         options.session.scriptsReady?.scenes.packageEnded(actor, walk.id);
       },
     });

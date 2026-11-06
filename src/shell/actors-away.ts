@@ -70,6 +70,8 @@ export interface ActorsAwayOptions {
 export interface AwayPackage {
   readonly id: number;
   readonly procedure: string;
+  /** Its tree still has an activation after that procedure: getting there does not end it. */
+  readonly goesOn?: boolean;
 }
 
 /** A stretch of a trip: points in one space, ending at a load door (or at the place). */
@@ -557,7 +559,11 @@ export class ActorsAway {
     } else this.#followers.delete(actor);
     const walk: AwayPackage | undefined =
       start && start.kind !== 'undecided' && start.package !== undefined
-        ? { id: start.package, procedure: start.procedure ?? '' }
+        ? {
+            id: start.package,
+            procedure: start.procedure ?? '',
+            ...(start.goesOn === true && { goesOn: true }),
+          }
         : undefined;
     if (!destination) {
       if (again) this.#trips.delete(actor);
