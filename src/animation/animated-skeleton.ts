@@ -109,6 +109,15 @@ const boneLodSet = new WeakSet<BehaviorRuntime>();
  * that a footstep is heard on time), and its pose blends from the pose before into that one as
  * the interval passes. The skeleton's `time` is its graph's (ahead of the clock between such
  * updates), so that the time its root motion covers is the graph's step.
+ *
+ * A far graph told an event hears it at once, not at the end of its interval, and what it starts
+ * runs from the clock: the time it ran ahead and has not shown yet is given back, its pose blending
+ * on from the one shown. A graph waiting for a clip does not run ahead, for that clip's time does
+ * not pass meanwhile. Before, a far graph started an event's clip up to two intervals after a near
+ * one told at the same moment: the headsman at Helgen's block chopped 7 to 14 frames behind his
+ * prisoner, by where in his interval the event came, and the head flew off before the axe was down.
+ * TODO(M13): inferred from graphs told together being authored in step; what the original does
+ * with an event that reaches a graph between its updates is not read.
  */
 export function animateSkeletons(
   skeletons: Iterable<AnimatedSkeleton>,
@@ -120,8 +129,10 @@ export function animateSkeletons(
     const state = interpolations.get(animated);
     const frame = state ? Math.max(0, seconds - state.frame) : 0;
     if (state) state.frame = seconds;
+    const midway = state?.interpolating === true && seconds < state.until;
+    const told = rate !== undefined && behavior?.eventsWaiting === true;
     // Between two updates of a graph that ran ahead: its pose blends on.
-    if (state?.interpolating && seconds < state.until && animated.time !== undefined) {
+    if (state && midway && !told && animated.time !== undefined) {
       if (behavior && state.shown) {
         const t = (seconds - state.from) / Math.max(1e-6, state.until - state.from);
         blendPoses(state.before, behavior.pose, t, state.blended);
@@ -143,6 +154,13 @@ export function animateSkeletons(
       behavior.rootAway = wanted.rootAway === true;
     }
     let interval = wanted.interval;
+    // The pose it shows now, where that is not its graph's: the next blend goes on from it.
+    const shown = told && midway && state.shown ? state.blended : undefined;
+    if (told && midway && animated.time !== undefined) animated.time = seconds - frame;
+    // It hears it now, so the interval below knows what the event started (its triggers, its
+    // clips still being read).
+    if (told && interval > 0) step(animated, 0);
+    if (behavior?.awaitingClips === true) interval = 0;
     // The graph forbids it while any of its bIsSynced, bSpeedSynced or bDisableInterp is set
     // (observed in the original: the engine reads the three and sets none; the graphs do).
     if (interval > 0 && behavior && INTERP_BLOCKERS.some((name) => behavior.variable(name) === 1))
@@ -180,7 +198,7 @@ export function animateSkeletons(
       };
       interpolations.set(animated, interpolation);
     }
-    interpolation.before.set(behavior.pose);
+    interpolation.before.set(shown ?? behavior.pose);
     const dt = Math.min(Math.max(MAX_STEP, 2 * interval), Math.max(0, seconds + interval - time));
     animated.time = seconds + interval;
     // Its pose before is its graph's at the time its graph had, a little behind the clock when the

@@ -935,7 +935,10 @@ as each activates it, and once all three have, plays IdleExecutionerChop on the 
 executioner's, guard's and prisoner's graphs, 0_master Behavior36, 78 and 37, all chop on it;
 the player: IdleExecutionerChop_Player, then stage 98). The prisoner's chop raises Decapitate and
 KillActor; a graph's KillActor kills its actor; Decapitate takes the prisoner's head off
-(docs/animation.md, "Dismemberment").
+(docs/animation.md, "Dismemberment"). The event reaches all three graphs in one frame
+(`ActorFurniture.playIdle`), and a graph updated less often for being far from the camera hears it
+at once (docs/animation.md, "How often graphs update"): the three clips run in step, the axe coming
+down as the head goes.
 
 The player at the block (observed in the original): driven by AI from stage 70
 (SetPlayerAIDriven(True) in its fragment) to stage 140, they step up in line

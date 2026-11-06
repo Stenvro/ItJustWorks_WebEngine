@@ -64,6 +64,11 @@ export function faceKeepsPartition(bodyPart: number): boolean {
 
 // --- The head's flight ---------------------------------------------------------------------
 
+/** How far back a swing is read (SwingTrail), in seconds. */
+export const SWING_SECONDS = 0.1;
+/** Places a trail keeps: SWING_SECONDS and the time a cut takes at 240 frames a second. */
+const SWING_SAMPLES = 64;
+
 /**
  * How a cut head flies off (game units a second): from the neck through the head (the head
  * node's parent to the head node), bent towards the way the killer's weapon moves (each made a
@@ -82,6 +87,47 @@ export function decapitationLaunch(
   const way = unit([away[0] + swing[0], away[1] + swing[1], away[2] + swing[2]]);
   if (way[0] === 0 && way[1] === 0 && way[2] === 0) return undefined;
   return [way[0] * speed, way[1] * speed, way[2] * speed];
+}
+
+/**
+ * Where an actor's weapon was lately, to read its swing from: how it came into the blow. A swing
+ * read over one frame says nothing at the blow: Helgen's headsman's axe stops on the block within
+ * one of the chop's keys (30 a second), its last frame down coming at about 390 units a second and
+ * the next creeping sideways at about 60, and which of them a read fell on changed with the frame
+ * rate. TODO(M13): inferred; the engine reads its weapon body's velocity, and what stretch of the
+ * animation that velocity covers was not read.
+ */
+export class SwingTrail {
+  readonly #times = new Float64Array(SWING_SAMPLES);
+  readonly #places = new Float64Array(SWING_SAMPLES * 3);
+  #count = 0;
+
+  /** The newest place's time (a trail not added to for a frame belongs to no one any more). */
+  latest = -Infinity;
+
+  record(time: number, [x, y, z]: Vec3): void {
+    const i = this.#count++ % SWING_SAMPLES;
+    this.#times[i] = time;
+    this.#places[i * 3] = x;
+    this.#places[i * 3 + 1] = y;
+    this.#places[i * 3 + 2] = z;
+    this.latest = time;
+  }
+
+  /** Where it was at `time` or just before; else as far back as is known. */
+  before(time: number): { readonly at: Vec3; readonly time: number } | undefined {
+    const known = Math.min(this.#count, SWING_SAMPLES);
+    if (known === 0) return undefined;
+    let i = 0;
+    for (let back = 1; back <= known; back++) {
+      i = (this.#count - back) % SWING_SAMPLES;
+      if ((this.#times[i] ?? 0) <= time) break;
+    }
+    return {
+      at: [this.#places[i * 3] ?? 0, this.#places[i * 3 + 1] ?? 0, this.#places[i * 3 + 2] ?? 0],
+      time: this.#times[i] ?? 0,
+    };
+  }
 }
 
 function unit([x, y, z]: Vec3): Vec3 {
