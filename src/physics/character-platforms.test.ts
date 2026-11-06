@@ -140,6 +140,33 @@ describe('moving bodies carry the character controller', () => {
   });
 });
 
+describe('a simulated body under the character controller', () => {
+  it('does not take the shape with it where the solver threw it (under the floor)', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    platform(physics, 'fixed');
+    const crate = physics.world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic().setTranslation(0, 0, h(30)).setGravityScale(0),
+    );
+    const collider = physics.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(h(100), h(100), h(30)).setMass(5),
+      crate,
+    );
+    physics.register(collider, Layer.static, { reference: 2, kind: 'object' });
+    physics.step(1 / 60);
+    const character = settled(physics, [0, 0, 61]);
+    const start = character.feet;
+    // The solver leaves it elsewhere than the step's forecast, turned and thrown.
+    crate.setTranslation({ x: h(200), y: 0, z: h(-100) }, true);
+    crate.setRotation({ x: 0.7071, y: 0, z: 0, w: 0.7071 }, true);
+    character.step(1 / 60);
+    physics.step(1 / 60);
+    expect(Math.hypot(character.feet[0] - start[0], character.feet[1] - start[1])).toBeLessThan(10);
+    expect(character.feet[2]).toBeGreaterThan(start[2] - 10);
+    character.free();
+    physics.free();
+  });
+});
+
 describe('moving bodies push the character controller', () => {
   it('is knocked back by a heavy body that comes at it, hardly by a light one', () => {
     const run = (mass: number): number => {
