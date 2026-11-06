@@ -495,6 +495,10 @@ function searchPath(
   chain.reverse();
   const goalPoint = reached ? to : end.at;
   const tight = pullTight(chain, from, goalPoint, options.radius);
+  // One standing at its goal already has a way there, with both its ends: the follower finds it
+  // arrived. (A single point reads as no way at all: Delphine, set down at the first of MQ203's
+  // sconces as the temple loaded, gave it up unlit.)
+  if (reached && tight.length === 1) tight.push(to);
   return {
     points: options.avoid?.length
       ? goRoundAll(set, tight, options.avoid, options.radius, obstacles)
