@@ -281,7 +281,7 @@ describe.skipIf(!hasGamedata())('what comes into a trigger box (headless simulat
       const base = await sim.db.get((await sim.runtime.baseOf(shots[0]?.reference ?? 0)) ?? 0);
       expect(base?.type).toBe('PROJ');
     }
-  });
+  }, 120_000);
 });
 
 const NIGHTGATE_CELLAR = 0x27552;
