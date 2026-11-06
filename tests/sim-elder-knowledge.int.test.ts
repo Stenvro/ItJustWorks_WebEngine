@@ -519,41 +519,17 @@ describe.skipIf(!hasGamedata())('MQ205 Elder Knowledge', () => {
         expect(sim.activate(ARMILLARY_FORWARD)).toBe(true);
         await sim.step(6);
         expect(await sim.runtime.vm.getVariable(armillary, '::currentPos_var')).toBe(press + 2);
-        console.log(
-          'f',
-          press,
-          await buttons(),
-          await sim.runtime.vm.getVariable(
-            new ObjectHandle(ARMILLARY, 'da04armillaryscript'),
-            '::currentPos_var',
-          ),
-        );
       }
       for (let press = 0; press < 2; press++) {
         expect(sim.activate(HUB_ROTATE)).toBe(true);
         await sim.step(6);
         expect(await sim.runtime.vm.getVariable(hub, 'currentPos')).toBe(press + 2);
-        console.log(
-          'r',
-          press,
-          await buttons(),
-          await sim.runtime.vm.getVariable(new ObjectHandle(HUB, 'da04hubscript'), 'currentPos'),
-        );
       }
       expect(sim.activate(HUB_OPEN)).toBe(true);
       expect(await sim.until(() => sim.stageDone(MQ205, 100), 1)).toBe(false);
       for (let second = 0; second < 30 && !(await sim.enabled(SCROLL_ACTIVATOR)); second++) {
         await sim.step(1);
       }
-      console.log(
-        await buttons(),
-        await sim.enabled(SCROLL_ACTIVATOR),
-        await sim.enabled(INSCRIBED_STAND),
-        sim
-          .problems()
-          .slice(-3)
-          .map((p) => p.text.slice(0, 150)),
-      );
       expect(await sim.enabled(SCROLL_ACTIVATOR)).toBe(true);
       expect(await sim.enabled(INSCRIBED_STAND)).toBe(true);
       expect(sim.activate(INSCRIBED_STAND)).toBe(true);
