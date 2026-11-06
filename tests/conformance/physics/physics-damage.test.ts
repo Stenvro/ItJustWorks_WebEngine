@@ -14,8 +14,10 @@
 
 import { describe, expect, it } from 'vitest';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { CollisionMatrix } from '../../../src/physics/collision-layers.ts';
+import { CollisionMatrix, Layer } from '../../../src/physics/collision-layers.ts';
 import { type HardContact, initPhysics, PhysicsWorld } from '../../../src/physics/physics-world.ts';
+import { ActorValue } from '../../../src/world/actor-values.ts';
+import { hasGamedata, openSim } from '../../helpers/sim.ts';
 import {
   contactDamage,
   damagingContact,
@@ -110,8 +112,77 @@ describe('physics damage (the engine’s formula)', () => {
     expect(fast[0]?.speed).toBeGreaterThanOrEqual(100);
     expect(told(50)).toEqual([]);
   });
-  it.todo(
-    'hurts actors under falling rock traps through the traps’ scripts, not by physics damage  ' +
-      '[data: TrapRockFall; original] (sim)',
+  it.skipIf(!hasGamedata())(
+    'hurts nobody by a body’s contact: an actor a rock falls on loses no health',
+    async () => {
+      /** WhiterunBanneredMare [0001605E] and Hulda [0001A66E] at her counter. */
+      const BANNERED_MARE = 0x1605e;
+      const HULDA = 0x1a66e;
+      const sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
+      try {
+        await sim.step(2);
+        // TrapRiggedRockFall01 [0007901B]: its harm is its script's (TrapRiggedRockfall).
+        const trap = await sim.db.get(0x7901b);
+        const script = trap?.fields.first('VMAD');
+        expect(script && Buffer.from(script).toString('latin1')).toContain('TrapRiggedRockfall');
+        const play = sim.world.play;
+        if (!play) throw new Error('no play');
+        const at = (await sim.position(HULDA)) ?? [0, 0, 0];
+        const before = (await sim.runtime.actors.value(HULDA, ActorValue.health)).current;
+        // A 500 kg rock on L_CLUTTER, from 300 units over her head.
+        const rock = play.physics.addObject(
+          {
+            bodies: [
+              {
+                node: 'Rock',
+                transform: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
+                motion: 'dynamic',
+                phantom: false,
+                layer: Layer.clutter,
+                mass: 500,
+                inertia: [50, 50, 50],
+                centerOfMass: [0, 0, 0],
+                friction: 0.5,
+                restitution: 0,
+                linearDamping: 0,
+                angularDamping: 0,
+                gravityFactor: 1,
+                maxLinearVelocity: 0,
+                maxAngularVelocity: 0,
+                quality: 0,
+                solverDeactivation: 1,
+                shapes: [
+                  {
+                    type: 'sphere',
+                    layer: Layer.clutter,
+                    material: 0,
+                    center: [0, 0, 0],
+                    radius: 30,
+                  },
+                ],
+              },
+            ],
+            skipped: [],
+          },
+          new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, at[0], at[1], at[2] + 430, 1]),
+          { reference: 0xfffffff0, kind: 'object' },
+        );
+        const body = rock.bodies[0]?.body;
+        if (!body) throw new Error('no rock');
+        let fastest = 0;
+        for (let i = 0; i < 120; i++) {
+          await sim.step(1 / 60);
+          fastest = Math.min(fastest, body.linvel().z);
+        }
+        // It came down hard (well past fPhysicsDamage's speeds), down to her.
+        expect(fastest).toBeLessThan(-5);
+        expect(body.translation().z * 69.99125).toBeLessThan(at[2] + 200);
+        const after = (await sim.runtime.actors.value(HULDA, ActorValue.health)).current;
+        expect(after).toBeGreaterThanOrEqual(before);
+      } finally {
+        await sim.close();
+      }
+    },
+    120_000,
   );
 });

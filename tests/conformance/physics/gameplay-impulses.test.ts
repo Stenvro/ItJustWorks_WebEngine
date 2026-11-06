@@ -27,9 +27,12 @@ import {
   explosionBodyPush,
   gameplayImpulse,
 } from '../../../src/gameplay/magic/explosions.ts';
+import { IniSettings } from '../../../src/world/ini-settings.ts';
 import {
   arrowKnock,
   conePush,
+  HAVOK_HIT_DEFAULTS,
+  havokHitSpeed,
   IMPULSE_DEFAULTS,
   projectileKnock,
   weaponKnock,
@@ -256,10 +259,19 @@ describe('the gameplay impulse (the engineâ€™s rule)', () => {
     expect(speed(near)).toBeCloseTo(nearSpeed, 3);
     physics.free();
   });
-  it.todo(
-    'pushes a ragdoll hit by fHavokHitImpulseMult (50) for fHavokHitTimeSec (3 s)  ' +
-      '[settings: [Animation]; original]',
-  );
+  it('pushes a ragdoll a blow hit only with bEnableHavokHit, off in the game (inferred)', () => {
+    expect(HAVOK_HIT_DEFAULTS).toEqual({ enabled: false, mult: 50, seconds: 3 });
+    expect(havokHitSpeed(HAVOK_HIT_DEFAULTS, 100, 60)).toBe(0);
+    const on = { ...HAVOK_HIT_DEFAULTS, enabled: true };
+    // fHavokHitImpulseMult's impulse over its mass; not again within fHavokHitTimeSec.
+    expect(havokHitSpeed(on, 100, 3)).toBe(0.5);
+    expect(havokHitSpeed(on, 100, 2.9)).toBe(0);
+    expect(havokHitSpeed(on, 0, 60)).toBe(0);
+    const ini = new IniSettings(undefined);
+    expect(ini.bool('Animation', 'bEnableHavokHit')).toBe(false);
+    expect(ini.number('Animation', 'fHavokHitImpulseMult')).toBe(50);
+    expect(ini.number('Animation', 'fHavokHitTimeSec')).toBe(3);
+  });
 });
 
 const BANNERED_MARE = 0x1605e;

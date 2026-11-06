@@ -35,6 +35,7 @@ import {
   PHYSICS_STEP,
   PhysicsWorld,
   sweptBody,
+  WORLD_BOUNDS,
 } from '../../../src/physics/physics-world.ts';
 import { Vfs } from '../../../src/vfs/vfs.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
@@ -154,10 +155,21 @@ describe('the step (the engine’s rule)', () => {
     expect(physics.currentStep).toBeCloseTo(PHYSICS_STEP, 9);
     physics.free();
   });
-  it.todo(
-    'steps fMaxTimeComplex (1/30 s) once a frame in the engine’s complex mode  [original: what turns ' +
-      'it on is not identified]',
-  );
+  // What turns the mode on in the original is not identified (TODO(M13) in physics-world.ts);
+  // nothing here does. The mode itself:
+  it('steps fMaxTimeComplex (1/30 s) once a frame in the engine’s complex mode', () => {
+    const physics = new PhysicsWorld(new CollisionMatrix([]), GRAVITY);
+    expect(physics.complex).toBe(false);
+    physics.complex = true;
+    // A frame's whole 1/30 s is one step of it, and a longer one's rest stays owed.
+    expect(physics.step(1 / 30)).toBe(1);
+    expect(physics.currentStep).toBeCloseTo(1 / 30, 9);
+    expect(physics.step(0.2)).toBe(1);
+    physics.complex = false;
+    physics.step(1 / 60);
+    expect(physics.currentStep).toBeCloseTo(PHYSICS_STEP, 9);
+    physics.free();
+  });
 });
 
 describe('simulated bodies (the engine’s rules)', () => {
@@ -220,11 +232,102 @@ describe('simulated bodies (the engine’s rules)', () => {
     physics.free();
   });
 
-  it.todo(
-    'keeps settling bodies awake for fWarmStartMaxTime (4 s) at most, never deactivated while ' +
-      'warm starting (bAllowDeactivationWhileWarmStarting 0)  [settings; original]',
-  );
-  it.todo('removes bodies that leave the Havok world’s bounds  [original: unread]');
+  it('keeps settling bodies awake for fWarmStartMaxTime (4 s), never deactivated meanwhile, and then deactivates what still moves', () => {
+    const matrix = new CollisionMatrix([
+      {
+        formId: 1,
+        editorId: 'L_CLUTTER',
+        index: Layer.clutter,
+        name: '',
+        flags: 0,
+        collidesWith: [2],
+      },
+      {
+        formId: 2,
+        editorId: 'L_STATIC',
+        index: Layer.static,
+        name: '',
+        flags: 0,
+        collidesWith: [1],
+      },
+    ]);
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const floor: CollisionData = {
+      bodies: [
+        {
+          ...clutter(5).bodies[0],
+          motion: 'fixed',
+          layer: Layer.static,
+          mass: 0,
+          shapes: [
+            {
+              type: 'box',
+              layer: Layer.static,
+              material: 0,
+              transform: IDENTITY,
+              halfExtents: [50000, 50000, 400],
+              radius: 0,
+            },
+          ],
+        } as CollisionBody,
+      ],
+      skipped: [],
+    };
+    physics.addObject(
+      floor,
+      new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -400, 1]),
+      { reference: 2, kind: 'object' },
+      false,
+    );
+    // One at rest on the floor, one that goes on moving (its friction 0: it slides on).
+    const still = physics.addObject(clutter(5), IDENTITY, { reference: 1, kind: 'object' }, false);
+    const sliding = physics.addObject(
+      {
+        ...clutter(5),
+        bodies: [{ ...(clutter(5).bodies[0] as CollisionBody), friction: 0 }],
+      },
+      new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 500, 0, 0, 1]),
+      { reference: 3, kind: 'object' },
+      false,
+    );
+    physics.step(1 / 60);
+    physics.settle(still, true);
+    physics.settle(sliding, true);
+    const a = still.bodies[0]?.body;
+    const b = sliding.bodies[0]?.body;
+    if (!a || !b) throw new Error('no bodies');
+    // Set going past the half second of settling that takes the speed away.
+    for (let i = 0; i < 0.6 * 60; i++) physics.step(1 / 60);
+    b.setLinvel({ x: 2, y: 0, z: 0 }, true);
+    // Three and a half seconds in: at rest for most of them, not deactivated (Havok's rest of a
+    // second and our checks would have had it asleep by two).
+    for (let i = 0; i < 2.9 * 60; i++) physics.step(1 / 60);
+    expect(a.isSleeping()).toBe(false);
+    expect(b.isSleeping()).toBe(false);
+    expect(Math.abs(b.linvel().x)).toBeGreaterThan(0.5);
+    // Past fWarmStartMaxTime: asleep, the one still moving too.
+    for (let i = 0; i < 0.75 * 60; i++) physics.step(1 / 60);
+    expect(a.isSleeping()).toBe(true);
+    expect(b.isSleeping()).toBe(true);
+    physics.free();
+  });
+
+  it('takes a body out of the simulation as it leaves the world’s bounds (inferred)', () => {
+    const physics = new PhysicsWorld(new CollisionMatrix([]), GRAVITY);
+    const placed = physics.addObject(clutter(5), IDENTITY, { reference: 1, kind: 'object' }, false);
+    const body = placed.bodies[0]?.body;
+    if (!body) throw new Error('no body');
+    physics.step(1 / 60);
+    physics.settle(placed);
+    body.setGravityScale(0, true);
+    body.setTranslation({ x: 0, y: 0, z: -WORLD_BOUNDS + 1 }, true);
+    for (let i = 0; i < 10; i++) physics.step(1 / 60);
+    expect(body.isEnabled()).toBe(true);
+    body.setTranslation({ x: 0, y: 0, z: -WORLD_BOUNDS - 1 }, true);
+    for (let i = 0; i < 30; i++) physics.step(1 / 60);
+    expect(body.isEnabled()).toBe(false);
+    physics.free();
+  });
 });
 
 // Several minutes long: runs only when asked for (SKYRIM_SWEEPS=1), not in `npm run check`.

@@ -316,6 +316,11 @@ export class Worldspace {
    * away, saved on the road) loads with the cell it stands in now, and not with its own. Actors
    * stay listed where they were placed: the actor stage places those that moved.
    */
+  /** Whether a reference is one of this worldspace's persistent objects. */
+  isPersistentObject(reference: number): boolean {
+    return this.#persistentObjects.has(reference);
+  }
+
   persistentReferencesNow(
     x: number,
     y: number,

@@ -311,6 +311,11 @@ export function configurePhysics(
     1,
     Math.round(data.ini.number('HAVOK', 'uMaxNumPhysicsStepsPerUpdate')),
   );
+  physics.complexStep = data.ini.number('HAVOK', 'fMaxTimeComplex');
+  physics.complexSteps = Math.max(
+    1,
+    Math.round(data.ini.number('HAVOK', 'uMaxNumPhysicsStepsPerUpdateComplex')),
+  );
   physics.impactSpeed = data.ini.number('Audio', 'fMinSoundVel');
   physics.settleSeconds = data.ini.number('HAVOK', 'fWarmStartMaxTime');
   physics.debris = data.debris;

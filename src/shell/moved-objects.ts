@@ -11,6 +11,8 @@ import type { GameState } from '../scripting/runtime/game-state.ts';
 import type { ModelInstance } from '../render/scene-renderer.ts';
 import { matrixPlacement, referenceMatrix, type CellObject } from '../world/cell-loader.ts';
 
+/** An exterior cell's side (game units). */
+const CELL_SIZE = 4096;
 /** Farther than this (game units) or turned more than MOVED_TURN (radians): it has moved. */
 const MOVED_DISTANCE = 1;
 const MOVED_TURN = 0.01;
@@ -32,6 +34,8 @@ export function placedAsMoved(
       continue;
     }
     if (moved.cell !== undefined && moved.cell !== cell) continue;
+    // Pushed out of its exterior cell (noteMoved): it lies where it went, not here.
+    if (state.created.has(object.reference)) continue;
     const editor = matrixPlacement(object.world);
     placed.push({
       ...object,
@@ -45,11 +49,27 @@ export function placedAsMoved(
   return placed;
 }
 
-/** A cell leaves the loaded area: its objects that moved (their instances move) note where. */
+/** An exterior cell whose objects are noted (noteMoved). */
+export interface MovedFromExterior {
+  readonly world: number;
+  readonly grid: readonly [number, number];
+  /** Whether a reference is one of the worldspace's persistent ones (Worldspace knows where). */
+  isPersistent(reference: number): boolean;
+}
+
+/**
+ * A cell leaves the loaded area (or the game is saved): its objects that moved (their instances
+ * move) note where. One an exterior cell's object was pushed out of is now of the cell it lies in
+ * (`exterior`; observed in the original: a moved reference loads into the cell its save names):
+ * the worldspace's persistent ones go by Worldspace.persistentReferencesNow, the others as what
+ * the game placed there do, with the created references of its new cell. Returns those.
+ */
 export function noteMoved(
   entries: Iterable<{ readonly object: CellObject; readonly instance: ModelInstance }>,
   state: GameState,
-): void {
+  exterior?: MovedFromExterior,
+): number[] {
+  const left: number[] = [];
   for (const { object, instance } of entries) {
     if (!instance.motion) continue;
     const now = matrixPlacement(instance.world);
@@ -66,7 +86,17 @@ export function noteMoved(
     const entry = state.reference(object.reference);
     entry.position = now.position;
     entry.rotation = now.rotation;
+    if (!exterior) continue;
+    const x = Math.floor((now.position[0] ?? 0) / CELL_SIZE);
+    const y = Math.floor((now.position[1] ?? 0) / CELL_SIZE);
+    if (x === exterior.grid[0] && y === exterior.grid[1]) continue;
+    entry.world = exterior.world;
+    if (!exterior.isPersistent(object.reference)) {
+      state.created.set(object.reference, { base: object.base, count: 1 });
+    }
+    left.push(object.reference);
   }
+  return left;
 }
 
 function angleBetween(a: number, b: number): number {

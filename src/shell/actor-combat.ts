@@ -2427,6 +2427,20 @@ export class ActorCombat implements CombatBridge {
         physics.knock(wall.collider, wall.point, forward, (layer, mass) =>
           weaponKnock(weight, layer, mass, this.#impulses),
         );
+        // A blow's own push on the ragdoll it hit (off in the game).
+        const { ini } = this.#options.session;
+        if (wall.owner?.kind === 'actor' && ini.bool('Animation', 'bEnableHavokHit')) {
+          this.#options.bodies.havokHit(
+            wall.owner.reference,
+            forward,
+            {
+              enabled: true,
+              mult: ini.number('Animation', 'fHavokHitImpulseMult'),
+              seconds: ini.number('Animation', 'fHavokHitTimeSec'),
+            },
+            performance.now() / 1000,
+          );
+        }
       }
       if (wall && wall.owner?.kind !== 'actor') {
         const recoil = recoilOf(current, 'wall');

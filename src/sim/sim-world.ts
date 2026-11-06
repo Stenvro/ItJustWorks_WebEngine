@@ -53,7 +53,7 @@ import {
   type CollisionGroup,
 } from '../shell/play-session.ts';
 import { worldSaveParts } from '../shell/world-save-parts.ts';
-import { noteMoved, placedAsMoved } from '../shell/moved-objects.ts';
+import { noteMoved, placedAsMoved, type MovedFromExterior } from '../shell/moved-objects.ts';
 import { configurePhysics, Player } from '../shell/player.ts';
 import { PlayerAvatar } from '../shell/player-avatar.ts';
 import { PlayerFurniture } from '../shell/player-furniture.ts';
@@ -453,6 +453,11 @@ export class SimWorld {
   /** Every placed object of the loaded cells. */
   placedObjects(): PlacedObject[] {
     return [...this.#cells.values()].flatMap((cell) => [...cell.placed]);
+  }
+
+  /** A reference shown as one the game placed in a loaded cell (CreatedObjects), if any. */
+  createdObject(reference: number): unknown {
+    return this.#created.get(reference);
   }
 
   /** The placed object of a loaded cell by its reference (its instance, its open sequence). */
@@ -1061,11 +1066,23 @@ export class SimWorld {
     await this.#attachToScripts(cell);
   }
 
+  /** Where an exterior cell's objects were pushed out of (noteMoved). */
+  #exteriorOf(cell: SimCell): MovedFromExterior | undefined {
+    const place = this.#place;
+    if (place?.kind !== 'exterior' || !cell.grid) return undefined;
+    const world = place.world;
+    return {
+      world: world.record.formId,
+      grid: cell.grid,
+      isPersistent: (reference) => world.isPersistentObject(reference),
+    };
+  }
+
   /** A cell goes: its scripts hear it detach, its actors and collision leave. */
   #free(cell: SimCell): void {
     const loaded = new Set(this.#cellLoadedReferences(cell));
     // Its moved objects keep their places; its reset waits from now (cell-reset.ts).
-    noteMoved(cell.placed, this.runtime.state);
+    const left = noteMoved(cell.placed, this.runtime.state, this.#exteriorOf(cell));
     this.runtime.detach(this.runtime.cellResets.detached(cell.formId));
     this.runtime.detach(
       this.runtime.cellDetached(
@@ -1079,6 +1096,18 @@ export class SimWorld {
     );
     this.stage.detachCell(cell.key);
     this.#play?.remove(cell.collision);
+    // What the game placed in it goes with it, kept in the game state.
+    for (const entry of [...this.#created.all]) {
+      const at = entry.object.world;
+      const key = cellKey(
+        Math.floor((at[12] ?? 0) / CELL_SIZE),
+        Math.floor((at[13] ?? 0) / CELL_SIZE),
+      );
+      if (cell.grid && key === cell.key) this.#created.remove(entry.reference, this.#play);
+    }
+    // What was pushed out of it lies on in the cell it went to, if that is loaded (once this
+    // cell has gone).
+    for (const reference of left) void Promise.resolve().then(() => this.#showCreated(reference));
   }
 
   /** Leaves the place open now: its cells, the play and the player's body. */
@@ -1492,6 +1521,8 @@ export class SimWorld {
 
   /** A reference the scripts created: placed if it stands in a loaded cell. */
   async #showCreated(reference: number): Promise<void> {
+    // Pushed out of a cell still loaded (noteMoved at a save): it is that cell's until it goes.
+    if (this.placed(reference)) return;
     const at = await this.runtime.placement(reference);
     if (!at || this.#stageCellOf(at) === undefined) return;
     await this.#created.add(this.runtime, reference, this.#play);
@@ -1759,7 +1790,9 @@ export class SimWorld {
     saveActors: () => this.stage.saveActors(),
     noteMovedObjects: () => {
       for (const cell of this.#cells.values()) {
-        if (cell.scriptsAttached) noteMoved(cell.placed, this.runtime.state);
+        if (cell.scriptsAttached) {
+          noteMoved(cell.placed, this.runtime.state, this.#exteriorOf(cell));
+        }
       }
     },
     savePlayerGraphs: () => this.stage.savePlayerGraphs(),
