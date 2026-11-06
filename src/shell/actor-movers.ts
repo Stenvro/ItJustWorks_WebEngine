@@ -105,9 +105,10 @@ import {
   JUMP_SWIMMING_MULT,
 } from './player.ts';
 import { actorFell, waterHarmed } from './time-flow.ts';
+import { BREATH_DEFAULTS, BREATH_SETTING_NAMES } from '../gameplay/breath.ts';
 import { floatSpeed, submersion, swims, walksOnWater } from '../gameplay/swimming.ts';
 import { WaterHazard } from '../gameplay/water-hazard.ts';
-import { currentPush, type WaterPhysics } from '../physics/water-physics.ts';
+import { currentPush, type WaterPhysics, type WaterSplash } from '../physics/water-physics.ts';
 import { materialId } from '../world/material-type.ts';
 import type { Terminal } from './terminal.ts';
 
@@ -120,6 +121,8 @@ export interface MoverWorld {
   readonly stepHooks: Set<(step: number) => void>;
   /** The water's physics (src/physics/water-physics.ts): who swims, who splashes. */
   readonly water?: WaterPhysics | undefined;
+  /** A splash (its sound has been played): its model. */
+  onSplash?: ((splash: WaterSplash) => void) | undefined;
   /** The player: actors go round them and react when they bump into them. */
   readonly player?: {
     readonly character: CharacterBody;
@@ -262,6 +265,8 @@ export interface ActorMoversOptions {
    * Surface package, the water's surface at `top`; asked every step while it does not run.
    */
   readonly surface?: (actor: number, top: number) => void;
+  /** An actor came up after fActorLeaveWaterBreathTimer under water: its Leave Water Breath line. */
+  readonly gasped?: (actor: number) => void;
   /** Whether an actor breathes water (WaterBreathing): it never runs short of breath. */
   readonly breathesWater?: (actor: number) => boolean;
   /** Whether an actor walks on water (WaterWalking above 0): the surface bears it. */
@@ -1616,6 +1621,20 @@ export class ActorMovers {
     return this.#movers.get(reference)?.character.goodPosition(feet) ?? true;
   }
 
+  #leaveWater: number | undefined;
+
+  /** fActorLeaveWaterBreathTimer, from the game settings once read (its default until then). */
+  #leaveWaterTimer(): number {
+    if (this.#leaveWater === undefined) {
+      this.#leaveWater = BREATH_DEFAULTS.leaveWaterTimer;
+      void this.#options.session.settings().then((settings) => {
+        this.#leaveWater =
+          settings.number(BREATH_SETTING_NAMES.leaveWaterTimer) ?? BREATH_DEFAULTS.leaveWaterTimer;
+      });
+    }
+    return this.#leaveWater;
+  }
+
   /** [HAVOK] fCharControllerWarpDistSqr. */
   #warpDistanceSquared(): number {
     return (
@@ -2618,7 +2637,11 @@ export class ActorMovers {
         );
       }
       mover.character.step(step);
-      if (mover.jumped && !mover.character.goingUp && (mover.character.grounded || mover.character.swimming)) {
+      if (
+        mover.jumped &&
+        !mover.character.goingUp &&
+        (mover.character.grounded || mover.character.swimming)
+      ) {
         mover.jumped = false;
       }
       // Standing on a turning body (a platform, a lift), it turns with it.
@@ -2778,6 +2801,7 @@ export class ActorMovers {
           surface(reference, at.surface);
         }
       } else {
+        if (breath && breath.under >= this.#leaveWaterTimer()) this.#options.gasped?.(reference);
         this.#breaths.delete(reference);
       }
     }

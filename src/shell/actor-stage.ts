@@ -129,6 +129,8 @@ const REACT_DESTROYED_RADIUS = 1024;
 /** An actor's WaterBreathing (its breath under water) is read again after this (ms). */
 const WATER_BREATHING_READ_MS = 1000;
 const WATER_BREATHING = actorValueIndex('WaterBreathing') ?? 0;
+/** The topic subtype said on coming up after a long time under water. */
+const LEAVE_WATER_BREATH = 'LWBS';
 const WATER_WALKING = actorValueIndex('WaterWalking') ?? 0;
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
@@ -455,6 +457,7 @@ export class ActorStage {
           surfaceTo(() => top),
         ),
       breathesWater: (actor) => this.#breathesWater(actor),
+      gasped: (actor) => void this.talk.bark(actor, LEAVE_WATER_BREATH, PLAYER_REF),
       walksOnWater: (actor) => this.#positiveValue(this.#waterWalking, actor, WATER_WALKING),
       bumper: (actor) => this.graphEvents.bumper(actor),
       // Taking to the water's surface (the vampire lord's graph: WaterWalkStart).
@@ -1529,6 +1532,19 @@ export class ActorStage {
 
   /** The physics world the actors move and are hit in (undefined: the play ended). */
   attachPlay(world: SensesWorld | undefined): void {
+    // What comes up from a long dive gasps (Leave Water Breath): the player's as an NPC's.
+    this.#options.session.time.gasped = () =>
+      void this.talk.bark(PLAYER_REF, LEAVE_WATER_BREATH, PLAYER_REF);
+    // What splashes shows the splash's model (sSplashParticles) at the surface.
+    if (world) {
+      world.onSplash = (splash) => {
+        this.fx.show(splash.model, undefined, splash.position, {
+          kind: 'explosion',
+          scale: splash.scale,
+          fades: true,
+        });
+      };
+    }
     this.movers.attach(world);
     this.bodies.attach(world?.physics);
     this.dismemberment.attach(world?.physics);

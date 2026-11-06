@@ -203,7 +203,12 @@ export interface WaterRules {
   readonly flowmapTypes: ReadonlySet<number>;
   /** How strong a current must be to carry an actor off (currentPush). */
   readonly knockdown?: WaterKnockdownSettings;
+  /** [HAVOK] fDefaultWaterfallCurrentVelocity (Havok units a second); DEFAULT_WATERFALL_VELOCITY. */
+  readonly waterfallVelocity?: number;
 }
+
+/** [HAVOK] fDefaultWaterfallCurrentVelocity's built-in value (Havok units a second). */
+export const DEFAULT_WATERFALL_VELOCITY = 6;
 
 /**
  * fWaterKnockdownVelocity (Havok units a second) and fWaterKnockdownSizeSmall, ...Normal,
@@ -367,6 +372,12 @@ export class WaterPhysics {
         });
       }
       tracked.share = share;
+      // Against a waterfall (a fixed shape of the water's material) it is carried down it.
+      if (this.#onWaterfall(body)) {
+        const fall = this.rules.waterfallVelocity ?? DEFAULT_WATERFALL_VELOCITY;
+        const a = WATER_DRAG * (-fall - v.z);
+        if (a < 0) body.setLinvel({ x: v.x, y: v.y, z: v.z + a * seconds }, true);
+      }
       if (share <= 0 || !water) return;
       const current = this.rules.currents.get(water.type);
       const w = body.angvel();
@@ -523,6 +534,34 @@ export class WaterPhysics {
     });
   }
 
+  /**
+   * Whether a body touches a waterfall. The vanilla falling water (FXWaterfallBody*,
+   * FXWaterfallThin* and the like) has a fixed convex body of the Water material on L_STATIC;
+   * water elsewhere lies on L_WATER. TODO(M13): the original has a waterfall collision shape of
+   * its own (CommonLibSSE: BGSWaterCollisionManager::bhkWaterfall, a phantom shape); which models
+   * get one, its way and its pull were not read: down, at the setting's speed, by the water's
+   * drag, is inferred.
+   */
+  #onWaterfall(body: RAPIER.RigidBody): boolean {
+    const world = this.#physics.world;
+    const water = this.rules.waterMaterial;
+    for (let i = 0; i < body.numColliders(); i++) {
+      let found = false;
+      world.contactPairsWith(body.collider(i), (other) => {
+        if (
+          !found &&
+          other.parent()?.isFixed() === true &&
+          this.#physics.layerOf(other) === Layer.static &&
+          this.#physics.materialOf(other) === water
+        ) {
+          found = true;
+        }
+      });
+      if (found) return true;
+    }
+    return false;
+  }
+
   /** A body's volume, size, buoyancy and material, read once. */
   #bodyWater(body: RAPIER.RigidBody): BodyWater {
     const known = this.#props.get(body.handle);
@@ -539,7 +578,7 @@ export class WaterPhysics {
       const v = shapeVolume(collider);
       const id = this.#physics.materialOf(collider);
       const layer = this.#physics.layerOf(collider);
-      if (layer === Layer.biped || layer === Layer.bipedNoCc) {
+      if (layer === Layer.biped || layer === Layer.bipedNoCc || layer === Layer.deadBip) {
         ragdoll = true;
         trunk ||= TRUNK.test(this.#physics.nodeOf(collider) ?? '');
       }
@@ -592,7 +631,8 @@ function shapeVolume(collider: RAPIER.Collider): number {
     box *= extent + 2 * radius;
     factor *= extent > 1e-6 ? (extent + 2 * radius) / extent : Infinity;
   }
-  return Math.min(box, core * factor);
+  // A flat hull has no core at all (an iron ingot's): its shell is its volume.
+  return core > 0 ? Math.min(box, core * factor) : box;
 }
 
 /** A splash as an impact against the water's material: its sound (src/audio/impacts.ts). */

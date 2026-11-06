@@ -477,6 +477,8 @@ export const INI_DEFAULTS = {
     fImpulseLimit: 15,
   },
   HAVOK: {
+    // How fast a waterfall carries what floats against it (src/physics/water-physics.ts).
+    fDefaultWaterfallCurrentVelocity: 6,
     // Characters push one another (src/physics/character.ts).
     bAllowCharacterBumper: 1,
     // Further than its root (square units) from where it should be, a controller is set there.
