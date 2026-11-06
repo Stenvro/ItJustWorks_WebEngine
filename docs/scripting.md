@@ -499,7 +499,17 @@ worldspaces on screen:
   nothing. TODO(M13): a dead actor's inventory and pickpocketing by a script's Activate.
 - **Triggers**: trigger volumes (activators' primitives and trigger-layer collision) tell
   their scripts when the player enters and leaves (OnTriggerEnter, OnTriggerLeave,
-  GetTriggerObjectCount). Moving objects enter them too, but not the clutter a cell places
+  GetTriggerObjectCount). Observed in the original: a volume keeps one entry per reference (one
+  enter however many of its bodies come in; GetTriggerObjectCount is how many entries it has, 0
+  for one with none); a living actor counts by its controller; and an activator with a keyword
+  (ACTI KNAM, `activator-keywords.ts`) takes notice only of references that have it, traps too:
+  1,025 placed volumes ask for one, none of the vanilla traps. Who is in a volume goes by the
+  layer matrix for everyone (a volume's own layer: XTRI): L_PROJECTILEZONE takes in no
+  controller, L_DEADACTORZONE only corpses, L_ACTORZONE no corpses. Projectiles go by their
+  record's layer (`projectile-triggers.ts`), a cone along its middle line (TODO(M13): its
+  spread). What is gone (disabled, deleted, a corpse's ragdoll too) has left, told as it goes
+  (`PhysicsWorld.takeGone`), and a trap's keyframed body is looked at as its animation moves it.
+  Moving objects enter them too, but not the clutter a cell places
   inside one as it loads: the game's placed clutter lies inactive until disturbed (an object
   left floating in the editor floats until touched), and its trigger volumes (hkpTriggerVolume,
   in the original) hear of a body only from the contacts an active one's simulation makes; ours
@@ -792,6 +802,21 @@ type; the initial-hit flag is false for these contacts. The scripts hear them on
 actors. The player's and the actors' controllers are checked each physics step
 (`PhysicsWorld.trapsTouching`). Of the 28 bases with a trap-hit script (TrapHitBase, HazardBase
 and the scripts extending them), 1,797 references.
+
+A trap's trigger goes off by its script's state. PressurePlate (419 references) and the plain
+TrapTriggerBase triggers fire on the first step: Inactive's OnTriggerEnter goes to active, whose
+onBeginState activates the trigger and so its activate children. MQ203's 69 plates
+(dunKarthspirePlatePuzzleSCRIPT) are different: they cast in their Active state's OnTriggerEnter,
+and their cell's load (TrapTriggerBase.onCellLoad, isTriggerVolume set, nothing inside) has put them
+in Inactive, so by the scripts the first step arms the plate and the next one fires it. Observed in
+the original: a volume tells one enter per reference, GetTriggerObjectCount is 0 for an empty one and
+OnCellLoad goes to every reference of a fully loaded cell, so nothing there makes the first step
+fire. TODO(M13): whether the original's first step on these plates fires is not known (UESP has a
+wrong plate launch a fireball, without saying on which step). TODO(M13): a hanging mace
+(TrapMace01, on its tripwire) does not swing: its chain's links are simulated, a pin is fixed, and
+what lets it go is not known. Observed in the original: no code reads fLockTrapGoOffBase or
+fLockTrapGoOffMult, so a failed pick sets no trap off. fProjectileKnockMultTrap and
+fGameplayImpulseMultTrap are the pushed body's: what is on L_TRAP takes less of a blow.
 
 ## Story manager
 

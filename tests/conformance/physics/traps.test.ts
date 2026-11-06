@@ -14,11 +14,23 @@
 // - The data (Skyrim.esm): TrapSpear01 [0005B8F4] (TrapHitBase; its spear SpikeTrap, a fixed body
 //   on L_TRAP up to 388 units over its origin: `node tools/collision-info.ts
 //   meshes/traps/spiketrap/spiketrap01.nif`); one of them, [00050C22], stands in
-//   RiftenMercerFreyHouse [00037CC6] at (−2371.1, 2148.9, −814.6).
+//   RiftenMercerFreyHouse [00037CC6] at (−2371.1, 2148.9, −814.6). The plate [00050C2B] beside it
+//   (PressurePlate) is the activate parent of it and three more. In WarehouseTraps [000243DF] the
+//   tripwire [000247B8] is the activate parent of the battering ram [0002464C], a log that swings
+//   (TrapBatteringRam01: BatteringTrap, TrapHitBase).
+// - The scripts: PressurePlate and TrapTriggerBase's plain triggers go off in the state they enter
+//   on the first step (Inactive's OnTriggerEnter goes to active, whose onBeginState activates).
+//   dunKarthspirePlatePuzzleSCRIPT, MQ203's 69 plates alone, casts in its Active state's
+//   OnTriggerEnter instead (see the plates' test in tests/sim-alduins-wall.int.test.ts).
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import RAPIER from '@dimforge/rapier3d-compat';
+import { EXPLOSION_DEFAULTS, gameplayImpulse } from '../../../src/gameplay/magic/explosions.ts';
+import { arrowKnock } from '../../../src/gameplay/impulses.ts';
+import { parseVmad } from '../../../src/formats/esm/vmad.ts';
 import { CollisionMatrix as Matrix, Layer } from '../../../src/physics/collision-layers.ts';
+import { ActivatorKeywords } from '../../../src/scripting/runtime/activator-keywords.ts';
+import { ActorValue } from '../../../src/world/actor-values.ts';
 import { initPhysics, PhysicsWorld } from '../../../src/physics/physics-world.ts';
 import { EventHub, type GameEvents } from '../../../src/scripting/runtime/event-hub.ts';
 import {
@@ -139,6 +151,44 @@ describe.skipIf(!hasGamedata())('the traps of the load order (data)', () => {
     expect(census.trapBases).toBe(28);
     expect(census.trapReferences).toBe(1797);
   });
+
+  it('counts the pressure plates by the state their traps go off from (419 at the first step, 69 not)', async () => {
+    const plates = ['pressureplate', 'dunkarthspireplatepuzzlescript'];
+    const bases = new Map<number, string>();
+    for (const formId of db.formIdsOfType('ACTI')) {
+      const record = await db.get(formId);
+      const vmad = record?.fields.first('VMAD');
+      if (!record || !vmad) continue;
+      for (const { name } of parseVmad(vmad, record.type).scripts) {
+        if (plates.includes(name.toLowerCase())) bases.set(formId, name.toLowerCase());
+      }
+    }
+    const count = new Map<string, number>();
+    await db.scan(
+      ['REFR'],
+      () => true,
+      (record) => {
+        const base = record.formIdField('NAME');
+        const script = !record.deleted && base !== undefined ? bases.get(base) : undefined;
+        if (script) count.set(script, (count.get(script) ?? 0) + 1);
+      },
+    );
+    expect(count.get('pressureplate')).toBe(419);
+    expect(count.get('dunkarthspireplatepuzzlescript')).toBe(69);
+  }, 300_000);
+
+  it('finds no trap with a keyword in the vanilla records (the rule waits for one)', async () => {
+    const withKeyword: number[] = [];
+    for (const formId of db.formIdsOfType('ACTI')) {
+      const record = await db.get(formId);
+      const vmad = record?.fields.first('VMAD');
+      if (!record?.fields.has('KNAM') || !vmad) continue;
+      const { scripts } = parseVmad(vmad, record.type);
+      if (scripts.some((script) => census.trapHitScripts.has(script.name.toLowerCase())))
+        withKeyword.push(formId);
+    }
+    expect(withKeyword).toEqual([]);
+  });
 });
 
 const MERCER_FREY_HOUSE = 0x37cc6;
@@ -171,11 +221,93 @@ describe.skipIf(!hasGamedata())('the player stands on a spear trap (headless sim
   });
 });
 
+const PLATE = 0x50c2b;
+
+describe.skipIf(!hasGamedata())('a pressure plate at the first step (headless simulation)', () => {
+  let sim: Sim;
+  let unhurt = 0;
+  let health = 0;
+
+  beforeAll(async () => {
+    sim = await openSim({ interior: MERCER_FREY_HOUSE, hour: 10 });
+    await sim.step(1);
+    unhurt = (await sim.runtime.actors.value(PLAYER_REF, ActorValue.health)).current;
+    const at = await sim.position(PLATE);
+    expect(at).toBeDefined();
+    if (at) await sim.moveTo([at[0], at[1], at[2] + 8]);
+    await sim.step(1.5);
+    health = (await sim.runtime.actors.value(PLAYER_REF, ActorValue.health)).current;
+  }, 600_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it('activates itself, then the spears it is the activate parent of, on the one step', () => {
+    const entered = sim.events('triggerEnterLeave').filter((event) => event.trigger === PLATE);
+    expect(entered).toEqual([{ trigger: PLATE, reference: PLAYER_REF, entered: true }]);
+    const activated = sim.events('activate');
+    expect(activated).toContainEqual({ target: PLATE, actor: PLATE });
+    expect(activated).toContainEqual({ target: SPEAR_TRAP, actor: PLATE });
+  });
+
+  it('hurts the player as the trap’s script processes the hit (ProcessTrapHit)  [data]', () => {
+    const hits = sim.events('trapHit').filter((event) => event.target === PLAYER_REF);
+    expect(hits.some((event) => event.phase === 'start')).toBe(true);
+    // TrapSpear01's damage on a level 1 player: 20 (TrapHitBase, ResolveLeveledDamage).
+    expect(unhurt - health).toBeGreaterThan(10);
+  });
+});
+
+const WAREHOUSE_TRAPS = 0x243df;
+const LOG_TRIPWIRE = 0x247b8;
+const SWINGING_LOG = 0x2464c;
+/** Under the log's swing: it passes here on its way down (the room's floor). */
+const IN_THE_LOGS_WAY: readonly [number, number, number] = [2304, -1575, -128];
+
+describe.skipIf(!hasGamedata())('a log set off by its tripwire (headless simulation)', () => {
+  let sim: Sim;
+  let actor = 0;
+  let unhurt = 0;
+  let since = 0;
+
+  beforeAll(async () => {
+    sim = await openSim({ interior: WAREHOUSE_TRAPS, hour: 10 });
+    await sim.step(0.5);
+    since = sim.time;
+    actor = await sim.place(await sim.formId('NPC_', 'Hulda'), SWINGING_LOG);
+    await sim.native(sim.runtime.referenceHandle(actor), 'ObjectReference', 'SetPosition', [
+      ...IN_THE_LOGS_WAY,
+    ]);
+    await sim.step(0.2);
+    unhurt = (await sim.runtime.actors.value(actor, ActorValue.health)).current;
+    const wire = await sim.position(LOG_TRIPWIRE);
+    expect(wire).toBeDefined();
+    if (wire) await sim.moveTo([wire[0], wire[1], wire[2]]);
+    await sim.until(() => sim.events('trapHit').some((event) => event.target === actor), 4);
+    await sim.step(0.5);
+  }, 600_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it('swings a log trap set off by its tripwire into an actor in its way, which OnTrapHit tells  [data: TrapBatteringRam01, Tripwire]', async () => {
+    expect(sim.events('activate')).toContainEqual({ target: SWINGING_LOG, actor: LOG_TRIPWIRE });
+    const sent = sim.scriptEvents({ event: 'OnTrapHitStart', target: SWINGING_LOG, since });
+    expect(sent[0]?.args[0]).toEqual({ form: actor });
+    const health = await sim.runtime.actors.value(actor, ActorValue.health);
+    expect(unhurt - health.current).toBeGreaterThan(10);
+  });
+
+  it('tells an NPC’s contact with a trap as the player’s (the movers check their controllers)  [original]', () => {
+    const hits = sim.events('trapHit').filter((event) => event.target === actor);
+    expect(hits[0]).toMatchObject({ trap: SWINGING_LOG, phase: 'start', initial: false });
+  });
+});
+
 describe('what traps do', () => {
-  it.todo('hurts the player as the trap’s script processes the hit (ProcessTrapHit)  [data] (sim)');
   it.todo(
-    'swings a log trap set off by its tripwire into an actor in its way, which OnTrapHit tells  ' +
-      '[data: TrapSwingingLog, Tripwire] (sim)',
+    'swings a hanging mace set off by its tripwire (TrapMace01: PhysicsTrapHit alone, and its ' +
+      'chain does not move when woken: what lets it go is not known)  [data] (sim)',
   );
   it('takes a body on L_CLOUDTRAP as a trap, its material told  [original]', async () => {
     await initPhysics();
@@ -193,10 +325,6 @@ describe('what traps do', () => {
     expect([...physics.trapsTouching(actor, 2).keys()]).toEqual([0x55]);
     physics.free();
   });
-  it.todo(
-    'tells an NPC’s contact with a trap as the player’s (the movers check their controllers)  ' +
-      '[original] (sim)',
-  );
   it('carries the material of the trap’s shape touched (aeMaterial), the initial flag clear  [original]', () => {
     const hub = new EventHub();
     const told: GameEvents['trapHit'][] = [];
@@ -208,15 +336,48 @@ describe('what traps do', () => {
     expect(told[0]?.material).toBe(0x1234);
     expect(told[0]?.initial).toBe(false);
   });
-  it.todo(
-    'lets an activator trap with a keyword pass actors that have it (the listener asks the ' +
-      'actor)  [original: the keyword is not identified]',
-  );
-  it.todo(
-    'pushes clutter and actors with trap blows by fProjectileKnockMultTrap (0.05) and ' +
-      'fGameplayImpulseMultTrap (0.15)  [settings]',
-  );
-  it.todo(
-    'sets traps off by lock picking failures (fLockTrapGoOffBase, fLockTrapGoOffMult)  [settings]',
-  );
+  it('lets a trap whose activator has a keyword (ACTI KNAM) hit only actors that have it  [original]', async () => {
+    const hub = new EventHub();
+    const told: GameEvents['trapHit'][] = [];
+    hub.on('trapHit', (event) => {
+      told.push(event);
+    });
+    const KEYWORD = 0x99;
+    const keywords = new ActivatorKeywords(
+      (reference) => Promise.resolve(reference === 7 ? KEYWORD : undefined),
+      (who, keyword) => Promise.resolve(who === 20 && keyword === KEYWORD),
+    );
+    const hits = new TrapHits(
+      hub,
+      () => 0,
+      (trap, target) => keywords.admitsNow(trap, target),
+    );
+    // Asking takes a moment (yes meanwhile); the answer holds from then on.
+    await keywords.admits(7, 20);
+    keywords.admitsNow(7, 21);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    told.length = 0;
+    hits.forget(21);
+    hits.forget(20);
+    hits.touching(21, new Map([[7, TOUCH]]));
+    expect(told).toEqual([]);
+    hits.touching(20, new Map([[7, TOUCH]]));
+    expect(told.map((event) => event.target)).toEqual([20]);
+    // A trap asking for nothing hits anyone.
+    await keywords.admits(8, 21);
+    hits.touching(21, new Map([[8, TOUCH]]));
+    expect(told.map((event) => event.trap)).toEqual([7, 8]);
+  });
+  // The two "Trap" multipliers are the pushed body's: a blow on a body on L_TRAP takes less.
+  it('pushes a body on L_TRAP by fProjectileKnockMultTrap (0.05) and fGameplayImpulseMultTrap (0.15)  [original, settings]', () => {
+    const clutter = gameplayImpulse(10, Layer.clutter, undefined);
+    expect(EXPLOSION_DEFAULTS.impulseMultClutter).toBe(1);
+    expect(gameplayImpulse(10, Layer.trap, undefined) / clutter).toBeCloseTo(0.15);
+    // fProjectileKnockMultClutter: 0.15.
+    expect(arrowKnock(1000, Layer.trap, 100) / arrowKnock(1000, Layer.clutter, 100)).toBeCloseTo(
+      0.05 / 0.15,
+    );
+  });
+  // fLockTrapGoOffBase and fLockTrapGoOffMult: observed in the original, no code reads the two
+  // settings; a failed pick sets no trap off, and there is no rule to build.
 });
