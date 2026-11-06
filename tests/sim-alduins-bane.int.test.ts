@@ -197,10 +197,10 @@ describe.skipIf(!hasGamedata())("MQ206 Alduin's Bane", () => {
 
   // MQ206PresentDayScene: Alduin and Paarthurnax trade words (120, 140) and take to the air. The
   // player's Dragonrend, once it reaches him (MQ206AlduinScript's OnMagicEffectApply), is 180, and it
-  // brings him down. The player's blows land on him there; `fendOff`'s kin stands in for the rest
-  // of a fight the first level's fists do not win: what is left of his health is taken by the
-  // player's hand. Essential, he bleeds out (200); he says his last and is gone (230, and 220: MQ301
-  // begins); his way out over the mountains ends at 240.
+  // brings him down on his landing marker. The player's fist lands on him there; the rest of a fight
+  // a first level's fists do not win stands in as one blow of theirs for what is left of his health.
+  // Essential, he bleeds out (200); he says his last and is gone (230, and 220: MQ301 begins); his
+  // way out over the mountains ends at 240.
   it('has the player bring Alduin down with Dragonrend, and he escapes (120-240)', async () => {
     if (!inThePresent) return;
     const sim = await loadSim(inThePresent);
