@@ -2354,7 +2354,8 @@ export class ActorMovers {
         this.#options.navmeshes?.()?.locate([x, y, z]) !== undefined;
       // Out of what it stands in (set on the floor, its shape may touch it), as the player.
       if (world.physics.queriesCurrent) character.recover();
-      // What it pushes other characters and moving bodies back with: its Mass by a human's.
+      // What it pushes other characters and moving bodies back with: its Mass by a human's
+      // (TODO(M13): inferred; the character proxy's mass is not documented).
       void session.scriptsReady?.actors
         .value(reference, ActorValue.mass)
         .then((mass) => {

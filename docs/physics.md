@@ -377,9 +377,10 @@ through the edges' middles, a player walks around it); and a few steps higher th
   face of 75° stood on it for good: too steep is no ground now, and it slides off, no faster than
   the face lets it. The contact alone does not say: a cone on a stair's or a ledge's edge meets it
   at the cone's own slope, so the faces under the shape's middle and ring are asked too, and only
-  with none of them walkable is it on a slope (`#onWalkable`; `tools/stairs-audit.ts` walks
-  Helgen Keep's, Whiterun's and Bleak Falls Barrow's stairs and ramps the same with it as without
-  it). TODO(M13): a jump is not asked for while it slides; Havok's proxy's own support check
+  with none of them walkable is it on a slope (`#onWalkable`; `tools/stairs-audit.ts` walks Bleak
+  Falls Barrow's 363 stairs and ramps the same with it as without it, and of Helgen Keep's 112 and
+  Whiterun's 78 walks only those at shut doors and gates stop). TODO(M13): a jump is not asked for
+  while it slides; Havok's proxy's own support check
   (bUseUnsupportedCast, fUnsupportCastLength) was not read.
 - **Two characters** (inferred, TODO(M13): CommonLibSSE names the proxy's character interaction,
   the controller's push delta and count, kNotPushable; their numbers were not read): one walking
