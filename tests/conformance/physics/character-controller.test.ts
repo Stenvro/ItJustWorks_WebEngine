@@ -120,7 +120,10 @@ function box(
   turn: RAPIER.Rotation = { x: 0, y: 0, z: 0, w: 1 },
 ): RAPIER.RigidBody {
   const made = physics.world.createRigidBody(
-    (kind === 'fixed' ? RAPIER.RigidBodyDesc.fixed() : RAPIER.RigidBodyDesc.kinematicPositionBased())
+    (kind === 'fixed'
+      ? RAPIER.RigidBodyDesc.fixed()
+      : RAPIER.RigidBodyDesc.kinematicPositionBased()
+    )
       .setTranslation(h(at[0]), h(at[1]), h(at[2]))
       .setRotation(turn),
   );
@@ -384,10 +387,7 @@ describe('what carries and pushes characters', () => {
         .setLinvel(h(300), 0, 0)
         .setGravityScale(0),
     );
-    const shape = physics.world.createCollider(
-      RAPIER.ColliderDesc.ball(h(40)).setMass(400),
-      log,
-    );
+    const shape = physics.world.createCollider(RAPIER.ColliderDesc.ball(h(40)).setMass(400), log);
     physics.register(shape, Layer.props, { reference: 2, kind: 'object' });
     physics.step(STEP);
     const actor = character(physics, [0, 0, 1]);

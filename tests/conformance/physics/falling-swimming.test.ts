@@ -21,8 +21,13 @@
 //   fActorSwimBreathBase 10, Mult 0.5 (Skyrim.esm 0.2), Damage 0.2 (Skyrim.esm 0.08);
 //   fActorLeaveWaterBreathTimer 4.
 // - UESP "Skyrim:Damage" (falling) for the formula's shape.
+// - The data: interface\hudmenu.swf has no breath meter of any name (the vanilla game shows none);
+//   the settings fFallLegDamageMult, iFallLegDamageChance are built-in only, no plugin sets them.
+// - Inferred (TODO(M13) in src/gameplay/falling.ts, src/shell/time-flow.ts): the leg's damage is
+//   read from the settings' names; the drowning sound's repeat from the damage's second.
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { allTags, readSwf, SwfTagCode, tagBody } from '../../../src/formats/swf/swf.ts';
 import {
   Breath,
   BREATH_DEFAULTS,
@@ -31,13 +36,18 @@ import {
   UNDERWATER_SUBMERSION,
 } from '../../../src/gameplay/breath.ts';
 import {
+  FALL_LEG_DEFAULTS,
   fallDamage,
+  fallLegDamage,
   NPC_FALL,
   PLAYER_FALL,
   RAGDOLL_FALL_SHARE,
 } from '../../../src/gameplay/falling.ts';
-import { ActorValue } from '../../../src/world/actor-values.ts';
-import { hasGamedata, openSim, type Sim } from '../../helpers/sim.ts';
+import { Layer } from '../../../src/physics/collision-layers.ts';
+import { actorFell } from '../../../src/shell/time-flow.ts';
+import { ObjectHandle } from '../../../src/scripting/values.ts';
+import { ActorValue, actorValueIndex } from '../../../src/world/actor-values.ts';
+import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 /** Skyrim.esm's settings (GMST). */
 const ESM_PLAYER_FALL = { ...PLAYER_FALL, exponent: 1.45 };
@@ -65,11 +75,13 @@ describe('falling damage (the engine’s formula)', () => {
     expect(RAGDOLL_FALL_SHARE).toBe(0.25);
   });
 
-  it.todo(
-    'breaks a leg on a hard landing: fFallLegDamageMult (0.5), iFallLegDamageChance (50)  ' +
-      '[settings; original: unread]',
-  );
-  it.todo('takes nothing from a fall into water deep enough to swim  [original] (sim)');
+  it('hurts a leg on a hard landing: fFallLegDamageMult (0.5), iFallLegDamageChance (50)', () => {
+    expect(FALL_LEG_DEFAULTS).toEqual({ mult: 0.5, chance: 50 });
+    expect(fallLegDamage(100, 49.9)).toBe(50);
+    expect(fallLegDamage(100, 50)).toBe(0);
+    expect(fallLegDamage(0, 0)).toBe(0);
+    expect(fallLegDamage(100, 10, { mult: 0.25, chance: 11 })).toBe(25);
+  });
 });
 
 describe('breath and drowning (the engine’s rule)', () => {
@@ -117,30 +129,265 @@ describe('breath and drowning (the engine’s rule)', () => {
     long.step(1.5, 1);
     expect(long.step(0.1, 0).gasped).toBe(true);
   });
-
-  it.todo(
-    'plays NPCHumanDrowning on the player while they drown  [original] (sim: a deep-water place)',
-  );
-  it.todo(
-    'says the Leave Water Breath line (LWBS) on coming up after 4 s under water  [original] (sim)',
-  );
-  it.todo(
-    'sends an NPC running out of breath to the surface, never drowning it  [original: the action ' +
-      'the engine starts is not identified] (sim)',
-  );
-  it.todo('shows the breath meter on the HUD while the player is under water  [UI] (sim)');
 });
 
-describe('swimming', () => {
-  it.todo(
-    'swims every actor whose submersion reaches 0.7 (the engine marks it swimming), not only ' +
-      'the player  [original] (sim: an NPC led into a river)',
-  );
-  // Jumps out of water by fJumpSwimmingMult (2): tests/sim-water.int.test.ts, with the Jump key.
-  it.todo(
-    'knocks an actor down in fast water: fWaterKnockdownVelocity (5 with Skyrim.esm) and ' +
-      'fWaterKnockdownSize* by size  [settings; original: unread]',
-  );
+const TAMRIEL = 0x3c;
+/** Riverwood's cells and the river's next to it. */
+const RIVER_CELLS: readonly (readonly [number, number])[] = [
+  [4, -11],
+  [5, -11],
+  [3, -11],
+  [4, -12],
+];
+
+describe.skipIf(!hasGamedata())('in Riverwood’s river (headless simulation)', () => {
+  let sim: Sim;
+  /** The riverbed under the deepest water found, and the surface over it. */
+  let bed: [number, number, number] = [0, 0, 0];
+  let surface = 0;
+  let npc = 0;
+
+  const water = (): NonNullable<NonNullable<Sim['world']['play']>['water']> => {
+    const found = sim.world.play?.water;
+    if (!found) throw new Error('no water');
+    return found;
+  };
+
+  function deepest(): { floor: [number, number, number]; depth: number } | undefined {
+    const play = sim.world.play;
+    if (!play) return undefined;
+    let found: { floor: [number, number, number]; depth: number } | undefined;
+    for (const [cx, cy] of RIVER_CELLS) {
+      for (let x = 64; x < 4096; x += 128) {
+        for (let y = 64; y < 4096; y += 128) {
+          const at: [number, number] = [cx * 4096 + x, cy * 4096 + y];
+          const hit = play.physics.raycast([...at, 6000], [0, 0, -1], 12_000, Layer.charController);
+          const over = hit && water().surface(at[0], at[1], hit.point[2]);
+          if (over && hit && over.height - hit.point[2] > (found?.depth ?? 0)) {
+            found = { floor: [at[0], at[1], hit.point[2]], depth: over.height - hit.point[2] };
+          }
+        }
+      }
+    }
+    return found;
+  }
+
+  beforeAll(async () => {
+    sim = await openSim({ exterior: { world: TAMRIEL, cell: [4, -11] }, hour: 10 });
+    let deep = deepest();
+    for (let i = 0; i < 30 && (deep?.depth ?? 0) < 130; i++) {
+      await sim.step(0.2);
+      deep = deepest();
+    }
+    if (!deep) throw new Error('no water');
+    bed = deep.floor;
+    surface = bed[2] + deep.depth;
+    await sim.moveTo([bed[0], bed[1], surface + 300]);
+    await sim.step(1);
+    // Someone of the town with a controller, a person: the river's mudcrabs swim as well.
+    for (const staged of sim.actors()) {
+      if (staged.dead || !sim.world.stage.movers.motion(staged.reference)) continue;
+      if (!/^(Embry|Sigrid|Alvor|Hod|Gerdur|Faendal|Sven)/.test(staged.placed.look.editorId)) {
+        continue;
+      }
+      npc = staged.reference;
+      break;
+    }
+    if (npc === 0) throw new Error('no one in the town');
+    // It goes nowhere of its own (its package would walk it out of the cases' water).
+    await sim.native(new ObjectHandle(npc, 'actor'), 'Actor', 'EnableAI', [false]);
+  }, 300_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  const health = async (reference: number): Promise<number> =>
+    (await sim.runtime.actors.value(reference, ActorValue.health)).current;
+
+  /** Keeps an actor at the riverbed, under water, for `seconds`. */
+  async function holdUnder(reference: number, seconds: number): Promise<void> {
+    const feet: [number, number, number] = [bed[0], bed[1], bed[2] + 2];
+    // The player out of its way: floating over it they would hold it under.
+    if (reference !== PLAYER_REF) await sim.moveTo([bed[0] + 200, bed[1], surface]);
+    for (let t = 0; seconds - t >= 1 / 120; t += 0.1) {
+      if (reference === PLAYER_REF) await sim.moveTo(feet);
+      else sim.runtime.move(reference, feet);
+      await sim.step(0.1);
+    }
+  }
+
+  it('the river is deep enough to go under', () => {
+    expect(surface - bed[2]).toBeGreaterThan(130);
+  });
+
+  it('takes nothing from a fall into water deep enough to swim', async () => {
+    const before = await health(PLAYER_REF);
+    await sim.moveTo([bed[0], bed[1], surface + 1200]);
+    const player = sim.world.player;
+    let fastest = 0;
+    const landed = vi.fn<(height: number) => void>();
+    const was = player.onLanded;
+    player.onLanded = (height) => {
+      landed(height);
+      was?.(height);
+    };
+    for (let i = 0; i < 300 && !player.swimming; i++) {
+      await sim.step(1 / 60);
+      fastest = Math.min(fastest, player.character.verticalSpeed);
+    }
+    await sim.step(1);
+    player.onLanded = was;
+    // It came down fast (from a dry fall of 1200 the player would take some 377).
+    expect(fastest).toBeLessThan(-600);
+    expect(player.swimming).toBe(true);
+    expect(landed).not.toHaveBeenCalled();
+    expect(await health(PLAYER_REF)).toBeGreaterThanOrEqual(before);
+  }, 120_000);
+
+  it('takes a leg’s condition from a hard landing as the roll says', async () => {
+    const left = actorValueIndex('LeftMobilityCondition') ?? 0;
+    const right = actorValueIndex('RightMobilityCondition') ?? 0;
+    const legs = async (): Promise<number> =>
+      (await sim.runtime.actors.value(npc, left)).current +
+      (await sim.runtime.actors.value(npc, right)).current;
+    const before = await legs();
+    // The roll over the chance: no leg.
+    await actorFell(sim.runtime, npc, 460, 1, () => 99);
+    expect(await legs()).toBe(before);
+    // Under it: half the health taken (450 is the NPCs' minimum: (10 × 0.1)^1.65 = 1).
+    const taken = await actorFell(sim.runtime, npc, 460, 1, () => 10);
+    expect(taken).toBeGreaterThan(0);
+    expect(await legs()).toBeCloseTo(before - taken * 0.5, 3);
+  }, 60_000);
+
+  it('swims every actor whose submersion reaches 0.7, an NPC led into the river too', async () => {
+    const motion = (): ReturnType<Sim['world']['stage']['movers']['motion']> =>
+      sim.world.stage.movers.motion(npc);
+    expect(motion()?.swimming).toBe(false);
+    sim.runtime.move(npc, [bed[0], bed[1], bed[2] + 2]);
+    expect(await sim.until(() => motion()?.swimming === true, 3)).toBe(true);
+    // Up to the surface, its shoulders at the water (0.69 of a person's 131 units).
+    await sim.step(1.5);
+    const below = surface - (sim.actor(npc)?.position[2] ?? 0);
+    expect(below).toBeGreaterThan(80);
+    expect(below).toBeLessThan(105);
+  }, 60_000);
+
+  it('sends an NPC out of breath to the surface, and never drowns it', async () => {
+    const stage = sim.world.stage;
+    const pushed = vi.spyOn(stage.ai, 'pushEngine');
+    const before = await health(npc);
+    await holdUnder(npc, 25);
+    expect(pushed.mock.calls.some(([actor, name]) => actor === npc && name === 'surface')).toBe(
+      true,
+    );
+    expect(await health(npc)).toBeGreaterThanOrEqual(before);
+    pushed.mockRestore();
+    await sim.step(2);
+  }, 300_000);
+
+  it('says the Leave Water Breath line (LWBS) on coming up after 4 s under water, not sooner', async () => {
+    const stage = sim.world.stage;
+    const bark = vi.spyOn(stage.talk, 'bark');
+    const said = (actor: number): boolean =>
+      bark.mock.calls.some(([who, subtype]) => who === actor && subtype === 'LWBS');
+    // Under for 2 s: no gasp; for 5 s: one as it comes up.
+    await holdUnder(npc, 2);
+    await sim.step(2);
+    expect(said(npc)).toBe(false);
+    await holdUnder(npc, 5);
+    await sim.step(1);
+    expect(said(npc)).toBe(true);
+    // Out of the player's way (floating over them it would hold them under).
+    sim.runtime.move(npc, [bed[0] + 600, bed[1], surface + 100]);
+    await holdUnder(PLAYER_REF, 2);
+    await sim.step(2);
+    expect(said(PLAYER_REF)).toBe(false);
+    await holdUnder(PLAYER_REF, 5);
+    await sim.step(2);
+    expect(said(PLAYER_REF)).toBe(true);
+    bark.mockRestore();
+  }, 300_000);
+
+  it('plays NPCHumanDrowning on the player while they drown, and takes their health', async () => {
+    const drowning = await sim.formId('SNDR', 'NPCHumanDrowning');
+    const heard = (): number =>
+      sim.sounds().filter((sound) => sound.descriptor === drowning).length;
+    const before = await health(PLAYER_REF);
+    expect(heard()).toBe(0);
+    // The breath is 20 s with Skyrim.esm: not before it is gone.
+    await holdUnder(PLAYER_REF, 15);
+    expect(heard()).toBe(0);
+    await holdUnder(PLAYER_REF, 8);
+    // The descriptors are looked up by name as the first is asked for.
+    await vi.waitFor(() => {
+      expect(heard()).toBeGreaterThanOrEqual(2);
+    });
+    expect(await health(PLAYER_REF)).toBeLessThan(before);
+    await sim.step(2);
+  }, 300_000);
+
+  it('reads fWaterKnockdownVelocity (5) and fWaterKnockdownSize* from Skyrim.esm', () => {
+    expect(sim.world.session.time.breath?.remaining).toBeDefined();
+    const knockdown = water().rules.knockdown;
+    expect(knockdown?.velocity).toBe(5);
+    [0.6, 0.75, 1.25, 1.5].forEach((size, i) => {
+      expect(knockdown?.sizes[i]).toBeCloseTo(size, 5);
+    });
+  });
+
+  it('carries an actor off in fast water only, past fWaterKnockdownVelocity × its size', async () => {
+    const rules = water().rules;
+    const moved = async (speed: number): Promise<number> => {
+      // The river's own current as fast as asked (no flow map) along +x.
+      const at = water().surface(bed[0], bed[1], bed[2]);
+      if (!at) throw new Error('no surface');
+      water().rules = {
+        ...rules,
+        flowmapTypes: new Set(),
+        currents: new Map([[at.type, { linear: [speed, 0, 0], angular: [0, 0, 0] }]]),
+      };
+      await sim.moveTo([bed[0] - 400, bed[1], surface]);
+      sim.runtime.move(npc, [bed[0], bed[1], bed[2] + 2]);
+      await sim.step(0.3);
+      const start = sim.actor(npc)?.position[0] ?? 0;
+      await sim.step(0.5);
+      return (sim.actor(npc)?.position[0] ?? 0) - start;
+    };
+    try {
+      // A person's a normal size: 5 × 0.75 = 3.75 Havok units a second is the limit.
+      const weak = await moved(3);
+      const strong = await moved(4);
+      expect(Math.abs(weak)).toBeLessThan(40);
+      expect(strong).toBeGreaterThan(80);
+    } finally {
+      water().rules = rules;
+    }
+  }, 120_000);
+});
+
+describe.skipIf(!hasGamedata())('the breath meter (data)', () => {
+  it('is not in the HUD’s movie: the vanilla game shows none', async () => {
+    const { Vfs } = await import('../../../src/vfs/vfs.ts');
+    const { openGameFolder } = await import('../../../tools/gamedata-path.ts');
+    const vfs = await Vfs.mount(openGameFolder());
+    const movie = readSwf(await vfs.read('interface\\hudmenu.swf'));
+    await vfs.close();
+    let scripts = 0;
+    let breath = 0;
+    let meter = 0;
+    for (const tag of allTags(movie.tags)) {
+      if (tag.code !== SwfTagCode.doAction && tag.code !== SwfTagCode.doInitAction) continue;
+      scripts++;
+      const text = Buffer.from(tagBody(movie, tag)).toString('latin1');
+      if (/breath/i.test(text)) breath++;
+      if (text.includes('SetStaminaMeterPercent')) meter++;
+    }
+    // What the check reads does hold the other meters.
+    expect(scripts).toBeGreaterThan(0);
+    expect(meter).toBeGreaterThan(0);
+    expect(breath).toBe(0);
+  }, 120_000);
 });
 
 /** WhiterunWorld [0001A26F]: its busiest cell, outdoors (nothing over the actors' heads). */

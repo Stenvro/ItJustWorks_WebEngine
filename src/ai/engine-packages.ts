@@ -239,6 +239,8 @@ const NPC_BREATH_SKILL = 50;
 /** An NPC's breath under water: when it must surface. */
 export class Breath {
   #left: number | undefined;
+  /** How long its head has been under water (seconds). */
+  under = 0;
 
   /** The breath left (seconds; undefined: full). */
   get left(): number | undefined {
@@ -260,8 +262,10 @@ export class Breath {
     const most = NPC_BREATH_SKILL * settings.swimBreathMult + settings.swimBreathBase;
     if (!under) {
       this.#left = undefined;
+      this.under = 0;
       return false;
     }
+    this.under += seconds;
     const left = Math.max(0, Math.min(most, this.#left ?? most) - seconds);
     this.#left = left;
     const rise = speed > 0 ? Math.max(0, depth) / speed : Infinity;

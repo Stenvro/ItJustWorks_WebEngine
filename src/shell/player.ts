@@ -228,6 +228,7 @@ export async function readPlayerData(
       });
   }
   const controls = parseControlMap(decodeWindows1252(controlText));
+  const ini = new IniSettings(vfs.ini, preferences);
   return {
     body,
     stairMaterials,
@@ -250,10 +251,11 @@ export async function readPlayerData(
       },
       waterMaterials,
       waterMaterial: materialId('Water'),
+      waterfallVelocity: ini.number('HAVOK', 'fDefaultWaterfallCurrentVelocity'),
       harms,
       flowmapTypes,
     },
-    ini: new IniSettings(vfs.ini, preferences),
+    ini,
     baseControls: controls,
     controls,
     // The behavior graph's movement states (MOVT MNAM).
