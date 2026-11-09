@@ -1410,7 +1410,8 @@ const FLEE_LOOK = 0.5;
 /**
  * Flee's way: to its flee-to place, else away from what it flees by its flee distance (at least
  * the done distance); then, with something to flee from, it stays away until it is safe
- * (fleeSafe), running off again whenever it comes within the done distance of it.
+ * (fleeSafe), running off again whenever it comes within the done distance of it; with it in
+ * another cell or worldspace it is safe.
  */
 const fleeAway: ProcedureRunner = async (run) => {
   const settings = settingsOf(run);
@@ -1419,10 +1420,17 @@ const fleeAway: ProcedureRunner = async (run) => {
   const own = await run.mind.placement(run.actor);
   const interior = (to?.space ?? own?.space)?.kind === 'interior';
   const done = interior ? settings.fleeDoneDistanceInterior : settings.fleeDoneDistanceExterior;
-  const threatAt = async (): Promise<Vec3 | undefined> =>
-    threat === undefined
-      ? undefined
-      : (run.mind.livePosition?.(threat) ?? (await run.mind.placement(threat))?.position);
+  // Where the threat is, while it is in the actor's cell or worldspace: in another (the actor
+  // through a load door, or it), the two places are no distance apart and the actor is safe.
+  const threatAt = async (): Promise<Vec3 | undefined> => {
+    if (threat === undefined) return undefined;
+    const [self, other] = await Promise.all([
+      run.mind.placement(run.actor),
+      run.mind.placement(threat),
+    ]);
+    if (self?.space && other?.space && !sameSpace(self.space, other.space)) return undefined;
+    return run.mind.livePosition?.(threat) ?? other?.position;
+  };
   const runOff = async (): Promise<boolean> => {
     const here = run.body.position();
     let goal: Vec3 | undefined = to?.position;
@@ -1445,6 +1453,7 @@ const fleeAway: ProcedureRunner = async (run) => {
   while (!run.stopped()) {
     const here = run.body.position();
     const from = await threatAt();
+    // Gone, or in another space: safe.
     if (!here || !from) return 'success';
     const distance = Math.hypot(here[0] - from[0], here[1] - from[1]);
     if (fleeSafe(distance, safeFor, interior, settings)) return 'success';

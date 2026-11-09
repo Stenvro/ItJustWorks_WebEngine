@@ -201,7 +201,8 @@ export function givesWay<A extends WayGiver>(a: A, b: A): A {
 
 /**
  * What an actor on its way does about the one in its way (docs/ai.md, "Paths"): nothing while it
- * has been held up no longer than fMaxTimeBlockedByActors (or while it steps aside itself); then
+ * has been held up no longer than fMaxTimeBlockedByActors (stepping aside itself, its way waits
+ * and its time held up does not run: the movers' part); then
  * (observed in the original: its way is blocked by actors) it acts. The player standing in its
  * way is asked to move first (`ask`: its ActorCollidewithActor line, the infos' IsSmallBump 0
  * ones: "Excuse me.", "Mind the way."), once a travel, and given one more
@@ -215,8 +216,6 @@ export function blockedByActor(input: {
   readonly blockedFor: number;
   /** fMaxTimeBlockedByActors. */
   readonly most: number;
-  /** It steps aside itself (giving way, bumped): its way waits. */
-  readonly reacting: boolean;
   /** The one in its way is the player, standing (not moving). */
   readonly playerStanding: boolean;
   /** It asked the player already on this travel. */
@@ -224,7 +223,7 @@ export function blockedByActor(input: {
   /** The one in its way is another actor on its own way. */
   readonly otherTravels: boolean;
 }): 'wait' | 'ask' | 'giveWay' | 'round' {
-  if (input.reacting || input.blockedFor <= input.most) return 'wait';
+  if (input.blockedFor <= input.most) return 'wait';
   if (input.playerStanding && !input.askedPlayer) return 'ask';
   return input.otherTravels ? 'giveWay' : 'round';
 }

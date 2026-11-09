@@ -996,7 +996,6 @@ export class ActorMovers {
     const response = blockedByActor({
       blockedFor: travel.blockedFor,
       most,
-      reacting: false,
       playerStanding: other === undefined && Math.hypot(...blocker.velocity) < BLOCKED_SPEED,
       askedPlayer: travel.askedPlayer,
       otherTravels: otherTravel !== undefined,

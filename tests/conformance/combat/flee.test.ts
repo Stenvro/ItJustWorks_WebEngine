@@ -35,6 +35,7 @@ import {
   type PackageInput,
   type ProcedureBranch,
 } from '../../../src/ai/package-records.ts';
+import type { Space } from '../../../src/ai/package-start.ts';
 import type { ProcedureRun } from '../../../src/ai/package-runtime.ts';
 import { fleeSafe, PROCEDURES } from '../../../src/ai/procedure-runs.ts';
 import { ProcedureInputs } from '../../../src/ai/procedures.ts';
@@ -279,7 +280,10 @@ describe('who flees (formula)', () => {
     const THREAT = 0x99;
     let here: [number, number, number] = [100, 0, 0];
     let waited = 0;
-    const travels: number[][] = [];
+    let travels: number[][] = [];
+    // Both in Tamriel; then the threat in an interior.
+    const tamriel = { kind: 'world', world: 0x3c } as const;
+    let threatSpace: Space = tamriel;
     const branch: ProcedureBranch = {
       type: 'Procedure',
       conditions: [],
@@ -321,7 +325,7 @@ describe('who flees (formula)', () => {
           Promise.resolve({
             position: reference === THREAT ? [0, 0, 0] : here,
             heading: 0,
-            space: { kind: 'exterior' },
+            space: reference === THREAT ? threatSpace : tamriel,
           }),
         place: () => Promise.resolve(undefined),
       },
@@ -340,5 +344,15 @@ describe('who flees (formula)', () => {
     expect(travels).toEqual([[2600, 0, 0]]);
     expect(waited).toBeGreaterThanOrEqual(30);
     expect(waited).toBeLessThan(31);
+
+    // The threat in another space (the actor through a load door, or it): no distance between
+    // them, safe at once.
+    here = [100, 0, 0];
+    waited = 0;
+    travels = [];
+    threatSpace = { kind: 'interior', cell: 0x1605e } as const;
+    expect(await PROCEDURES.flee?.(run)).toBe('success');
+    expect(travels).toHaveLength(1);
+    expect(waited).toBe(0);
   });
 });

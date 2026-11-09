@@ -120,14 +120,13 @@ describe('the engine’s own packages (no record holds them)', () => {
     const held = {
       blockedFor: 2.5,
       most,
-      reacting: false,
       playerStanding: true,
       askedPlayer: false,
       otherTravels: false,
     };
-    // Held up no longer than fMaxTimeBlockedByActors, or stepping aside itself: it waits.
+    // Held up no longer than fMaxTimeBlockedByActors: it waits. (Stepping aside itself, its time
+    // held up does not run: actor-movers.ts #blockedByActors.)
     expect(blockedByActor({ ...held, blockedFor: most })).toBe('wait');
-    expect(blockedByActor({ ...held, reacting: true })).toBe('wait');
     // Then it asks the standing player to move (its ActorCollidewithActor line), once a travel.
     expect(blockedByActor(held)).toBe('ask');
     expect(blockedByActor({ ...held, askedPlayer: true })).toBe('round');
