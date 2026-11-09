@@ -710,8 +710,8 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   limits' tau factor of the excess a step (pushed back only). Hulda, killed still where she
   leans at the Bannered Mare's counter (a Ragdoll death, no blow), stayed asleep on her feet,
   her hips and knees in the box but past the cone and held there by their friction; with the
-  cone she slumps to the floor (`ragdolls-death.test.ts`) when killed 1.5 or 2 s into her lean
-  idle. Killed at 1, 2.5 or 3 s her upper body tips onto the counter while her hips bend to
+  cone she slumps to the floor (`ragdolls-death.test.ts`) when killed 0.5 or 5 s into her lean
+  idle. Killed at 1 to 4.5 s her upper body tips onto the counter while her hips bend to
   their limit and her knees straighten to theirs, her feet flat at the ankles' limit: her legs
   stand as a locked strut and she stays draped over the counter (head at 96–99 units). It is
   the solver's give, not the limits' softness: Rapier at 4 or 5 substeps (the original's world
@@ -729,7 +729,16 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   at rest within 20 s); only two substeps buckle the strut. The foot capsules point 36° toe
   down at the skeleton's rest, and the ankle's limit (3.6°) leaves them 5° short of flat: a
   foot pressed flat holds its calf leaning back, the knee behind the line from hip to ankle,
-  locked at its limit. TODO(M13): Havok's give at four iterations with the settling of eight.
+  locked at its limit. Traced at 1, 2 and 3 s (and swept at 1 to 4.5 s): within a second of the
+  kill her feet are pressed flat onto that limit and her knees straightened to theirs, then her
+  thighs spread to their plane limits and every joint of her legs lies at a limit, the hips at the
+  cone; she is still awake there 5 s on, so neither Rapier's own sleep (bodies created unable to
+  sleep stand the same) nor the solver deactivation (off, the same) holds her. That one limit
+  decides it: 8° more dorsiflexion and she slumps at 1 and 2 s (at 3 s her other knee stays
+  locked). The placed ragdoll poses' ankles (the Creation Kit's settled Havok state) lie past it
+  by more than 1° in 41 of 1,066 and by more than 5° in 6, so a Havok ankle gives a little under
+  a corpse's own weight; how far it gives under a body's, at four iterations, is not known.
+  TODO(M13): Havok's give at four iterations with the settling of eight.
 - **Made dynamic** (observed in the original: the behavior's ragdoll driver set to dynamic):
   every body of it that is then of a dynamic motion type and moves slower than 0.5 Havok units
   a second is activated and given 0.5 Havok units a second more upward speed, so that nothing
