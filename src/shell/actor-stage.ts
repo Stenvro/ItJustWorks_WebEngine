@@ -37,6 +37,7 @@ import { RecordFlag } from '../formats/esm/record.ts';
 import type { GaitMotion, SoundingWorld } from './actor-sounds.ts';
 import { ActorGraphEvents } from './actor-graph-events.ts';
 import {
+  actorGround,
   actorOnRay,
   groundActor,
   headPosition,
@@ -2525,12 +2526,10 @@ export class ActorStage {
       }
     }
     const reach = this.#groundReach(staged.position);
-    groundActor(staged.placed, staged.position, staged.heading, (from, length) => {
-      // TODO(M13): this ray also meets another actor on the spot, and sets this one on or in it
-      // (one standing where the player comes through a door rises some 30 units for a moment).
-      const hit = physics.raycast(from, [0, 0, -1], Math.min(length, reach), Layer.charController);
-      return hit && { point: hit.point, normal: hit.normal };
-    });
+    // Another actor on the spot is no ground (actorGround).
+    groundActor(staged.placed, staged.position, staged.heading, (from, length) =>
+      actorGround(physics, from, Math.min(length, reach)),
+    );
     const world = staged.placed.instances[0]?.world;
     if (world) staged.position = [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0];
     staged.grounded = true;
