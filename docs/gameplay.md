@@ -1252,9 +1252,15 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
   a friend; frenzied (Aggression 3), a crime against the player (a faction that made them its
   enemy, SetPlayerEnemy; guards to attack them) or a relationship of enemy or worse: hostile;
   else a friend (a friend combat reaction, a relationship of friend or better), an ally (an
-  ally reaction, a shared faction without Special Combat), hostile (an enemy reaction), or
-  neutral. The combat reactions are the factions' XNAM, as scripts set them (SetAlly,
-  SetEnemy). `attacksOnSight(aggression, reaction)`: aggressive actors attack enemies, very
+  ally reaction), hostile (an enemy reaction), or neutral. The combat reactions are the
+  factions' XNAM, as scripts set them (SetAlly, SetEnemy). A faction both are in counts by its
+  reaction to itself, as any other pair: membership alone makes no allies (docs/ai.md,
+  "Reactions"). The data needs it so: some factions name themselves enemies to set their
+  members on each other (DA02CultistsAreEnemies, WE19BanditFaction; none Special Combat), and
+  MQ101's TemporaryFriendsFaction, its own friend while the opening's Imperials and
+  Stormcloaks walk Helgen together, is set neutral to itself at stage 270 (SetEnemy(itself,
+  true, true)) so that Ralof and the keep's Imperials fight; as allies by the shared faction,
+  Ralof stood by while both soldiers fought the player alone. `attacksOnSight(aggression, reaction)`: aggressive actors attack enemies, very
   aggressive neutrals too, frenzied anyone. TODO(M13): the engine's precedence.
 - Relationships (RELA) and their association types (ASTP: HasAssociationType,
   HasFamilyRelationship by ASTP DATA 0x1, HasParentRelationship).

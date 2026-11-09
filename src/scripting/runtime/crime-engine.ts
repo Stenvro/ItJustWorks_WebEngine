@@ -1543,9 +1543,10 @@ export class CrimeEngine {
 
   /**
    * How an actor regards another (src/gameplay/factions.ts reaction): their factions' combat
-   * reactions, a shared faction, their relationship, frenzy, and crime (a faction that made the
-   * player its enemy, guards to attack them: guardResponse). The combat AI (5.2) asks this;
-   * `alarmed`: the actor learned of a crime of the other's just now.
+   * reactions, their relationship, frenzy, and crime (a faction that made the player its enemy,
+   * guards to attack them: guardResponse). A faction both are in counts by its reaction to
+   * itself, as any other pair of their factions: membership alone makes no allies. The combat
+   * AI (5.2) asks this; `alarmed`: the actor learned of a crime of the other's just now.
    */
   async reaction(actor: number, other: number, alarmed = false): Promise<Reaction> {
     const runtime = this.#runtime;
@@ -1554,16 +1555,8 @@ export class CrimeEngine {
     const mine = await actors.factionsOf(actor);
     const theirs = await actors.factionsOf(other);
     const factionReactions: number[] = [];
-    let sameFaction = false;
     for (const [faction, rank] of mine) {
       if (rank < 0) continue;
-      const record = await actors.faction(faction);
-      if (
-        (theirs.get(faction) ?? -1) >= 0 &&
-        ((record?.flags ?? 0) & CrimeFlag.specialCombat) === 0
-      ) {
-        sameFaction = true;
-      }
       for (const [otherFaction, otherRank] of theirs) {
         if (otherRank < 0) continue;
         const value = await actors.factionReaction(faction, otherFaction);
@@ -1573,7 +1566,6 @@ export class CrimeEngine {
     const aggression = (await actors.value(actor, ActorValue.aggression)).current;
     return regard({
       factionReactions,
-      sameFaction,
       relationshipRank: await actors.relationshipRank(actor, other),
       frenzied: aggression >= 3,
       crimeHostile: other === PLAYER_REF && (await this.#crimeHostile(actor, mine, alarmed)),

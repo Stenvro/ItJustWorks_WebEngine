@@ -78,6 +78,17 @@ describe('strikes', () => {
       [2, 1],
     );
   });
+
+  it('hit the one aimed at where they reach it, before one nearer at the side', () => {
+    // The officer swings at the player dead ahead; the soldier stands nearer, 56° off (MQ101's keep).
+    const player = target(0x14, 0, 102);
+    const soldier = target(0xff00086d, 52, 35);
+    expect(strikeTargets(strike, [soldier, player], false, 0x14)[0]?.target.reference).toBe(0x14);
+    // The one aimed at out of reach: the nearest it reaches.
+    expect(
+      strikeTargets(strike, [soldier, target(0x14, 0, 300)], false, 0x14)[0]?.target.reference,
+    ).toBe(0xff00086d);
+  });
 });
 
 describe('blocks and hit directions', () => {

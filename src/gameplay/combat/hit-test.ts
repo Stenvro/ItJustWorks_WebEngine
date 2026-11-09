@@ -96,20 +96,30 @@ export function strikeContact(strike: Strike, target: StrikeTarget): StrikeConta
 }
 
 /**
- * The targets a strike hits: the nearest it reaches (`all`: every one, the Sweep perk). Those
- * it is told to leave out (the attacker, the dead) are not offered.
+ * The targets a strike hits: the one it is aimed at (`aimed`: the attacker's combat target, the
+ * player's aimed actor) where it reaches it, else the nearest it reaches (`all`: every one, the
+ * Sweep perk). Those it is told to leave out (the attacker, the dead) are not offered.
+ * TODO(M13): the aimed target first is inferred, as the player's own aim keeps its current
+ * target first (observed in the original); by the nearest alone, a soldier's blow at the player
+ * dead ahead fell on its fellow soldier at its side, and Ralof's on the player beside him.
  */
 export function strikeTargets(
   strike: Strike,
   targets: Iterable<StrikeTarget>,
   all = false,
+  aimed?: number,
 ): StrikeContact[] {
   const contacts: StrikeContact[] = [];
   for (const target of targets) {
     const contact = strikeContact(strike, target);
     if (contact) contacts.push(contact);
   }
-  contacts.sort((a, b) => a.distance - b.distance || a.angle - b.angle);
+  contacts.sort(
+    (a, b) =>
+      Number(b.target.reference === aimed) - Number(a.target.reference === aimed) ||
+      a.distance - b.distance ||
+      a.angle - b.angle,
+  );
   return all ? contacts : contacts.slice(0, 1);
 }
 

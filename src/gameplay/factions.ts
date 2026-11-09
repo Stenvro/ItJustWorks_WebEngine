@@ -31,11 +31,15 @@ export interface ReactionInputs {
   readonly self?: boolean;
   /**
    * The combat reactions between their factions (each of the actor's factions towards each of
-   * the other's: scripts' SetAlly / SetEnemy first, else XNAM), CombatReaction values.
+   * the other's: scripts' SetAlly / SetEnemy first, else XNAM), CombatReaction values. A faction
+   * both are in counts by its reaction to itself, as any other pair: membership alone makes no
+   * allies. Vanilla's group factions name themselves (BanditFaction is BanditFaction's ally);
+   * some name themselves enemies to set their members on each other (DA02CultistsAreEnemies,
+   * WE19BanditFaction, none of them Special Combat), and MQ101TemporaryFriendsFaction, its own
+   * friend while the opening's Imperials and Stormcloaks must not fight, is set neutral to
+   * itself by MQ101 stage 270's SetEnemy(itself, true, true) so that the keep's two sides fight.
    */
   readonly factionReactions: readonly number[];
-  /** They share a faction that is not Special Combat (its members fight each other). */
-  readonly sameFaction: boolean;
   /** GetRelationshipRank between them. */
   readonly relationshipRank: number;
   /** The actor is frenzied (Aggression 3: Frenzy) and attacks anyone. */
@@ -57,8 +61,7 @@ export interface ReactionInputs {
  * How an actor regards another (Creation Kit: Faction "Combat Reaction", Relationship ranks;
  * CommonLibSSE Actor::GetFactionReaction): itself a friend; frenzied, a crime against them, a
  * script's combat or a relationship of enemy or worse: hostile; else its closest tie: a friend
- * (friend reaction or a relationship of friend or better), an ally (ally reaction, a shared
- * faction), hostile where a faction of its regards one of theirs as an enemy, else neutral.
+ * (friend reaction or a relationship of friend or better), an ally (ally reaction), hostile where a faction of its regards one of theirs as an enemy, else neutral.
  * TODO(M13): the engine's precedence between a faction's enmity and another's friendship.
  */
 export function reaction(inputs: ReactionInputs): Reaction {
@@ -71,7 +74,7 @@ export function reaction(inputs: ReactionInputs): Reaction {
   ) {
     return 'friend';
   }
-  if (inputs.sameFaction || inputs.factionReactions.includes(CombatReaction.ally)) return 'ally';
+  if (inputs.factionReactions.includes(CombatReaction.ally)) return 'ally';
   if (inputs.factionReactions.includes(CombatReaction.enemy)) return 'hostile';
   return 'neutral';
 }

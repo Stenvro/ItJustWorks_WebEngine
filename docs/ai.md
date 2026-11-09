@@ -3021,7 +3021,9 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   bond winning (ally, friend, enemy, neutral), the other's view where the actor's names none; a
   crime faction set as the player's enemy is an enemy faction to the player. Vanilla factions
   list themselves (BanditFaction is BanditFaction's ally): faction-mates are not allies by
-  themselves. Crime makes the player an enemy (`CrimeEngine.reaction`'s crime hostility): to
+  themselves, in crime's reactions too (MQ101's keep fight needs it: Ralof and the two Imperials
+  share MQ101TemporaryFriendsFaction, which stage 270 sets neutral to itself, and their CW NPC
+  factions are enemies; `tests/sim-helgen-keep-fight.int.test.ts`). Crime makes the player an enemy (`CrimeEngine.reaction`'s crime hostility): to
   the members of a faction set as the player's enemy, to those of a crime faction that is, to
   guards whose response to the player's bounty is to attack (`guardResponse`), and to the others
   of a crime faction that attacks rather than arrests (soldiers) once alarmed by a bounty

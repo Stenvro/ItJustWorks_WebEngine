@@ -8,7 +8,7 @@ import {
   RelationshipRank,
 } from './factions.ts';
 
-const none = { factionReactions: [], sameFaction: false, relationshipRank: 0 };
+const none = { factionReactions: [], relationshipRank: 0 };
 
 describe('reactions', () => {
   it('are neutral between strangers, a friend to oneself', () => {
@@ -24,7 +24,11 @@ describe('reactions', () => {
     expect(
       reaction({ ...none, factionReactions: [CombatReaction.enemy, CombatReaction.ally] }),
     ).toBe('ally');
-    expect(reaction({ ...none, sameFaction: true })).toBe('ally');
+    // A faction both are in counts by its reaction to itself: one set neutral to itself (MQ101's
+    // TemporaryFriendsFaction from stage 270) leaves another pair's enmity to decide.
+    expect(
+      reaction({ ...none, factionReactions: [CombatReaction.neutral, CombatReaction.enemy] }),
+    ).toBe('hostile');
   });
 
   it('follow the relationship: friends and better are friends, enemies hostile', () => {
@@ -35,7 +39,7 @@ describe('reactions', () => {
     expect(
       reaction({
         ...none,
-        sameFaction: true,
+        factionReactions: [CombatReaction.ally],
         relationshipRank: RelationshipRank.archnemesis,
       }),
     ).toBe('hostile');

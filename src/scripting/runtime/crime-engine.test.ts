@@ -20,6 +20,8 @@ const FRIEND = 0x204;
 /** Two guards of Whiterun's faction: allies. */
 const GUARD = 0x205;
 const OTHER_GUARD = 0x206;
+/** The guards' side (CWImperialFaction), its own ally. */
+const GUARD_SIDE = 0x2bf9a;
 /** A chest Whiterun owns. */
 const CHEST = 0x400;
 
@@ -77,11 +79,21 @@ function engine(): { crime: CrimeEngine; state: GameState; events: StoryEventDat
       isDead: (actor: number) => Promise.resolve(state.actors.get(actor)?.dead === true),
       faction: (formId: number) =>
         Promise.resolve(formId === WHITERUN || formId === RIFT ? hold(formId) : undefined),
+      // The guards are allies by a faction that names itself its ally (as CWImperialFaction
+      // does): sharing Whiterun's crime faction, which names no reaction to itself, makes none.
       factionsOf: (actor: number) =>
         Promise.resolve(
-          new Map<number, number>(actor === GUARD || actor === OTHER_GUARD ? [[WHITERUN, 0]] : []),
+          new Map<number, number>(
+            actor === GUARD || actor === OTHER_GUARD
+              ? [
+                  [WHITERUN, 0],
+                  [GUARD_SIDE, 0],
+                ]
+              : [],
+          ),
         ),
-      factionReaction: () => Promise.resolve(undefined),
+      factionReaction: (faction: number, other: number) =>
+        Promise.resolve(faction === GUARD_SIDE && other === GUARD_SIDE ? 2 : undefined),
       value: () => Promise.resolve({ base: 0, max: 0, current: 0 }),
       info: () => Promise.resolve(undefined),
       factionRank: () => Promise.resolve(-2),
