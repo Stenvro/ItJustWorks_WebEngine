@@ -462,7 +462,9 @@ OnDeath still to come: docs/animation.md, "Dying, then dead") are kept too
 (`RuntimeSave.engines.dying`: [actor, killer, 0 for none]); the load sends their OnDeath as it
 ends (dead from the load: inferred, TODO(M13)), so a quest whose alias's OnDeath sets a stage
 does not stick on a save made in the 2 s after the kill. Test: actor-engine.test.ts "keeps a
-save made while it dies".
+save made while it dies". An imported `.ess` gives its actors saved in life state 1 the same
+way (`importEss`: [actor, 0], no killer taken, TODO(M13)). Test: ess-import.test.ts "send the
+OnDeath of an actor saved dying".
 
 An imported .ess keeps each graph by names instead (`ActorGraphState.named`, `SavedGraph.named`:
 `NamedGraphState`, src/animation/named-graph-state.ts; docs/formats/ess.md "Animation

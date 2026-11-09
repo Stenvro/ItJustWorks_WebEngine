@@ -31,9 +31,14 @@ const DAWNGUARD_FORM = 0x000d62;
 const COMPANIONS = 0x48362;
 const ESSENTIAL_NPC = 0x2bfa7;
 
-/** An actor's own data without an AI process: 25 health damage, Two-handed (7) at 35. */
-function actorData(w: EssWriter): EssWriter {
-  w.u8(0).bytes(new Uint8Array(52)).refId(0, 0).bytes(new Uint8Array(18)).refId(0, 0).u8(0);
+/**
+ * An actor's own data without an AI process: 25 health damage, Two-handed (7) at 35; its life
+ * state (the fifth state byte) `life`.
+ */
+function actorData(w: EssWriter, life = 0): EssWriter {
+  const stateBits = new Uint8Array(18);
+  stateBits[4] = life;
+  w.u8(0).bytes(new Uint8Array(52)).refId(0, 0).bytes(stateBits).refId(0, 0).u8(0);
   for (let i = 0; i < 5; i++) w.refId(0, 0);
   w.u32(3).f32(0).f32(0).f32(-25);
   for (let i = 0; i < 3; i++) w.u32(3).f32(0).f32(0).f32(0);
@@ -731,6 +736,49 @@ describe('the global data tables of controls, references and sky cells', () => {
     for (const type of [8, 100, 102, 105, 110, 113]) {
       expect(imported.skipped).not.toContain(`global data ${String(type)}`);
     }
+  });
+
+  it('send the OnDeath of an actor saved dying as the load ends, none for the dead', () => {
+    const DYING = 0x1c1b2;
+    const flags = ChangeRefr.moved | ChangeRefr.lifeState;
+    /** An NPC in Breezehome, no AI process, no extras: its life state `life`. */
+    const actor = (life: number): Uint8Array =>
+      actorData(
+        new EssWriter()
+          .refId(1, BREEZEHOME)
+          .f32(10)
+          .f32(20)
+          .f32(30)
+          .f32(0)
+          .f32(0)
+          .f32(1)
+          .u32(0xffffffff)
+          .u32(0),
+        life,
+      ).done();
+    const bytes = writeSyntheticEss({
+      playerName: 'Dragonborn',
+      playerLevel: 1,
+      location: 'Breezehome',
+      plugins: ['Skyrim.esm'],
+      globalData1: [],
+      globalData2: [],
+      globalData3: [],
+      changeForms: [
+        { refId: [1, 0x14], type: 1, flags: ChangeRefr.moved, data: playerInBreezehome() },
+        // Life state 1 (dying) and 2 (dead).
+        { refId: [1, DYING], type: 1, flags, data: actor(1) },
+        { refId: [1, DEAD], type: 1, flags, data: actor(2) },
+      ],
+      formIds: [],
+    });
+    const imported = importEss(readEss(bytes), world, { name: 'D', number: 1, now: 0 });
+    const runtime = imported.save.runtime;
+    const state = runtime.state as unknown as GameState;
+    expect(state.actors.get(DYING)?.dead).toBe(true);
+    expect(state.actors.get(DEAD)?.dead).toBe(true);
+    // As our own save's dying (ActorEngine.dyingSaveData): the load sends its OnDeath.
+    expect(runtime.engines?.dying).toEqual([[DYING, 0]]);
   });
 
   it("keep the created objects, a cell's Warn To Leave and the file name's character", () => {

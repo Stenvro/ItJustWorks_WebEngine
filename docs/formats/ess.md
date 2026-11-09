@@ -618,7 +618,10 @@ ess)` reads those places ahead);
 - books read and locations cleared; infos said (their Say Once marks);
 - actors' life state, the fifth of their saved state bytes (CommonLibSSE's ACTOR_LIFE_STATE: 2
   on the opening's executed and killed, 0 on the living; 6 restrained, 3 unconscious): dead,
-  restrained, unconscious;
+  restrained, unconscious; one saved dying (1) is dead and kept as our own save keeps the dying
+  (`RuntimeSave.engines.dying`), so its scripts hear the OnDeath it was still waiting for as the
+  load ends (docs/formats/save.md); its killer is not taken (where the save keeps it is not
+  known: none, TODO(M13));
 - locks (the Lock extra: level, flags with bit 0 locked, key): the level and whether locked;
 - the scenes playing (SCEN): the first state word is the phase (−1: not begun, a start
   waiting); each action's last two bytes are running and done (package actions that run on
