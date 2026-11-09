@@ -13,6 +13,7 @@ import {
   type PackageBody,
   type PackageMind,
   type PackagePlace,
+  type SandboxSpot,
   type SavedPackage,
 } from '../ai/package-runtime.ts';
 import {
@@ -1318,9 +1319,23 @@ export class ActorAi {
       },
       placement: placementOf,
       linked: async (reference, keyword) => runtime()?.linkedReference(reference, keyword),
-      around: (center, radius, actor) => {
+      around: async (center, radius, actor, space) => {
         const flags = staged(actor)?.placed.look.raceFlags ?? 0;
-        return this.#furniture.spots(center, radius, (flags & RaceFlag.child) !== 0, actor);
+        const spots = await this.#furniture.spots(
+          center,
+          radius,
+          (flags & RaceFlag.child) !== 0,
+          actor,
+        );
+        if (!space) return spots;
+        // Only those of the place's own cell or worldspace: the loaded area's furniture near
+        // the same coordinates in another interior is no spot of the place.
+        const kept: SandboxSpot[] = [];
+        for (const spot of spots) {
+          const at = await placementOf(spot.reference);
+          if (!at || sameSpace(at.space, space)) kept.push(spot);
+        }
+        return kept;
       },
       idleMarker: async (reference) => {
         const scripts = runtime();
