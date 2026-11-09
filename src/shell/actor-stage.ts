@@ -58,7 +58,7 @@ import type { Terminal } from './terminal.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { inwardOnNavmesh, type NavmeshSet } from '../ai/pathfinding.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
-import { FledThroughDoors } from '../ai/fled-through-doors.ts';
+import type { FledFlights } from '../ai/fled-through-doors.ts';
 import {
   processLevel,
   processListsBudget,
@@ -1476,10 +1476,14 @@ export class ActorStage {
     return true;
   }
 
-  /** The fights of actors that fled through a load door, carried to the other side. */
-  readonly #fled = new FledThroughDoors();
-  /** Those whose fight has been started again, waiting for it to take hold. */
-  readonly #fledStarting = new Set<number>();
+  /**
+   * The fights of actors that fled through a load door, carried to the other side. The game's,
+   * not this stage's: a change of cell (which clears the stage) keeps them, and they reach the
+   * other viewer's stage; a load or a New Game drops them (GameSession.resetStates).
+   */
+  get #fled(): FledFlights {
+    return this.#session.fledFlights;
+  }
 
   /**
    * A fled actor placed again with its enemy here (the player followed it through, or the other
@@ -1488,20 +1492,7 @@ export class ActorStage {
   #resumeFled(seconds: number): void {
     const present = (reference: number): boolean =>
       reference === PLAYER_REF || this.#actors.get(reference)?.dead === false;
-    for (const actor of this.#fledStarting) {
-      if (!this.#fled.carries(actor)) this.#fledStarting.delete(actor);
-    }
-    for (const due of this.#fled.update(seconds, present)) {
-      if (this.combat.targetOf(due.actor) !== due.enemy) {
-        if (this.#fledStarting.has(due.actor)) continue;
-        this.#fledStarting.add(due.actor);
-        this.combat.startCombat(due.actor, due.enemy, { modifier: due.modifier });
-      }
-      if (this.combat.resumeFlight(due.actor, due)) {
-        this.#fled.taken(due.actor);
-        this.#fledStarting.delete(due.actor);
-      }
-    }
+    this.#fled.update(seconds, present, this.combat);
   }
 
   /**

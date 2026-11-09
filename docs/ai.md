@@ -2939,7 +2939,10 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   it came out of alone as the one it came by (fCombatFleeLastDoorRestrictTime,
   fCombatFleeUseDoorRestrictTime from its passage); later its fight is over, as a group all
   fleeing gives up a lost target (inferred, TODO(M13): the original's handling of a fight whose
-  actor left the loaded area). To cover hidden from its enemy (Find Hide Cover: cover at least
+  actor left the loaded area). The carried fights are the game's (`GameSession.fledFlights`), not
+  a stage's: a change of cell keeps them and they reach the other viewer's stage (an interior
+  left for the exterior), while a load or a New Game (`GameSession.resetStates`) drops them, so
+  no fight of the game left is forced on the one loaded. To cover hidden from its enemy (Find Hide Cover: cover at least
   its crouched height, no ledge) at least fCombatFleeCoverMinDistance from it within
   fCombatFleeCoverSearchRadius, where it hides (Hide Parallel: Track Target, Turn Around, the Hide
   Selector with Boost Confidence last): down, its back to the enemy, weighing each half second:

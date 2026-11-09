@@ -4,6 +4,7 @@
 
 import { loadGameScripts, type GameSave } from '../save/game-save.ts';
 import { OffStageActors, WorldRestore } from '../save/world-save.ts';
+import { FledFlights } from '../ai/fled-through-doors.ts';
 import type { SaveHeader } from '../save/save-codec.ts';
 import { loadRouteMap } from '../ai/route-map.ts';
 import type { Space } from '../ai/package-start.ts';
@@ -314,6 +315,12 @@ export class GameSession {
   restoring: WorldRestore | undefined;
   /** What a save keeps of the actors that left the stage during play. */
   readonly offStage = new OffStageActors();
+  /**
+   * The fights of actors that fled through a load door, carried to the other side (whichever
+   * viewer's stage it is on). They belong to the game being played: a load or a New Game
+   * (resetStates) drops them, while a change of cell in play keeps them.
+   */
+  readonly fledFlights = new FledFlights();
   /** The scripts while their new game starts, and what they are doing (dev checks). */
   scriptsStarting: ScriptRuntime | undefined;
   scriptsProgress = '';
@@ -1272,6 +1279,7 @@ export class GameSession {
     const world = this.#pendingLoad?.save.world;
     this.restoring = world && new WorldRestore(world);
     this.offStage.clear();
+    this.fledFlights.clear();
     if (!this.#voices)
       void this.sounds().then((sounds) => {
         sounds.globals = undefined;

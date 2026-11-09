@@ -91,3 +91,56 @@ export class FledThroughDoors {
     this.#fled.clear();
   }
 }
+
+/** The fights a fled actor's flight is taken up in (src/shell/actor-combat.ts). */
+export interface FledCombat {
+  targetOf(actor: number): number | undefined;
+  startCombat(actor: number, target: number, options: { modifier?: number | undefined }): void;
+  /** Its flight goes on; false while its fight has not taken hold yet. */
+  resumeFlight(actor: number, fight: FledFightDue): boolean;
+}
+
+/**
+ * The fled actors' fights and their taking up: each frame a fled actor placed again with its
+ * enemy here has its fight started again, then flees on once that fight took hold. All of it
+ * belongs to the game being played: a load or a New Game drops it (`clear`), so no fight carried
+ * from the game that was left is forced on the one loaded.
+ */
+export class FledFlights {
+  readonly #fled: FledThroughDoors;
+  /** Those whose fight has been started again, waiting for it to take hold. */
+  readonly #starting = new Set<number>();
+
+  constructor(fled = new FledThroughDoors()) {
+    this.#fled = fled;
+  }
+
+  /** An actor fled through a door: its fight goes with it. */
+  went(actor: number, fight: FledFight): void {
+    this.#fled.went(actor, fight);
+  }
+
+  /** One frame (seconds): the fights whose actor and enemy are both here are taken up. */
+  update(seconds: number, present: (reference: number) => boolean, combat: FledCombat): void {
+    for (const actor of this.#starting) {
+      if (!this.#fled.carries(actor)) this.#starting.delete(actor);
+    }
+    for (const due of this.#fled.update(seconds, present)) {
+      if (combat.targetOf(due.actor) !== due.enemy) {
+        if (this.#starting.has(due.actor)) continue;
+        this.#starting.add(due.actor);
+        combat.startCombat(due.actor, due.enemy, { modifier: due.modifier });
+      }
+      if (combat.resumeFlight(due.actor, due)) {
+        this.#fled.taken(due.actor);
+        this.#starting.delete(due.actor);
+      }
+    }
+  }
+
+  /** The game was left (a load, a New Game, the view closed): every carried fight is dropped. */
+  clear(): void {
+    this.#fled.clear();
+    this.#starting.clear();
+  }
+}
