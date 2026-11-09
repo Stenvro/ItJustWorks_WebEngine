@@ -119,8 +119,8 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   of its references that are keyframed, and every moving body of a reference flagged "Don't
   Havok Settle", are held: made keyframed with no speed, then given back their motion type and
   any speed they had. Ours settles over the first fWarmStartMaxTime of play instead (above): our
-  deactivation leaves what settles be until then (Rapier still sleeps a body at rest by its speed)
-  and leaves what still moves at its end moving. TODO(M13): the settling at once, and the
+  deactivation leaves what settles be until then (Rapier's own sleeping still puts a settling
+  body to sleep once it has rested a second by the rule below, `#holdAwake`) and leaves what still moves at its end moving. TODO(M13): the settling at once, and the
   deactivation at its end: putting to sleep what still moves at the 4 s of `tools/settle-audit.ts` took
   the objects of the interiors that go through what they lie on from 92 to 159 (a sleeping body's
   contacts drop while what lies on it still moves, as under "Deactivation by island").
@@ -948,7 +948,18 @@ checked every quarter second, within 0.02 units and 0.05 radians; TODO(M13): how
 runs its two checks and for how many frames a body must pass them are not read). Before that,
 Havok's solver slows a slow body down (solver deactivation, above). Rapier sleeps bodies by their
 speed alone, so a ragdoll whose limbs shook against a slope or a rock never slept (the Helgen
-skeleton flipped its vertical speed 12–31 times a second for half a minute). Also behind the
+skeleton flipped its vertical speed 12–31 times a second for half a minute), and a body sliding
+or turning slowly (under 0.1 units or about 0.1 radians a second) was put to sleep after half a
+second, still moving. Rapier's sleeping is held to the rule (`PhysicsWorld.#holdAwake`): each
+check starts Rapier's half-second timer over for every body not yet inactive for a second, and
+a body Rapier puts to sleep before the rule would (one woken between checks) is woken again
+with its speed, with what it touches (`tests/conformance/physics/deactivation.test.ts`).
+Settling Whiterun's 27 interiors (`node tools/settle-audit.ts whiterun`) leaves the same 2
+fallen and 17 dropped off; a settling cell steps longer with more bodies awake, as they now
+rest a second before they sleep, not half of one (mean step over the first 4 s, Jorrvaskr
+2.4 → 3.6 ms, Dragonsreach 4.8 → 6.1 ms, the Bannered Mare 2.5 → 3.7 ms; from 6 s on Jorrvaskr
+and the Bannered Mare as before, while Dragonsreach keeps 11 bodies awake past 10 s, all asleep
+by 20 s: 0.4 → 0.8 ms over 10–20 s). Also behind the
 shaking, and fixed: the landscape is solid from above only (`addMesh` with `ground`: Rapier's
 fixed internal edges, which drop contacts from below a triangle and smooth the edges between
 them), so a foot that went under the ground is no longer pushed further down while its joint
