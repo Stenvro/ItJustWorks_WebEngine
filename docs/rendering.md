@@ -1780,8 +1780,9 @@ What it was, and what changed:
   Meshes, heightfields and compounds are lent as the hulls were.
 - **Path searches over frames** (`PathSearch`, docs/ai.md, "Paths"): a search for a goal off the
   actor's island takes the whole island, 12,000 triangles round Helgen, 10–25 ms in one frame
-  (the soldiers going for Alduin on the tower, five to ten such searches a minute). A travel's
-  search now takes at most 2,000 nodes of a frame; the search itself is cheaper too (its nodes
+  (the soldiers going for Alduin on the tower, five to ten such searches a minute). The searches
+  now take about 2,000 nodes of a frame, those waiting longest first (a search begun takes at
+  least 256 in its first frame); the search itself is cheaper too (its nodes
   by number, a triangle's corners read once for its edges, a cut triangle's corners only when it
   is first cut, `sqrt` for `hypot`).
 - **Smaller ones:** a behavior reference's file worked out once a name (`ClipHost.behavior`: it

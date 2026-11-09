@@ -164,15 +164,22 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   (`ActorDoors`). A goal that cannot be
   reached (another island, past 20,000 triangles) gives the path to where the search came
   nearest to it.
-- **Searches over frames** (`PathSearch`, `ActorMovers`): a travel's search takes at most
-  2,000 nodes of a frame (about 2 ms), shared by the actors in turn; most end within a few dozen
-  and give their path in the frame they began. One whose goal is off the actor's island takes
-  the whole island first (12,000 triangles round Helgen, 10–25 ms: the soldiers going for Alduin
-  on the tower as he attacks) and goes on in the next frames, its actor going on as it went
-  meanwhile; it held one frame each time before. Without frames to keep smooth (the headless
-  simulation, a loading screen) a search ends at once, as before. Inferred from the original's
-  paths being searched on a pathing thread of their own while the actor waits; TODO(M13): its
-  budget and what an actor does while waiting.
+- **Searches over frames** (`PathSearch`, `ActorMovers`): the actors' searches take about
+  2,000 nodes of a frame (about 2 ms); most end within a few dozen and give their path in the
+  frame they began. One whose goal is off the actor's island takes the whole island first (12,000
+  triangles round Helgen, 10–25 ms: the soldiers going for Alduin on the tower as he attacks) and
+  goes on in the next frames, its actor going on as it went meanwhile (its last request kept); it
+  held one frame each time before. The frame's nodes go first to the searches going on from
+  earlier frames, the one waiting longest first, so each ends in turn; a search begun this frame
+  takes at least 256 nodes whatever the others took, so a short way never waits behind another
+  actor's long search, and a search begun again waits behind those already going on. While one
+  goes on it keeps what it began with: obstacles that come or go meanwhile are looked at against
+  its path once it ends (searched again if they touch it), and a moving destination is followed
+  on once it ends (the travel's destination is always the one its path was searched to). Without
+  frames to keep smooth (the headless simulation, a loading screen) a search ends at once, as
+  before. Inferred from the original searching its paths on a pathing thread of their own, a path
+  coming some frames after it was asked for; TODO(M13): its budget and order, and what an actor
+  does until its path comes (ours: it goes on as it went).
 - **Off the navmesh** (`ActorMovers`): a travel from a point off the navmeshes begins at their
   nearest point within 512 units. One to a point off them (the player by a door stands a few
   units past the navmesh's edge) ends at their nearest point if that is within the travel's
