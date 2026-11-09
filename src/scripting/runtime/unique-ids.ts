@@ -1,14 +1,16 @@
 // Items' unique ids (the original's ExtraUniqueID, CommonLibSSE): an item in an inventory that
 // has a reference of its own (an item with scripts, held by an alias, made by a script or taken
 // from the world: ReferenceState.container) has an id in that inventory, with the inventory's
-// holder; the ids of an inventory count up from 1 and are 16-bit (ExtraUniqueID.uniqueID and
-// TESUniqueIDChangeEvent's ids are std::uint16_t). As such an item goes into another inventory
-// it gets an id there, and the engine tells the change (TESUniqueIDChangeEvent: the holders and
-// ids before and after, and the item's base); out into the world it has none, and one that
-// leaves the game (ScriptRuntime.removeFromGame) holds none any more.
-// TODO(M13): inferred: which items the original gives an id, that a holder's ids count on from
-// the highest it holds (the original keeps a counter per inventory) and take the lowest free
-// one past 0xFFFF, and that TESUniqueIDChangeEvent's two base ids are the holders, are not read.
+// holder; the ids are 16-bit (ExtraUniqueID.uniqueID and TESUniqueIDChangeEvent's ids are
+// std::uint16_t). As such an item goes into another inventory it gets an id there, and the
+// engine tells the change (TESUniqueIDChangeEvent: the holders and ids before and after, and the
+// item's base); out into the world it has none, and one that leaves the game
+// (ScriptRuntime.removeFromGame) holds none any more.
+// TODO(M13): inferred, none of it read or observed in the original: which items get an id; that
+// the ids are per inventory and count up from 1, on from the highest the holder's items hold
+// (how the original picks the next id is not known), the lowest free one past 0xFFFF; that
+// TESUniqueIDChangeEvent's two base ids are the holders; and that its objectID is the item's
+// base (the payload names the field only).
 // Platform-independent.
 
 import type { ScriptRuntime } from './runtime.ts';

@@ -448,6 +448,10 @@ describe('the event sources and the hub', () => {
     let resets: number[] = [];
     /** An iron dagger the player dropped in the mine, and the forms deleted as it reset. */
     let dropped = 0;
+    /** A food barrel there (BarrelFood01: Respawns) and a dagger the player put in it. */
+    const FOOD_BARREL = 0x62210;
+    let stored = 0;
+    let storedAfterReset: Record<string, unknown> = {};
     let deletedByReset: number[] = [];
     let trapHits: GameEvents['trapHit'][] = [];
     let loads: GameEvents['loadGame'][] = [];
@@ -464,6 +468,10 @@ describe('the event sources and the hub', () => {
       await sim.drop(dagger);
       await sim.step(1);
       dropped = [...sim.runtime.state.created.keys()].find((ref) => !createdBefore.has(ref)) ?? 0;
+      // Another one, made by the game, put in the food barrel (a respawning container).
+      stored = await sim.place(dagger, PLAYER_REF);
+      await sim.runtime.addItem(FOOD_BARREL, sim.runtime.referenceHandle(stored), 1, true);
+      await sim.step(0.1);
       await sim.openInterior(INN);
       await sim.step(1);
       sim.setDay(Math.floor(sim.runtime.state.gameDaysPassed) + 11);
@@ -479,6 +487,13 @@ describe('the event sources and the hub', () => {
         .events('formDelete')
         .slice(deleteSince)
         .map((event) => event.form);
+      const storedEntry = sim.runtime.state.references.get(stored);
+      storedAfterReset = {
+        deleted: storedEntry?.deleted,
+        container: storedEntry?.container,
+        uniqueId: storedEntry?.uniqueId,
+        daggersInBarrel: await sim.runtime.itemCount(FOOD_BARREL, dagger),
+      };
       // The spear trap in Mercer Frey's house, stood on.
       await sim.openInterior(MERCER_FREY_HOUSE);
       await sim.step(1);
@@ -507,6 +522,19 @@ describe('the event sources and the hub', () => {
       // with it, told once.
       expect(dropped).toBeGreaterThan(0);
       expect(deletedByReset.filter((form) => form === dropped)).toEqual([dropped]);
+    });
+
+    it('TESFormDeleteEvent: what a respawning container held goes with its reset, told deleted  [CommonLibSSE]', () => {
+      // The dagger put in the food barrel: the barrel's inventory is drawn anew as the mine
+      // resets, and the dagger's reference leaves the game with it (no ghost held, no id kept).
+      expect(stored).toBeGreaterThan(0);
+      expect(deletedByReset.filter((form) => form === stored)).toEqual([stored]);
+      expect(storedAfterReset).toEqual({
+        deleted: true,
+        container: undefined,
+        uniqueId: undefined,
+        daggersInBarrel: 0,
+      });
     });
 
     it('TESTrapHitEvent: told as a trap touches something  [CommonLibSSE]', () => {

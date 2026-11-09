@@ -1694,7 +1694,8 @@ export class ScriptRuntime implements VmHost {
 
   /**
    * A reference leaves the game for good, whatever removes it (a script's Delete, a cell's
-   * reset of what was dropped there, a restock or a RemoveItem with nowhere to go, a summon's
+   * reset of what was dropped there or of what a respawning container or actor held, a restock,
+   * ObjectReference.Reset or a RemoveItem with nowhere to go, a summon's
    * end, a hazard's, the oldest stuck arrow): it takes the deleted flag and no longer holds an
    * inventory's unique id (unique-ids.ts). A created reference's form goes with it
    * (TESFormDeleteEvent); a plugin's reference only takes the flag, its form stays. Whether it
@@ -2968,11 +2969,13 @@ export class ScriptRuntime implements VmHost {
     return formId;
   }
 
+  /**
+   * ObjectReference.Reset: the reference is as its records make it again, what it held with it
+   * (#emptyHolder: the item references in it leave the game as a cell reset's do).
+   */
   async resetReference(reference: number, target: number | undefined): Promise<void> {
     this.state.references.delete(reference);
-    this.state.inventories.delete(reference);
-    this.crafting.clear(reference);
-    this.#seeded.delete(reference);
+    this.#emptyHolder(reference);
     this.vm.reset(this.referenceHandle(reference));
     if (target !== undefined) {
       const at = await this.placement(target);
@@ -3387,14 +3390,28 @@ export class ScriptRuntime implements VmHost {
     this.actors.forget(reference);
   }
 
-  /** What a container holds goes: its items are its records' again as it is next read. */
+  /**
+   * What a container holds goes: its items are its records' again as it is next read. The item
+   * references it holds leave the game (removeFromGame: a created one is told deleted, its unique
+   * id goes), but one a quest's alias holds stays in it with its count, as a cell reset keeps a
+   * created reference an alias holds (cell-reset.ts). TODO(M13): inferred that an alias-held
+   * item outlives its holder's reset or restock; not observed in the original.
+   */
   #emptyHolder(container: number): void {
+    const kept = new Map<number, number>();
     for (const [reference, state] of this.state.references) {
-      if (state.container?.holder !== container) continue;
+      const held = state.container;
+      if (held?.holder !== container) continue;
+      if (state.deleted !== true && this.aliasesHolding(reference).length > 0) {
+        kept.set(held.base, (kept.get(held.base) ?? 0) + held.count);
+        continue;
+      }
       delete state.container;
       this.removeFromGame(reference);
     }
     this.state.inventories.delete(container);
+    // Its own items are seeded on top of these as it is next read (inventory).
+    if (kept.size > 0) this.state.inventories.set(container, kept);
     this.crafting.clear(container);
     this.crime.clearStolen(container);
     this.#seeded.delete(container);

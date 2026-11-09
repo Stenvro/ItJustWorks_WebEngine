@@ -293,9 +293,10 @@ export interface GameEvents {
   };
   /**
    * An item's unique id changed (TESUniqueIDChangeEvent): an item with a reference of its own
-   * got a new id as it went into another inventory (the original's ExtraUniqueID: an id per
-   * inventory, with the inventory's holder). The item's base, the holders before and after
-   * (undefined: none, the world) and the ids (0: none).
+   * got a new id as it went into another inventory (the original's ExtraUniqueID). The item's
+   * base, the holders before and after (undefined: none, the world) and the ids (0: none).
+   * TODO(M13): inferred (unique-ids.ts): an id per inventory, the payload's objectID as the
+   * item's base and its two base ids as the holders.
    */
   uniqueIdChange: {
     readonly item: number;

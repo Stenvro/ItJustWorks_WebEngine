@@ -893,21 +893,25 @@ TESResolveNPCTemplatesEvent and TESUniqueIDChangeEvent). Only `initScript`'s ref
   for a reference without scripts.
 - `formDelete` (TESFormDeleteEvent): a created reference that leaves the game, once, whatever
   removes it (`ScriptRuntime.removeFromGame`: a script's Delete or DeleteWhenAble, a cell reset's
-  removal of what was dropped or placed there, a merchant's restock, RemoveItem with nowhere to
-  go, a summon's or a scripted spawn's end, a hazard's end, the oldest stuck arrow); a plugin's
-  reference only takes the deleted flag. The original deletes the form once nothing holds it and
-  its VM lets go of the form's script instances; ours tells it as the reference goes and keeps
-  them.
+  removal of what was dropped or placed there, the items a respawning container or actor held as
+  its inventory is drawn anew with its cell's reset (`resetHeld`), a merchant's restock and
+  ObjectReference.Reset alike, RemoveItem with nowhere to go, a summon's or a scripted spawn's
+  end, a hazard's end, the oldest stuck arrow); a plugin's reference only takes the deleted flag.
+  An item a quest's alias holds stays in its holder through a reset or restock, with its count
+  (as a cell reset keeps a created reference an alias holds). The original deletes the form once
+  nothing holds it and its VM lets go of the form's script instances; ours tells it as the
+  reference goes and keeps them.
 - `questStageItemDone` (TESQuestStageItemDoneEvent): each log entry of a stage set whose conditions
   held, once its fragment has run (at once without one), after `questStage`.
 - `resolveNpcTemplates` (TESResolveNPCTemplatesEvent): the NPC_ placed for an actor takes a part
   from a template; once per NPC_, the first time an actor of it is made. The original's one form
   id (templateID) is taken as that NPC_, the templates' user, not one of its templates.
 - `uniqueIdChange` (TESUniqueIDChangeEvent, `unique-ids.ts`): an item with a reference of its own
-  gets an id in each inventory it goes into (the original's ExtraUniqueID, per inventory with its
-  holder; 16-bit): the holders (taken as the event's two base ids) and ids before and after. Ours
-  counts on from the highest id the holder's items hold, past 0xFFFF the lowest free one; an item
-  that left the game holds none.
+  gets an id in each inventory it goes into (the original's ExtraUniqueID, 16-bit; taken as per
+  inventory with its holder): the item's base (taken as the event's objectID), the holders (taken
+  as its two base ids) and ids before and after. Ours counts on from the highest id the holder's
+  items hold, past 0xFFFF the lowest free one (how the original picks the next id is not known);
+  an item that left the game, a reset's or restock's included, holds none.
 
 The stats' singleton sources BooksRead (the player's first read of a book, told by
 `src/shell/book-reading.ts` after `bookRead`) and ChestsLooted (the container menu's first take of
