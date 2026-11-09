@@ -746,18 +746,28 @@ times are whole game hours, 0 for never):
   that left before the zone's last reset resets as it comes back. A reset zone is levelled anew.
 - What may reset: a reference not flagged No Respawn (REFR 0x40000000); a container only if its
   base Respawns (CONT DATA 0x02), an actor only if its base Respawns (ACBS 0x08); a leveled
-  actor unless No Respawn. What a reset does: the reference's lock, open state, destruction and
-  harvest go, a container's inventory is picked anew, an object that is not persistent goes
-  back to its editor place, an actor comes back as its records make it, and the reset is told
-  (TESResetEvent: OnReset, after OnCellAttach). The engine also sets the reference's enable
-  state again: ours sets the one the plugins give it (TODO(M13): whether the engine sets the
-  initial one is not read), and the animated state it kept (`GameState.graphs`) goes. It keeps
+  actor (its base comes down through a leveled list along its templates: LvlVampire, ACBS
+  flags 0) unless No Respawn. What a reset does: the reference's lock, open state, destruction
+  and harvest go (harvested flora grows again only so: a coin purse flagged No Respawn stays
+  taken), what a container or an actor held goes with its item references, improvements and
+  stolen marks and its records' items are drawn anew (`GameState.resets` counts the reference's
+  resets and seeds its leveled lists, a leveled actor's pick too, so each reset picks anew), an
+  object that is not persistent goes back to its editor place, an actor comes back as its
+  records make it (a dead one at its editor place, persistent or not: inferred, TODO(M13)), and
+  the reset is told (TESResetEvent: OnReset, after OnCellAttach). The engine also sets the
+  reference's enable state again: ours sets the one the plugins give it (TODO(M13): whether the
+  engine sets the initial one is not read), and the animated state it kept (`GameState.graphs`)
+  goes. It keeps
   a clock of its own on each actor that its respawn waits from: ours is the actor's death, so a
   dead actor respawns only once the wait has passed since it died, also where its zone reset
   sooner (what else sets the clock is not read, TODO(M13)).
 - What the game made in the cell goes with its reset: references created there (dropped items,
   PlaceAtMe) lying in the world, unless a quest's alias holds them (TODO(M13): which created
   references the engine keeps besides).
+- The cell the player is jailed in resets as it next comes in, whatever its clocks say (the
+  original forces its detach time; ours, `CellResets.force` and `GameState.cellResetsForced`,
+  forces the reset past a zone and for a cell met the first time too: inferred, TODO(M13)), so
+  its cell doors are locked again.
 - Corpses: as a cell that left comes back, an actor that does not respawn, did not start dead
   and died more than iHoursToClearCorpses (24) hours ago is removed (disabled); two further
   checks of the engine's are not identified (a corpse a quest's alias holds is kept here).
