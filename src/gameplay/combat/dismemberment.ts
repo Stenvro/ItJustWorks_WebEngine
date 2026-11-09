@@ -114,6 +114,38 @@ export class SwingTrail {
     this.latest = time;
   }
 
+  /**
+   * Where it was at `time`, between the places around it (as far back or on as is known, the
+   * time then).
+   */
+  at(time: number): { readonly at: Vec3; readonly time: number } | undefined {
+    const known = Math.min(this.#count, SWING_SAMPLES);
+    if (known === 0) return undefined;
+    const place = (i: number): Vec3 => [
+      this.#places[i * 3] ?? 0,
+      this.#places[i * 3 + 1] ?? 0,
+      this.#places[i * 3 + 2] ?? 0,
+    ];
+    let later: number | undefined;
+    for (let back = 1; back <= known; back++) {
+      const i = (this.#count - back) % SWING_SAMPLES;
+      const t = this.#times[i] ?? 0;
+      if (t <= time) {
+        if (later === undefined) return { at: place(i), time: t };
+        const next = this.#times[later] ?? 0;
+        const share = next > t ? (time - t) / (next - t) : 0;
+        const [ax, ay, az] = place(i);
+        const [bx, by, bz] = place(later);
+        return {
+          at: [ax + (bx - ax) * share, ay + (by - ay) * share, az + (bz - az) * share],
+          time,
+        };
+      }
+      later = i;
+    }
+    return later === undefined ? undefined : { at: place(later), time: this.#times[later] ?? 0 };
+  }
+
   /** Where it was at `time` or just before; else as far back as is known. */
   before(time: number): { readonly at: Vec3; readonly time: number } | undefined {
     const known = Math.min(this.#count, SWING_SAMPLES);

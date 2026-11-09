@@ -87,17 +87,27 @@ const DECAPITATE_BLOOD_TIME = 5;
 const DISMEMBERED_LIMB_VELOCITY = 10;
 
 /**
- * A blow as it fell: the actor as last shown when its graph raised Decapitate (the update raising
- * it has not been posed yet), which the head flies from however long its cut takes (its armor's
- * models may still be read), and who struck. TODO(M13): inferred; the engine queues its cut too,
- * and whether that reads the pose of the blow or of its turn was not read. Helgen's prisoner's head
- * drops 1.7 units a frame just past the blow, which at the cut's turn was the difference between
- * clearing the basket's near rim and skipping off it.
+ * A blow as it fell: the actor as shown at the blow's moment, which the head flies from however
+ * long its cut takes (its armor's models may still be read), and who struck. The moment is the
+ * Decapitate's on the clock (its clip's annotation, GraphEvent.late), not the frame its graph
+ * raised it in: a graph far from the camera, or one the camera does not look at, runs up to
+ * fAnimInterpMaxTime ahead of the clock and raises the event that much early, and a frame at
+ * 15 a second ends up to 67 ms after it. The actor is shown as the clock reaches the moment (its
+ * pose between the two frames around it), and the killer's swing is read up to it. Before, the
+ * blow was read from the frame the graph raised it in: with the camera turned from Helgen's
+ * block the head flew from a pose and a swing up to a quarter of a second before the chop, over
+ * the basket's rim and 300 units down the street. TODO(M13): inferred; the engine queues its cut
+ * too, and whether that reads the pose of the blow or of its turn was not read.
  */
 interface Blow {
+  /** The blow's moment on the animation clock. */
   readonly time: number;
+  /** When `world` and `worlds` were shown (the clock then). */
+  shownAt: number;
   readonly world: Float32Array;
   readonly worlds: Float32Array;
+  /** The pose is the moment's (the clock reached it). */
+  settled: boolean;
   killer: number | undefined;
 }
 
@@ -137,6 +147,9 @@ export class ActorDismemberment {
   readonly #deciding = new Set<number>();
   /** Dismembered actors being dressed again as their cut limb's record says. */
   readonly #redressing = new Set<number>();
+  /** Blows whose moment the clock has not reached yet, with whom they cut. */
+  readonly #blows = new Map<Blow, number>();
+  /** The animation clock (seconds: the skeletons' and their graphs' clock). */
   #clock = 0;
   readonly #placement = new Float32Array(16);
 
@@ -159,7 +172,7 @@ export class ActorDismemberment {
    * armor for its sex is given it to wear (AddWornItem: put in its inventory and worn), its head
    * is recorded as gone, with what it wears, and it is queued for the cut.
    */
-  async decapitate(reference: number): Promise<void> {
+  async decapitate(reference: number, at?: number): Promise<void> {
     const { session } = this.#options;
     const runtime = session.scriptsReady;
     const body = this.#options.body(reference);
@@ -168,12 +181,17 @@ export class ActorDismemberment {
     // One at a time: the graph may raise it again while the armor goes on.
     if (limbGone(state.dismembered, HEAD_LIMB) || this.#deciding.has(reference)) return;
     this.#deciding.add(reference);
+    // As last shown (the update raising it has not been posed yet): settled as the clock passes
+    // its moment (#settle).
     const blow: Blow = {
-      time: this.#clock,
+      time: at !== undefined && Number.isFinite(at) ? at : this.#clock,
+      shownAt: this.#clock,
       world: new Float32Array(body.world),
       worlds: new Float32Array(body.placed.pose.worlds),
+      settled: false,
       killer: undefined,
     };
+    this.#blows.set(blow, reference);
     try {
       await this.#decapitate(reference, body, state, blow);
     } finally {
@@ -283,14 +301,26 @@ export class ActorDismemberment {
 
   // --- Every frame ---------------------------------------------------------------------------
 
-  /** The queued cuts (iActorsDismemberedPerFrame a frame); the heads follow their bodies. */
-  frame(seconds: number): void {
-    this.#clock += seconds;
+  /**
+   * The queued cuts (iActorsDismemberedPerFrame a frame, each once the clock has reached its
+   * blow); the heads follow their bodies. `clock`: the animation clock now (the skeletons'
+   * time; else it runs on by `seconds`).
+   */
+  frame(seconds: number, clock = this.#clock + seconds): void {
+    this.#clock = clock;
     this.#followSwings();
+    this.#settle();
     const ini = this.#options.session.ini;
     const perFrame = Math.max(1, ini.number('GamePlay', 'iActorsDismemberedPerFrame'));
-    for (let i = 0; i < perFrame && this.#queue.length > 0; i++) {
-      const pending = this.#queue.shift();
+    let cuts = 0;
+    for (let i = 0; i < this.#queue.length && cuts < perFrame;) {
+      const pending = this.#queue[i];
+      if (pending?.blow && !pending.blow.settled) {
+        i++;
+        continue;
+      }
+      this.#queue.splice(i, 1);
+      cuts++;
       if (pending) {
         this.#cut(pending).catch((error: unknown) => {
           this.#options.terminal.log('actor', `a decapitation: ${describe(error)}`, 'warn');
@@ -302,6 +332,34 @@ export class ActorDismemberment {
       if (!piece.collision?.placement(placement)) continue;
       multiply(placement, piece.bodyToDraw, piece.world);
       piece.motion.version++;
+    }
+  }
+
+  /**
+   * The blows whose moment the clock has reached take the pose the actor had then, between the
+   * one shown before and the one shown now; those still ahead keep the one shown now.
+   */
+  #settle(): void {
+    for (const [blow, reference] of this.#blows) {
+      const body = this.#options.body(reference);
+      const worlds = body?.placed.pose.worlds;
+      if (!body || worlds?.length !== blow.worlds.length) {
+        blow.settled = true;
+        this.#blows.delete(blow);
+        continue;
+      }
+      if (blow.time > this.#clock) {
+        blow.world.set(body.world);
+        blow.worlds.set(worlds);
+        blow.shownAt = this.#clock;
+        continue;
+      }
+      const span = this.#clock - blow.shownAt;
+      const t = span > 1e-6 ? Math.min(1, Math.max(0, (blow.time - blow.shownAt) / span)) : 1;
+      lerpInto(blow.world, body.world, t);
+      lerpInto(blow.worlds, worlds, t);
+      blow.settled = true;
+      this.#blows.delete(blow);
     }
   }
 
@@ -343,6 +401,11 @@ export class ActorDismemberment {
     this.#pieces.delete(reference);
     if (piece) this.#drop(piece);
     this.#dressing.delete(reference);
+    for (const [blow, of] of this.#blows) {
+      if (of !== reference) continue;
+      blow.settled = true;
+      this.#blows.delete(blow);
+    }
     for (let i = this.#queue.length - 1; i >= 0; i--) {
       if (this.#queue[i]?.reference === reference) this.#queue.splice(i, 1);
     }
@@ -355,6 +418,8 @@ export class ActorDismemberment {
     this.#dressing.clear();
     this.#deciding.clear();
     this.#swings.clear();
+    for (const blow of this.#blows.keys()) blow.settled = true;
+    this.#blows.clear();
   }
 
   // --- The cut -------------------------------------------------------------------------------
@@ -590,8 +655,8 @@ export class ActorDismemberment {
   #swingInto(blow: Blow | undefined): Vec3 | undefined {
     const trail = blow?.killer === undefined ? undefined : this.#swings.get(blow.killer);
     if (!blow || !trail) return undefined;
-    const to = trail.before(blow.time);
-    const from = trail.before(blow.time - SWING_SECONDS);
+    const to = trail.at(blow.time);
+    const from = trail.at(blow.time - SWING_SECONDS);
     if (!to || !from || to.time <= from.time) return undefined;
     const dt = to.time - from.time;
     return [
@@ -629,3 +694,11 @@ export class ActorDismemberment {
 
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
+
+/** `into` moved `t` of the way to `to`, value by value. */
+function lerpInto(into: Float32Array, to: Float32Array, t: number): void {
+  for (let i = 0; i < into.length; i++) {
+    const a = into[i] ?? 0;
+    into[i] = a + ((to[i] ?? 0) - a) * t;
+  }
+}

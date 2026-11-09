@@ -69,6 +69,19 @@ describe('dismemberment', () => {
     expect(trail.before(-5)?.time).toBeCloseTo(66 / 60 - 63 / 60);
   });
 
+  it('reads where a weapon was at a moment between two frames, at any frame rate', () => {
+    // The same fall at 15 frames a second: a moment between two frames is read between them.
+    const trail = new SwingTrail();
+    expect(trail.at(1)).toBeUndefined();
+    for (let frame = 0; frame <= 15; frame++) trail.record(frame / 15, [0, 0, 300 - 20 * frame]);
+    const at = trail.at(0.95);
+    expect(at?.time).toBe(0.95);
+    expect(at?.at[2]).toBeCloseTo(300 - 300 * 0.95);
+    // Past the newest or before the oldest: the place there, at its own time.
+    expect(trail.at(2)).toEqual({ at: [0, 0, 0], time: 1 });
+    expect(trail.at(-1)).toEqual({ at: [0, 0, 300], time: 0 });
+  });
+
   it('rolls a killing blow on an explodable part as the engine does', () => {
     const explodable = { flags: BodyPartFlag.explodable, explosionChance: 100 };
     // 5% × 100 explodes under 5, dismembers under 25.

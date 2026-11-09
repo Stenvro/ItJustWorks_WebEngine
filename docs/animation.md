@@ -1146,10 +1146,18 @@ up again.
 Ours: the body's instances read the cut nodes as its scene is built again (`Severing`: the
 partition rule, the head parts left out); the decapitation armor's models are put on its
 pose in place; the piece is the actor's instances skinned to the head on a still copy of the
-pose as the blow found it (the pose last shown as the graph raises Decapitate, whenever the cut
-gets its turn: inferred, TODO(M13)), drawn where the head's body (the skeleton model's head body,
+pose as the blow found it (inferred, TODO(M13)): the pose shown at the moment of the clip's
+Decapitate on the animation clock, whenever the cut gets its turn. A graph raises a clip's event
+in the update that passes it and tells how long before that update's end it fell
+(`GraphEvent.late`); a graph updated ahead of the clock (far from the camera, or behind it: up to
+fAnimInterpMaxTime, 0.25 s) raises it that much early, so the blow waits for the clock and takes
+the pose between the two frames shown around its moment. Read from the frame the graph raised it
+in, with the camera turned from Helgen's block, the head flew from a pose and a swing up to a
+quarter of a second before the chop, over the basket's rim and 300 units down the street. The
+piece is drawn where the head's body (the skeleton model's head body,
 alone) carries it; the weapon's motion is read from where the killer's weapon node was over the
-SWING_SECONDS (0.1 s) coming into the blow (`SwingTrail`; the engine reads its weapon body's
+SWING_SECONDS (0.1 s) coming into the blow's moment, between the frames it was shown in
+(`SwingTrail.at`; the engine reads its weapon body's
 velocity, and what stretch of the animation that covers was not read: TODO(M13)), the killer
 being a killmove's leader
 before the kill lands (inferred: the victim's myKiller is set by the kill), else, for an actor

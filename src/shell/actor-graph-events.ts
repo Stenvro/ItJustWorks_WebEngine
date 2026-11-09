@@ -244,9 +244,15 @@ export class ActorGraphEvents {
       void runtime?.actors.kill(source.reference, stage.combat.killerOf(source.reference));
     });
     // Decapitate (an execution's chop): the actor's head comes off
-    // (src/shell/actor-dismemberment.ts; a killmove's victim hears its killer's 2_Decapitate).
-    d.handle('DecapitateHandler', (source) => {
-      if (!source.firstPerson) void stage.dismemberment.decapitate(source.reference);
+    // (src/shell/actor-dismemberment.ts; a killmove's victim hears its killer's 2_Decapitate),
+    // at the moment its clip has it on the graph's clock.
+    d.handle('DecapitateHandler', (source, event) => {
+      if (source.firstPerson) return;
+      const time = source.skeleton.time;
+      void stage.dismemberment.decapitate(
+        source.reference,
+        time === undefined ? undefined : time - (event.late ?? 0),
+      );
     });
     // Casting: the hands' SpellFire, the voice's (shouts) and its start, interrupts.
     d.handle('LeftHandSpellFireHandler', (source) => {

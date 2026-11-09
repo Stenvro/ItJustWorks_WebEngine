@@ -21,6 +21,13 @@ export interface GraphEvent {
   readonly payload?: string;
   /** Its name as the graph has it (scripts register for these: SoundPlay.NPCGiantAttackStomp). */
   readonly text: string;
+  /**
+   * How long before the end of the graph update that raised it it fell (graph seconds): a clip's
+   * trigger or annotation passed within the update. Undefined: at the update's end. A graph
+   * updated ahead of the clock (far from the camera) raises a clip's event before the clock
+   * reaches it; the update's end less this is its moment on the graph's clock.
+   */
+  readonly late?: number;
 }
 
 /**

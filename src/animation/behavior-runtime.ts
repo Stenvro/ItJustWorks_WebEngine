@@ -1667,13 +1667,13 @@ export class BehaviorRuntime {
     return raised;
   }
 
-  #raise(event: BehaviorEvent | number, scope: Scope): void {
+  #raise(event: BehaviorEvent | number, scope: Scope, late?: number): void {
     const id = typeof event === 'number' ? event : event.id;
     const global = this.#globalEvent(id, scope);
     if (global < 0) return;
     const payload = typeof event === 'number' ? undefined : event.payload;
     this.#queue.push(payload === undefined ? { id: global } : { id: global, payload });
-    this.#emit(this.#eventNames[global] ?? '', payload);
+    this.#emit(this.#eventNames[global] ?? '', payload, late);
   }
 
   /**
@@ -1683,9 +1683,9 @@ export class BehaviorRuntime {
    * meshes\responses\actorresponse.txt names their handlers (HeadTrackingOffHandler,
    * HeadTrackingOnHandler).
    */
-  #emit(text: string, payload?: string): void {
+  #emit(text: string, payload?: string, late?: number): void {
     const event = graphEvent(text, payload);
-    this.#raised.push(event);
+    this.#raised.push(late === undefined ? event : { ...event, late });
     const key = event.name.toLowerCase();
     if (key === 'headtrackingoff') this.#headTracking = false;
     else if (key === 'headtrackingon') this.#headTracking = true;
@@ -3619,21 +3619,31 @@ export class BehaviorRuntime {
         ? time > previous || time <= state.time
         : (first ? time >= previous : time > previous) && time <= state.time;
     if (state.time === previous && !wrapped && !first) return;
+    // How long before the update's end a passed time fell (GraphEvent.late), by the share of the
+    // clip's step that came after it.
+    const advanced = wrapped ? state.time + duration - previous : state.time - previous;
+    const lateOf = (time: number): number | undefined => {
+      if (!(advanced > 1e-9) || !(dt > 0)) return undefined;
+      const after = wrapped && time > state.time ? state.time + duration - time : state.time - time;
+      const late = Math.min(dt, Math.max(0, (dt * after) / advanced));
+      return late > 0 ? late : undefined;
+    };
     // A clip does not raise an event its graph flags silent (EVENT_FLAGS.silent: the horse's,
     // troll's, vampire lord's and werewolf's SyncLeft and SyncRight annotations).
     const flags = scope.graph.eventFlags ?? [];
     for (const trigger of node.triggers ?? []) {
       const time = trigger.relativeToEndOfClip ? duration + trigger.localTime : trigger.localTime;
       if (((flags[trigger.event.id] ?? 0) & EVENT_FLAGS.silent) !== 0) continue;
-      if (passed(time)) this.#raise(trigger.event, scope);
+      if (passed(time)) this.#raise(trigger.event, scope, lateOf(time));
     }
     if (((node.flags ?? 0) & CLIP_FLAGS.dontConvertAnnotationsToTriggers) === 0) {
       for (const annotation of animation.annotations) {
-        if (!passed(annotation.time - (node.cropStart ?? 0))) continue;
+        const time = annotation.time - (node.cropStart ?? 0);
+        if (!passed(time)) continue;
         if (silentEvents(scope.graph).has(annotation.text.toLowerCase())) continue;
         // A graph declares an annotation's whole text as its event (SoundPlay.NPCCowMoo); the
         // engine hears it as tag and payload (graphEvent: AnimObjLoad.DecapitationHeadGore).
-        this.#emit(annotation.text);
+        this.#emit(annotation.text, undefined, lateOf(time));
         const id = this.#eventIndex.get(annotation.text.toLowerCase());
         if (id !== undefined) this.#queue.push({ id });
       }

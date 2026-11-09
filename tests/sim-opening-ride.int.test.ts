@@ -248,11 +248,20 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
       expect(Math.hypot(toX - fromX, toY - fromY)).toBeGreaterThan(400);
       // The first prisoner beheaded (Decapitate in his chop, AddWornItem of DecapitatedHead): his
       // head drops into the basket before the block, its flight bent down by the headsman's chop,
-      // and the armor coming in does not have him take up the battleaxe he carries.
+      // and the armor coming in does not have him take up the battleaxe he carries. The player
+      // looks away from the block meanwhile: the two graphs, behind the camera, update only every
+      // fAnimInterpMaxTime and raise the chop's Decapitate up to that much before its moment.
+      // Found 2026-11-09: the head flew from a pose and a swing read when the graph raised it,
+      // over the basket's rim and 300 units down the street.
       const stage = sim.world.stage;
-      expect(await sim.until(() => stage.dismemberment.headAt(prisoner) !== undefined, 60)).toBe(
-        true,
-      );
+      const basketAt = await sim.position(HEAD_BASKET);
+      for (let t = 0; t < 60 && stage.dismemberment.headAt(prisoner) === undefined; t += 1 / 60) {
+        const eye = sim.world.player.eye;
+        if (basketAt)
+          sim.world.look(Math.atan2(basketAt[0] - eye[0], basketAt[1] - eye[1]) + Math.PI);
+        await sim.step(1 / 60);
+      }
+      expect(stage.dismemberment.headAt(prisoner)).toBeDefined();
       // The axe is down as the head flies: the headsman's graph, updated less often for being
       // farther from the camera, hears the chop with the prisoner's and chops in step with it.
       const flying = stage.dismemberment.headAt(prisoner);

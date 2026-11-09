@@ -2961,7 +2961,7 @@ export class ActorStage {
       this.#playerDied();
     this.playerDeath.frame(frame);
     // Heads come off (the cuts queued), and those cut off follow their bodies.
-    this.dismemberment.frame(frame);
+    this.dismemberment.frame(frame, seconds);
     // The casting art follows the hands as they are posed now, and so do their props.
     this.casting.afterAnimate();
     this.animObjects.frame();
