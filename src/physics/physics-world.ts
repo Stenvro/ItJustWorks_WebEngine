@@ -2498,6 +2498,24 @@ export class PhysicsWorld {
    * layer and mass (Havok units, kg·m/s); a held body moves from now on. Fixed and keyframed
    * bodies (a living actor's, an animated object's) are not moved. Returns whether it pushed.
    */
+  /**
+   * The pose (game units) of the moving body a collider belongs to (a dynamic or keyframed
+   * one); undefined for the fixed world, or once the body is gone.
+   */
+  movingPose(
+    collider: RAPIER.Collider,
+  ): { position: Vec3; rotation: [number, number, number, number] } | undefined {
+    if (!collider.isValid()) return undefined;
+    const body = collider.parent();
+    if (!body?.isValid() || body.isFixed()) return undefined;
+    const t = body.translation();
+    const r = body.rotation();
+    return {
+      position: [t.x * HAVOK_SCALE, t.y * HAVOK_SCALE, t.z * HAVOK_SCALE],
+      rotation: [r.x, r.y, r.z, r.w],
+    };
+  }
+
   knock(
     collider: RAPIER.Collider,
     point: Vec3,

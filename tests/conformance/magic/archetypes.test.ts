@@ -24,7 +24,20 @@ import {
   TARGET_VALUES,
 } from '../../../src/gameplay/magic/effect-rules.ts';
 import { invisibilityVeil } from '../../../src/gameplay/magic/invisibility.ts';
-import { sticksAsLight } from '../../../src/gameplay/magic/projectile-flight.ts';
+import {
+  carriedByBody,
+  sticksAsLight,
+  stuckOnBody,
+  type BodyPose,
+} from '../../../src/gameplay/magic/projectile-flight.ts';
+import { Layer } from '../../../src/physics/collision-layers.ts';
+import type { PhysicsWorld } from '../../../src/physics/physics-world.ts';
+import type { Vec3 } from '../../../src/render/math.ts';
+import type { RenderPort } from '../../../src/render/render-port.ts';
+import type { GameSession } from '../../../src/shell/game-session.ts';
+import { MagicProjectiles } from '../../../src/shell/magic-projectiles.ts';
+import type { Terminal } from '../../../src/shell/terminal.ts';
+import { ProjectileType, type ProjectileRecord } from '../../../src/world/projectile-data.ts';
 import {
   telekinesisDamage,
   telekinesisDamageMult,
@@ -419,8 +432,141 @@ describe.skipIf(!hasGamedata())('Dispel and Light on actors (sim)', () => {
   }, 120_000);
 });
 
+describe('a Magelight on a moving body (inferred: carried as a stuck arrow is)', () => {
+  const CASTER = 0x1001;
+  const SPELL = 0x2001;
+  const LIGHT_EFFECT = 0x2002;
+  const MISSILE = {
+    formId: 0x3001,
+    editorId: 'MagelightProjectile',
+    flags: 0,
+    type: ProjectileType.missile,
+    gravity: 0,
+    speed: 1000,
+    range: 2000,
+    light: undefined,
+    muzzleFlashLight: undefined,
+    tracerChance: 0,
+    proximity: 0,
+    timer: 0,
+    explosion: undefined,
+    sound: undefined,
+    muzzleFlashDuration: 0,
+    fadeDuration: 0,
+    impactForce: 0,
+    countdownSound: undefined,
+    disableSound: undefined,
+    defaultWeaponSource: undefined,
+    coneSpread: 0,
+    collisionRadius: 10,
+    lifetime: 0,
+    relaunchInterval: 0,
+    decal: undefined,
+    collisionLayer: undefined,
+    model: undefined,
+    muzzleFlashModel: undefined,
+    soundLevel: 1,
+  } satisfies ProjectileRecord;
+
+  /** A Light effect's missile flying along Y and meeting a body 5 units ahead. */
+  async function struck(pose: () => BodyPose | undefined): Promise<MagicProjectiles> {
+    const item = {
+      formId: SPELL,
+      effects: [{ effect: LIGHT_EFFECT, magnitude: 0, duration: 60, area: 0, conditions: [] }],
+      delivery: 1,
+    };
+    const runtime = {
+      magic: { item: (formId: number) => Promise.resolve(formId === SPELL ? item : undefined) },
+      casting: {
+        projectile: () => Promise.resolve(MISSILE),
+        cost: () => Promise.resolve(0),
+        mainEffect: () =>
+          Promise.resolve({ formId: LIGHT_EFFECT, archetype: EffectArchetype.light, flags: 0 }),
+      },
+    };
+    const session = {
+      scriptsReady: runtime,
+      settings: () => new Promise(() => undefined),
+      model: () => Promise.resolve(undefined),
+    };
+    const collider = { parent: () => null };
+    const physics = {
+      matrix: { indexOf: () => Layer.spell },
+      raycast: (origin: Vec3, direction: Vec3, length: number) =>
+        length < 5
+          ? undefined
+          : {
+              distance: 5,
+              point: [
+                origin[0] + direction[0] * 5,
+                origin[1] + direction[1] * 5,
+                origin[2] + direction[2] * 5,
+              ],
+              normal: [0, -1, 0],
+              layer: Layer.clutter,
+              owner: { kind: 'object', reference: 0x5000 },
+              material: 0,
+              collider,
+            },
+      knock: () => false,
+      movingPose: (hit: unknown) => (hit === collider ? pose() : undefined),
+    };
+    const magic = new MagicProjectiles({
+      session: session as unknown as GameSession,
+      renderer: {} as RenderPort,
+      terminal: { log: () => undefined } as unknown as Terminal,
+      targets: () => [],
+    });
+    magic.attach(physics as unknown as PhysicsWorld);
+    await magic.restore([
+      {
+        projectile: MISSILE.formId,
+        item: SPELL,
+        via: 'spell',
+        caster: CASTER,
+        dual: false,
+        position: [0, 0, 0],
+        velocity: [0, 1000, 0],
+        traveled: 0,
+        age: 0,
+      },
+    ]);
+    magic.frame(0.05);
+    return magic;
+  }
+
+  it('is carried with the body where it struck it, turning as it turns', async () => {
+    let pose: BodyPose = { position: [0, 25, 0], rotation: [0, 0, 0, 1] };
+    const magic = await struck(() => pose);
+    expect(magic.save()).toMatchObject([{ kind: 'stuck', position: [0, 5, 0] }]);
+    // The body rolls a quarter turn about Z and slides 100 units along X.
+    pose = { position: [100, 25, 0], rotation: [0, 0, Math.SQRT1_2, Math.SQRT1_2] };
+    magic.frame(0.05);
+    const [stuck] = magic.save();
+    expect(stuck?.kind).toBe('stuck');
+    expect(stuck?.position[0]).toBeCloseTo(120, 6);
+    expect(stuck?.position[1]).toBeCloseTo(25, 6);
+    expect(stuck?.position[2]).toBeCloseTo(0, 6);
+  });
+
+  it('stays where it struck the fixed world', async () => {
+    const magic = await struck(() => undefined);
+    magic.frame(0.5);
+    expect(magic.save()).toMatchObject([{ kind: 'stuck', position: [0, 5, 0] }]);
+  });
+
+  it('keeps the point struck in the body’s own frame', () => {
+    const pose: BodyPose = { position: [10, 0, 0], rotation: [0, 0, Math.SQRT1_2, Math.SQRT1_2] };
+    const local = stuckOnBody(pose, [10, 30, 0]);
+    expect(local[0]).toBeCloseTo(30, 9);
+    expect(local[1]).toBeCloseTo(0, 9);
+    const back = carriedByBody(pose, local);
+    expect(back[0]).toBeCloseTo(10, 9);
+    expect(back[1]).toBeCloseTo(30, 9);
+  });
+});
+
 describe('what the original’s archetypes do that ours do not yet', () => {
-  it.todo('Light (Magelight): on a moving object it struck');
   it.todo('Invisibility: the refraction shimmer through the actor (ours dithers it away)');
   // Summon Creature's search when its way is blocked: src/ai/pathfinding.test.ts (summonPlace).
   it.todo('Darkness, Night Eye: the image space and fMagicNightEyeAmbient (0.75)');

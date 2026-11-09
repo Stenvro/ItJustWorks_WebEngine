@@ -614,6 +614,8 @@ the player in a runtime on the game data, `--audit` reads every record).
   lasts, else their own time once), the light of a Light effect over its shoulder (Candlelight;
   Magelight's projectile that strikes a surface stays there, its model and its effect's light,
   for the effect's duration as cast: projectile-flight.ts sticksAsLight, TODO(M13) how many stay;
+  on a moving body (dynamic or keyframed) it is carried where it struck the body, turning with
+  it (stuckOnBody; TODO(M13): inferred from a stuck arrow; a save keeps where it is, not the body);
   TODO(M13): where the engine floats it; fMagicLightForwardOffset, SideOffset and HeightOffset
   are registered but never read by the engine, original), the image-space modifier while an effect
   acts on the player (aimed at it: radial blur and depth of field that use their target), the
