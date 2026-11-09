@@ -1449,7 +1449,8 @@ const FLEE_LOOK = 0.5;
  * Flee's way: to its flee-to place, else away from what it flees by its flee distance (at least
  * the done distance); then, with something to flee from, it stays away until it is safe
  * (fleeSafe), running off again whenever it comes within the done distance of it; with it in
- * another cell or worldspace it is safe.
+ * another cell or worldspace it counts as safe at once (inferred, TODO(M13): no data or
+ * documentation gives the original's rule for a threat beyond a load door).
  */
 const fleeAway: ProcedureRunner = async (run) => {
   const settings = settingsOf(run);
@@ -1459,7 +1460,8 @@ const fleeAway: ProcedureRunner = async (run) => {
   const interior = (to?.space ?? own?.space)?.kind === 'interior';
   const done = interior ? settings.fleeDoneDistanceInterior : settings.fleeDoneDistanceExterior;
   // Where the threat is, while it is in the actor's cell or worldspace: in another (the actor
-  // through a load door, or it), the two places are no distance apart and the actor is safe.
+  // through a load door, or it) there is no distance to weigh and the actor counts as safe
+  // (inferred, TODO(M13): the original's rule for a threat in another space is not known).
   const threatAt = async (): Promise<Vec3 | undefined> => {
     if (threat === undefined) return undefined;
     const [self, other] = await Promise.all([
@@ -1491,7 +1493,7 @@ const fleeAway: ProcedureRunner = async (run) => {
   while (!run.stopped()) {
     const here = run.body.position();
     const from = await threatAt();
-    // Gone, or in another space: safe.
+    // Gone, or in another space: safe (another space: inferred, TODO(M13)).
     if (!here || !from) return 'success';
     const distance = Math.hypot(here[0] - from[0], here[1] - from[1]);
     if (fleeSafe(distance, safeFor, interior, settings)) return 'success';

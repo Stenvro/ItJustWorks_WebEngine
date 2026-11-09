@@ -3230,7 +3230,8 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   what it flees for fFleeIsSafeTimer (30 s), running off again whenever it comes nearer
   (procedure-runs.ts `fleeSafe`: the settings are read there in the original, not by the combat
   tree; the count is inferred). With what it flees in another cell or worldspace (through a load
-  door) it is safe at once: two spaces' places are no distance apart.
+  door) it counts as safe at once (inferred, TODO(M13): no data or documentation gives the
+  original's rule for a threat in another space).
 - **Searching** (`CombatSearch`): once its group has lost all its targets
   ([Combat detection](#combat-detection)) it searches (CombatToLost; GetCombatState 2): it runs
   to where the group last knew its target to be (within

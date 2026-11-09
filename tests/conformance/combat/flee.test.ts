@@ -345,8 +345,8 @@ describe('who flees (formula)', () => {
     expect(waited).toBeGreaterThanOrEqual(30);
     expect(waited).toBeLessThan(31);
 
-    // The threat in another space (the actor through a load door, or it): no distance between
-    // them, safe at once.
+    // The threat in another space (the actor through a load door, or it): no distance to weigh,
+    // safe at once (inferred, TODO(M13): the original's rule here is not known).
     here = [100, 0, 0];
     waited = 0;
     travels = [];
