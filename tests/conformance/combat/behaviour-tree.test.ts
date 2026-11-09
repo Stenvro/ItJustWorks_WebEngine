@@ -491,6 +491,62 @@ describe('the subtrees', () => {
     expect(t.tick()).toEqual(expect.arrayContaining(['reposition', 'surround']));
   });
 
+  it('Find Attack Location: Ranged Movement’s, its line of fire blocked  [original]', () => {
+    // The selector: beside it, round it, beside an ally, else the failed search noted.
+    const blocked = {
+      rightBow: true,
+      rangedMovement: true,
+      mayChooseRun: true,
+      mayFindAttackLocation: true,
+    } as const;
+    const t = fighter(blocked);
+    expect(t.tree.actionsOf('FindAttackLocation')).toEqual([
+      'findLateralAttackLocation',
+      'findAttackLocation',
+      'findAllyAttackLocation',
+      'attackLocationFailed',
+    ]);
+    t.ctx.results.findLateralAttackLocation = 'failure';
+    t.ctx.results.findAttackLocation = 'failure';
+    t.ctx.results.findAllyAttackLocation = 'failure';
+    t.ctx.results.attackLocationFailed = 'failure';
+    const log = t.tick();
+    const searched = log.filter((name) => /attackLocation/i.test(name));
+    expect(searched).toEqual([
+      'findLateralAttackLocation',
+      'findAttackLocation',
+      'findAllyAttackLocation',
+      'attackLocationFailed',
+    ]);
+    // None found: it strafes and keeps its range as before.
+    expect(log.indexOf('maintainOptimalRange')).toBeGreaterThan(
+      log.indexOf('attackLocationFailed'),
+    );
+    // A place found: it runs there; its strafing waits.
+    const going = fighter(blocked);
+    going.ctx.results.findLateralAttackLocation = 'running';
+    const run = going.tick();
+    expect(run).toContain('findLateralAttackLocation');
+    expect(run).not.toContain('maintainOptimalRange');
+    // Use Cover comes first.
+    const cover = fighter({ ...blocked, mayUseCover: true });
+    const covered = cover.tick();
+    expect(covered.indexOf('findCover')).toBeLessThan(covered.indexOf('findLateralAttackLocation'));
+    // Its line clear: no search.
+    const clear = fighter({ rightBow: true, rangedMovement: true, mayChooseRun: true });
+    expect(clear.tick()).not.toContain('findLateralAttackLocation');
+    // Close movement out of position repositions; it never looks for an attack location.
+    const close = fighter({
+      rightMelee: true,
+      mayChooseRun: true,
+      outOfPosition: true,
+      mayFindAttackLocation: true,
+    });
+    const closeLog = close.tick();
+    expect(closeLog).toContain('reposition');
+    expect(closeLog).not.toContain('findLateralAttackLocation');
+  });
+
   it('Use Cover: Find Cover, Attack From Cover, Wait Behind Cover  [original]', () => {
     // Tried first by a ranged fighter; no cover found, ranged movement runs.
     const t = fighter({

@@ -13,7 +13,7 @@
 //   weapon), dual (Prepare Dual Cast), the voice (Shout) and Use Potion.
 // - Movement, a priority list in the engine's order (the first whose condition holds runs, the
 //   higher ones stop the lower): Essential Down, Hide, Return To Combat Area, Exit Water,
-//   Acquire Weapon, Check Unreachable Target, Ranged Movement (Use Cover first), Flanking
+//   Acquire Weapon, Check Unreachable Target, Ranged Movement (Use Cover and Find Attack Location first), Flanking
 //   Movement, Close Movement (Fallback To Ranged, the chase, the Close Movement selector).
 // - Low Combat, the low process's root: Flee, Attack Low, Pursue, Search.
 //
@@ -47,6 +47,7 @@ export const COMBAT_VALUES = [
   'hasRangedOption',
   'rangedMovement',
   'mayUseCover',
+  'mayFindAttackLocation',
   'flanking',
   'farAway',
   'beyondRange',
@@ -111,6 +112,11 @@ export const COMBAT_ACTIONS = [
   'fallbackToRanged',
   // Use Cover.
   'findCover',
+  // Find Attack Location.
+  'findLateralAttackLocation',
+  'findAttackLocation',
+  'findAllyAttackLocation',
+  'attackLocationFailed',
   'waitBehindCover',
   'attackFromCover',
   // Acquire Weapon.
@@ -213,9 +219,10 @@ const test = (value: Expr): NodeSpec => ({ node: 'value', value });
 
 /**
  * The Close Movement selector (observed in the original; combat-movement.ts chooseCloseMovement): out of
- * range Advance, Surround, Circle Distant (by its chance); out of position Reposition, Surround
- * (Find Attack Location); in range Fallback or Circle (the style's chances), Backoff
- * (fCombatBackoffChance); else the Close Movement Idle. The first whose goal is found runs.
+ * range Advance, Surround, Circle Distant (by its chance); out of position (the Out of Position
+ * Movement Selector) Reposition, Surround, the Close Movement Idle; in range Fallback or Circle
+ * (the style's chances), Backoff (fCombatBackoffChance); else the Close Movement Idle. The first
+ * whose goal is found runs. (Find Attack Location is the Ranged Movement's, not this selector's.)
  */
 export const CLOSE_MOVEMENT_SELECTOR: NodeSpec = first(
   when(
@@ -227,7 +234,7 @@ export const CLOSE_MOVEMENT_SELECTOR: NodeSpec = first(
       act('closeIdle'),
     ),
   ),
-  when(v('outOfPosition'), first(link('FindAttackLocation'), act('closeIdle'))),
+  when(v('outOfPosition'), link('OutOfPositionMovement')),
   first(
     chance(v('fallbackChance'), act('fallback'), chance(v('circleChance'), act('circle'))),
     chance(v('backoffChance'), act('backoff')),
@@ -468,11 +475,14 @@ export const COMBAT_TREES: Readonly<Record<string, NodeSpec>> = {
       child: seq(act('waitBehindCover'), act('attackFromCover')),
     }),
   },
-  // Ranged Movement (its selector's first entry Use Cover, then Maintain Optimal Range: in range
-  // strafing or circling, out of range closing in).
+  // Ranged Movement (observed in the original: the In Range and Out of Range Movement Selectors
+  // both try Use Cover, then Find Attack Location, then strafing or circling, out of range
+  // Maintain Optimal Range first). Find Attack Location runs here while its line of fire is
+  // blocked (mayFindAttackLocation; inferred: TODO(M13)).
   RangedMovement: pick(
     watch(v('beyondRange'), act('chase')),
     watch(v('mayUseCover'), link('UseCover')),
+    watch(v('mayFindAttackLocation'), link('FindAttackLocation')),
     seq(
       act('trackRun'),
       ok(seq(test(v('mayChooseRun')), act('decideRun'), act('maintainOptimalRange'))),
@@ -517,7 +527,24 @@ export const COMBAT_TREES: Readonly<Record<string, NodeSpec>> = {
     choose: { data: 'maneuver' },
     children: [act('flank'), act('stalk')],
   }),
-  FindAttackLocation: first(act('reposition'), act('surround')),
+  // The Out of Position Movement Selector (observed in the original): Reposition, Surround, the
+  // Close Movement Idle.
+  OutOfPositionMovement: first(act('reposition'), act('surround'), act('closeIdle')),
+  // Find Attack Location (observed in the original: the Find Attack Location Context over its
+  // selector: Find Lateral Attack Location, Find Attack Location, Find Ally Attack Location, else
+  // Set Failed Timestamp). Each finds a place with a clear line of fire and runs there
+  // (combat-subtrees.ts). The failed search fails here, so the strafing below it runs (inferred:
+  // TODO(M13)).
+  FindAttackLocation: {
+    node: 'context',
+    context: 'findAttackLocation',
+    child: first(
+      act('findLateralAttackLocation'),
+      act('findAttackLocation'),
+      act('findAllyAttackLocation'),
+      act('attackLocationFailed'),
+    ),
+  },
 };
 
 /** The combat tree's registry: the trees above with the AI's values and actions. */

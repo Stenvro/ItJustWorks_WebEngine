@@ -2446,7 +2446,15 @@ meanwhile.
   lies within fCombatRangedProjectileFiringArc (30°) of its aim, looking again a quarter second
   later; held past fCombatRangedAttackMaximumHoldTime (10 s) it lets the bow down unloosed
   (ActionRightInterrupt: CancelBowAttack). Its facing gates only a new draw: a drawn bow waiting
-  on its archer's turn was never loosed. It changes weapons only between attacks (a sword taken
+  on its archer's turn was never loosed. Nor is it loosed down a blocked line of fire (an actor
+  it must not hit, i.e. not its target nor one of its side's targets, which it may hit: observed
+  in the original; a wall or the ground between: ours, a ray on the line-of-sight layer that
+  passes every actor's bodies, so actors are weighed by the first rule alone and it still shoots
+  past its target's foes), let down once blocked past fCombatAimProjectileBlockedTime (1.5 s); a
+  spell from a hand is not cast down a blocked line either, and its Ranged Movement looks for a
+  place with a clear one (Find Attack Location, "The combat behaviour tree"). A shout is not held
+  by a blocked line (inferred, TODO(M13): followers of the original are widely reported to shout
+  Unrelenting Force through the player; combat-tactics.ts castWaitsForLineOfFire). It changes weapons only between attacks (a sword taken
   up under a drawn bow left its graph in the bow's drawn state, whose release and cancel ask for
   a bow). A UseWeapon practice asks for each draw again every 0.25 s while the graph refuses it
   (just out of its draw, a release or a turn): MQ101's archers drew once each at Lokir, were
@@ -2925,6 +2933,31 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   and again; none found, it looks again fCombatCoverSearchFailedDelay later (TODO(M13): the
   reservation slots along an edge, an obstacle's move within fCombatCoverObstacleMovedTime, the
   sight of other enemies at 2048 units and the style value on the time scales).
+- **Find Attack Location** (observed in the original: the Find Attack Location Context over the
+  Find Attack Location Selector, whose entries are Find Lateral Attack Location, Find Attack
+  Location, Find Ally Attack Location and Set Failed Timestamp, the blackboard's
+  FindAttackLocationFailedTimeStamp; linked only from Ranged Movement's In Range and Out of
+  Range Movement Selectors, after Use Cover and before strafing or Maintain Optimal Range; the
+  close movement's Out of Position Movement Selector is Reposition, Surround, the Close Movement
+  Idle). Ours (src/ai/combat-subtrees.ts, src/shell/actor-combat-ai.ts): it runs while the
+  shooter's line of fire is blocked (each 0.25 s, both ends at three quarters of the actors'
+  heights: an actor it must not hit, else the world: a ray on the line-of-sight layer that
+  passes every actor's bodies, so neither its target's foes nor an ally whose place it asks from
+  block it); Lateral
+  offers places square to its line to the target, each fCombatFindLateralAttackLocationIntervalMin
+  .. Max (64 .. 128, at random) past the last, out to fCombatFindLateralAttackLocationDistance
+  (512) either side, nearest first, only where its way reaches over the navmeshes; Find Attack
+  Location the navmesh places its way search reaches within fCombatFindAttackLocationDistance
+  (1024), none within fCombatFindAttackLocationAvoidTargetRadius (384) of the target nor beyond
+  its weapon's range (at most 24, spaced 64 apart); Ally the places beside a member of its group
+  whose own line is clear and who stands fCombatFindAllyAttackLocationDistanceMin .. Max (256 .. 4096) from the target, fCombatFindAllyAttackLocationAllyRadius (64) past its body. The first
+  place with a clear line it runs to; none, the failed search is noted with where its target
+  stood, and it does not look again while the target stays within
+  fCombatFindAttackLocationKeyAngle (5°) of that bearing and fCombatFindAttackLocationKeyHeight
+  (128) of that height, as seen from the shooter (it strafes meanwhile). TODO(M13): the settings
+  are the engine's, their use is inferred from their names: when the search runs (ours: a
+  blocked line), the places' order and spacing, the key, and that the failed search fails the
+  subtree so the strafing below it runs.
 - **Flee** (Flee Context: Start Flee; the Flee Selector's Flee To Ally, Flee Through Door, Flee
   To Cover, Flee, Unrestricted Flee, Boost Confidence; then Hide): through a door (observed in
   the original) by fCombatFleeUseDoorChance (0.33), with a race that opens doors, not within
@@ -3027,9 +3060,10 @@ on its fCombat…ChanceMin .. Max (0 .. 1); a hover, perch attack or ground figh
 from its setting's Min up to the style's time on Min .. Max; an orbit at random from
 fCombatOrbitTimeMin up to offensive on fCombatOrbitTimeMax .. Min (12 .. 3 s).
 
-Not yet run (TODO(M13): phase 5, the combat tree): the special attack, block attack and offensive
-bash behaviours (their values are ready); the flanking and ranged movement selectors (ours: in
-`chooseManeuver`). The close movement is the engine's ([Combat movement](#combat-movement)).
+The special attack, block attack and offensive bash run in the combat tree (src/ai/combat-tree.ts),
+as do the flanking and ranged movement (their maneuvers chosen by `chooseManeuver`; the ranged
+movement's Find Attack Location: "The combat behaviour tree"). The close movement is the
+engine's ([Combat movement](#combat-movement)).
 
 - **Reactions** (`reactionsOf(runtime).reaction`, `src/ai/combat-reactions.ts`: the rules crime
   does not weigh, then crime and factions' `runtime.crime.reaction`; `combatReaction` keeps the
@@ -3170,8 +3204,9 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   strafes aside (strafe chance), circles at its distance (circle chance) or holds: the Strafe
   Selector observed in the original (Strafe, Circle, else Ranged Movement Idle, inside both the In Range
   and the Out of Range Movement Selectors, beside Use Cover, Find Attack Location and, out of
-  range, Maintain Optimal Range); it chases beyond its range (TODO(M13): Find Attack Location,
-  and which chances the Strafe and Circle value nodes read: ours the style's strafe and circle
+  range, Maintain Optimal Range); it chases beyond its range; its line of fire blocked, Find
+  Attack Location takes it to a place with a clear one ("The combat behaviour tree"; TODO(M13):
+  which chances the Strafe and Circle value nodes read: ours the style's strafe and circle
   mults). Its combat override package list (NPC\_ / alias ECOR: the first package
   whose conditions hold) keeps it within that package's place: back there first, no chase of a
   target beyond it. Observed in the original of a hold position's area: at least
