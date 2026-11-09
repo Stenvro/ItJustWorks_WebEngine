@@ -15,6 +15,17 @@ for regressions.
   window 1280 × 720 unless `--size` gives another, its clicks scaled from the movies' stage).
   What was seen is kept in docs/completeness/menus.md ("On screen"). The project's Vite config
   leaves out only its own root's hidden folders, so a working copy under one still sees its edits.
+- Helgen Keep's first fight: `tools/qa-keep-fight.ts --out <folder> [--bot-minutes 4]` plays a
+  new game (the cart, the execution, the race menu) to MQ101 160, follows the guide with the
+  follow bot (god mode) and, where the bot stalls, enters the keep as MQ101SetStage220 has it;
+  in the keep the player takes Gunjar's gear and fights the two Imperials by mouse buttons
+  (taps, held power attacks, blocks held on their own and in the middle of a swing), closes the
+  tutorials that come up (the low health one) with E, and stops at MQ101 300 (won) or the
+  player's death. `keep-fight.json`: the outcome, every blow from MQ101 150 on (the courtyard
+  and the fight), who fought the player in the courtyard, the player's attack actions with the
+  state of each refused one, each block held and whether the guard went up, the menus and the
+  frame times. Vite 5204 and Chrome 9404 by default. Since the page reloads as its sources
+  change, no edit of `src/` may happen while it runs.
 
 ## Running it
 
