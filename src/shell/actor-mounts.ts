@@ -21,6 +21,7 @@
 import { aiSettingsOf } from '../ai/ai-settings.ts';
 import { angleBetween, Locomotion, type LocomotionGraph } from '../ai/locomotion.ts';
 import type { GraphEvent } from '../animation/graph-events.ts';
+import type { BehaviorRuntime } from '../animation/behavior-runtime.ts';
 import type { ActorGraphSource } from './actor-graph-events.ts';
 import {
   dismountPlace,
@@ -541,9 +542,12 @@ export class ActorMounts {
   graphEvents(source: ActorGraphSource, events: readonly GraphEvent[]): void {
     const ride = this.#rides.get(source.reference);
     if (!ride || source.firstPerson || this.#bodyOf(ride.rider) !== source.skeleton) return;
+    // The graph that raised it took the event without its prefix itself (a paired clip's own
+    // events: src/animation/behavior-runtime.ts #ownEvent).
+    const told = source.skeleton.behavior;
     for (const event of events) {
-      if (event.text === MOUNTED && ride.phase === 'mounting') this.#mounted(ride);
-      if (event.text === DISMOUNTED && ride.phase === 'dismounting') this.#dismounted(ride);
+      if (event.text === MOUNTED && ride.phase === 'mounting') this.#mounted(ride, told);
+      if (event.text === DISMOUNTED && ride.phase === 'dismounting') this.#dismounted(ride, told);
     }
   }
 
@@ -558,8 +562,8 @@ export class ActorMounts {
     else if (ride?.phase === 'dismounting') this.#dismounted(ride);
   }
 
-  #mounted(ride: Ride): void {
-    this.#send(ride.rider, MOUNTED.slice(PAIRED_PREFIX.length));
+  #mounted(ride: Ride, told?: BehaviorRuntime): void {
+    this.#send(ride.rider, MOUNTED.slice(PAIRED_PREFIX.length), told);
     this.#options.get(ride.horse)?.placed.behavior?.sendEvent(PAIR_END);
     ride.phase = 'riding';
     ride.elapsed = 0;
@@ -630,9 +634,9 @@ export class ActorMounts {
     });
   }
 
-  #dismounted(ride: Ride): void {
+  #dismounted(ride: Ride, told?: BehaviorRuntime): void {
     const { get } = this.#options;
-    this.#send(ride.rider, DISMOUNTED.slice(PAIRED_PREFIX.length));
+    this.#send(ride.rider, DISMOUNTED.slice(PAIRED_PREFIX.length), told);
     this.#stand(ride);
     const horse = get(ride.horse);
     horse?.placed.behavior?.sendEvent(PAIR_END);
@@ -712,10 +716,14 @@ export class ActorMounts {
       : this.#options.get(rider)?.placed;
   }
 
-  /** Sends an event to a rider's graphs (the player's both). */
-  #send(rider: number, event: string): void {
-    if (rider === PLAYER_REF) this.#options.player?.()?.avatar?.send(event);
-    else this.#options.get(rider)?.placed.behavior?.sendEvent(event);
+  /** Sends an event to a rider's graphs (the player's both), but the one that took it already. */
+  #send(rider: number, event: string, told?: BehaviorRuntime): void {
+    const avatar = rider === PLAYER_REF ? this.#options.player?.()?.avatar : undefined;
+    const graphs =
+      rider === PLAYER_REF
+        ? [avatar?.body.behavior, avatar?.firstPerson?.behavior]
+        : [this.#options.get(rider)?.placed.behavior];
+    for (const graph of graphs) if (graph !== told) graph?.sendEvent(event);
   }
 
   /** A staged rider drawn at a place. */

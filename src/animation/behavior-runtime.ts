@@ -69,8 +69,16 @@ import {
   type LookAtBoneValues,
   type LookAtState,
 } from './procedural.ts';
-import { isPaired, PARTNER_PREFIX, pairedTrackBones, type PairedSide } from './paired-clips.ts';
-import { graphEvent, type GraphEvent } from './graph-events.ts';
+import {
+  isPaired,
+  ownEventPrefix,
+  ownPairedEvent,
+  partnerEventPrefix,
+  PARTNER_PREFIX,
+  pairedTrackBones,
+  type PairedSide,
+} from './paired-clips.ts';
+import { graphEvent, pairedEvent, type GraphEvent } from './graph-events.ts';
 import { namedOf, wordValue, type NamedGraphState } from './named-graph-state.ts';
 
 /** A placed object's skeletal graph as a save keeps it (BehaviorRuntime.saveState). */
@@ -616,6 +624,11 @@ export class BehaviorRuntime {
   readonly #rootScope: Scope;
   readonly #scopes = new Map<BehaviorGraph, Scope>();
   readonly #nodeScopes = new WeakMap<object, Scope>();
+  /** The synchronized clip generator (BSSynchronizedClipGenerator) each clip plays under. */
+  readonly #syncOf = new WeakMap<
+    object,
+    Extract<BehaviorGenerator, { kind: 'synchronized-clip' }>
+  >();
   readonly #variableIndex = new Map<string, number>();
   readonly #variableNames: string[] = [];
   #values: number[] = [];
@@ -946,6 +959,7 @@ export class BehaviorRuntime {
   #mark(node: BehaviorGenerator | undefined, scope: Scope): void {
     if (!node || this.#nodeScopes.has(node)) return;
     this.#nodeScopes.set(node, scope);
+    if (node.kind === 'synchronized-clip' && node.generator) this.#syncOf.set(node.generator, node);
     for (const child of children(node)) this.#mark(child, scope);
     if (node.kind === 'modifier-generator' && node.modifier)
       this.#markModifier(node.modifier, scope);
@@ -1679,13 +1693,52 @@ export class BehaviorRuntime {
     return raised;
   }
 
-  #raise(event: BehaviorEvent | number, scope: Scope): void {
+  /**
+   * An event raised by a node of the graph: the graph handles it at its next update, and the
+   * engine hears it (#emit). `own`: the prefix of this side's own events in the paired clip
+   * the raising clip plays under (#ownEvent).
+   */
+  #raise(event: BehaviorEvent | number, scope: Scope, own?: string): void {
     const id = typeof event === 'number' ? event : event.id;
     const global = this.#globalEvent(id, scope);
     if (global < 0) return;
     const payload = typeof event === 'number' ? undefined : event.payload;
     this.#queue.push(payload === undefined ? { id: global } : { id: global, payload });
-    this.#emit(this.#eventNames[global] ?? '', payload);
+    this.#ownEvent(this.#eventNames[global] ?? '', payload, own);
+  }
+
+  /**
+   * A paired clip's trigger goes to the side its prefix names (inferred from the vanilla data,
+   * TODO(M13): the engine's own routing is not read). Each actor's graph plays its side of the
+   * clip, and its side's triggers name its own events with its prefix (src/animation/
+   * paired-clips.ts ownEventPrefix: a killmove victim's 2_KillActor, its killer's NPCHitFrame,
+   * a feeding vampire's NPCVampireFeedEnd), while the response files name the events without
+   * one (KillActor, HitFrame, VampireFeedEnd: no handler would answer them else). So an event of
+   * this side's prefix reaches the engine without it, and the graph is sent it so: a rider's
+   * NPCpairedStop takes its graph to HorseRider_State by pairedStop (src/ai/mounts.ts), the
+   * dragon's 2_PairEnd ends its grapple's ST_Ground_KillMove by PairEnd. Its name as the graph
+   * has it (scripts register for it) stays whole.
+   *
+   * An event of the other side's prefix (an authoring slip: the one-handed bleedout kill's
+   * killer side, Paired_1HMBleedOutKill, raises 2_KillActor and 2_KillMoveEnd at 3.33 s, its
+   * victim's side its own at 2.80 s; the troll killmoves' clip files annotate both
+   * SoundPlay.NPCKill1HMD and 2_SoundPlay.NPCKill1HMD, which both sides read; a few victims'
+   * sides raise NPCpairedStop or NPCFootScuffLeft) is the partner's, not this actor's: the
+   * engine does not hear it from this side (KillActor would kill the killer). Each such
+   * killmove's end its partner's clip raises itself. Its graph still handles it as its own
+   * event. Inferred from the data, TODO(M13). An event of no side's prefix, and NPCSoundPlay
+   * (paired-clips.ts), raises as it is.
+   */
+  #ownEvent(text: string, payload: string | undefined, own: string | undefined): void {
+    if (own !== undefined && ownPairedEvent(text, partnerEventPrefix(own)) !== undefined) return;
+    const stripped = own === undefined ? undefined : ownPairedEvent(text, own);
+    if (stripped === undefined) {
+      this.#emit(text, payload);
+      return;
+    }
+    this.#emit(text, payload, stripped);
+    const id = this.#eventIndex.get(stripped.toLowerCase());
+    if (id !== undefined) this.#queue.push(payload === undefined ? { id } : { id, payload });
   }
 
   /**
@@ -1695,8 +1748,8 @@ export class BehaviorRuntime {
    * meshes\responses\actorresponse.txt names their handlers (HeadTrackingOffHandler,
    * HeadTrackingOnHandler).
    */
-  #emit(text: string, payload?: string): void {
-    const event = graphEvent(text, payload);
+  #emit(text: string, payload?: string, own?: string): void {
+    const event = own === undefined ? graphEvent(text, payload) : pairedEvent(text, own, payload);
     this.#raised.push(event);
     const key = event.name.toLowerCase();
     if (key === 'headtrackingoff') this.#headTracking = false;
@@ -3656,11 +3709,14 @@ export class BehaviorRuntime {
     // A clip does not raise an event its graph flags silent (EVENT_FLAGS.silent: the horse's,
     // troll's, vampire lord's and werewolf's SyncLeft and SyncRight annotations).
     const flags = scope.graph.eventFlags ?? [];
+    // A paired clip's: its side's own events (#ownEvent).
+    const sync = this.#syncOf.get(node);
+    const own = sync && ownEventPrefix(sync.syncPrefix);
     for (const trigger of node.triggers ?? []) {
       const time = trigger.relativeToEndOfClip ? duration + trigger.localTime : trigger.localTime;
       if (((flags[trigger.event.id] ?? 0) & EVENT_FLAGS.silent) !== 0) continue;
       const times = timesPassed(sweeps, time, trigger.acyclic ? 0 : undefined);
-      for (let n = 0; n < times; n++) this.#raise(trigger.event, scope);
+      for (let n = 0; n < times; n++) this.#raise(trigger.event, scope, own);
     }
     if (((node.flags ?? 0) & CLIP_FLAGS.dontConvertAnnotationsToTriggers) === 0) {
       for (const annotation of animation.annotations) {
@@ -3670,9 +3726,9 @@ export class BehaviorRuntime {
         for (let n = 0; n < times; n++) {
           // A graph declares an annotation's whole text as its event (SoundPlay.NPCCowMoo); the
           // engine hears it as tag and payload (graphEvent: AnimObjLoad.DecapitationHeadGore).
-          this.#emit(annotation.text);
           const id = this.#eventIndex.get(annotation.text.toLowerCase());
           if (id !== undefined) this.#queue.push({ id });
+          this.#ownEvent(annotation.text, undefined, own);
         }
       }
     }

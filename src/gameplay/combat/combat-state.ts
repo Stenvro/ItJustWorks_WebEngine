@@ -370,24 +370,28 @@ export function graphEvent(state: CombatState, event: string, handler?: string):
     case 'blockstop':
       state.blocking = false;
       break;
-    // Paired animations: the side done to hears its partner's events with "2_" (only its graph
-    // raises them; a clip's last frame may raise its 2_PairEnd before its 2_KillActor).
+    // A paired clip's side hears its own events without its prefix (src/animation/
+    // behavior-runtime.ts #ownEvent: a victim's 2_KillActor as KillActor, KillActorHandler) and
+    // not the other side's (Paired_1HMBleedOutKill's killer side raises 2_KillActor). These
+    // reach it with their prefix only from a graph that raises them outside a synchronized
+    // clip, and only the victim is the one they are done to: a leader that raised one would
+    // otherwise kill or behead itself. A clip's last frame may raise 2_PairEnd before
+    // 2_KillActor (the victim's pair over, it still dies).
     case '2_killactor':
-      effects.push({ kind: 'kill-actor' });
+      if (state.paired !== 'lead') effects.push({ kind: 'kill-actor' });
       break;
     case '2_decapitate':
-      effects.push({ kind: 'decapitate' });
+      if (state.paired !== 'lead') effects.push({ kind: 'decapitate' });
       break;
     case '2_killmoveend':
-      if (state.killMove) {
+      if (state.killMove && state.paired !== 'lead') {
         state.killMove = false;
         effects.push({ kind: 'killmove-end' });
       }
       break;
-    // A victim on its clip's first tracks says it without the prefix (the dragon's bite: the
-    // people's Paired_BiteGrapple raises NPCKillMoveEnd, its killer's side the 2_ events): its
-    // killmove ends there, and it dies by its killer. TODO(M13): inferred from the clips' events;
-    // no response file names NPCKillMoveEnd.
+    // So too a victim on its clip's first side (the dragon's bite: the people's
+    // Paired_BiteGrapple raises NPCKillMoveEnd, which reaches it as KillMoveEnd): its killmove
+    // ends there, and it dies by its killer. TODO(M13): inferred from the clips' events.
     case 'npckillmoveend':
       if (state.killMove && state.paired === 'support') {
         state.killMove = false;
@@ -395,8 +399,10 @@ export function graphEvent(state: CombatState, event: string, handler?: string):
       }
       break;
     case 'pairend':
-    case '2_pairend':
       endPaired(state, effects);
+      break;
+    case '2_pairend':
+      if (state.paired !== 'lead') endPaired(state, effects);
       break;
     case 'bleedout_transoutend':
       if (state.life === LifeState.bleedout || state.life === LifeState.essentialDown) {

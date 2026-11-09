@@ -187,7 +187,8 @@ what fills it was not found).
       actor-sounds.ts), SoundPlay, NPCSoundPlay, SoundStop, SoundRelease, the response files'
       events (weaponSwing, HitFrame, PreHitFrame, ...), the graphs' own events (SyncLeft,
       SyncRight, FlightLandingEffect, the dogs' and wolves' sounds by their graph events, ...),
-      paired partners' 2_ events.
+      paired clips' own events of each side ("2_" and "NPC", the prefix off; the other side's
+      not heard; NPCSoundPlay keeps its name: docs/animation.md "Paired events").
 - [x] SyncLeft, SyncRight and the other sync points (EVENT_FLAGS.syncPoint): they sync the
       clips of syncing blenders (round 2; by hand below).
 - [x] FrontFoot (26), BackFoot (25), Spellfire (2), FrootBack (4), FootFornt (3), FottFront (1),
@@ -298,9 +299,10 @@ what fills it was not found).
       vanilla graph plays one (tests/conformance/animation/clips.test.ts). TODO(M13): the engine's
       rule, for a mod's.
 - [x] Engine handlers: the response files' 95 of 97 (above).
-- [ ] An event no node takes is not reported as not handled. (bDisableInterp has no setter in
-      the engine, observed in the original: the graphs set it; it is read with bIsSynced and
-      bSpeedSynced: round 8.)
+- [x] An event no node takes is reported as not handled (BehaviorRuntime.answered): a death
+      idle its graph does not take lets the body go at once (inferred, TODO(M13);
+      tests/conformance/animation/graph-runtime.test.ts). (bDisableInterp has no setter in the engine, observed in the
+      original: the graphs set it; it is read with bIsSynced and bSpeedSynced: round 8.)
 - [x] Head tracking (docs/animation.md, "Head tracking"; the settings above).
 - [x] Look-at, direct-at (BSLookAtModifier, BSDirectAtModifier) and limb IK.
 - [ ] Foot IK: the narrow quadrupeds' (the formats' list).
@@ -312,7 +314,12 @@ what fills it was not found).
 - [ ] Faces: the engine's scale from an eye turn to a look morph's weight (ours an inferred
       estimate from the eyes' TRI, 29° and 16°).
 - [x] Paired animations: the support's mark, its side to the clip's end, death limp.
-- [ ] Paired animations: events not routed per side.
+- [x] Paired animations: events routed per side by their prefix ("2_", "NPC"; the other side's
+      not heard from it); pairedStop ends only the pair of the side that raised it, the other
+      side's by its own pairedStop or as its graph leaves the clip (inferred;
+      tests/conformance/animation/paired-animations.test.ts).
+- [ ] Paired animations: a vampire feeding pair ends the feeding procedures. TODO(M11): our AI
+      runs no feeding procedure; VampireFeedEnd ends the feeder's GetVampireFeed (inferred).
 - [x] Kill moves (docs/animation.md, "Killmoves").
 - [x] Dismemberment and decapitation (the head's flight, the stump, persistence).
 - [ ] The severed head's flight into MQ101's basket: it reaches the rim's height over the near
@@ -325,7 +332,9 @@ what fills it was not found).
       one, a model without "Prn" never shown, saves (tests/conformance/animation/animation-objects.test.ts).
 - [x] Ambient idles (but which idles skip the next PickNewIdle, the complex scene's wait).
 - [x] Weapons and aim, casting, horses, first person.
-- [ ] Graph state in saves: actors' graphs rebuilt from furniture and packages, not saved.
+- [x] Graph state in saves: each actor's graph's states, clips' times, variables, events not
+      handled yet, transitions and modifiers (docs/formats/save.md, "Animation graphs";
+      tests/conformance/animation/graph-runtime.test.ts).
 - [x] Clips: compression, root motion, float tracks, annotations.
 - [x] Clip triggers and annotations raised as they are passed: looping cycles, ping-pong turns,
       a negative speed played from the end, acyclic triggers (docs/animation.md, "Clip triggers";

@@ -15,6 +15,58 @@ export const PAIRED_ROOT = 'PairedRoot';
 /** The prefix of the second actor's tracks. */
 export const PARTNER_PREFIX = '2_';
 
+/**
+ * The first actor's name in a paired clip (its placement track, "NPC"): the prefix its own
+ * events carry in the clip's triggers (NPCHitFrame, NPCpairedStop, NPCVampireFeedEnd).
+ */
+export const FIRST_EVENT_PREFIX = 'NPC';
+
+/**
+ * NPCSoundPlay.<descriptor> is an event of its own, not the first side's SoundPlay: the engine
+ * plays it for actors other than the player (src/shell/actor-sounds.ts), and both sides of
+ * paired clips raise it (the killers' NPCSoundPlay.NPCKillChop; the vampire lord's victims'
+ * clips annotate NPCSoundPlay.NPCVampireLordFeed, which the lord's side raises too: an NPC
+ * victim sounds the player lord's feeding). The werewolf killmoves raise both
+ * NPCSoundPlay.NPCWerewolfMaul and SoundPlay.NPCWerewolfMaul, a mount both NPCSoundPlay and
+ * SoundPlay.NPCHorseMount: the player hears each once.
+ */
+const NPC_SOUND_PLAY = 'npcsoundplay.';
+
+/**
+ * The prefix of a side's own events in the synchronized clip it plays: the clip's
+ * SyncAnimPrefix where it names one (the second actor's "2_": a killmove victim's 2_KillActor,
+ * 2_Decapitate, 2_DeathEmote), else the first actor's "NPC" (the killer's NPCHitFrame, a
+ * rider's NPCpairedStop). Read from the vanilla behaviors (docs/animation.md, "Paired
+ * events"): of the triggers on their synchronized clips, a side whose clip names "2_" carries
+ * "2_" events (1,165 of 1,222), one whose clip names none "NPC" events (4,657 of 4,787).
+ */
+export function ownEventPrefix(syncPrefix: string | undefined): string {
+  return syncPrefix !== undefined && syncPrefix !== '' ? syncPrefix : FIRST_EVENT_PREFIX;
+}
+
+/**
+ * The prefix of the other side's events, for a side whose own is `own`: the first actor's
+ * "NPC" for the second side, the second's "2_" for the first.
+ */
+export function partnerEventPrefix(own: string): string {
+  return own.toLowerCase() === FIRST_EVENT_PREFIX.toLowerCase()
+    ? PARTNER_PREFIX
+    : FIRST_EVENT_PREFIX;
+}
+
+/**
+ * A side's own event of a paired clip without its prefix ("2_KillActor" with "2_": "KillActor"),
+ * undefined for one that does not begin with it (the other side's, or one of no side) and for
+ * NPCSoundPlay (an event of its own, above).
+ */
+export function ownPairedEvent(text: string, prefix: string): string | undefined {
+  if (text.length <= prefix.length) return undefined;
+  if (text.toLowerCase().startsWith(NPC_SOUND_PLAY)) return undefined;
+  return text.slice(0, prefix.length).toLowerCase() === prefix.toLowerCase()
+    ? text.slice(prefix.length)
+    : undefined;
+}
+
 /** Which actor of a pair a skeleton plays: the first (unprefixed tracks) or the second. */
 export type PairedSide = 'first' | 'second';
 

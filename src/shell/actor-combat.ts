@@ -2228,19 +2228,19 @@ export class ActorCombat implements CombatBridge {
     if (answer === 'attackstophandler' && attacking(fighter.state)) {
       fighter.attackStoppedAt = this.#clock;
     }
-    const leading = fighter.state.paired === 'lead';
     const effects = !strikes && released ? [] : graphEvent(fighter.state, event.name, handler);
     for (const effect of effects) {
       if (!strikes && (effect.kind === 'strike' || effect.kind === 'arrow-release')) continue;
       this.#effect(fighter, effect);
     }
+    // pairedStop (PairedStopHandler) ends the paired animation of the side that raised it only
+    // (graphEvent: pair-end), never its partner's. Where both sides raise it they do so each at
+    // its own time: a dying creature's side well before its killer's (the hagraven's
+    // Paired_2HMKillMoveHagravenA: 2_pairedStop at 1.13 s, the killer's NPCpairedStop at 3.66 s;
+    // the dragon's slash 4.18 s against 6.33 s), and the killer, the player too, stays in its
+    // clip to its own end. A side whose clip raises none ends as its graph leaves the
+    // synchronized clip (#update). Inferred from the data, TODO(M13): the handler is not read.
     const lower = answer === undefined ? event.name.toLowerCase() : undefined;
-    // A leader whose own clip says 2_PairEnd (the dragon's Paired_BiteGrapple: its graph stands in
-    // the clip's last frame until it hears PairEnd, which nothing else raises). TODO(M13): inferred
-    // from the clip's and the graph's data; how the engine turns the one into the other is unknown.
-    if (leading && lower === '2_pairend') {
-      for (const graph of this.#graphs(fighter)) graph.sendEvent('PairEnd');
-    }
     // The weapon is drawn at weaponDraw (graphEvent), also unasked (the werewolf's graph starts
     // in its combat stance once it has changed); the draw's clip plays on to WeapEquip_Out. A
     // creature's graph (the wolf's: combatStanceStart raises weaponDraw) has no equip clip that
@@ -3735,11 +3735,14 @@ export class ActorCombat implements CombatBridge {
     const runtime = this.#options.session.scriptsReady;
     if (!runtime) return;
     fighter.state.killMove = false;
+    // Its killer stays its killer until the kill is done: the clip's 2_KillActor, raised with
+    // its 2_KillMoveEnd (Paired_1HMKillMoveDecapSlash: 2_PairEnd, 2_KillMoveEnd, 2_KillActor at
+    // 1.69 s), kills it by its killer too (KillActorHandler: killerOf).
     const killer = fighter.killer;
-    fighter.killer = undefined;
     if (killer !== undefined && !(await runtime.actors.isDead(fighter.reference))) {
       await runtime.actors.kill(fighter.reference, killer);
     }
+    if (fighter.killer === killer) fighter.killer = undefined;
     await runtime.actors.endDeferredKill(fighter.reference);
   }
 

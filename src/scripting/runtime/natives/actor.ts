@@ -21,9 +21,10 @@ const GOLD = 0xf;
 const IDLE_VAMPIRE_FEED = 0xff9e5;
 const IDLE_CANNIBAL_FEED = 0xfe09d;
 /**
- * How long a feeding lasts (real seconds: GetVampireFeed holds meanwhile, the perks' Feed is
- * not offered again). TODO(M13): the engine ends it with the feeding's animation, whose
- * length is its own.
+ * How long a feeding lasts at most (real seconds: GetVampireFeed holds meanwhile, the perks'
+ * Feed is not offered again). Its graph ends it sooner as its clip raises VampireFeedEnd
+ * (ScriptRuntime.feedingDone; inferred). TODO(M13): when the engine ends it is not read; a
+ * feeding whose graph raises none (a cannibal's, the bed's) ends by this.
  */
 const FEEDING_SECONDS = 6;
 

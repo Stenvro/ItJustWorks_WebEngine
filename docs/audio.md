@@ -354,7 +354,16 @@ player's by their movement, an NPC's by its controller's motion (the movers': sn
 gait its AI asks for while it moves) or, beyond the high process, the gait its AI asks for. The player in iron boots running across the Abandoned Shack's floor plays
 FSTWoodRunArmorHeavyLSD / RSD. Animations' **SoundPlay.`<descriptor>`** events play that sound
 descriptor (by editor id) at the actor; **NPCSoundPlay.`<descriptor>`** only for actors other
-than the player. **SoundStop.`<descriptor>`** stops what that actor's animations started of it
+than the player. Only paired clips raise NPCSoundPlay, on either side (a killer's NPCKillChop, a
+rider's NPCHorseMount; the vampire lord's victims' clips annotate NPCVampireLordFeed, which the
+lord's side raises too), and it keeps its name there: it is not the first side's prefixed
+SoundPlay (docs/animation.md, "Paired events"). Some raise a sound both ways: the werewolf
+killmoves (werewolfbehavior.hkx WW PairedFeedingWithHuman, ...00, WW PairedHeadSmash) raise
+NPCSoundPlay.X and SoundPlay.X 0.00 to 0.02 s apart (NPCWerewolfFeedingKill, NPCWerewolfMaul,
+NPCWerewolfHeadSmash),
+a rider's mount NPCSoundPlay.NPCHorseMount with its clip's SoundPlay.NPCHorseMount: the player
+hears it once. One actor's graph sounds a descriptor once per update (a paired clip's twins at
+one moment; inferred, TODO(M13)). **SoundStop.`<descriptor>`** stops what that actor's animations started of it
 at once (the bow's draw loop, WPNBowPullLPM, as the arrow leaves: 17 annotations), and
 **SoundRelease.`<descriptor>`** lets it end, a loop playing out its release (8, the dogs'
 barks). TODO(M13): the split between the two is inferred from their names and where the data

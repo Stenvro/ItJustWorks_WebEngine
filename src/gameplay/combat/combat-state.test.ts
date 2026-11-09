@@ -228,6 +228,18 @@ describe('the combat state', () => {
     ]);
   });
 
+  it('does not kill or behead a leader by the victim’s 2_ events (Paired_1HMBleedOutKill)', () => {
+    // The one-handed bleedout kill's killer side raises 2_KillActor and 2_KillMoveEnd at 3.33 s.
+    const leader = newCombatState();
+    leader.paired = 'lead';
+    leader.killMove = true;
+    expect(kinds(['2_Decapitate', '2_KillActor', '2_KillMoveEnd', '2_PairEnd'], leader)).toEqual(
+      [],
+    );
+    expect(leader.killMove).toBe(true);
+    expect(leader.paired).toBe('lead');
+  });
+
   it('counts only pa_Kill events as killmoves', () => {
     const state = newCombatState();
     startAttack(state, { event: 'pa_KillMoveB', hand: 'right', power: true, bash: false });

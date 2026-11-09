@@ -63,8 +63,13 @@ interface Dying {
   /** Its Death line waits for its graph's DeathEmote (until then, or DEATH_EMOTE_WAIT). */
   cry: (() => void) | undefined;
   /**
-   * The graph's active states as its death idle was sent (undefined: checked, or a killmove's):
-   * a graph whose states did not change by DEATH_TAKEN did not take it.
+   * The death idle's event its graph was sent, until the graph answers whether it took it
+   * (undefined: answered, or a killmove's).
+   */
+  idle: string | undefined;
+  /**
+   * The graph's active states as its death idle was sent: a graph that has not answered by
+   * DEATH_TAKEN (it has not updated since) and whose states did not change did not take it.
    */
   before: string | undefined;
   /**
@@ -82,9 +87,12 @@ interface Dying {
  */
 const DEATH_WAIT = 8;
 /**
- * A death idle its graph names but does not take (no active state answers it: a cow's
- * DeathAnimation while it grazes) leaves its states as they were: after this long the body is
- * let go (seconds). The engine's graphs report an event no active node takes as not handled.
+ * A death idle its graph does not take (no active state answers it: a cow's DeathAnimation
+ * while it grazes). The engine's graphs report an event no active node takes as not handled;
+ * ours reads that answer the update after the idle was sent (BehaviorRuntime.answered) and lets
+ * the body go at once (inferred, TODO(M13): what the engine does on that answer, and how soon,
+ * is not read). A graph that has not answered this long after (seconds) is judged by its
+ * states: unchanged, it did not take it.
  */
 const DEATH_TAKEN = 0.3;
 /** A death cry waiting for its graph's DeathEmote is said after this at the latest (seconds). */
@@ -398,16 +406,15 @@ export class ActorGraphEvents {
       this.#activations.delete(source.reference);
       waiting?.done();
     });
-    // A vampire's feeding ended: the feeding procedure is done.
+    // A vampire's feeding ended (the feeder's clip's NPCVampireFeedEnd, the only VampireFeedEnd
+    // in the vanilla behaviors: src/animation/behavior-runtime.ts #ownEvent). Observed in the
+    // original, an actor running a vampire feeding package procedure is done with it here.
+    // TODO(M11): our AI runs no feeding procedure. Ours ends the feeder's feeding
+    // (StartVampireFeed: GetVampireFeed) here, before its clip ends (Paired_VampFeedFront_Player
+    // raises it 1.07 s before its end): inferred, TODO(M13): when the engine clears the feeding
+    // state is not read.
     d.handle('VampireFeedEndHandler', (source) => {
-      // TODO(M11): observed in the original, an actor running a vampire feeding package
-      // procedure is done with it here; our AI runs no feeding procedure yet (the player's
-      // feeding is the combat's paired idle, which its own end ends).
-      this.#options.terminal.log(
-        'actor',
-        `${source.reference.toString(16)}: VampireFeedEnd (no feeding procedure runs)`,
-        'info',
-      );
+      this.#options.session.scriptsReady?.feedingDone(source.reference);
     });
     // The graph attaches the actor to a node of the furniture it uses, or lets it go.
     d.handle('NPCAttachHandler', (source, event) => {
@@ -584,6 +591,7 @@ export class ActorGraphEvents {
       phase: 'animating',
       since: 0,
       cry: waitsForEmote ? cry : undefined,
+      idle: before === undefined ? undefined : event,
       before,
       paired,
     });
@@ -682,9 +690,23 @@ export class ActorGraphEvents {
         if (!holds || dying.since >= DEATH_WAIT) this.#limp(dying);
         continue;
       }
+      // Whether its graph took its death idle: as the graph answers (the update after the idle
+      // was sent), else by its states once DEATH_TAKEN has passed.
+      if (dying.idle !== undefined) {
+        const answer = graph?.answered(dying.idle);
+        if (answer === false || !graph) {
+          this.#limp(dying);
+          continue;
+        }
+        if (answer === true) {
+          dying.idle = undefined;
+          dying.before = undefined;
+        }
+      }
       if (dying.before !== undefined && dying.since >= DEATH_TAKEN) {
         const before = dying.before;
         dying.before = undefined;
+        dying.idle = undefined;
         if (!graph || statesOf(graph) === before) {
           this.#limp(dying);
           continue;

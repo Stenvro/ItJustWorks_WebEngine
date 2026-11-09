@@ -92,14 +92,27 @@ export function actorSounds(
   return (events) => {
     const sounds = world.sounds();
     if (!sounds) return;
+    // One descriptor sounds once per update of the actor's graph: a paired clip's file
+    // annotates some sounds for both sides at the same moment, each side reading both (the troll
+    // killmoves' SoundPlay.NPCKill1HMD and 2_SoundPlay.NPCKill1HMD, the second side's own
+    // reaching it as SoundPlay: docs/animation.md, "Paired events"), a mount's rider raises
+    // NPCSoundPlay.NPCHorseMount with its clip's SoundPlay.NPCHorseMount. Inferred, TODO(M13):
+    // whether the engine plays such twins twice is not read.
+    const started = new Set<string>();
+    const once = (name: string): void => {
+      const key = name.toLowerCase();
+      if (started.has(key)) return;
+      started.add(key);
+      play(sounds, name);
+    };
     for (const event of events) {
       const tag = event.name.toLowerCase();
       if (tag === SOUND_PLAY) {
-        if (event.payload !== undefined) play(sounds, event.payload);
+        if (event.payload !== undefined) once(event.payload);
         continue;
       }
       if (tag === NPC_SOUND_PLAY) {
-        if (!actor.player && event.payload !== undefined) play(sounds, event.payload);
+        if (!actor.player && event.payload !== undefined) once(event.payload);
         continue;
       }
       if (tag === SOUND_STOP || tag === SOUND_RELEASE) {
