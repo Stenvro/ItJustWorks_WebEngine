@@ -102,8 +102,8 @@ export interface ActorFlightOptions {
   /** A flier without a controller flew into (or out of) a trigger volume. */
   readonly onTrigger?: (trigger: number, actor: number, entered: boolean) => void;
   /**
-   * A flier placed in the air (it was aloft off the stage) may not fly there after all: it is
-   * set on the ground under it, as an actor placed there is.
+   * A flier placed in the air (it was aloft off the stage) may not fly there after all, or has
+   * nothing under it at all: it is set on the ground under it, as an actor placed there is.
    */
   readonly setDown?: (reference: number) => void;
   /** Whether the collision under a staged actor is all in place (the stage's own test). */
