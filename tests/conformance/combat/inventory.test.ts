@@ -11,10 +11,12 @@ import { COMBAT_AI_DEFAULTS } from '../../../src/ai/combat-ai.ts';
 import { readCombatAiSettings } from '../../../src/ai/combat-ai.ts';
 import {
   chooseEquipment,
+  darkForTorch,
   equipmentMult,
   equipmentScore,
   leftHandSpell,
   minEquipTime,
+  torchInFight,
   weighedDamage,
 } from '../../../src/ai/combat-tactics.ts';
 import { ENGINE } from './settings.ts';
@@ -85,11 +87,42 @@ describe('what it keeps', () => {
     expect(chooseEquipment([sword, bow], 2000, style, settings)?.id).toBe(2);
   });
 
-  // Stays: no NPC in a fight takes up a torch yet; the torch's own inventory item (its range
-  // fCombatInventoryTorchEquipRange and min equip time) was not followed to its check.
-  // Ammunition for a bow is taken up with it (the combat AI's #equipAmmo;
+  // The torch's own inventory item (CombatInventoryItemTorch), its range
+  // fCombatInventoryTorchEquipRange and min equip time are the original's; their check and the
+  // dark they weigh (fTorchLightLevel*) are inferred (combat-tactics.ts darkForTorch,
+  // torchInFight). Ammunition for a bow is taken up with it (the combat AI's #equipAmmo;
   // tests/conformance/combat/ranged.test.ts).
-  it.todo('torches in the dark  [original]');
+  it('torches in the dark  [original settings] (inferred rule)', () => {
+    expect(settings.torchEquipRange).toBe(256);
+    expect(settings.minEquipTimeTorch).toBe(5);
+    // The dark: inside a light level under 40; outside the sky under 0.6 in the morning, 1.2
+    // in the evening (it comes out at a brighter sky than it goes away by).
+    const inside = { interior: true, sky: 0, hour: 12 };
+    expect(darkForTorch({ ...inside, level: 39 }, settings)).toBe(true);
+    expect(darkForTorch({ ...inside, level: 40 }, settings)).toBe(false);
+    const outside = { interior: false, level: 0, sky: 0.9 };
+    expect(darkForTorch({ ...outside, hour: 7 }, settings)).toBe(false);
+    expect(darkForTorch({ ...outside, hour: 19 }, settings)).toBe(true);
+    // Taken up in the dark by a free left hand, its target beyond 256 units.
+    const fight = {
+      dark: true,
+      carries: true,
+      leftHandFree: true,
+      distance: 300,
+      holding: false,
+      heldFor: 0,
+    };
+    expect(torchInFight(fight, settings)).toBe(true);
+    expect(torchInFight({ ...fight, distance: 200 }, settings)).toBe(false);
+    expect(torchInFight({ ...fight, leftHandFree: false }, settings)).toBe(false);
+    expect(torchInFight({ ...fight, carries: false }, settings)).toBe(false);
+    expect(torchInFight({ ...fight, dark: false }, settings)).toBe(false);
+    // Held: kept fCombatInventoryMinEquipTimeTorch, then while it is dark.
+    const held = { ...fight, holding: true, dark: false };
+    expect(torchInFight({ ...held, heldFor: 4.5 }, settings)).toBe(true);
+    expect(torchInFight({ ...held, heldFor: 5 }, settings)).toBe(false);
+    expect(torchInFight({ ...held, heldFor: 60, dark: true, distance: 0 }, settings)).toBe(true);
+  });
 
   it('the weapon’s score: its damage, the fists’ penalty, the bound bonus, its reach  [original]', () => {
     const sword = { kind: 'melee', id: 1, damage: 20, range: 150, equipped: false } as const;

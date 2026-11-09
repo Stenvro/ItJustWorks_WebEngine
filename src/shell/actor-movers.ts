@@ -28,6 +28,7 @@ import { Breath, HEAD_UNDER } from '../ai/engine-packages.ts';
 import {
   avoidance,
   avoidanceNeighbours,
+  blockedByActor,
   layAvoidNode,
   type AvoidedNeighbour,
   givesWay,
@@ -1036,23 +1037,29 @@ export class ActorMovers {
     }
     const stuck = blocker !== undefined && Math.hypot(...mover.velocity) < BLOCKED_SPEED;
     travel.blockedFor = stuck ? travel.blockedFor + step : 0;
-    if (!blocker || travel.blockedFor <= most) return;
-    travel.blockedFor = 0;
+    if (!blocker) return;
     const reference = mover.staged.reference;
-    // The player standing in its way is asked to move (its ActorCollidewithActor line) before
-    // it goes round them. TODO(M13): the engine's own line and wait (ours: once a travel, one
-    // more fMaxTimeBlockedByActors).
-    const player = blocker.mover === undefined;
-    if (player && !travel.askedPlayer && Math.hypot(...blocker.velocity) < BLOCKED_SPEED) {
+    const other = blocker.mover;
+    const otherTravel = other && this.#travels.get(other.staged.reference);
+    // What it does about it (avoidance.ts blockedByActor): the player standing in its way is
+    // asked to move (its ActorCollidewithActor line) before it goes round them, once a travel.
+    const response = blockedByActor({
+      blockedFor: travel.blockedFor,
+      most,
+      playerStanding: other === undefined && Math.hypot(...blocker.velocity) < BLOCKED_SPEED,
+      askedPlayer: travel.askedPlayer,
+      otherTravels: otherTravel !== undefined,
+    });
+    if (response === 'wait') return;
+    travel.blockedFor = 0;
+    if (response === 'ask') {
       travel.askedPlayer = true;
       this.#options.blockedByPlayer?.(reference);
       return;
     }
     // Another on its way into it: one of the two gives way (stepping off the other's way), the
     // other goes on; one already giving way is waited for.
-    const other = blocker.mover;
-    const otherTravel = other && this.#travels.get(other.staged.reference);
-    if (other && otherTravel) {
+    if (response === 'giveWay' && other && otherTravel) {
       if (this.#reactions.has(other.staged.reference)) return;
       const first = givesWay(
         {

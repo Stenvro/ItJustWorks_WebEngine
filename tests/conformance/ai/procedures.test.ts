@@ -18,6 +18,7 @@
 //   Weapons Unequipped, 24:00 for 8 h).
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { blockedByActor } from '../../../src/ai/avoidance.ts';
 import { movementBlocked } from '../../../src/ai/engine-packages.ts';
 import { PROCEDURES } from '../../../src/ai/procedure-runs.ts';
 import { PROCEDURE_PARAMETERS } from '../../../src/ai/procedures.ts';
@@ -111,9 +112,28 @@ describe('the engine’s own packages (no record holds them)', () => {
   // (src/scripting/runtime/engine-events.test.ts, tests/magic-world.int.test.ts); whether the
   // original runs them as packages of its own was not read.
 
-  // Stays: the actors' movement (src/shell/actor-movers.ts) has no case without a whole stage, and
-  // the actor's line is ours until the engine's way round a blocker is read.
-  it.todo('Avoid Player for an actor the standing player blocks: it asks them to move');
+  // The movers' rule for one in the way (src/ai/avoidance.ts blockedByActor, which
+  // src/shell/actor-movers.ts follows): after fMaxTimeBlockedByActors (observed in the original),
+  // the standing player is asked first; the line and the one more wait are inferred.
+  it('Avoid Player for an actor the standing player blocks: it asks them to move (inferred)', () => {
+    const most = 2;
+    const held = {
+      blockedFor: 2.5,
+      most,
+      playerStanding: true,
+      askedPlayer: false,
+      otherTravels: false,
+    };
+    // Held up no longer than fMaxTimeBlockedByActors: it waits. (Stepping aside itself, its time
+    // held up does not run: actor-movers.ts #blockedByActors.)
+    expect(blockedByActor({ ...held, blockedFor: most })).toBe('wait');
+    // Then it asks the standing player to move (its ActorCollidewithActor line), once a travel.
+    expect(blockedByActor(held)).toBe('ask');
+    expect(blockedByActor({ ...held, askedPlayer: true })).toBe('round');
+    // A player on the move is gone round at once; an actor on its way, one of the two gives way.
+    expect(blockedByActor({ ...held, playerStanding: false })).toBe('round');
+    expect(blockedByActor({ ...held, playerStanding: false, otherTravels: true })).toBe('giveWay');
+  });
 
   it('Movement Blocked is off (bUseMovementBlockedPackage 0); on, it stands for its time', async () => {
     expect(INI_DEFAULTS.General.bUseMovementBlockedPackage).toBe(0);

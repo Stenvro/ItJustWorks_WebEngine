@@ -33,7 +33,7 @@ import {
   TrespassWarnings,
 } from '../../../src/gameplay/crime.ts';
 import { alarmReaches, readDetectionSettings } from '../../../src/ai/detection.ts';
-import { overlooksCrime, RelationshipRank } from '../../../src/gameplay/factions.ts';
+import { doesFavor, overlooksCrime, RelationshipRank } from '../../../src/gameplay/factions.ts';
 import { ObjectHandle } from '../../../src/scripting/values.ts';
 import { Vfs } from '../../../src/vfs/vfs.ts';
 import { parseNpcStats } from '../../../src/world/actor-stats-records.ts';
@@ -266,9 +266,29 @@ describe('who must witness it', () => {
     }
   });
 
-  // Stays: the original reads these two only in its check of whether an actor does the player a
-  // favor (the cost against the relationship rank), which is the favors' system, not crime's.
-  it.todo('fCrimeFavorMult, iCrimeFavorBaseValue in the favor check  [favors, not crime]');
+  // The original reads these two only in its check of whether an actor does the player a favor
+  // (the cost against the relationship rank), the favors' system, not crime's; the comparison's
+  // form is inferred (factions.ts doesFavor), the follower's command its use (actor-favors.ts).
+  it('fCrimeFavorMult, iCrimeFavorBaseValue in the favor check  [favors, not crime] (inferred)', () => {
+    const favors = readCrimeSettings();
+    expect(favors.favorBaseValue).toBe(0);
+    expect(favors.favorMult).toBe(1);
+    // A cost of 25 (MQ102RikkeWaitMarker's XFVC): a friend's 25 favor points cover it, an
+    // acquaintance's none do not.
+    expect(doesFavor(RelationshipRank.friend, 25, favors)).toBe(true);
+    expect(doesFavor(RelationshipRank.acquaintance, 25, favors)).toBe(false);
+    expect(doesFavor(RelationshipRank.friend, 26, favors)).toBe(false);
+    expect(doesFavor(RelationshipRank.confidant, 26, favors)).toBe(true);
+    // No cost: done whatever the relationship.
+    expect(doesFavor(RelationshipRank.acquaintance, 0, favors)).toBe(true);
+    // The settings weigh the price: a base value and a mult of the load order's.
+    const dear = readCrimeSettings({
+      number: (name) =>
+        name === 'iCrimeFavorBaseValue' ? 10 : name === 'fCrimeFavorMult' ? 2 : undefined,
+    });
+    expect(doesFavor(RelationshipRank.ally, 45, dear)).toBe(true);
+    expect(doesFavor(RelationshipRank.ally, 46, dear)).toBe(false);
+  });
 });
 
 describe.skipIf(!hasGamedata())('the crime faction of an actor crime (data)', () => {

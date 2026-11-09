@@ -2102,7 +2102,7 @@ export class ActorStage {
       }
       const target = pending.target;
       if (target === PLAYER_REF || this.#actors.has(target)) {
-        this.combat.startCombat(actor, target, pending.modifier);
+        this.combat.startCombat(actor, target, { modifier: pending.modifier });
         // Taken up at once: its search goes on before its fight is weighed again.
         if (this.combat.targetOf(actor) === target) {
           this.#restoredCombat.delete(actor);

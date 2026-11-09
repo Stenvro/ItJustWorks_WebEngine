@@ -29,6 +29,16 @@ import {
   pickFleeDoor,
 } from '../../../src/ai/combat-subtrees.ts';
 import { COMBAT_TREES } from '../../../src/ai/combat-tree.ts';
+import { AI_DEFAULTS } from '../../../src/ai/ai-settings.ts';
+import {
+  TargetType,
+  type PackageInput,
+  type ProcedureBranch,
+} from '../../../src/ai/package-records.ts';
+import type { Space } from '../../../src/ai/package-start.ts';
+import type { ProcedureRun } from '../../../src/ai/package-runtime.ts';
+import { fleeSafe, PROCEDURES } from '../../../src/ai/procedure-runs.ts';
+import { ProcedureInputs } from '../../../src/ai/procedures.ts';
 import { ENGINE, LOAD_ORDER } from './settings.ts';
 
 const settings = COMBAT_AI_DEFAULTS;
@@ -252,10 +262,97 @@ describe('who flees (formula)', () => {
     });
   });
 
-  // Stays, not combat's: fFleeIsSafeTimer and fFleeDoneDistance* are read by the Flee package's
+  // Not combat's: fFleeIsSafeTimer and fFleeDoneDistance* are read by the Flee package's
   // procedure in the original (docs/completeness/ai.md), not by the combat tree: its fight ends on
-  // fFleeDistance* and sight of no enemy.
-  it.todo(
-    'safe after fFleeIsSafeTimer (30 s) beyond fFleeDoneDistance* (2500, 600): the Flee package’s, not combat’s  [settings]',
-  );
+  // fFleeDistance* and sight of no enemy. How the procedure counts the time is inferred
+  // (procedure-runs.ts fleeSafe).
+  it('safe after fFleeIsSafeTimer (30 s) beyond fFleeDoneDistance* (2500, 600): the Flee package’s, not combat’s  [settings]', async () => {
+    expect(AI_DEFAULTS.fleeIsSafeTimer).toBe(30);
+    expect(AI_DEFAULTS.fleeDoneDistanceExterior).toBe(ENGINE.fFleeDoneDistanceExterior);
+    expect(AI_DEFAULTS.fleeDoneDistanceInterior).toBe(ENGINE.fFleeDoneDistanceInterior);
+    expect(fleeSafe(2500, 30, false, AI_DEFAULTS)).toBe(true);
+    expect(fleeSafe(2499, 60, false, AI_DEFAULTS)).toBe(false);
+    expect(fleeSafe(2500, 29.5, false, AI_DEFAULTS)).toBe(false);
+    expect(fleeSafe(600, 30, true, AI_DEFAULTS)).toBe(true);
+
+    // The procedure: from a threat at the origin, away by its flee distance (at least the done
+    // distance), then it waits out the safe time before it is done.
+    const THREAT = 0x99;
+    let here: [number, number, number] = [100, 0, 0];
+    let waited = 0;
+    let travels: number[][] = [];
+    // Both in Tamriel; then the threat in an interior.
+    const tamriel = { kind: 'world', world: 0x3c } as const;
+    let threatSpace: Space = tamriel;
+    const branch: ProcedureBranch = {
+      type: 'Procedure',
+      conditions: [],
+      branchFlags: 0,
+      procedure: 'Flee',
+      flags: 0,
+      inputs: [0, -1, -1, -1, -1, 5],
+      flagOverride: undefined,
+      children: [],
+    };
+    const inputs = new Map<number, PackageInput>([
+      [
+        0,
+        {
+          id: 0,
+          type: 'SingleRef',
+          value: {
+            kind: 'singleRef',
+            target: { type: TargetType.specificReference, value: THREAT, count: 0 },
+          },
+        },
+      ],
+      [5, { id: 5, type: 'Float', value: { kind: 'float', value: 1024 } }],
+    ]);
+    const run = {
+      actor: 1,
+      body: {
+        leaveFurniture: () => Promise.resolve(),
+        position: () => here,
+        travel: (to: readonly number[]) => {
+          travels.push([...to]);
+          here = [to[0] ?? 0, to[1] ?? 0, to[2] ?? 0];
+          return Promise.resolve(true);
+        },
+      },
+      mind: {
+        target: () => Promise.resolve(THREAT),
+        placement: (reference: number) =>
+          Promise.resolve({
+            position: reference === THREAT ? [0, 0, 0] : here,
+            heading: 0,
+            space: reference === THREAT ? threatSpace : tamriel,
+          }),
+        place: () => Promise.resolve(undefined),
+      },
+      inputs: new ProcedureInputs(branch, inputs),
+      context: {},
+      found: () => [],
+      stopped: () => waited > 120,
+      wait: (seconds: number) => {
+        waited += seconds;
+        return Promise.resolve();
+      },
+      random: () => 0,
+    } as unknown as ProcedureRun;
+    expect(await PROCEDURES.flee?.(run)).toBe('success');
+    // Off to 2600 (the done distance beyond its 100), then 30 s there.
+    expect(travels).toEqual([[2600, 0, 0]]);
+    expect(waited).toBeGreaterThanOrEqual(30);
+    expect(waited).toBeLessThan(31);
+
+    // The threat in another space (the actor through a load door, or it): no distance to weigh,
+    // safe at once (inferred, TODO(M13): the original's rule here is not known).
+    here = [100, 0, 0];
+    waited = 0;
+    travels = [];
+    threatSpace = { kind: 'interior', cell: 0x1605e } as const;
+    expect(await PROCEDURES.flee?.(run)).toBe('success');
+    expect(travels).toHaveLength(1);
+    expect(waited).toBe(0);
+  });
 });

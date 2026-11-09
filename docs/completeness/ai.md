@@ -203,8 +203,10 @@ the readers ask for by name.
       wait at least fSandBoxDelayEvalSeconds (observed; tests/conformance/ai/sandbox.test.ts).
       Inferred: the field the engine caps it by, taken as the stay, which is longer in vanilla.
 - [ ] Sandbox: the places the engine gives no radius: open (near itself and near its start: done).
-- [ ] fSandBoxExtraDialogueRange: observed to size only the second place of the engine's In Game
-      Dialogue package, which we do not make (actors talk through the story manager's scenes).
+- [x] fSandBoxExtraDialogueRange: observed to size only the second place of the engine's In Game
+      Dialogue package (the first's radius plus it); ours holds two actors talking in their scene
+      (talk.ts inGameDialoguePlaces, src/shell/actor-talk.ts): one drawn beyond the second place
+      walks back within the first (inferred; tests/conformance/ai/sandbox.test.ts).
 - [x] Paths: navmesh A\*, edge links, ledges, doors on the way, routes through load doors.
 - [x] Navmesh obstacles: the ground under one cut out of each triangle by the rule's footprint and
       height band, its free parts stay open; a moving body's cut (5 units, 5°, the update delta)
@@ -236,7 +238,11 @@ the readers ask for by name.
 - [ ] Crime: the NPC criminal not fighting flees the guard that answers (observed; the stage starts
       no flee from here); the answering guard attacks at once (inferred; the original's Alarm
       package); a guard of another faction taking the crime over; which witnesses of an NPC's crime
-      report it (inferred). fCrimeFavorMult, iCrimeFavorBaseValue belong to the favor check.
+      report it (inferred).
+- [x] fCrimeFavorMult, iCrimeFavorBaseValue: the favor check, a favor's price (the base value plus
+      the cost × the mult) within the favor points of the relationship rank (factions.ts doesFavor,
+      inferred in form); a commanded follower refuses a reference whose favor cost (XFVC) is beyond
+      it (src/shell/actor-favors.ts; tests/conformance/ai/crime.test.ts).
 - [x] Followers, horses, vehicles (followers.ts, mounts.ts, vehicles.ts).
 - [x] Followers: the follow offset (their places by distance, both radii and the spacing between:
       followOffset), the path to the leader itself, the walk zone (the middle of the radii,
@@ -250,7 +256,12 @@ the readers ask for by name.
       fAIInDialogueModewithPlayerTimer is read for a conversation with the player, not a greeting
       (the conversation's use is not built).
 - [x] Scenes (scene-runtime.ts).
-- [x] Travel, escort, flee, follow to, keep an eye on, ambush (procedure-runs.ts).
+- [x] Travel, escort, flee, follow to, keep an eye on, ambush (procedure-runs.ts). Flee from
+      something is done once safe: fFleeIsSafeTimer beyond fFleeDoneDistance* (fleeSafe, the count
+      inferred; tests/conformance/combat/flee.test.ts).
+- [x] Asking the player who stands in the way to move (avoidance.ts blockedByActor, the movers'
+      rule: after fMaxTimeBlockedByActors, once a travel, its ActorCollidewithActor line; the line
+      and the wait inferred; tests/conformance/ai/procedures.test.ts).
 - [x] Engine packages: get up, avoid player, steal warning, movement blocked (engine-packages.ts).
 - [x] Wear Sleep Outfit: Asbjorn in his bed's package (tests/conformance/ai/procedures.test.ts).
 - [x] Head tracking (head-tracking.ts): no favourites (the player asked first, else the first it may

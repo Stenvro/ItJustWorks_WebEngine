@@ -899,7 +899,7 @@ Actors use furniture as the engine's furniture handling does, as far as the data
     real seconds: ours scans as each activity ends); fSandBoxSearchRadius (6000) for a place the
     engine gets no radius for (ours keeps the place's radius, at least 100);
     fSandBoxExtraDialogueRange, observed to size only the second place of the engine's In Game
-    Dialogue package (the first's radius plus this), which we do not make.
+    Dialogue package (the first's radius plus this): see "Conversations between actors".
   - As it reaches its activity (in its seat or bed, on its marker) its next package and procedure
     evaluations wait at least fSandBoxDelayEvalSeconds (observed in the original; capped by a field
     of its state, inferred to be the stay).
@@ -2202,8 +2202,10 @@ Sovngarde, dogs), all with a scene of two (869) or three actors.
   until its speaker faces whom it speaks to within fAIMinAngleRangeToStartSceneDialogue, 20
   degrees; we hold the scene for that, at most 2 s: TODO(M13) the engine's patience), and the
   scene goes on: its phases and lines as any scene's. They stand facing each other while it
-  plays (the engine's in-game dialogue package); an actor the scene gives a package to follows
-  that. TODO(M13): whether the engine gets a seated actor up (we have the other one come) and
+  plays (the engine's In Game Dialogue package: its first place round the other as wide as they
+  came together to, its second fSandBoxExtraDialogueRange, 384, wider, observed in the original;
+  one drawn farther than the second walks back within the first, inferred: talk.ts
+  `inGameDialoguePlaces`); an actor the scene gives a package to follows that. TODO(M13): whether the engine gets a seated actor up (we have the other one come) and
   what fAIWalkAwayTimerForConversation (2 s, set as a random scene begins) does.
 - **DialogueActivate** with another actor as its target raises the same event (it as R1, its
   target as R2) and waits fAISocialTimerToWaitForEvent (20 s) for a scene to take it: none, the
@@ -2283,7 +2285,14 @@ meanwhile.
   MT_Torch_State: the arm holds it up; torchUnequip as it goes, ShdEquip and WeapSoloEquip for
   a shield likewise; TODO(M13): when the engine sends them) and its light (the LIGH's radius, colour,
   flicker) shines from the model's AttachLight node, lighting the world and its bearer for
-  detection ([Detection](#detection), the light on the target). `ActorCombat.lights`.
+  detection ([Detection](#detection), the light on the target). `ActorCombat.lights`. In a
+  fight, an NPC with a free left hand (a one-handed weapon, nothing in the left) takes up a torch
+  it carries in the dark while its target is beyond fCombatInventoryTorchEquipRange (256), keeps
+  it at least fCombatInventoryMinEquipTimeTorch (5 s) and then while it is dark, and puts it away
+  as its fight ends. The dark: inside, the cell's own light on it (ambient and directional, point
+  lights left out) below fTorchLightLevelInterior (40) as a light level; outside, the sky's light
+  below fTorchLightLevelMorning (0.6) before noon, fTorchLightLevelNight (1.2) after
+  (`darkForTorch`, `torchInFight`; the settings are the original's, the rule inferred: TODO(M13)).
 - **Hits** (`hit-test.ts`): at HitFrame the strike reaches fCombatDistance (141) × the weapon's
   reach (fists: the race's unarmed reach, RACE DATA @100; a bash fCombatBashReach) × the
   attacker's size, from its feet to the target's shape, inside the attack data's strike angle
@@ -3076,6 +3085,15 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   alerted), gets off its horse (one on a mount that fights ridden stays on: "Horses and
   followers" below), its detection reaction or override
   package ends, and its package's way stops.
+- **A script's target** (StartCombat): the controller holds its target selectors in a list, the
+  standard one first (both seen as classes and in saves: CombatTargetSelectorStandard, Fixed);
+  StartCombat puts a fixed one for its target on top, and while that target is one of its
+  candidates it is kept whatever the scores; while it is not (not yet known, given up by its
+  group) the standard selector chooses, and once it is dead or gone the fixed one goes
+  (`fixedTarget`; inferred, TODO(M13)). Only Papyrus StartCombat puts it there: the engine's own
+  fights (a summons taking up its commander's, guards answering a crime, a follower's attack
+  command, a package's, the horse's target lock) choose by the standard one. A save keeps the
+  fixed target with the fight (SavedFight.fixed).
 - **Targets** (`selectTarget`, observed in the original: the standard selector): among those
   its group knows and has not lost, and its current target if known, the highest sum wins; a
   group's sole target needs none; with none known, the one known most recently. The sum: its own
@@ -3099,7 +3117,9 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   its members know of its targets ([Combat detection](#combat-detection)): a target the group
   has not lost counts as detected for each member, at the place the group knows; it counts for
   the style's group offensive mult and GetCombatGroupMemberCount; one dying, another says
-  AllyKilled.
+  AllyKilled. As two or more of a group come to attack one target, the group's longest member
+  that does not flee calls its strategy (GroupStrategy, once each time; inferred, TODO(M13):
+  nothing in the original was found to say it, and vanilla's GroupStrategy topics hold no line).
 - **What it fights with** (`chooseEquipment`, weighed again once what it took up has been kept
   its kind's fCombatInventoryMinEquipTime: a weapon 5 s, magic and a shout 3 s, a staff 5 s, and
   no sooner than what it carries is read again, 3 s): the weapons
@@ -3205,7 +3225,13 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   (3000) away from its enemy over the navmeshes, cowers where it can go no farther (ActionIdle:
   the idles IsFleeing picks), and its combat
   ends once it is that far and detects no enemy. IsFleeing: fleeing in combat, a Flee procedure
-  that counts as fleeing, or fear.
+  that counts as fleeing, or fear. The Flee procedure (a package's, out of combat) is done once
+  it has been beyond fFleeDoneDistanceExterior (2500; inside fFleeDoneDistanceInterior, 600) of
+  what it flees for fFleeIsSafeTimer (30 s), running off again whenever it comes nearer
+  (procedure-runs.ts `fleeSafe`: the settings are read there in the original, not by the combat
+  tree; the count is inferred). With what it flees in another cell or worldspace (through a load
+  door) it counts as safe at once (inferred, TODO(M13): no data or documentation gives the
+  original's rule for a threat in another space).
 - **Searching** (`CombatSearch`): once its group has lost all its targets
   ([Combat detection](#combat-detection)) it searches (CombatToLost; GetCombatState 2): it runs
   to where the group last knew its target to be (within
@@ -3215,9 +3241,12 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   fights on; the group giving its targets up, it ends its combat (LostToNormal; detection's
   alert ends).
 - **Yielding**: an actor fighting the player that does not attack them on sight (the fight is
-  a quarrel or a brawl) and would flee yields instead: Yield, weapon away, out of the fight for
-  fCombatYieldTime (10 s), not again within fCombatYieldRetryTime (600 s); struck again it
-  fights on. The player yields a quarrel their blows started by sheathing and holding off 3 s:
+  a quarrel or a brawl) and would flee yields instead: Yield, weapon away, out of its fight with
+  the player until they have held off 3 s since (as their own yield is accepted), at the latest
+  fCombatYieldTime (10 s); once a fight (as the original lets the player try their yield once a
+  combat: CommonLibSSE attemptedYieldInCurrentCombat), and not within fCombatYieldRetryTime
+  (600 s); struck again it fights on, and flees rather than yield again (`yields`, `yieldOver`;
+  the actor's rule is inferred after the player's). The player yields a quarrel their blows started by sheathing and holding off 3 s:
   AcceptYield, and it lets them be; so do guards that took up a fight against the player (a
   crime: their arrest follows) unless their faction attacks the player on sight. TODO(M13): the
   engine's rule.

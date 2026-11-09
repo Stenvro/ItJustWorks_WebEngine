@@ -114,6 +114,13 @@ export interface CrimeSettings {
   readonly favorConfidant: number;
   readonly favorAlly: number;
   readonly favorLover: number;
+  /**
+   * iCrimeFavorBaseValue, fCrimeFavorMult: a favor's price against the relationship (factions.ts
+   * doesFavor). The original reads them only in its check whether an actor does the player a
+   * favor, not in crime.
+   */
+  readonly favorBaseValue: number;
+  readonly favorMult: number;
 }
 
 /**
@@ -165,6 +172,8 @@ const SETTINGS: readonly (readonly [keyof CrimeSettings, string, number])[] = [
   ['favorConfidant', 'iFavorConfidantValue', 50],
   ['favorAlly', 'iFavorAllyValue', 100],
   ['favorLover', 'iFavorLoverValue', 500],
+  ['favorBaseValue', 'iCrimeFavorBaseValue', 0],
+  ['favorMult', 'fCrimeFavorMult', 1],
 ];
 
 /** The game settings crime reads, with their GMSTs and built-in values (tools). */

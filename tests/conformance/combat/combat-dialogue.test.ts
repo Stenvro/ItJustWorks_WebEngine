@@ -11,6 +11,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { COMBAT_AI_DEFAULTS, firstTauntTime } from '../../../src/ai/combat-ai.ts';
+import { CombatGroups, type CombatGroupWorld } from '../../../src/ai/combat-groups.ts';
 import {
   CombatDialogue,
   COMBAT_DIALOGUE_DEFAULTS,
@@ -103,6 +104,45 @@ describe('combat dialogue', () => {
   });
 
   // The original's subtype and its distance mult are all that is found of it (the gate above has
-  // them): nothing was found that says one, so no rule is there to run.
-  it.todo('GroupStrategy: the group’s leader calls the strategy  [xEdit DIAL]');
+  // them); when it is said is inferred (combat-groups.ts #strategies): as two or more of a group
+  // come to attack one target, the group's longest member that does not flee calls it.
+  it('GroupStrategy: the group’s leader calls the strategy  [xEdit DIAL] (inferred)', () => {
+    const groups = new CombatGroups();
+    const targets = new Map<number, number>([[1, 9]]);
+    const fleeing = new Set<number>();
+    const calls: [number, number][] = [];
+    const world: CombatGroupWorld = {
+      combatTarget: (member) => targets.get(member),
+      fleeing: (member) => fleeing.has(member),
+      position: () => [0, 0, 0],
+      present: () => true,
+      detects: () => true,
+      sneaking: () => false,
+      invisible: () => false,
+      sees: () => true,
+      callStrategy: (leader, target) => calls.push([leader, target]),
+    };
+    groups.join(1, []);
+    groups.join(2, [1]);
+    groups.addTarget(1, 9);
+    // One attacks it: no strategy yet.
+    groups.update(world, 0);
+    expect(calls).toEqual([]);
+    // A second takes it on: the leader (the group's first) calls it, once.
+    targets.set(2, 9);
+    groups.update(world, 1);
+    groups.update(world, 2);
+    expect(calls).toEqual([[1, 9]]);
+    // It ends as one turns away; begun again, the leader that flees leaves the call to the next.
+    targets.delete(2);
+    groups.update(world, 3);
+    targets.set(2, 9);
+    fleeing.add(1);
+    groups.update(world, 4);
+    expect(calls).toEqual([
+      [1, 9],
+      [2, 9],
+    ]);
+    expect(COMBAT_DIALOGUE_DEFAULTS.lines.GroupStrategy.distanceMult).toBe(1);
+  });
 });

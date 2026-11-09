@@ -199,6 +199,35 @@ export function givesWay<A extends WayGiver>(a: A, b: A): A {
   return a.reference < b.reference ? a : b;
 }
 
+/**
+ * What an actor on its way does about the one in its way (docs/ai.md, "Paths"): nothing while it
+ * has been held up no longer than fMaxTimeBlockedByActors (stepping aside itself, its way waits
+ * and its time held up does not run: the movers' part); then
+ * (observed in the original: its way is blocked by actors) it acts. The player standing in its
+ * way is asked to move first (`ask`: its ActorCollidewithActor line, the infos' IsSmallBump 0
+ * ones: "Excuse me.", "Mind the way."), once a travel, and given one more
+ * fMaxTimeBlockedByActors to step aside; one moving, or asked already, it goes round (`round`).
+ * Another actor on its way into it: one of the two gives way (`giveWay`: givesWay). Inferred,
+ * TODO(M13): the engine's line and wait for the player (its Avoid Player package is the player's
+ * swings' and shots'), and what its path manager does with the report.
+ */
+export function blockedByActor(input: {
+  /** Seconds it has been held up (hardly moving with one in its way). */
+  readonly blockedFor: number;
+  /** fMaxTimeBlockedByActors. */
+  readonly most: number;
+  /** The one in its way is the player, standing (not moving). */
+  readonly playerStanding: boolean;
+  /** It asked the player already on this travel. */
+  readonly askedPlayer: boolean;
+  /** The one in its way is another actor on its own way. */
+  readonly otherTravels: boolean;
+}): 'wait' | 'ask' | 'giveWay' | 'round' {
+  if (input.blockedFor <= input.most) return 'wait';
+  if (input.playerStanding && !input.askedPlayer) return 'ask';
+  return input.otherTravels ? 'giveWay' : 'round';
+}
+
 /** The INI's avoidance settings ([Pathfinding]). */
 export interface AvoidanceSettings {
   /** iMaxActorsToAvoid: at most this many are gone round (the engine: at most 32). */

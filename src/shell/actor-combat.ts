@@ -190,6 +190,7 @@ import {
   type CombatCasting,
   type CombatFlight,
   type FighterView,
+  type StartCombatOptions,
 } from './actor-combat-ai.ts';
 import type { Threat } from '../ai/combat-tactics.ts';
 import { cellLight, type MagicFx } from './magic-fx.ts';
@@ -264,6 +265,17 @@ const RELOAD_SECONDS = 3;
  * original: "pa_KillMoveB" for the leader, "KillMoveB" for the one it is done to).
  */
 const PAIRED_PREFIX = 'pa_';
+
+/** Whether a fighter may begin an attack now: able to act; in the attack's window the next chains, otherwise one at a time. */
+function mayAttack(state: CombatState): boolean {
+  if (!canAct(state)) return false;
+  return (
+    !attacking(state) ||
+    state.attack === AttackState.nextAttack ||
+    state.attack === AttackState.followThrough ||
+    state.attack === AttackState.bash
+  );
+}
 /** A paired clip's partner is judged at its mark this long after its get-to-mark time (s). */
 const MARK_SETTLE = 0.25;
 
@@ -551,7 +563,7 @@ export class ActorCombat implements CombatBridge {
    */
   readonly #joining = new Map<
     number,
-    { left: number; readonly target: number; readonly modifier: number | undefined; told: boolean }
+    { left: number; readonly target: number; readonly options: StartCombatOptions; told: boolean }
   >();
   /** The NPC archers' Archery, as read when they draw. */
   readonly #archery = new Map<number, number>();
@@ -934,18 +946,21 @@ export class ActorCombat implements CombatBridge {
     return this.#fighters.get(actor)?.state.paired !== undefined;
   }
 
-  /** `modifier`: a loaded save's fight keeps the confidence modifier it drew. */
-  startCombat(actor: number, target: number, modifier?: number): void {
+  /**
+   * `modifier`: a loaded save's fight keeps the confidence modifier it drew; `fixed`: a script's
+   * StartCombat, whose target the actor keeps (ActorCombatAi.startCombat).
+   */
+  startCombat(actor: number, target: number, options: StartCombatOptions = {}): void {
     if (actor === target) return;
     // Not a fighter yet (too far from the player, or placed since the last frame: PlaceAtMe and
     // StartCombat at once): it is one from the next frame, and takes the fight up then.
     if (!this.#fighters.has(actor)) {
       if (actor !== PLAYER_REF) {
-        this.#joining.set(actor, { left: JOIN_SECONDS, target, modifier, told: false });
+        this.#joining.set(actor, { left: JOIN_SECONDS, target, options, told: false });
       }
       return;
     }
-    this.#brain.startCombat(actor, target, modifier);
+    this.#brain.startCombat(actor, target, options);
   }
 
   /** The confidence modifier an actor's fight drew (a save keeps it). */
@@ -1130,17 +1145,7 @@ export class ActorCombat implements CombatBridge {
   ): Promise<boolean> {
     const fighter = this.#fighters.get(reference);
     const runtime = this.#options.session.scriptsReady;
-    if (!fighter || !runtime || !canAct(fighter.state)) return false;
-    const state = fighter.state;
-    // In the attack's window the next one chains; otherwise one at a time.
-    if (
-      attacking(state) &&
-      state.attack !== AttackState.nextAttack &&
-      state.attack !== AttackState.followThrough &&
-      state.attack !== AttackState.bash
-    ) {
-      return false;
-    }
+    if (!fighter || !runtime || !mayAttack(fighter.state)) return false;
     // A crossbow out without its bolt on (its release clip's reload cut short): the attack
     // reloads instead (ActionReload: reloadStart), and none goes until the bolt is on.
     if (await this.#reload(fighter, action)) return true;
@@ -1178,6 +1183,41 @@ export class ActorCombat implements CombatBridge {
           );
         })) ?? (creature ? this.#creatureAttack(fighter, action) : undefined));
     if (event === undefined) return false;
+    return this.#began(fighter, runtime, action, event, target);
+  }
+
+  /**
+   * An NPC's kill move: its Special Attack (ActionRightPowerAttack), whose idle tree holds the
+   * kill moves under their conditions, played only when the idle it gives is a paired one its
+   * target takes now. Nothing else stands for one: not the action's plain power attack, not a
+   * creature's attack data, not a plain attack for want of stamina (a power attack's action, it
+   * needs stamina as any; inferred, TODO(M13)). Whether one began.
+   */
+  async killMove(reference: number): Promise<boolean> {
+    const fighter = this.#fighters.get(reference);
+    const runtime = this.#options.session.scriptsReady;
+    if (!fighter || fighter.player || !runtime || !mayAttack(fighter.state)) return false;
+    const target = fighter.target;
+    if (target === undefined) return false;
+    const action = 'ActionRightPowerAttack';
+    if (!(await runtime.progression.canPowerAttack(reference))) return false;
+    const event = await this.#act(fighter, action, target, (idle) =>
+      idle.toLowerCase().startsWith(PAIRED_PREFIX),
+    );
+    if (event === undefined) return false;
+    return this.#began(fighter, runtime, action, event, target);
+  }
+
+  /** An attack's event its graph took: the fighter's attack state, its costs, its line, its pair. */
+  #began(
+    fighter: Fighter,
+    runtime: ScriptRuntime,
+    action: string,
+    event: string,
+    target: number | undefined,
+  ): boolean {
+    const reference = fighter.reference;
+    const state = fighter.state;
     const lower = event.toLowerCase();
     if (lower === 'weapequip') {
       state.weapon = WeaponState.drawing;
@@ -1556,7 +1596,7 @@ export class ActorCombat implements CombatBridge {
     for (const [reference, joining] of this.#joining) {
       if (joining.told || !this.#fighters.has(reference)) continue;
       joining.told = true;
-      this.#brain.startCombat(reference, joining.target, joining.modifier);
+      this.#brain.startCombat(reference, joining.target, joining.options);
     }
     const player = this.#fighters.get(PLAYER_REF);
     const avatar = this.#avatar;
@@ -4033,7 +4073,8 @@ export class ActorCombat implements CombatBridge {
       },
       draw: (reference) => this.draw(reference),
       sheathe: (reference) => this.sheathe(reference),
-      attack: (reference, action) => this.attack(reference, action),
+      attack: (reference, action, melee) => this.attack(reference, action, melee),
+      killMove: (reference) => this.killMove(reference),
       release: (reference, action) => this.release(reference, action),
       block: (reference, on) => this.block(reference, on),
       anticipateBlow: (reference, blow) => this.anticipateBlow(reference, blow),
@@ -4042,6 +4083,7 @@ export class ActorCombat implements CombatBridge {
         return fighter ? this.#act(fighter, action, target) : Promise.resolve(undefined);
       },
       threats: () => this.#threats(),
+      attackKills: (attacker, target) => this.attackKills(attacker, target),
     };
   }
 
@@ -4119,6 +4161,7 @@ export class ActorCombat implements CombatBridge {
         raceFlags: gear.raceFlags,
         rightSpell: gear.spellForms.right,
         leftSpell: gear.spellForms.left,
+        torch: gear.torch !== undefined,
         strikeAngle,
         recoveryTime,
         powerRecoveryTime,

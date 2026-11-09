@@ -14,7 +14,9 @@ import {
   NO_PACKAGE_INTERRUPTS,
   TalkPlanner,
   talkSettings,
+  inGameDialoguePlaces,
   sceneLineFaces,
+  strayedFromDialogue,
   triggerDistance,
   type TalkActor,
   type TalkIntent,
@@ -112,6 +114,15 @@ export class ActorTalk {
   readonly #approaching = new Set<number>();
   /** Those held talking in their random scene, by the scene. */
   readonly #inScene = new Map<number, number>();
+  /** Two actors' In Game Dialogue package while their scene plays: whom, its places. */
+  readonly #dialoguePlaces = new Map<
+    number,
+    {
+      readonly other: number;
+      readonly places: { readonly first: number; readonly second: number };
+      returning: boolean;
+    }
+  >();
   /** Those whose sandbox lets them talk with others (Allow Conversation). */
   readonly #sociable = new Set<number>();
   /**
@@ -399,11 +410,40 @@ export class ActorTalk {
     for (const [actor, scene] of [...this.#inScene]) {
       if (this.#approaching.has(actor)) continue;
       const ended = runtime.scenes.sceneOf(actor) !== scene;
-      if (!ended && runtime.scenes.packagesOf(actor) === undefined) continue;
+      if (!ended && runtime.scenes.packagesOf(actor) === undefined) {
+        this.#keepTogether(actor);
+        continue;
+      }
       this.#inScene.delete(actor);
+      this.#dialoguePlaces.delete(actor);
       this.#options.ai.releaseFromTalk(actor);
       if (ended && planner.partnerOf(actor) !== undefined) planner.released(actor);
     }
+  }
+
+  /**
+   * Its In Game Dialogue package's places (talk.ts inGameDialoguePlaces): one drawn farther from
+   * the other than the second place (pushed, knocked aside) walks back within the first.
+   */
+  #keepTogether(actor: number): void {
+    const held = this.#dialoguePlaces.get(actor);
+    const self = this.#staged.get(actor)?.position;
+    const other = held && this.#staged.get(held.other)?.position;
+    if (!held || held.returning || !self || !other) return;
+    const { movers, furniture } = this.#options;
+    if (furniture.holds(actor)) return;
+    const apart = Math.hypot(self[0] - other[0], self[1] - other[1]);
+    if (!strayedFromDialogue(apart, held.places)) return;
+    held.returning = true;
+    // Its talk hold faces it no more while it walks (as the one that came up walked).
+    const ai = this.#options.ai;
+    ai.holdToTalk(actor, () => undefined);
+    void movers.travel(actor, other, 'walk', held.places.first).finally(() => {
+      held.returning = false;
+      if (this.#dialoguePlaces.get(actor) === held) {
+        ai.holdToTalk(actor, () => this.#staged.get(held.other)?.position);
+      }
+    });
   }
 
   /**
@@ -544,6 +584,10 @@ export class ActorTalk {
         'actor',
         `${names[0]} and ${names[1]} face each other ${apartNow().toFixed(0)} apart: ${title} goes on`,
       );
+      // Their In Game Dialogue package holds them so while the scene plays.
+      const places = inGameDialoguePlaces(Math.max(reach, apartNow()), settings);
+      this.#dialoguePlaces.set(starter, { other, places, returning: false });
+      this.#dialoguePlaces.set(other, { other: starter, places, returning: false });
     } finally {
       for (const actor of pair) {
         director.hold(actor, false);
@@ -695,6 +739,7 @@ export class ActorTalk {
   remove(actor: number): void {
     this.#sociable.delete(actor);
     this.#options.session.lines.stop(actor);
+    this.#dialoguePlaces.delete(actor);
     if (this.#inScene.delete(actor)) this.#options.ai.releaseFromTalk(actor);
   }
 }

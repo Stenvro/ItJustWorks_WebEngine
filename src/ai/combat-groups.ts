@@ -124,6 +124,8 @@ const EVENT_SECONDS = 1;
 const EVENT_MOVED = 64;
 /** Stealth points kept above none while the level is 0 (the engine's). */
 const POINTS_AT_ZERO = 0.1;
+/** A group has a strategy against a target this many of it attack (inferred: TODO(M13)). */
+const STRATEGY_ATTACKERS = 2;
 
 /** What a group knows of a target. */
 export interface GroupTarget {
@@ -152,6 +154,8 @@ export interface GroupTarget {
   eventTime: number;
   /** How many members fight it (their combat target). */
   attackers: number;
+  /** The group has a strategy against it: two or more of it attack it (#strategies). */
+  strategy: boolean;
 }
 
 /**
@@ -205,6 +209,8 @@ export interface CombatGroupWorld {
   invisible(target: number): boolean;
   /** Whether a member sees a place (its line of sight: the lost check). */
   sees(member: number, at: Vec3): boolean;
+  /** The group's leader calls its strategy against a target (its GroupStrategy line). */
+  callStrategy?(leader: number, target: number): void;
 }
 
 /** A place kept: a copy (the positions handed in are the actors' own, and they move on). */
@@ -269,6 +275,18 @@ export class CombatGroups {
     const group = this.#of.get(actor);
     if (!group) return;
     for (const member of group.members) if (member !== actor) yield member;
+  }
+
+  /**
+   * The leader of an actor's group: its longest member that does not flee (as members leave, the
+   * next in line leads). Undefined: no group, or all of it flees. Inferred, TODO(M13): which
+   * member speaks for its group in the original.
+   */
+  leader(actor: number, world: Pick<CombatGroupWorld, 'fleeing'>): number | undefined {
+    const group = this.#of.get(actor);
+    if (!group) return undefined;
+    for (const member of group.members) if (!world.fleeing(member)) return member;
+    return undefined;
   }
 
   /** How many are in an actor's group (GetCombatGroupMemberCount; 0: none). */
@@ -364,6 +382,7 @@ export class CombatGroups {
         eventAt: undefined,
         eventTime: -Infinity,
         attackers: 0,
+        strategy: false,
       };
       group.targets.set(target, known);
     }
@@ -554,6 +573,7 @@ export class CombatGroups {
         if (world.combatTarget(member) === known.reference) known.attackers++;
       }
     }
+    this.#strategies(group, world);
     // Members out of the high process detect the targets near them fully.
     for (const member of group.members) {
       if (world.detects(member)) continue;
@@ -577,6 +597,25 @@ export class CombatGroups {
       group.targets.delete(known.reference);
       const member = group.members.values().next().value;
       if (member !== undefined) given.push({ member, target: known.reference });
+    }
+  }
+
+  /**
+   * The group's strategy against each target (the GroupStrategy dialogue subtype; its distance
+   * gate fCombatDialogueGroupStrategyDistanceMult, 1): the group has one once two or more of its
+   * members attack the target, and its leader calls it as it begins, once; it ends as fewer
+   * attack it and may begin again. Inferred, TODO(M13): nothing found in the original says when
+   * the line is said (and vanilla's GroupStrategy topics hold no line to say).
+   */
+  #strategies(group: CombatGroup, world: CombatGroupWorld): void {
+    for (const known of group.targets.values()) {
+      const strategy = known.attackers >= STRATEGY_ATTACKERS;
+      if (strategy === known.strategy) continue;
+      known.strategy = strategy;
+      const first = group.members.values().next().value;
+      if (!strategy || first === undefined) continue;
+      const leader = this.leader(first, world);
+      if (leader !== undefined) world.callStrategy?.(leader, known.reference);
     }
   }
 

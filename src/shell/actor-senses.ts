@@ -46,7 +46,7 @@ import {
   type DetectionSave,
   type WitnessedAct,
 } from '../ai/detection-states.ts';
-import { brightestAmbient, lightLevel, type LightProbe } from '../ai/light-level.ts';
+import { brightestAmbient, lightLevel, skyLevel, type LightProbe } from '../ai/light-level.ts';
 import { InterruptFlag, PackageFlag } from '../ai/package-records.ts';
 import {
   parseNpcCombat,
@@ -958,6 +958,21 @@ export class ActorSenses implements ScriptSenses {
       ambient: this.#ambient(body),
     });
     return light * (exterior ? settings.lightExteriorMult : settings.lightMult);
+  }
+
+  /**
+   * The sky's light on an actor (light-level.ts skyLevel); undefined: not on the stage, or no
+   * lighting known there.
+   */
+  skyLight(actor: number): number | undefined {
+    const body = this.#bodies().get(actor);
+    const probe = body && this.#options.light?.(body.chest);
+    return probe && skyLevel(probe);
+  }
+
+  /** Whether the view shows an interior. */
+  get interior(): boolean {
+    return this.#options.interior;
   }
 
   /** Whether an observer detects a target now (a test made anew unless one is fresh). */
