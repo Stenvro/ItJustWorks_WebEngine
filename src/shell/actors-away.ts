@@ -65,9 +65,9 @@ export interface ActorsAwayOptions {
    */
   readonly reached?: (actor: number, walk: AwayPackage) => void;
   /**
-   * The low process puts an actor somewhere: a flier coming into the loaded area in the air
-   * (#fly: `inAir`) is placed there cruising on; anywhere else (its trip's end, out of a door)
-   * it is on the ground.
+   * The low process put an actor somewhere (the game state has it there now): a flier coming
+   * into the loaded area in the air (#fly: `inAir`) is placed there cruising on; anywhere else
+   * (its trip's end, out of a door) it is on the ground.
    */
   readonly aloft?: (actor: number, inAir: boolean) => void;
 }
@@ -941,8 +941,9 @@ export class ActorsAway {
       // A worldspace's cell no plugin has: the persistent cell holds it.
       cell ??= runtime.forms.db.persistentCell(world);
     }
-    this.#options.aloft?.(actor, inAir);
     runtime.move(actor, [...position], [0, 0, place.heading ?? 0], cell, world);
+    // Before the stage takes the move up (it places it a few promise turns later).
+    this.#options.aloft?.(actor, inAir);
   }
 }
 

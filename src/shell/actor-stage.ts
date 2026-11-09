@@ -304,9 +304,12 @@ export class ActorStage {
    * The game state's place each staged actor was put on the stage from (or a script last moved
    * it to on the stage): the very array, so a newer move (a follower sent through the door
    * with the player, a script's MoveTo) the stage has not taken up yet is told apart
-   * (#keepPlace).
+   * (#keepPlace), and the game state it was (another game loaded since is not written to).
    */
-  readonly #stagedFrom = new WeakMap<StagedActor, { readonly position: Vec3 | undefined }>();
+  readonly #stagedFrom = new WeakMap<
+    StagedActor,
+    { readonly runtime: ScriptRuntime | undefined; readonly position: Vec3 | undefined }
+  >();
   #generation = 0;
 
   /** The actors that move by themselves: their character controllers and movement. */
@@ -649,9 +652,13 @@ export class ActorStage {
         if (walk.procedure.toLowerCase() !== 'travel' || walk.goesOn === true) return;
         options.session.scriptsReady?.scenes.packageEnded(actor, walk.id);
       },
+      // Kept by the session at the game state's place the low process gave it (any view's
+      // stage places it from there).
       aloft: (actor, inAir) => {
-        if (inAir) this.flight.restoreAloft(actor);
-        else this.flight.landedAway(actor);
+        const offStage = options.session.offStage;
+        const place = options.session.scriptsReady?.state.references.get(actor)?.position;
+        if (inAir && place) offStage.keepAloft(actor, place);
+        else offStage.landed(actor);
       },
     });
     this.ai = new ActorAi({
@@ -928,6 +935,10 @@ export class ActorStage {
       ...(options.objects && { objects: options.objects }),
       setDown: (reference) => {
         this.#setDown(reference);
+      },
+      groundReady: (reference) => {
+        const staged = this.#actors.get(reference);
+        return staged !== undefined && this.#groundReady(staged);
       },
     });
     this.practice = new ActorPractice({
@@ -2226,7 +2237,7 @@ export class ActorStage {
       if (staged.cell !== key) continue;
       const record = this.#leaving(staged, space);
       this.#keepPlace(staged, space);
-      this.#remove(staged, true);
+      this.#remove(staged);
       this.#keepLeft(record);
     }
   }
@@ -2236,31 +2247,40 @@ export class ActorStage {
    * state, as a moved object does (moved-objects.ts noteMoved) and a corpse (#keepCorpse): the
    * low process takes its packages on from there, and a script finds it there. Written for one
    * the game state places already (a script or the low process moved it, a script created it)
-   * and for one leaving in the air (it stays aloft: ActorFlight.remove); one its cell alone
-   * places is put where its package has it as the cell loads again, as before.
-   * TODO(M13): inferred, the original's unload rule for an actor's place was not checked
-   * (before, the game state kept where a script or the low process had last put one, however
-   * far it had gone since: Sovngarde's Alduin, his cell unloading under him in flight, came
-   * back on the ground where the low process had last left him, some 9,800 units away).
+   * and for one leaving in the air; one its cell alone places is put where its package has it
+   * as the cell loads again, as before. One leaving in the air stays in it off the stage, kept
+   * by the session at that place (OffStageActors.aloft: GetFlyingState answers cruising, and it
+   * is placed in the air again) until anything moves it (a script, the low process).
+   * TODO(M13): inferred, the original's unload rules for an actor's place and a flier's state
+   * were not checked (before, the game state kept where a script or the low process had last
+   * put one, however far it had gone since: Sovngarde's Alduin, his cell unloading under him in
+   * flight, came back on the ground where the low process had last left him, some 9,800 units
+   * away).
    */
   #keepPlace(staged: StagedActor, space: Space | undefined): void {
     const reference = staged.reference;
-    const runtime = this.#options.session.scriptsReady;
+    const session = this.#options.session;
+    const runtime = session.scriptsReady;
     if (!runtime || !space || staged.dead || staged.placed.actor.startsDead) return;
     if (!staged.enabled(reference) || runtime.state.actors.get(reference)?.dead === true) return;
     if (runtime.state.actors.get(reference)?.vehicle !== undefined) return;
     const state = runtime.state.references.get(reference);
     // A newer place the game state has for it, which the stage has not taken up yet, wins: a
     // follower sent through the door with the player (ActorFollowers.comeAlong) as the view
-    // closes, one a script moved a moment before its cell went.
-    if (this.#stagedFrom.get(staged)?.position !== state?.position) return;
-    if (state?.position === undefined && !this.flight.isFlying(reference)) return;
+    // closes, one a script moved a moment before its cell went. So does another game's state
+    // (a game loaded, started anew, while this one's view closes).
+    const from = this.#stagedFrom.get(staged);
+    if (from?.runtime !== runtime || from.position !== state?.position) return;
+    const aloft = this.flight.staysAloft(reference);
+    if (state?.position === undefined && !aloft) return;
     const live = this.livePlacement(reference);
     if (!live) return;
     const kept = runtime.state.reference(reference);
     const position: [number, number, number] = [...live.position];
     kept.position = position;
     kept.rotation = [0, 0, live.rotation[2]];
+    if (aloft) session.offStage.keepAloft(reference, position);
+    else session.offStage.landed(reference);
     if (space.kind === 'interior') {
       kept.cell = space.cell;
       delete kept.world;
@@ -2321,7 +2341,7 @@ export class ActorStage {
     this.#guides.clear();
     this.#cells.clear();
     for (const { staged, record } of leaving) {
-      this.#remove(staged, true);
+      this.#remove(staged);
       this.#keepLeft(record);
     }
   }
@@ -2538,7 +2558,10 @@ export class ActorStage {
       staged.cell = key;
       staged.position = [...now.position];
       staged.heading = now.rotation[2];
-      this.#stagedFrom.set(staged, { position: runtime.state.references.get(reference)?.position });
+      this.#stagedFrom.set(staged, {
+        runtime,
+        position: runtime.state.references.get(reference)?.position,
+      });
       // Set on the ground there once the collision there is in place (else ground does it).
       const ready = this.#groundReady(staged);
       moveActor(
@@ -2995,7 +3018,8 @@ export class ActorStage {
     for (const { actor } of candidates) this.#placing.add(actor.reference);
     const { session, terminal } = this.#options;
     // The game state's place each is put on the stage from (#keepPlace).
-    const references = session.scriptsReady?.state.references;
+    const runtime = session.scriptsReady;
+    const references = runtime?.state.references;
     const stagedFrom = new Map(
       candidates.map(({ actor }) => [actor.reference, references?.get(actor.reference)?.position]),
     );
@@ -3035,7 +3059,7 @@ export class ActorStage {
           dead: false,
         };
         this.#actors.set(reference, entry);
-        this.#stagedFrom.set(entry, { position: stagedFrom.get(reference) });
+        this.#stagedFrom.set(entry, { runtime, position: stagedFrom.get(reference) });
         staged.push(entry);
         this.graphEvents.attach(entry);
         this.away.arrived(reference);
@@ -3054,21 +3078,26 @@ export class ActorStage {
         // Riding a vehicle (SetVehicle, kept in the game state): on it again.
         this.vehicles.rideAgain(reference);
         // A flier in the air off the stage (its cell unloaded under it in flight, the low
-        // process flew it in) stays there, not set on the ground, and cruises on (ActorFlight),
-        // if it may fly now; else it is set on the ground under it as any actor placed is.
-        if (this.flight.aloft(reference)) {
-          if (
-            !actor.actor.startsDead &&
-            fliesByRace(actor.look.raceFlags) &&
-            this.flight.mayFly(reference)
-          ) {
-            entry.grounded = true;
-          } else this.flight.landedAway(reference);
-        }
+        // process flew it in), not moved since, stays there, not set on the ground, and
+        // cruises on (ActorFlight), if it may fly now; else it is set on the ground under it as
+        // any actor placed is. A loaded save's record of it says instead (below).
+        const aloftAway = session.offStage.aloft(reference, stagedFrom.get(reference));
+        session.offStage.landed(reference);
         // A loaded save's actor: in its furniture again at once, its package going on where
         // it was, fighting whom it fought.
         session.offStage.drop(reference);
         const saved = session.restoring?.actor(reference);
+        if (
+          !saved &&
+          aloftAway &&
+          !actor.actor.startsDead &&
+          runtime?.state.actors.get(reference)?.dead !== true &&
+          fliesByRace(actor.look.raceFlags) &&
+          this.flight.mayFly(reference)
+        ) {
+          entry.grounded = true;
+          this.flight.restoreAloft(reference);
+        }
         if (saved) {
           session.restoring?.drop(reference);
           // Its graph goes on where it was (a rider in its riding idle; one getting out, from
@@ -3144,8 +3173,7 @@ export class ActorStage {
     );
   }
 
-  /** It leaves the stage; `unloaded`: with its cell or its view (#keepPlace). */
-  #remove(staged: StagedActor, unloaded = false): void {
+  #remove(staged: StagedActor): void {
     // A corpse leaving (its cell unloading) is kept where its ragdoll laid it.
     this.#keepCorpse(staged);
     this.graphEvents.remove(staged.reference);
@@ -3159,8 +3187,7 @@ export class ActorStage {
     this.ai.remove(staged.reference);
     this.senses.remove(staged.reference);
     this.casting.remove(staged.reference);
-    // A flier unloaded in the air stays in it off the stage.
-    this.flight.remove(staged.reference, unloaded);
+    this.flight.remove(staged.reference);
     this.crime.remove(staged.reference);
     this.talk.remove(staged.reference);
     this.mounts.remove(staged.reference);

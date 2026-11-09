@@ -293,6 +293,14 @@ type StatePlace = readonly [number, number, number] | undefined;
  */
 export class OffStageActors {
   readonly #kept = new Map<number, { record: SavedActor; statePlace: StatePlace }>();
+  /**
+   * The fliers in the air off the stage, each with the game state's place it had as it left the
+   * stage in flight (or as the low process flew it into the loaded area): a move elsewhere since
+   * (a script's MoveTo or SetPosition, the end of a trip of the low process) leaves it on the
+   * ground there. Kept for the session, not by one stage (a viewer's low process moves those
+   * another viewer's cells let go); a game loaded or started anew clears them.
+   */
+  readonly #aloft = new Map<number, StatePlace>();
 
   keep(record: SavedActor, statePlace: StatePlace): void {
     this.#kept.delete(record.reference);
@@ -310,6 +318,29 @@ export class OffStageActors {
 
   clear(): void {
     this.#kept.clear();
+    this.#aloft.clear();
+  }
+
+  /** A flier is in the air off the stage while the game state has it at `statePlace`. */
+  keepAloft(reference: number, statePlace: readonly [number, number, number]): void {
+    this.#aloft.set(reference, [statePlace[0], statePlace[1], statePlace[2]]);
+  }
+
+  /**
+   * Whether a flier is in the air off the stage: kept so (keepAloft), the game state's place for
+   * it (`statePlace`, the game state's now) still the one it was kept at. One moved elsewhere
+   * since is on the ground, and is forgotten.
+   */
+  aloft(reference: number, statePlace: StatePlace): boolean {
+    if (!this.#aloft.has(reference)) return false;
+    if (samePlace(this.#aloft.get(reference), statePlace)) return true;
+    this.#aloft.delete(reference);
+    return false;
+  }
+
+  /** It is on the ground off the stage, or on the stage again: no longer kept in the air. */
+  landed(reference: number): void {
+    this.#aloft.delete(reference);
   }
 
   /**
