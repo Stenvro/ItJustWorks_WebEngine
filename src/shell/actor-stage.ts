@@ -2011,7 +2011,8 @@ export class ActorStage {
     // The camera as it was: first or third person, the fields of view.
     if (player.fov) view.play.player.setFov(player.fov[0], player.fov[1]);
     if (player.pov) view.play.player.setPov(player.pov);
-    if (player.sneaking === true) view.play.player.sneaking = true;
+    // Sneaking as saved (a save keeps it only while sneaking): never what the player came with.
+    view.play.player.sneaking = player.sneaking === true;
     if (player.weaponDrawn === true) {
       this.#restoredDraws.set(PLAYER_REF, { left: 5, resumed: graphs?.body !== undefined });
     }

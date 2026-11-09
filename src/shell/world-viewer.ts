@@ -1296,8 +1296,8 @@ export class WorldViewer {
   /**
    * Opens a worldspace. The player arrives at `arrival` (a load door's destination), or as
    * the game would bring them in near `cell` (default: the busiest cell): in front of the
-   * nearest load door, else at the nearest map marker. `stance`: the player's as they come
-   * through a load door (Player.keepStance).
+   * nearest load door, else at the nearest map marker. `stance`: the player as they left the
+   * place before (Player.keepStance).
    */
   async open(
     formId: number,
