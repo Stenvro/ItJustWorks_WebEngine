@@ -28,7 +28,15 @@
 
 import fs from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+  ScriptRuntime,
+  type LivePlacement,
+  type WorldBridge,
+} from '../../../src/scripting/runtime/runtime.ts';
 import { SCRIPT_EVENTS } from '../../../src/scripting/runtime/script-events.ts';
+import { ScriptLibrary } from '../../../src/scripting/script-library.ts';
+import { RecordDatabase } from '../../../src/world/record-db.ts';
+import type { Value } from '../../../src/scripting/values.ts';
 import { Vfs } from '../../../src/vfs/vfs.ts';
 import { openGameFolder } from '../../../tools/gamedata-path.ts';
 import { scriptEventUsage, type ScriptEventUsage } from '../../../tools/script-event-usage.ts';
@@ -403,12 +411,14 @@ describe.skipIf(!hasGamedata())('the world’s events to the scripts (headless s
 // player arrives in, and in the cellar a spear trap [00050C22] (TrapSpear01, its hits told
 // to its scripts: tests/conformance/physics/traps.test.ts). An item lying in the Bannered Mare
 // (its first MISC reference) is out of the attached area until a script moves it to the player
-// and back (MoveTo, MoveToMyEditorLocation). Expected,
-// from the Creation Kit's event pages and the base scripts' declarations:
+// and back (MoveTo, MoveToMyEditorLocation); others are moved as a script moves the player out
+// and down and they come back by themselves (below). Expected, from the Creation Kit's event
+// pages and the base scripts' declarations:
 // - OnTriggerEnter(akActionRef), OnTrigger(akActionRef) again each fTriggerEventDelayMS (500 ms)
 //   while it stays inside, OnTriggerLeave(akActionRef) as it leaves: to the trigger.
 // - OnTrapHitStart, then OnTrapHit while the trap keeps touching a living actor, OnTrapHitStop
-//   (akTarget) as the contact ends: to the trap.
+//   (akTarget) as the contact ends: to the trap (the spear's contact as the player lands is
+//   short of the hits' delay: OnTrapHit is the spike bed's case below).
 // - OnAttachedToCell / OnDetachedFromCell: to a reference moved into or out of the attached
 //   area by itself (TESMoveAttachDetachEvent), not with its cell.
 const MERCER_FREY_HOUSE = 0x37cc6;
@@ -416,6 +426,17 @@ const TRIGGER_BOX = 0x94027;
 const IN_THE_BOX: [number, number, number] = [-1026, 1346, -60];
 const SPEAR_TRAP = 0x50c22;
 const ON_THE_TRAP: [number, number, number] = [-2371.1, 2148.9, -814.6];
+// The house's front door outside [0004227E] (its load door's XTEL: in RiftenWorld [00016BB4],
+// persistent, so in the worldspace's persistent cell [00016BE0], not the grid cell the world
+// shows the player in) and its cellar's door into RiftenRatway02 [000A1BFD] ([00052A8C]),
+// with three more items lying in the Bannered Mare.
+const RIFTEN_WORLD = 0x16bb4;
+const FRONT_DOOR = 0x4227e;
+const RIFTEN_RATWAY = 0xa1bfd;
+const RATWAY_DOOR = 0x52a8c;
+const SENT_OUT = 0x6170d;
+const LEFT_OUT = 0x6170c;
+const BROUGHT_UP = 0x6170b;
 
 describe.skipIf(!hasGamedata())('triggers, traps and moves (headless simulation)', () => {
   let sim: Sim;
@@ -425,6 +446,44 @@ describe.skipIf(!hasGamedata())('triggers, traps and moves (headless simulation)
   let movedIn = 0;
   let movedOut = 0;
   let item = 0;
+  let sentOut = 0;
+  /** The cell the world showed the player in as the item followed them out. */
+  let shownAsSent: number | undefined;
+  let outside = false;
+  let cameIn = 0;
+  let leftOut = 0;
+  let sentDown = 0;
+  let down = false;
+  let cameUp = 0;
+  let broughtUp = 0;
+
+  const handle = (reference: number) => sim.runtime.referenceHandle(reference);
+  /** MoveTo called as a script calls it: its work waits in the frame's post-render queue. */
+  const moveTo = (target: number, to: number): Promise<unknown> => {
+    const native = sim.runtime.native('objectreference', 'moveto');
+    if (!native) throw new Error('No native ObjectReference.MoveTo');
+    const args: Value[] = [handle(to), 0, 0, 0, true];
+    return Promise.resolve(
+      native({
+        vm: sim.runtime.vm,
+        self: handle(target),
+        args,
+        name: 'objectreference.moveto',
+        latent: (promise) => promise,
+        where: () => '',
+      }),
+    );
+  };
+  /** Calls made together (in one frame's queue), the world stepping until all are done. */
+  const together = async (...calls: Promise<unknown>[]) => {
+    let done = false;
+    void Promise.allSettled(calls).then(() => {
+      done = true;
+    });
+    await sim.until(() => done, 30);
+  };
+  /** Where the world shows the player. */
+  const shownIn = () => sim.runtime.world.livePlacement?.(PLAYER_REF);
 
   beforeAll(async () => {
     sim = await openSim({
@@ -435,7 +494,6 @@ describe.skipIf(!hasGamedata())('triggers, traps and moves (headless simulation)
     arrived = 0;
     await sim.step(1.5);
     // A script brings an item from the Bannered Mare (MoveTo the player), then sends it back.
-    const handle = (reference: number) => sim.runtime.referenceHandle(reference);
     for (const reference of sim.db.cellReferences(BANNERED_MARE)) {
       const base = await sim.runtime.baseOf(reference);
       if (base !== undefined && (await sim.db.get(base))?.type === 'MISC') {
@@ -462,7 +520,42 @@ describe.skipIf(!hasGamedata())('triggers, traps and moves (headless simulation)
     offTheTrap = sim.time;
     await sim.moveTo(IN_THE_BOX);
     await sim.step(1.5);
-  }, 600_000);
+    // A script sends the player out to the house's front door in Riften and, in the same frame's
+    // queue (before the world has taken them there), an item to it too.
+    sentOut = sim.time;
+    const door = await sim.runtime.placement(FRONT_DOOR);
+    if (door) {
+      // As MoveTo's work moves them (ScriptRuntime.move), back to back in one queue run: the
+      // world has not reacted to the player's move yet as the item moves.
+      for (const reference of [PLAYER_REF, SENT_OUT])
+        sim.runtime.move(reference, [...door.position], [...door.rotation], door.cell, door.world);
+      shownAsSent = shownIn()?.cell;
+    }
+    outside = await sim.until(() => shownIn()?.world === RIFTEN_WORLD, 30);
+    await sim.step(1);
+    // They come back in by themselves (as through the door: no script moves them), and a
+    // script moves another item out to the front door, then to the player.
+    cameIn = sim.time;
+    await sim.openInterior(MERCER_FREY_HOUSE, { position: IN_THE_BOX, heading: 0 });
+    await sim.step(1);
+    await together(moveTo(LEFT_OUT, FRONT_DOOR));
+    await sim.step(0.5);
+    leftOut = sim.time;
+    await together(moveTo(LEFT_OUT, PLAYER_REF));
+    await sim.step(0.5);
+    // A script sends the player down into the Ratway; they come back up before any other
+    // reference moves, and a script brings a third item to them.
+    sentDown = sim.time;
+    await together(moveTo(PLAYER_REF, RATWAY_DOOR));
+    down = await sim.until(() => shownIn()?.cell === RIFTEN_RATWAY, 30);
+    await sim.step(1);
+    cameUp = sim.time;
+    await sim.openInterior(MERCER_FREY_HOUSE, { position: IN_THE_BOX, heading: 0 });
+    await sim.step(1);
+    broughtUp = sim.time;
+    await together(moveTo(BROUGHT_UP, PLAYER_REF));
+    await sim.step(0.5);
+  }, 900_000);
   afterAll(async () => {
     await sim.close();
   });
@@ -501,19 +594,16 @@ describe.skipIf(!hasGamedata())('triggers, traps and moves (headless simulation)
     expect(byPlayer(sent('OnTrigger', TRIGGER_BOX, leftAt + 1e-6, offTheTrap))).toEqual([]);
   });
 
-  it('sends the trap OnTrapHit while it keeps touching the player, OnTrapHitStop as it ends', () => {
+  it('sends the trap OnTrapHitStop(the player) as its contact with them ends', () => {
+    // The contact as the player lands on the trap is short (shorter than the hits' delay:
+    // OnTrapHit, a lasting contact, is the spike bed's case below).
     const start = sent('OnTrapHitStart', SPEAR_TRAP, left, offTheTrap);
     expect(start.length).toBeGreaterThan(0);
-    const hits = sent('OnTrapHit', SPEAR_TRAP, left);
-    for (const hit of hits) {
-      // As OnTrapHitStart: the target, its velocity and position, the material, the flags.
-      expect(hit.args[0]).toEqual({ form: PLAYER_REF });
-      expect(hit.args).toHaveLength(start[0]?.args.length ?? 0);
-    }
     const stops = sent('OnTrapHitStop', SPEAR_TRAP, left);
     expect(stops.map((e) => e.args)).toContainEqual([{ form: PLAYER_REF }]);
     // The stop comes after the start and every hit.
     const stop = stops.at(-1)?.at ?? -Infinity;
+    const hits = sent('OnTrapHit', SPEAR_TRAP, left);
     for (const event of [...start, ...hits]) expect(event.at).toBeLessThanOrEqual(stop);
   });
 
@@ -526,6 +616,182 @@ describe.skipIf(!hasGamedata())('triggers, traps and moves (headless simulation)
   it('sends it OnDetachedFromCell as a script moves it back out of it', () => {
     expect(sent('OnDetachedFromCell', item, movedOut, left)).toHaveLength(1);
     expect(sent('OnAttachedToCell', item, movedOut, left)).toEqual([]);
+  });
+
+  it('reads the area round where a script just sent the player, before the world takes them', () => {
+    expect(outside).toBe(true);
+    // Sent to the front door with the player while the world still showed them inside.
+    expect(shownAsSent).toBe(MERCER_FREY_HOUSE);
+    expect(sent('OnAttachedToCell', SENT_OUT, sentOut, cameIn)).toHaveLength(1);
+    expect(sent('OnDetachedFromCell', SENT_OUT, sentOut, cameIn)).toEqual([]);
+  });
+
+  it('reads it round where the world shows them once they arrive outside and come back in', () => {
+    // Back inside by the door: the front door is out of the area, the player in it.
+    expect(sent('OnAttachedToCell', LEFT_OUT, cameIn, leftOut)).toEqual([]);
+    expect(sent('OnAttachedToCell', LEFT_OUT, leftOut, sentDown)).toHaveLength(1);
+    expect(sent('OnDetachedFromCell', LEFT_OUT, cameIn, sentDown)).toEqual([]);
+  });
+
+  it('reads it round where they are after leaving an interior a script sent them to', () => {
+    expect(down).toBe(true);
+    expect(sent('OnAttachedToCell', BROUGHT_UP, cameUp, broughtUp)).toEqual([]);
+    expect(sent('OnAttachedToCell', BROUGHT_UP, broughtUp)).toHaveLength(1);
+  });
+});
+
+// The trap test hall (WarehouseTraps [000243DF]), from the data: a bed of wooden spikes
+// [0001F863] (TrapWoodSpikeBed01, meshes\traps\norplatformtrap: its spikes static, over them a
+// phantom box on L_TRAP the one who lies on them is in) the player falls onto and stays on,
+// then is taken off. Expected, from the Creation Kit's ObjectReference event pages and the base
+// scripts' declarations: OnTrapHitStart as the trap first touches them, OnTrapHit again while
+// it keeps touching (each fTrapHitEventDelayMS, 500 ms), OnTrapHitStop(akTarget) as the contact
+// ends: to the trap.
+const WAREHOUSE_TRAPS = 0x243df;
+const SPIKE_BED = 0x1f863;
+
+describe.skipIf(!hasGamedata())('a spike bed the player lies on (headless simulation)', () => {
+  let sim: Sim;
+  let onIt = 0;
+  let offIt = 0;
+
+  beforeAll(async () => {
+    sim = await openSim({ interior: WAREHOUSE_TRAPS, hour: 10 });
+    await sim.step(0.5);
+    const at = await sim.position(SPIKE_BED);
+    if (!at) return;
+    onIt = sim.time;
+    await sim.moveTo([at[0], at[1], at[2] + 48]);
+    await sim.step(3);
+    offIt = sim.time;
+    await sim.moveTo([at[0], at[1] + 400, at[2] + 48]);
+    await sim.step(1);
+  }, 600_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  const sent = (event: string, since = 0, until = Infinity) =>
+    sim
+      .scriptEvents({ event, target: SPIKE_BED, since })
+      .filter((record) => record.at < until && record.alias === undefined);
+
+  it('sends the trap OnTrapHit while it keeps touching the player, then OnTrapHitStop', () => {
+    expect(onIt).toBeGreaterThan(0);
+    const start = sent('OnTrapHitStart', onIt, offIt);
+    expect(start.map((e) => e.args[0])).toEqual([{ form: PLAYER_REF }]);
+    const hits = sent('OnTrapHit', onIt, offIt);
+    // On it 3 s: told again at least once, the delay or more apart.
+    expect(hits.length).toBeGreaterThan(0);
+    for (const hit of hits) {
+      // As OnTrapHitStart: the target, its velocity and position, the material, the flags.
+      expect(hit.args[0]).toEqual({ form: PLAYER_REF });
+      expect(hit.args).toHaveLength(start[0]?.args.length ?? 0);
+    }
+    const times = [...start, ...hits].map((e) => e.at);
+    for (let i = 1; i < times.length; i++) {
+      expect((times[i] ?? 0) - (times[i - 1] ?? 0)).toBeGreaterThanOrEqual(0.5 - 1e-6);
+    }
+    const stops = sent('OnTrapHitStop', onIt);
+    expect(stops.map((e) => e.args)).toEqual([[{ form: PLAYER_REF }]]);
+    for (const at of times) expect(at).toBeLessThanOrEqual(stops[0]?.at ?? -Infinity);
+  });
+});
+
+// The attached area round the player in the script runtime alone, the world's view of the player
+// set frame by frame (WorldBridge.livePlacement): the cases above, with the world's part fixed.
+// Outside, the world shows the player in the grid cell they stand in (RiftenWorld's [00042247]
+// at the front door), never in the worldspace's persistent cell a persistent marker reads as in.
+const DOOR_GRID_CELL = 0x42247;
+
+describe.skipIf(!hasGamedata())('the attached area round the player (data, the runtime)', () => {
+  let vfs: Vfs;
+  let db: RecordDatabase;
+  let runtime: ScriptRuntime;
+  let shown: LivePlacement | undefined;
+  const told: { reference: number; attached: boolean }[] = [];
+  const world: WorldBridge = {
+    livePlacement: (reference) => (reference === PLAYER_REF ? shown : undefined),
+  };
+  const inside: LivePlacement = {
+    position: IN_THE_BOX,
+    rotation: [0, 0, 0],
+    cell: MERCER_FREY_HOUSE,
+  };
+  /** A frame: the runtime's update, then its detached work (record reads) done. */
+  const frame = async () => {
+    runtime.update(1 / 60, 0);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  };
+  const moveTo = async (reference: number, target: number) => {
+    const at = await runtime.placement(target);
+    if (!at) throw new Error(`No place for ${target.toString(16)}`);
+    runtime.move(reference, [...at.position], [...at.rotation], at.cell, at.world);
+    return at;
+  };
+
+  beforeAll(async () => {
+    vfs = await Vfs.mount(openGameFolder());
+    db = await RecordDatabase.open(vfs);
+    const library = new ScriptLibrary(async (name) => {
+      const path = `scripts\\${name}.pex`;
+      return vfs.has(path) ? vfs.read(path) : undefined;
+    });
+    runtime = new ScriptRuntime(db, library, { world });
+    runtime.events.on('moveAttachDetach', (event) => {
+      told.push(event);
+    });
+  }, 120_000);
+  afterAll(async () => {
+    await db.close();
+    await vfs.close();
+  });
+
+  const toldOf = (reference: number) =>
+    told.filter((event) => event.reference === reference).map((event) => event.attached);
+
+  it('reads it round the front door a script sent the player to until the world shows them there', async () => {
+    shown = inside;
+    await frame();
+    expect(db.cellOfReference(FRONT_DOOR)).not.toBe(DOOR_GRID_CELL);
+    expect(db.worldOfCell(DOOR_GRID_CELL)).toBe(RIFTEN_WORLD);
+    const door = await moveTo(PLAYER_REF, FRONT_DOOR);
+    // Before the world has taken the player out: an item sent to the door is with them.
+    await moveTo(SENT_OUT, FRONT_DOOR);
+    await frame();
+    expect(toldOf(SENT_OUT)).toEqual([true]);
+    // The world shows them outside, in the door's grid cell; then they come back in by the door.
+    shown = {
+      position: door.position,
+      rotation: [0, 0, 0],
+      world: RIFTEN_WORLD,
+      cell: DOOR_GRID_CELL,
+    };
+    await frame();
+    shown = inside;
+    await frame();
+    // The front door is out of the area round them now; the player's own place is in it.
+    await moveTo(LEFT_OUT, FRONT_DOOR);
+    await frame();
+    expect(toldOf(LEFT_OUT)).toEqual([]);
+    await moveTo(LEFT_OUT, PLAYER_REF);
+    await frame();
+    expect(toldOf(LEFT_OUT)).toEqual([true]);
+  });
+
+  it('reads it round where they are once they have left an interior a script sent them to', async () => {
+    shown = inside;
+    await frame();
+    const down = await moveTo(PLAYER_REF, RATWAY_DOOR);
+    expect(down.cell).toBe(RIFTEN_RATWAY);
+    // The world takes them down, and they come back up before anything else moves.
+    shown = { position: down.position, rotation: [0, 0, 0], cell: RIFTEN_RATWAY };
+    await frame();
+    shown = inside;
+    await frame();
+    runtime.move(BROUGHT_UP, [...IN_THE_BOX], [0, 0, 0], MERCER_FREY_HOUSE, undefined);
+    await frame();
+    expect(toldOf(BROUGHT_UP)).toEqual([true]);
   });
 });
 

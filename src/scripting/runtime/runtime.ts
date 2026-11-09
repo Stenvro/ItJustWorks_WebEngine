@@ -812,6 +812,17 @@ export interface AreaPlace {
 }
 
 /**
+ * The cell the attached area round a place is centred on: an interior by its cell, an exterior
+ * by its worldspace and grid (not by the cell id: a persistent reference outside reads as in its
+ * worldspace's persistent cell, the world shows the player in the grid cell they stand in).
+ */
+export function areaCentre(place: AreaPlace): string {
+  if (place.world === undefined) return `cell ${String(place.cell)}`;
+  const cell = (value: number): string => String(Math.floor(value / CELL_UNITS));
+  return `world ${String(place.world)} ${cell(place.position[0])},${cell(place.position[1])}`;
+}
+
+/**
  * Whether a place is in the attached area round the player: the player's interior cell, or in
  * the player's worldspace within the uGridsToLoad cells round the player's.
  */
@@ -1061,10 +1072,11 @@ export class ScriptRuntime implements VmHost {
   readonly #keywordCache = new Map<number, Promise<number[]>>();
   readonly #cellLocations = new Map<number, Promise<number | undefined>>();
   /**
-   * Where a script last moved the player, until the world shows them in that cell: the
-   * attached area round the player is the one they are going to meanwhile (`#movedAcross`).
+   * Where a script last moved the player to another area (`place`), and the area centre the
+   * world showed them in then (`from`), until the world shows them anywhere else: the attached
+   * area round the player is the one they are going to meanwhile (`#movedAcross`).
    */
-  #playerArrival: AreaPlace | undefined;
+  #playerArrival: { readonly place: AreaPlace; readonly from: string | undefined } | undefined;
   /** Per cell: the references its references activate (their XAPR names them), with delays. */
   readonly #activateChildren = new Map<
     number,
@@ -2307,7 +2319,11 @@ export class ScriptRuntime implements VmHost {
     // Where it was, for whether it moved into or out of the attached area (below).
     const attachedBefore = cell === undefined ? undefined : this.#areaPlaceBefore(reference, state);
     if (reference === PLAYER_REF && cell !== undefined) {
-      this.#playerArrival = { position, cell, world };
+      const place: AreaPlace = { position, cell, world };
+      const shown = this.#shownPlayer();
+      const from = shown && areaCentre(shown);
+      // Within the area the world shows them in, the world's place is already the right one.
+      this.#playerArrival = from === areaCentre(place) ? undefined : { place, from };
     }
     // A reference taken into a container comes back out into the world.
     const taken = state.container;
@@ -2381,27 +2397,37 @@ export class ScriptRuntime implements VmHost {
 
   /**
    * The place the attached area is round: where a script just moved the player, until the
-   * world shows them in that cell (the cell they arrive in attaches); else where the world shows
-   * them. Before, the place a script last left the player in, kept in the game state: none until
-   * a script moved them, so no reference a script moved told OnAttachedToCell or
-   * OnDetachedFromCell, and a stale one once the player had walked on.
+   * world shows them anywhere but where they were (the cell they arrive in attaches); else where
+   * the world shows them. Before, the place a script last left the player in, kept in the game
+   * state: none until a script moved them, so no reference a script moved told OnAttachedToCell
+   * or OnDetachedFromCell, and a stale one once the player had walked on.
    */
   async #playerArea(): Promise<AreaPlace | undefined> {
-    const shown = await this.placement(PLAYER_REF);
+    this.#settlePlayerArrival();
+    return this.#playerArrival?.place ?? (await this.placement(PLAYER_REF));
+  }
+
+  /** Where the world shows the player now (undefined: nowhere, between places). */
+  #shownPlayer(): AreaPlace | undefined {
+    const shown = this.world.livePlacement?.(PLAYER_REF);
+    if (!shown || (shown.cell === undefined && shown.world === undefined)) return undefined;
+    return { position: shown.position, cell: shown.cell, world: shown.world };
+  }
+
+  /**
+   * The player's arrival is over once the world shows them in another area than the one they
+   * were in as the script moved them: where they arrived, or anywhere they went on to (through a
+   * door, walking). Each frame (`update`), so a move a script makes later is never read round a
+   * place the player has left. An exterior is compared by its worldspace and grid
+   * (`areaCentre`), never by the cell id.
+   */
+  #settlePlayerArrival(): void {
     const arrival = this.#playerArrival;
-    if (!arrival) return shown;
-    const there =
-      shown !== undefined &&
-      shown.cell === arrival.cell &&
-      shown.world === arrival.world &&
-      (arrival.world === undefined ||
-        (Math.floor(shown.position[0] / CELL_UNITS) ===
-          Math.floor(arrival.position[0] / CELL_UNITS) &&
-          Math.floor(shown.position[1] / CELL_UNITS) ===
-            Math.floor(arrival.position[1] / CELL_UNITS)));
-    if (!there) return arrival;
-    this.#playerArrival = undefined;
-    return shown;
+    if (!arrival) return;
+    const shown = this.#shownPlayer();
+    if (!shown) return;
+    // `from` is never the arrival's own area (`move`): any other area ends it.
+    if (areaCentre(shown) !== arrival.from) this.#playerArrival = undefined;
   }
 
   moveToEditorLocation(reference: number): void {
@@ -3489,6 +3515,8 @@ export class ScriptRuntime implements VmHost {
   /** Every frame: the clocks move on (real seconds outside menus, game days). */
   update(realSeconds: number, gameDays: number): void {
     this.state.realTime += realSeconds;
+    // Whether the world has taken the player where a script sent them (the attached area).
+    this.#settlePlayerArrival();
     // The joints scripts made, as their references' bodies come back (a cell's collision goes
     // in over some frames; PhysicsWorld.joinBallAndSocket keeps one joint to two bodies).
     this.#sinceConstraints += realSeconds;
@@ -4036,6 +4064,8 @@ export class ScriptRuntime implements VmHost {
    */
   async loadGame(save: RuntimeSave, progress?: (what: string) => void): Promise<string[]> {
     const db = this.forms.db;
+    // A move of the player before the load is no arrival in the loaded game.
+    this.#playerArrival = undefined;
     this.#startDate = save.startDate;
     this.#startDays = save.startDays;
     await this.#findClockGlobals();

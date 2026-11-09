@@ -693,13 +693,22 @@ stats go to every object registered for them. What each kind becomes:
 - **Moves across the attached area** (`ScriptRuntime.move`): the engine tells a reference
   whose parent cell changes between an attached cell and a detached one. Ours: a move to
   another cell (MoveTo, an actor walking away or back) between the attached area (the
-  player's interior cell, or the uGridsToLoad cells round the player's outside, where the
-  player is going if a script just moved them, until the world shows them in that cell; else
-  where the world shows them) and the rest; MoveToMyEditorLocation too. The player is always
-  attached. Before, the area was read round where a script last left the player, none until
-  one did, so no reference a script moved was told either event (and a stale place once the
-  player walked on). A cell attaching or detaching with its references is OnCellAttach /
-  OnCellDetach instead. `tests/conformance/scripting/script-events.test.ts`.
+  player's interior cell, or the uGridsToLoad cells round the player's outside) and the rest;
+  MoveToMyEditorLocation too. The area is round where the world shows the player, except
+  between a script's MoveTo of the player to another area and the first frame the world shows
+  them anywhere but the area they were in then: meanwhile round where the script sent them
+  (`ScriptRuntime.#playerArrival`, settled each `update`, cleared on a load). Areas compare
+  as an interior's cell, or an exterior's worldspace and grid, never by the cell id: a
+  persistent marker outside reads as in its worldspace's persistent cell, the world shows the
+  player in the grid cell they stand in. The player is always attached. Before, the area was
+  read round where a script last left the player, none until one did, so no reference a
+  script moved was told either event. A cell attaching or detaching with its references is
+  OnCellAttach / OnCellDetach instead. TODO(M13): inferred that the engine reads the area
+  round the player's pending destination until the move is done.
+  `tests/conformance/scripting/script-events.test.ts` ("triggers, traps and moves": an item
+  sent with the player to Riften's front door, then moves after the player came back in from
+  outside and from the Ratway; "the attached area round the player": the same in the runtime
+  alone, the world's view of the player set frame by frame).
 - **Translations** (`ScriptRuntime.translate`): failed at once for a reference without its 3D,
   almost complete as it passes fRefTranslationAlmostDonePercent (0.9) of its way, complete at
   the end.
@@ -820,7 +829,12 @@ stop (OnTrapHitStop), with the trap body's velocity, the contact's place and the
 type; the initial-hit flag is false for these contacts. The scripts hear them only on living
 actors. The player's and the actors' controllers are checked each physics step
 (`PhysicsWorld.trapsTouching`). Of the 28 bases with a trap-hit script (TrapHitBase, HazardBase
-and the scripts extending them), 1,797 references.
+and the scripts extending them), 1,797 references. In the simulation
+(`tests/conformance/scripting/script-events.test.ts`): a spear trap's contact as the player
+lands on it, or a bear trap's jaws closing (they shove the player out), lasts shorter than the
+delay (start and stop only); lying on a spike bed (TrapWoodSpikeBed01, a phantom box on
+L_TRAP) is a lasting contact, told again (OnTrapHit) at the first physics step past each 500
+ms until the player is off it.
 
 A trap's trigger goes off by its script's state. PressurePlate (419 references) and the plain
 TrapTriggerBase triggers fire on the first step: Inactive's OnTriggerEnter goes to active, whose
