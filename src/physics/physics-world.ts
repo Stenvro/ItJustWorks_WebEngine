@@ -3281,6 +3281,75 @@ export class PhysicsWorld {
   }
 
   /**
+   * The trigger volumes a cone projectile's wave is in (game units): the sector from `apex` out to
+   * `front` along `direction`, `spread` degrees either side of it, whose layers collide with
+   * `layer` (L_CONEPROJECTILE: Unrelenting Force, Fire Breath). A volume off the wave's middle
+   * line that its spread reaches is in it as much as one on the line. The sector is a convex hull
+   * inscribed in it (three rings of 12 points out at the front, the apex and the front's middle);
+   * a spread past 90° (none in the data: 89° at most) is taken as 90°. TODO(M13): the shape the
+   * original's wave tests the volumes with is inferred (the sector its actors are met in:
+   * projectile-flight.ts inCone).
+   */
+  triggersInCone(
+    apex: Vec3,
+    direction: Vec3,
+    front: number,
+    spread: number,
+    layer: number,
+  ): Set<number> {
+    const d = Math.hypot(direction[0], direction[1], direction[2]);
+    if (!(front > 0) || d < 1e-6) return new Set();
+    const u: Vec3 = [direction[0] / d, direction[1] / d, direction[2] / d];
+    const middle: Vec3 = [apex[0] + u[0] * front, apex[1] + u[1] * front, apex[2] + u[2] * front];
+    const found = this.triggersAlong(apex, middle, layer);
+    const half = (Math.min(90, Math.max(0, spread)) * Math.PI) / 180;
+    if (half < 1e-4) return found;
+    // Two axes across the direction.
+    const side: Vec3 = Math.abs(u[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+    const cross: Vec3 = [
+      u[1] * side[2] - u[2] * side[1],
+      u[2] * side[0] - u[0] * side[2],
+      u[0] * side[1] - u[1] * side[0],
+    ];
+    const cl = Math.hypot(cross[0], cross[1], cross[2]);
+    const a: Vec3 = [cross[0] / cl, cross[1] / cl, cross[2] / cl];
+    const b: Vec3 = [
+      u[1] * a[2] - u[2] * a[1],
+      u[2] * a[0] - u[0] * a[2],
+      u[0] * a[1] - u[1] * a[0],
+    ];
+    const r = toHavok(front);
+    const points: number[] = [0, 0, 0, u[0] * r, u[1] * r, u[2] * r];
+    const RINGS = 3;
+    const AROUND = 12;
+    for (let ring = 1; ring <= RINGS; ring++) {
+      const polar = (half * ring) / RINGS;
+      const along = Math.cos(polar) * r;
+      const across = Math.sin(polar) * r;
+      for (let k = 0; k < AROUND; k++) {
+        const turn = (2 * Math.PI * k) / AROUND;
+        const c = Math.cos(turn) * across;
+        const s = Math.sin(turn) * across;
+        points.push(
+          u[0] * along + a[0] * c + b[0] * s,
+          u[1] * along + a[1] * c + b[1] * s,
+          u[2] * along + a[2] * c + b[2] * s,
+        );
+      }
+    }
+    const sector = new RAPIER.ConvexPolyhedron(Float32Array.from(points), null);
+    for (const trigger of this.#triggersIn(
+      { x: toHavok(apex[0]), y: toHavok(apex[1]), z: toHavok(apex[2]) },
+      { x: 0, y: 0, z: 0, w: 1 },
+      sector,
+      undefined,
+      layer,
+    ))
+      found.add(trigger);
+    return found;
+  }
+
+  /**
    * The placed objects whose collision a ball overlaps (`center`, `radius` in game units) on
    * bodies that collide with `layer` (a cone's: L_CONEPROJECTILE): each reference once, with
    * the point of its body nearest `toward` (game units; inside the body: that point itself). A

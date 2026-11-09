@@ -810,18 +810,16 @@ export class MagicProjectiles {
     for (const target of this.#options.targets()) targets.set(target.reference, target);
     const physics = this.#physics;
     const front = Math.min(wave.range, wave.front + wave.speed * step);
-    // Its way in the trigger volumes, from its apex to its front along its middle.
-    // TODO(M13): the wave's spread; a volume off its middle line is not told (inferred).
+    // It is in the trigger volumes its sector reaches, from its apex out to its front within its
+    // spread (a volume off its middle line too: PhysicsWorld.triggersInCone).
     if (front > 0) {
-      this.#options.triggers?.step(
+      this.#options.triggers?.sweep(
         entry,
         projectile.formId,
         origin,
-        [
-          origin[0] + wave.direction[0] * front,
-          origin[1] + wave.direction[1] * front,
-          origin[2] + wave.direction[2] * front,
-        ],
+        wave.direction,
+        front,
+        wave.spread,
         physics?.matrix.indexOf(projectile.collisionLayer) ?? Layer.coneProjectile,
       );
     }

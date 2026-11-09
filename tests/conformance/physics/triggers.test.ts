@@ -662,4 +662,75 @@ describe('what enters a trigger', () => {
     expect(told.at(-1)?.[2]).toBe(false);
     expect(deleted).toBe(2);
   });
+  it('tells a trigger a cone’s wave as its spread reaches it off its middle line, not one outside it or beyond its front  [COLL; the sector inferred]', async () => {
+    await initPhysics();
+    // L_TRIGGER meets L_CONEPROJECTILE.
+    const matrix = new Matrix([
+      {
+        formId: 3,
+        editorId: 'L_TRIGGER',
+        index: Layer.trigger,
+        name: '',
+        flags: LayerFlag.triggerVolume,
+        collidesWith: [4],
+      },
+      {
+        formId: 4,
+        editorId: 'L_CONEPROJECTILE',
+        index: Layer.coneProjectile,
+        name: '',
+        flags: 0,
+        collidesWith: [3],
+      },
+    ]);
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const at = (x: number, y: number, z: number): Float32Array =>
+      new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1]);
+    const volume = (reference: number, x: number, y: number): void => {
+      physics.addPrimitive('box', [50, 50, 50], at(x, y, 0), Layer.trigger, {
+        reference,
+        kind: 'object',
+      });
+    };
+    // Unrelenting Force's 15° either side, out along +y. Off the middle line, its near side 12°
+    // off; one 30° off; one on the line past the front.
+    volume(0x31, 180, 600);
+    volume(0x32, 400, 600);
+    volume(0x33, 0, 1200);
+    physics.step(1 / 60);
+    const wave = (front: number): Set<number> =>
+      physics.triggersInCone([0, 0, 0], [0, 1, 0], front, 15, Layer.coneProjectile);
+    // The middle line alone passes them all by.
+    expect(physics.triggersAlong([0, 0, 0], [0, 1000, 0], Layer.coneProjectile).size).toBe(0);
+    expect(wave(400)).toEqual(new Set());
+    expect(wave(1000)).toEqual(new Set([0x31]));
+    expect(wave(1200)).toEqual(new Set([0x31, 0x33]));
+    // A layer the trigger's does not collide with is not told.
+    expect(physics.triggersInCone([0, 0, 0], [0, 1, 0], 1200, 15, Layer.clutter).size).toBe(0);
+    physics.free();
+
+    // The wave's reference is told in as its sector reaches the volume, out as it ends.
+    const told: (readonly [number, number, boolean])[] = [];
+    const runtime = {
+      state: { create: () => 0xff000009, reference: () => ({ position: [0, 0, 0] }) },
+      triggered: (trigger: number, reference: number, entered: boolean) => {
+        told.push([trigger, reference, entered]);
+      },
+      deleteReference: () => undefined,
+    } as unknown as ScriptRuntime;
+    const triggers = new ProjectileTriggers(
+      () => runtime,
+      () => new Set(),
+      (_apex, _direction, front) => (front >= 600 ? new Set([0x31]) : new Set()),
+    );
+    const key = {};
+    triggers.sweep(key, 0x99, [0, 0, 0], [0, 1, 0], 300, 15, Layer.coneProjectile);
+    expect(told).toEqual([]);
+    triggers.sweep(key, 0x99, [0, 0, 0], [0, 1, 0], 700, 15, Layer.coneProjectile);
+    triggers.end(key);
+    expect(told).toEqual([
+      [0x31, 0xff000009, true],
+      [0x31, 0xff000009, false],
+    ]);
+  });
 });
