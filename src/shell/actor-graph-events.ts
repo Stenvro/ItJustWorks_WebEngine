@@ -433,9 +433,10 @@ export class ActorGraphEvents {
     d.heardBy('GetUpEndHandler', 'knockdowns');
     d.heardBy('ExitCartBeginHandler', 'vehicles');
     d.heardBy('ExitCartEndHandler', 'vehicles');
-    // Ambient idles: the graph asks for a new idle.
+    // Ambient idles: the graph asks for a new idle (the player's body's too; its first-person
+    // arms' graph picks none).
     d.handle('PickNewIdleHandler', (source) => {
-      if (!source.player) stage.ambientIdles.pickNewIdle(source.reference);
+      if (!source.firstPerson) stage.ambientIdles.pickNewIdle(source.reference);
     });
   }
 

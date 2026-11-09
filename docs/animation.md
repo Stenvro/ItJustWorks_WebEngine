@@ -354,9 +354,18 @@ our words:
 
 **Ours** (src/ai/ambient-idles.ts, the flags and gates; src/shell/actor-ambient-idles.ts, the
 stage's): the same, the idle tree's search being the furniture's `actionEvent` (as the death
-actions'), the bound radius the sphere round the skeleton's posed nodes. Not yet (TODO(M13),
-listed in tests/conformance/animation/ambient-idles.test.ts): which specific idles set the skip
-flag, the complex scene's wait, the frame's budget, the meal's gate. Seen in the headless
+actions'), the bound radius the sphere round the skeleton's posed nodes. Inferred (TODO(M13)):
+every idle the furniture's `playIdle` sends (a package's, a script's PlayIdle, a line's) is a
+specific idle, setting the skip flag when an idle plays; a complex scene is as many actors in
+the high process as iAINumberActorsComplexScene (20) or more (detection's count); the frame's
+budget is [Animation] fSpecialIdlePickTime (built-in default 250) read as microseconds, the
+tries taking turns round the actors from where the last frame stopped (at least one a frame);
+the restrained (life state 6) keep their wish but try none; the dying, dead and unconscious
+drop it (their graphs ask again as they stand up); the player's body picks them too (its
+PickNewIdle; the first-person arms' none) in third person, furniture's camera and the auto
+vanity camera, never in first person (ActionIdle gives the player IdlePlayer standing, the
+chair idles seated: the people's tree leaves the player out of the others by GetIsID). Not yet:
+the meal's gate. Seen in the headless
 simulation (the Bannered Mare at 20:00, 60 s): Hulda wiped the counter (IdleBarCounterWipe),
 Lucia put a hand on her hip (IdleHDRight), Saadia and Sinmir took MotionDrivenIdle (armed:
 IdleIfEquipped).

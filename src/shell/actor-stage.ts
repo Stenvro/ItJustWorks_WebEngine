@@ -427,6 +427,10 @@ export class ActorStage {
       paired: (actor, target, event) => {
         this.combat.pairIdle(actor, target, event);
       },
+      // A specific idle over one that plays: its stop's PickNewIdle is no request.
+      specificIdle: (actor) => {
+        this.ambientIdles.specificIdle(actor);
+      },
       ground: (at) => {
         const hit = this.#physics?.raycast(
           [at[0], at[1], at[2] - 1],
@@ -1005,6 +1009,27 @@ export class ActorStage {
         });
         return event;
       },
+      lifeOf: (reference) => {
+        const state = options.session.scriptsReady?.state.actors.get(reference);
+        if (state?.restrained === true) return LifeState.restrained;
+        if (state?.unconscious === true) return LifeState.unconscious;
+        return this.combat.lifeState(reference);
+      },
+      highProcess: (reference) => this.movers.inHighProcess(reference),
+      player: () => {
+        const view = options.player?.();
+        const user = options.seat?.()?.user;
+        if (!view?.avatar || !user) return undefined;
+        const seated = this.furniture.interaction(PLAYER_REF)?.state === 3;
+        return {
+          user,
+          camera: view.play.player.cameraState({
+            free: view.play.freeCamera,
+            furniture: seated,
+          }),
+        };
+      },
+      ...(options.processClock && { clock: options.processClock }),
     });
     this.graphEvents = new ActorGraphEvents({
       session: options.session,
@@ -2855,7 +2880,7 @@ export class ActorStage {
     this.combat.frame(frame, this.#options.focus?.());
     this.knockdowns.frame(frame);
     this.graphEvents.frame(frame);
-    this.ambientIdles.frame(this.#options.focus?.());
+    this.ambientIdles.frame(this.#options.focus?.(), frame);
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
     this.updateObstacles(frame);
     this.#recell();

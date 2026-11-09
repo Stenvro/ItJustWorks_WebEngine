@@ -16,6 +16,15 @@
 //   fAIIdleAnimationDistance, × fAIIdleAnimationLargeCreatureDistanceMult for a race larger than
 //   medium); in no furniture but on its way to some; entering, leaving or asleep in furniture;
 //   whose package has idles of its own (they play instead); at its meal.
+// - A specific idle (a package's, a script's PlayIdle, a line's) played over one that plays sets
+//   the "skip one" flag: the PickNewIdle the stopped idle raises is no request.
+// - The tries of a frame share a time budget; those left over go first in the next frame.
+//
+// Ours beyond that (inferred, TODO(M13)): the budget is [Animation] fSpecialIdlePickTime (250,
+// read as microseconds); the restrained (life state 6) pick none; a dying or unconscious actor's
+// update tries none and drops the wish it had (its graph asks again as it stands up); the player
+// picks them as the actors do, in third person, in furniture's camera and in the auto vanity
+// camera (the views that show the player's own body standing or seated), never in first person.
 //
 // Platform-independent: the caller values the gates and plays the action.
 
@@ -80,19 +89,93 @@ export interface AmbientIdleActor {
   readonly packageIdles: boolean;
   /** It is at its meal (an Eat package eating). */
   readonly eating: boolean;
+  /** Its life state (ACTOR_LIFE_STATE; undefined: alive). */
+  readonly life?: number;
 }
 
-/** Whether an actor's AI update tries an ambient idle now (with the flag set). */
+/** The life states the idle update tells apart (ACTOR_LIFE_STATE). */
+export const AmbientIdleLife = {
+  alive: 0,
+  dying: 1,
+  dead: 2,
+  unconscious: 3,
+  restrained: 6,
+} as const;
+
+/**
+ * What an actor's idle update does with its wish for a new idle: 'try' ActionIdle, 'keep' it
+ * for a later update (a gate holds), or 'drop' it (dying, dead or unconscious: inferred,
+ * TODO(M13); its graph raises PickNewIdle again as it stands up).
+ */
+export type AmbientIdleUpdate = 'try' | 'keep' | 'drop';
+
+/** The idle update of an actor that wants a new idle (ambientIdleAllowed with its life state). */
+export function ambientIdleUpdate(actor: AmbientIdleActor): AmbientIdleUpdate {
+  const life = actor.life ?? AmbientIdleLife.alive;
+  if (
+    life === AmbientIdleLife.dying ||
+    life === AmbientIdleLife.dead ||
+    life === AmbientIdleLife.unconscious
+  ) {
+    return 'drop';
+  }
+  return ambientIdleAllowed(actor) ? 'try' : 'keep';
+}
+
+/**
+ * Whether an actor's AI update tries an ambient idle now (with the flag set): alive (the
+ * restrained, life state 6, pick none), near, standing in no furniture or in it.
+ */
 export function ambientIdleAllowed(actor: AmbientIdleActor): boolean {
+  if (actor.life !== undefined && actor.life !== AmbientIdleLife.alive) return false;
   if (actor.distance > actor.reach) return false;
   if (actor.furniture !== 'none' && actor.furniture !== 'in') return false;
   return !actor.packageIdles && !actor.eating;
+}
+
+/**
+ * The player's camera states (CommonLibSSE CameraStates, SE order) in which the player picks
+ * ambient idles (inferred, TODO(M13)): third person (9), furniture's (5) and the auto vanity
+ * camera (1), the views of the player's own standing or seated body; not first person (0), nor
+ * the kill, free, iron sights, transition, tween, animated, mount, bleedout or dragon cameras.
+ */
+const PLAYER_IDLE_CAMERAS: ReadonlySet<number> = new Set([1, 5, 9]);
+
+/** Whether the player picks ambient idles in a camera state. */
+export function playerAmbientIdleCamera(cameraState: number): boolean {
+  return PLAYER_IDLE_CAMERAS.has(cameraState);
+}
+
+/**
+ * The idle wait timer an ambient idle sets as it plays (seconds): fAIIdleWaitTime, or
+ * fAIIdleWaitTimeComplexScene while a complex scene runs.
+ */
+export function ambientIdleWait(settings: AmbientIdleSettings, complexScene: boolean): number {
+  return complexScene ? settings.waitTimeComplexScene : settings.waitTime;
+}
+
+/** iAINumberActorsComplexScene's default: this many actors or more make a complex scene. */
+export const COMPLEX_SCENE_ACTORS = 20;
+
+/**
+ * Whether a complex scene runs: as many actors in the high process as iAINumberActorsComplexScene
+ * (20) or more, the player left out (as detection counts them: src/ai/detection.ts). Inferred
+ * for the idles (TODO(M13)): the setting's name and detection's use of it.
+ */
+export function isComplexScene(actors: number, complexSceneActors: number): boolean {
+  return actors >= complexSceneActors;
 }
 
 /** One actor's ambient idle state. */
 interface AmbientIdleState {
   wants: boolean;
   skip: boolean;
+  /** An idle plays on it (one it picked or a specific one), until its graph asks for another. */
+  playing: boolean;
+  /** Its idle wait timer runs out then (seconds on the caller's clock). */
+  waitUntil: number;
+  /** The timer was set in a complex scene: the next try waits for it. */
+  waitComplex: boolean;
 }
 
 /** The flags of every actor (the engine's process flags), by reference. */
@@ -102,7 +185,7 @@ export class AmbientIdleFlags {
   #state(actor: number): AmbientIdleState {
     let state = this.#states.get(actor);
     if (!state) {
-      state = { wants: false, skip: false };
+      state = { wants: false, skip: false, playing: false, waitUntil: 0, waitComplex: false };
       this.#states.set(actor, state);
     }
     return state;
@@ -111,8 +194,48 @@ export class AmbientIdleFlags {
   /** PickNewIdle (the engine's PickNewIdleHandler): the actor wants a new idle, unless skipped. */
   pickNewIdle(actor: number): void {
     const state = this.#state(actor);
+    // The idle that played has ended (or its graph's state asks for one).
+    state.playing = false;
     if (state.skip) state.skip = false;
     else state.wants = true;
+  }
+
+  /**
+   * A specific idle starts on the actor (a package's, a script's PlayIdle, a line's): over an
+   * idle that plays, the PickNewIdle the stopped one raises is skipped.
+   */
+  specificIdle(actor: number): void {
+    const state = this.#state(actor);
+    if (state.playing) state.skip = true;
+    state.playing = true;
+  }
+
+  /**
+   * An ambient idle played (`now`: seconds): the flag clears, the idle wait timer is set to
+   * `wait` (ambientIdleWait); in a complex scene the next try waits for it.
+   */
+  played(actor: number, now: number, wait: number, complexScene: boolean): void {
+    const state = this.#state(actor);
+    state.wants = false;
+    state.playing = true;
+    state.waitUntil = now + wait;
+    state.waitComplex = complexScene;
+  }
+
+  /**
+   * Whether the actor's idle update tries ActionIdle now: it wants a new idle, and no idle wait
+   * timer set in a complex scene runs (`now`: seconds).
+   */
+  ready(actor: number, now: number): boolean {
+    const state = this.#states.get(actor);
+    if (state?.wants !== true) return false;
+    return !state.waitComplex || now >= state.waitUntil;
+  }
+
+  /** Its wish is dropped (dying, dead or unconscious: ambientIdleUpdate 'drop'). */
+  drop(actor: number): void {
+    const state = this.#states.get(actor);
+    if (state) state.wants = false;
   }
 
   /**
@@ -140,6 +263,46 @@ export class AmbientIdleFlags {
 
   remove(actor: number): void {
     this.#states.delete(actor);
+  }
+}
+
+/**
+ * [Animation] fSpecialIdlePickTime: the engine's built-in default (250), the frame's budget for
+ * the ambient idles' tries, read as microseconds (inferred, TODO(M13)).
+ */
+export const SPECIAL_IDLE_PICK_TIME = 250;
+
+/**
+ * The frame's turns of the ambient idles' tries: each frame they begin after the actor the last
+ * frame's stopped at, and stop once the frame's budget is spent (at least one try a frame).
+ */
+export class AmbientIdleTurns {
+  /** The actor whose try came last (the next frame begins after it). */
+  #last: number | undefined;
+
+  /**
+   * Tries the actors (by reference, in the caller's order) that may want an idle: `attempt`
+   * tries one (false: it did not try, which costs nothing). `budget` and `clock` in
+   * milliseconds. The actors tried, in order.
+   */
+  run(
+    actors: readonly number[],
+    budget: number,
+    clock: () => number,
+    attempt: (actor: number) => boolean,
+  ): number[] {
+    const tried: number[] = [];
+    if (actors.length === 0) return tried;
+    const after = this.#last === undefined ? -1 : actors.indexOf(this.#last);
+    const start = clock();
+    for (let i = 1; i <= actors.length; i++) {
+      const actor = actors[(after + i) % actors.length];
+      if (actor === undefined || !attempt(actor)) continue;
+      tried.push(actor);
+      this.#last = actor;
+      if (clock() - start >= budget) break;
+    }
+    return tried;
   }
 }
 

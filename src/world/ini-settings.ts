@@ -18,6 +18,9 @@ export const INI_DEFAULTS = {
     fHavokHitTimeSec: 3,
     bDriveRagdollWithGraph: 1,
     bAlwaysDriveRagdoll: 0,
+    // The frame's budget for the ambient idles' tries (src/shell/actor-ambient-idles.ts; read
+    // as microseconds, inferred).
+    fSpecialIdlePickTime: 250,
     bFootIK: 1,
     bUseSpeedSampler: 1,
     // A mount or dismount not ended by its paired animation is ended (src/shell/actor-mounts.ts).

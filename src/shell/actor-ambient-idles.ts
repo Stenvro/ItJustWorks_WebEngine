@@ -1,12 +1,19 @@
 // Ambient idles on the stage (src/ai/ambient-idles.ts; docs/animation.md, "Ambient idles"): an
 // actor whose graph asked for a new idle (PickNewIdle) tries the idle tree's ActionIdle on its AI
-// updates, with the furniture it is in as the action's target, until one plays.
+// updates, with the furniture it is in as the action's target, until one plays; the player too,
+// in the camera states that allow it. The tries of a frame share its budget, in turns.
 
 import {
   AMBIENT_IDLE_DEFAULTS,
-  ambientIdleAllowed,
   ambientIdleDistance,
   AmbientIdleFlags,
+  AmbientIdleLife,
+  AmbientIdleTurns,
+  ambientIdleUpdate,
+  ambientIdleWait,
+  COMPLEX_SCENE_ACTORS,
+  isComplexScene,
+  playerAmbientIdleCamera,
   readAmbientIdleSettings,
   type AmbientIdleActor,
   type AmbientIdleSettings,
@@ -14,6 +21,7 @@ import {
 import { parsePackage } from '../ai/package-records.ts';
 import { parseRaceCombat, RaceSize } from '../ai/race-combat-records.ts';
 import type { Vec3 } from '../render/math.ts';
+import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ActorInteraction } from '../scripting/runtime/runtime.ts';
 import type { FurnitureUser } from './actor-furniture.ts';
 import type { StagedActor } from './actor-stage.ts';
@@ -34,6 +42,24 @@ export interface ActorAmbientIdlesOptions {
     target: number | undefined,
     inFurniture: boolean,
   ) => Promise<string | undefined>;
+  /** An actor's life state (ACTOR_LIFE_STATE; undefined: alive). */
+  readonly lifeOf?: (reference: number) => number | undefined;
+  /** Whether an actor is in the high process (undefined: taken as yes). */
+  readonly highProcess?: (reference: number) => boolean;
+  /** The player as the idles see it (undefined: no player body on the stage). */
+  readonly player?: () => AmbientIdlePlayer | undefined;
+  /** The clock the frame's budget is measured with (ms; default performance.now). */
+  readonly clock?: () => number;
+}
+
+/** The player as its idle update sees it. */
+export interface AmbientIdlePlayer {
+  /** The player's third person body as a user of furniture. */
+  readonly user: FurnitureUser;
+  /** The camera's state (src/shell/camera-states.ts). */
+  readonly camera: number;
+  /** Its life state (undefined: alive). */
+  readonly life?: number;
 }
 
 /** An ambient idle played (kept for the checks: the last HISTORY). */
@@ -62,11 +88,22 @@ export class ActorAmbientIdles {
   /** Whether a package has idles of its own (PACK IDLA), by package, as read. */
   readonly #packageIdles = new Map<number, boolean>();
 
+  /** Seconds of frames seen (the idle wait timers' clock). */
+  #clock = 0;
+  readonly #turns = new AmbientIdleTurns();
+  /** iAINumberActorsComplexScene. */
+  #complexSceneActors = COMPLEX_SCENE_ACTORS;
+  /** The frame's budget for the tries (ms): [Animation] fSpecialIdlePickTime, microseconds. */
+  readonly #budget: number;
+
   constructor(options: ActorAmbientIdlesOptions) {
     this.#options = options;
+    this.#budget = options.session.ini.number('Animation', 'fSpecialIdlePickTime') / 1000;
     options.session.settings().then(
       (settings) => {
         this.#settings = readAmbientIdleSettings((name) => settings.number(name));
+        this.#complexSceneActors =
+          settings.number('iAINumberActorsComplexScene') ?? COMPLEX_SCENE_ACTORS;
       },
       () => undefined,
     );
@@ -77,33 +114,98 @@ export class ActorAmbientIdles {
     this.flags.pickNewIdle(reference);
   }
 
-  /** The actors' AI updates: those that want a new idle try ActionIdle. */
-  frame(focus: Vec3 | undefined): void {
+  /**
+   * A specific idle was sent to an actor's graph (a package's, a script's PlayIdle, a line's):
+   * over an idle that plays, the PickNewIdle the stopped one raises is no request.
+   */
+  specificIdle(reference: number): void {
+    this.flags.specificIdle(reference);
+  }
+
+  /**
+   * The actors' AI updates (`seconds` since the last frame): those that want a new idle try
+   * ActionIdle, in turns within the frame's budget; the player too, in the camera states that
+   * allow it.
+   */
+  frame(focus: Vec3 | undefined, seconds = 0): void {
+    this.#clock += seconds;
     if (!focus) return;
-    for (const staged of this.#options.actors()) {
-      const reference = staged.reference;
-      if (staged.dead || !staged.placed.behavior) continue;
-      if (!this.flags.wants(reference) || this.#trying.has(reference)) continue;
-      const actor = this.#actor(staged, focus);
-      if (!actor || !ambientIdleAllowed(actor)) continue;
-      this.#trying.add(reference);
-      const inFurniture = actor.furniture === 'in';
-      const furniture = inFurniture ? this.#options.interaction(reference)?.furniture : undefined;
-      void this.#options
-        .playAction(this.#options.userOf(staged), furniture, inFurniture)
-        .then(
-          (event) => {
-            this.flags.tried(reference, event !== undefined);
-            if (event === undefined) return;
-            this.played.push({ actor: reference, event, furniture });
-            if (this.played.length > HISTORY) this.played.shift();
-          },
-          () => undefined,
-        )
-        .finally(() => {
-          this.#trying.delete(reference);
-        });
+    const now = this.#clock;
+    const staged = new Map<number, StagedActor>();
+    let high = 0;
+    for (const actor of this.#options.actors()) {
+      staged.set(actor.reference, actor);
+      if (!actor.dead && this.#options.highProcess?.(actor.reference) !== false) high++;
     }
+    const complex = isComplexScene(high, this.#complexSceneActors);
+    const order = [...staged.keys()];
+    const player = this.#options.player?.();
+    if (player) order.push(PLAYER_REF);
+    const clock = this.#options.clock ?? (() => performance.now());
+    this.#turns.run(order, this.#budget, clock, (reference) => {
+      if (!this.flags.ready(reference, now) || this.#trying.has(reference)) return false;
+      const one = staged.get(reference);
+      if (one) return this.#tryActor(one, focus, now, complex);
+      return player !== undefined && this.#tryPlayer(player, now, complex);
+    });
+  }
+
+  /** One actor's idle update (with its flag set): whether it tried ActionIdle. */
+  #tryActor(staged: StagedActor, focus: Vec3, now: number, complex: boolean): boolean {
+    const reference = staged.reference;
+    if (!staged.placed.behavior) return false;
+    if (staged.dead) {
+      this.flags.drop(reference);
+      return false;
+    }
+    const actor = this.#actor(staged, focus);
+    if (!actor) return false;
+    const update = ambientIdleUpdate(actor);
+    if (update === 'drop') this.flags.drop(reference);
+    if (update !== 'try') return false;
+    this.#try(this.#options.userOf(staged), actor.furniture === 'in', now, complex);
+    return true;
+  }
+
+  /** The player's idle update (with its flag set): whether it tried ActionIdle. */
+  #tryPlayer(player: AmbientIdlePlayer, now: number, complex: boolean): boolean {
+    if (!playerAmbientIdleCamera(player.camera)) return false;
+    const update = ambientIdleUpdate({
+      distance: 0,
+      reach: Infinity,
+      furniture: this.#furnitureState(PLAYER_REF),
+      packageIdles: false,
+      eating: false,
+      ...(player.life !== undefined && { life: player.life }),
+    });
+    if (update === 'drop') this.flags.drop(PLAYER_REF);
+    if (update !== 'try') return false;
+    this.#try(player.user, this.#furnitureState(PLAYER_REF) === 'in', now, complex);
+    return true;
+  }
+
+  /** Tries ActionIdle on one (its conditions valued asynchronously). */
+  #try(user: FurnitureUser, inFurniture: boolean, now: number, complex: boolean): void {
+    const reference = user.reference;
+    this.#trying.add(reference);
+    const furniture = inFurniture ? this.#options.interaction(reference)?.furniture : undefined;
+    void this.#options
+      .playAction(user, furniture, inFurniture)
+      .then(
+        (event) => {
+          if (event === undefined) {
+            this.flags.tried(reference, false);
+            return;
+          }
+          this.flags.played(reference, now, ambientIdleWait(this.#settings, complex), complex);
+          this.played.push({ actor: reference, event, furniture });
+          if (this.played.length > HISTORY) this.played.shift();
+        },
+        () => undefined,
+      )
+      .finally(() => {
+        this.#trying.delete(reference);
+      });
   }
 
   remove(reference: number): void {
@@ -124,6 +226,7 @@ export class ActorAmbientIdles {
       // TODO(M13): observed in the original, an actor at its meal (an Eat package at its
       // eating step) picks none; our Eat procedure's steps are not told apart here.
       eating: false,
+      life: this.#options.lifeOf?.(staged.reference) ?? AmbientIdleLife.alive,
     };
   }
 

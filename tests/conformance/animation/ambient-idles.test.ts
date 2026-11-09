@@ -20,12 +20,22 @@ import {
   ambientIdleAllowed,
   ambientIdleDistance,
   AmbientIdleFlags,
+  AmbientIdleLife,
+  AmbientIdleTurns,
+  ambientIdleUpdate,
+  ambientIdleWait,
+  COMPLEX_SCENE_ACTORS,
+  isComplexScene,
+  playerAmbientIdleCamera,
   readAmbientIdleSettings,
+  SPECIAL_IDLE_PICK_TIME,
   type AmbientIdleActor,
 } from '../../../src/ai/ambient-idles.ts';
 import { readIdleTree, type IdleTree } from '../../../src/ai/idle-records.ts';
 import { RaceSize } from '../../../src/ai/race-combat-records.ts';
 import type { AmbientIdlePlayed } from '../../../src/shell/actor-ambient-idles.ts';
+import { CameraState } from '../../../src/shell/camera-states.ts';
+import { INI_DEFAULTS } from '../../../src/world/ini-settings.ts';
 import { hasGamedata, openSim, type Sim } from '../../helpers/sim.ts';
 
 describe('the settings', () => {
@@ -223,15 +233,122 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
   });
 });
 
-describe('ambient idles (todo)', () => {
-  it.todo(
-    'a specific idle played over a playing one skips the PickNewIdle its stop raises  [original]',
-  );
-  it.todo(
-    'in a complex scene the next try waits fAIIdleWaitTimeComplexScene after an idle  [original]',
-  );
-  it.todo('the frame’s idle time budget: tries stop when it is spent  [original]');
-  it.todo('the player picks ActionIdle in the camera states that allow it  [original]');
-  it.todo('a dying or unconscious actor’s idle update  [original]');
-  it.todo('a restrained actor (life state 6) picks none  [original]');
+describe('the idle update (original; the specifics inferred: src/ai/ambient-idles.ts)', () => {
+  const base: AmbientIdleActor = {
+    distance: 100,
+    reach: 2000,
+    furniture: 'none',
+    packageIdles: false,
+    eating: false,
+  };
+
+  it('a specific idle played over a playing one skips the PickNewIdle its stop raises', () => {
+    const flags = new AmbientIdleFlags();
+    // An ambient idle plays (picked at 0 s).
+    flags.pickNewIdle(1);
+    flags.played(1, 0, 0.1, false);
+    // A package's idle (or a script's PlayIdle) replaces it: the stopped one's PickNewIdle is
+    // no request, the one its own end raises is.
+    flags.specificIdle(1);
+    flags.pickNewIdle(1);
+    expect(flags.wants(1)).toBe(false);
+    flags.pickNewIdle(1);
+    expect(flags.wants(1)).toBe(true);
+    // Played over none, nothing is skipped.
+    const idle = new AmbientIdleFlags();
+    idle.specificIdle(2);
+    idle.pickNewIdle(2);
+    expect(idle.wants(2)).toBe(true);
+  });
+
+  it('in a complex scene the next try waits fAIIdleWaitTimeComplexScene after an idle', () => {
+    const settings = readAmbientIdleSettings((name) =>
+      name === 'fAIIdleWaitTime' ? 0.1 : undefined,
+    );
+    // iAINumberActorsComplexScene (20) actors or more make a complex scene.
+    expect(isComplexScene(COMPLEX_SCENE_ACTORS, COMPLEX_SCENE_ACTORS)).toBe(true);
+    expect(isComplexScene(COMPLEX_SCENE_ACTORS - 1, COMPLEX_SCENE_ACTORS)).toBe(false);
+    expect(ambientIdleWait(settings, true)).toBe(3);
+    expect(ambientIdleWait(settings, false)).toBe(0.1);
+    const complex = new AmbientIdleFlags();
+    complex.pickNewIdle(1);
+    expect(complex.ready(1, 0)).toBe(true);
+    complex.played(1, 10, ambientIdleWait(settings, true), true);
+    // Its idle ends a second later: the next try waits for the timer (3 s).
+    complex.pickNewIdle(1);
+    expect(complex.ready(1, 11)).toBe(false);
+    expect(complex.ready(1, 12.9)).toBe(false);
+    expect(complex.ready(1, 13)).toBe(true);
+    // Out of a complex scene it tries again at once.
+    const simple = new AmbientIdleFlags();
+    simple.pickNewIdle(1);
+    simple.played(1, 10, ambientIdleWait(settings, false), false);
+    simple.pickNewIdle(1);
+    expect(simple.ready(1, 10)).toBe(true);
+  });
+
+  it('the frame’s idle time budget: tries stop when it is spent', () => {
+    // [Animation] fSpecialIdlePickTime (250 µs), the engine's built-in default.
+    expect(INI_DEFAULTS.Animation.fSpecialIdlePickTime).toBe(SPECIAL_IDLE_PICK_TIME);
+    const budget = SPECIAL_IDLE_PICK_TIME / 1000;
+    let now = 0;
+    const clock = (): number => now;
+    // Each try costs 0.1 ms: three fit in 0.25 ms (the third spends it).
+    const attempt = (): boolean => {
+      now += 0.1;
+      return true;
+    };
+    const turns = new AmbientIdleTurns();
+    const actors = [11, 12, 13, 14, 15];
+    expect(turns.run(actors, budget, clock, attempt)).toEqual([11, 12, 13]);
+    // The next frame goes on after the last tried, round to the first.
+    expect(turns.run(actors, budget, clock, attempt)).toEqual([14, 15, 11]);
+    // Those that do not try cost nothing.
+    expect(turns.run(actors, budget, clock, (actor) => actor === 13 && attempt())).toEqual([13]);
+    // A spent budget still lets one try a frame.
+    expect(turns.run(actors, 0, clock, attempt)).toEqual([14]);
+  });
+
+  it('the player picks ActionIdle in the camera states that allow it', () => {
+    // Third person, furniture's camera, the auto vanity camera: the player's own body.
+    expect(playerAmbientIdleCamera(CameraState.thirdPerson)).toBe(true);
+    expect(playerAmbientIdleCamera(CameraState.furniture)).toBe(true);
+    expect(playerAmbientIdleCamera(CameraState.autoVanity)).toBe(true);
+    for (const state of [
+      CameraState.firstPerson,
+      CameraState.vats,
+      CameraState.free,
+      CameraState.ironSights,
+      CameraState.transition,
+      CameraState.tween,
+      CameraState.animated,
+      CameraState.mount,
+      CameraState.bleedout,
+      CameraState.dragon,
+    ]) {
+      expect(playerAmbientIdleCamera(state)).toBe(false);
+    }
+  });
+
+  it('a dying or unconscious actor’s idle update tries none and drops its wish', () => {
+    for (const life of [AmbientIdleLife.dying, AmbientIdleLife.dead, AmbientIdleLife.unconscious]) {
+      expect(ambientIdleUpdate({ ...base, life })).toBe('drop');
+    }
+    expect(ambientIdleUpdate({ ...base, life: AmbientIdleLife.alive })).toBe('try');
+    expect(ambientIdleUpdate({ ...base, distance: 5000 })).toBe('keep');
+    const flags = new AmbientIdleFlags();
+    flags.pickNewIdle(1);
+    flags.drop(1);
+    expect(flags.wants(1)).toBe(false);
+    // As it stands up again its graph asks anew.
+    flags.pickNewIdle(1);
+    expect(flags.wants(1)).toBe(true);
+  });
+
+  it('a restrained actor (life state 6) picks none', () => {
+    const restrained = { ...base, life: AmbientIdleLife.restrained };
+    expect(ambientIdleAllowed(restrained)).toBe(false);
+    // Its wish is kept: freed, it picks one.
+    expect(ambientIdleUpdate(restrained)).toBe('keep');
+  });
 });
