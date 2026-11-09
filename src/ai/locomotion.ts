@@ -461,16 +461,6 @@ const MOVING_SPEED = 5;
 const TURNING_RATE = Math.PI / 180;
 
 /**
- * The movement actions the engine performs as its graph data channels cross their thresholds,
- * by the event their idles (IDLE under the AACT) send in every vanilla graph that has them:
- * ActionMoveStart moveStart (the characters' only while not riding: IsRidingHorse() == 0),
- * ActionTurnLeft turnLeft, ActionMoveForward moveForward, ... ActionMoveLeft and ActionMoveRight
- * have no idles. These are what a graph gets without the actor's idle tree (a horse's
- * Locomotion, the tests); with it (`actions`) the actions are performed and their idles decide
- * (a rider's graph gets no moveStart, SprintStart only neither sneaking nor blocking, the
- * slaughterfish turns by SwimLeft).
- */
-/**
  * The actions an actor's movement performs through its idle tree (Locomotion: its graph data
  * channels crossing their thresholds, its falls, landings, sneaking, sprinting and swimming).
  */
@@ -493,6 +483,16 @@ export const MOVEMENT_ACTIONS: ReadonlySet<string> = new Set([
   'ActionLand',
 ]);
 
+/**
+ * The movement actions the engine performs as its graph data channels cross their thresholds,
+ * by the event their idles (IDLE under the AACT) send in every vanilla graph that has them:
+ * ActionMoveStart moveStart (the characters' only while not riding: IsRidingHorse() == 0),
+ * ActionTurnLeft turnLeft, ActionMoveForward moveForward, ... ActionMoveLeft and ActionMoveRight
+ * have no idles. These are what a graph gets without the actor's idle tree (a horse's
+ * Locomotion, the tests); with it (`actions`) the actions are performed and their idles decide
+ * (a rider's graph gets no moveStart, SprintStart only neither sneaking nor blocking, the
+ * slaughterfish turns by SwimLeft).
+ */
 const ACTION_EVENTS = {
   moveStart: 'moveStart',
   moveStop: 'moveStop',
