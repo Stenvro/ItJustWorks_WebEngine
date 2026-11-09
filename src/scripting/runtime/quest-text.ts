@@ -187,7 +187,11 @@ async function withBaseName(
 }
 
 /** The name a reference's base gives it, an NPC's from its templates if it has none of its own. */
-async function baseName(runtime: ScriptRuntime, reference: number, short: boolean): Promise<string> {
+async function baseName(
+  runtime: ScriptRuntime,
+  reference: number,
+  short: boolean,
+): Promise<string> {
   let base = await runtime.baseOf(reference);
   for (let depth = 0; base !== undefined && depth < TEMPLATE_DEPTH; depth++) {
     const record = await runtime.forms.record(base);

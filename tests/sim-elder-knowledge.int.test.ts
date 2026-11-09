@@ -27,11 +27,10 @@ const COLLEGE_GATE = 0x37a7d;
 const WINTERHOLD_MARKER = 0x177ef;
 const HALL_OF_THE_ELEMENTS_DOOR = 0x177f9;
 const HALL_OF_THE_ELEMENTS = 0x1380e;
-/** The Arcanaeum's door, MQ205's Urag alias, his book (DA04Book1Ref), Septimus's map marker. */
+/** The Arcanaeum's door, MQ205's Urag alias and his book (DA04Book1Ref). */
 const ARCANAEUM_DOOR = 0x175dd;
 const URAG = 2;
 const RUMINATIONS = 0x32787;
-const SEPTIMUS_MARKER = 0x2d511;
 /** The Arcanaeum and where Urag puts his books down (DA04UragPlaceBooksMARKER). */
 const ARCANAEUM = 0x13810;
 const BOOKS_PLACED = 0x2726d;

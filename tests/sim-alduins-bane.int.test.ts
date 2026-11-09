@@ -109,9 +109,10 @@ describe.skipIf(!hasGamedata())("MQ206 Alduin's Bane", () => {
     try {
       const lines: string[] = [];
       sim.runtime.scenes.listen((line) => lines.push(line));
-      const said = (action: number): boolean =>
-        lines.includes(`MQ206BattleScene: #${action} said`);
-      const dragonrend = await sim.runtime.casting.shout(await sim.formId('SHOU', 'DragonrendShout'));
+      const said = (action: number): boolean => lines.includes(`MQ206BattleScene: #${action} said`);
+      const dragonrend = await sim.runtime.casting.shout(
+        await sim.formId('SHOU', 'DragonrendShout'),
+      );
       expect(dragonrend).toBeDefined();
       if (!dragonrend) return;
       expect(sim.runtime.casting.wordsKnown(PLAYER_REF, dragonrend)).toBe(0);
@@ -158,8 +159,7 @@ describe.skipIf(!hasGamedata())("MQ206 Alduin's Bane", () => {
     try {
       const lines: string[] = [];
       sim.runtime.scenes.listen((line) => lines.push(line));
-      const said = (action: number): boolean =>
-        lines.includes(`MQ206BattleScene: #${action} said`);
+      const said = (action: number): boolean => lines.includes(`MQ206BattleScene: #${action} said`);
       expect(await sim.until(() => sim.stageDone(MQ206, 82), 60)).toBe(true);
       await sim.step(1);
       const gormlaith = alias(sim, MQ206, GORMLAITH);

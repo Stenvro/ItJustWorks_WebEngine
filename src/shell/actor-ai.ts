@@ -675,7 +675,13 @@ export class ActorAi {
             const near = large ? Math.max(arrive, movers.radius(reference) ?? arrive) : arrive;
             const [x, y] = staged.position;
             if (large && Math.hypot(to[0] - x, to[1] - y) <= near) return Promise.resolve(true);
-            return movers.travel(reference, to, 'walk', near, heading === undefined ? {} : { heading });
+            return movers.travel(
+              reference,
+              to,
+              'walk',
+              near,
+              heading === undefined ? {} : { heading },
+            );
           },
           face,
           types === undefined ? { activates: true } : { types, activates: true },

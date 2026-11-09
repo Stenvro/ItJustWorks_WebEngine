@@ -976,7 +976,7 @@ export class Sim {
       await openBookUnseen(this.runtime, { book: read });
     });
     const entry = (await model.view()).entries.find((candidate) => candidate.formId === book);
-    if (!entry || !model.select) return false;
+    if (!entry) return false;
     await this.#stepUntil(model.select(entry, 0));
     return true;
   }

@@ -214,7 +214,10 @@ describe.skipIf(!hasGamedata())('MQ302 Season Unending', () => {
         expect(sim.stageDone(MQ302, stage), `stage ${stage}`).toBe(true);
       }
       for (const scene of ['MQ302CouncilSceneElenwenLeaves', 'MQ302CouncilScene4']) {
-        expect(lines.some((line) => line.startsWith(`${scene}: phase 0`)), scene).toBe(true);
+        expect(
+          lines.some((line) => line.startsWith(`${scene}: phase 0`)),
+          scene,
+        ).toBe(true);
       }
       await sim.step(2);
       expect(objective(sim, 60)).toEqual({ displayed: true, completed: true });

@@ -108,9 +108,10 @@ describe.skipIf(!hasGamedata())('MQ304 Sovngarde', () => {
       for (const [trigger, stage] of VALLEY) {
         const at = await sim.position(trigger);
         expect(at && (await walkFighting(sim, at, 90, 100)), `to ${String(stage)}`).toBe(true);
-        expect(await sim.until(() => sim.stageDone(MQ304, stage), 3), `stage ${String(stage)}`).toBe(
-          true,
-        );
+        expect(
+          await sim.until(() => sim.stageDone(MQ304, stage), 3),
+          `stage ${String(stage)}`,
+        ).toBe(true);
       }
       await sim.step(1);
       expect(lines).toContain('MQ304LostSoulScene1: phase 0 completes');

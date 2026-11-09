@@ -112,12 +112,7 @@ async function walkFighting(
 }
 
 /** To a pillar, and it is turned until it shows what solves it. */
-async function turnPillar(
-  sim: Sim,
-  pillar: number,
-  script: string,
-  solved: string,
-): Promise<void> {
+async function turnPillar(sim: Sim, pillar: number, script: string, solved: string): Promise<void> {
   const at = await sim.position(pillar);
   expect(at && (await walkFighting(sim, at, 90, 180))).toBe(true);
   const handle = new ObjectHandle(pillar, script);

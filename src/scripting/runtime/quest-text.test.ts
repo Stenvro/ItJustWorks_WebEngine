@@ -104,7 +104,9 @@ describe('questText', () => {
   });
 
   it("fills an alias's display name with the base's name, and a short name without it", async () => {
-    expect(await questText(runtime, quest, 'Ask <Alias=Titled>')).toBe('Ask Jarl Ingun Black-Briar');
+    expect(await questText(runtime, quest, 'Ask <Alias=Titled>')).toBe(
+      'Ask Jarl Ingun Black-Briar',
+    );
     expect(await questText(runtime, quest, 'Jarl <Alias.ShortName=Titled>')).toBe('Jarl Ingun');
   });
 

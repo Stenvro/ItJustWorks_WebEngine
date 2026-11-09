@@ -1437,9 +1437,9 @@ export class ActorPackages {
           if (ended.result === 'skipped') continue;
           ran = true;
           // A procedure's success that completes the package ends it at once, whatever is left.
-          const goesOn =
-            last && [...pending.keys()].some((i) => mayComplete(branch.children[i]));
-          const now = (!all && !goesOn) || ended.result === 'complete' || ended.result === 'stopped';
+          const goesOn = last && [...pending.keys()].some((i) => mayComplete(branch.children[i]));
+          const now =
+            (!all && !goesOn) || ended.result === 'complete' || ended.result === 'stopped';
           if (!now) continue;
           views.forEach((view, i) => {
             if (i !== ended.i) view.cut = true;

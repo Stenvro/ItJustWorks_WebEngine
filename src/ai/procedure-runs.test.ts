@@ -326,9 +326,9 @@ describe('procedures', () => {
       searchHeld: () => Promise.resolve([]),
       carried: () => Promise.resolve(0x888),
     };
-    expect(await run('Find', [0, 1, 2, 4, 3], [NEAR_HOME, BEDS, FOUND_BED, held, STEAL], mind)).toBe(
-      'success',
-    );
+    expect(
+      await run('Find', [0, 1, 2, 4, 3], [NEAR_HOME, BEDS, FOUND_BED, held, STEAL], mind),
+    ).toBe('success');
     expect(found.get(FOUND_BED.id)?.length).toBe(1);
     expect(await run('Acquire', [2], [FOUND_BED], mind)).toBe('failure');
     expect(done).toEqual([]);
