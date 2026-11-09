@@ -47,7 +47,7 @@ import {
   type WitnessedAct,
 } from '../ai/detection-states.ts';
 import { brightestAmbient, lightLevel, type LightProbe } from '../ai/light-level.ts';
-import { InterruptFlag, PackageFlag, type PackageRecord } from '../ai/package-records.ts';
+import { InterruptFlag, PackageFlag } from '../ai/package-records.ts';
 import {
   parseNpcCombat,
   parseRaceCombat,
@@ -266,7 +266,6 @@ export class ActorSenses implements ScriptSenses {
   #detectedCount = 0;
   #hiddenCount = 0;
   #aware = false;
-  readonly #packages = new Map<number, PackageRecord | undefined>();
   readonly #raceSizes = new Map<number, number>();
   readonly #armour = new Map<number, number>();
   readonly #questLists = new Map<number, Map<number, OverridePackageLists>>();
@@ -1327,9 +1326,10 @@ export class ActorSenses implements ScriptSenses {
     if (runtime.dialogueSpeaker === actor || runtime.scenes.sceneOf(actor) !== undefined)
       return false;
     const running = ai.current(actor);
-    const pack = running && this.#package(running.id);
     if (kind !== 'warn') {
-      if (!pack) return false;
+      // The running package carries its flags (as its procedure's override leaves them): no
+      // record is read here, so a first reaction is not lost waiting for one to load.
+      if (!running) return false;
       const wanted =
         kind === 'search'
           ? InterruptFlag.reactionToPlayerActions
@@ -1392,20 +1392,6 @@ export class ActorSenses implements ScriptSenses {
     ai.hold(actor, true);
     this.#reactions.set(actor, reaction);
     return true;
-  }
-
-  /** The running package's record (read once). */
-  #package(id: number): PackageRecord | undefined {
-    if (!this.#packages.has(id)) {
-      this.#packages.set(id, undefined);
-      void this.#options.session
-        .packageData()
-        .then((data) => data.package(id))
-        .then((pack) => {
-          this.#packages.set(id, pack);
-        });
-    }
-    return this.#packages.get(id);
   }
 
   /** The reactions go on; those that end let their actors go back to their packages. */
