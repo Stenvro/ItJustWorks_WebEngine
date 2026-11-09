@@ -181,9 +181,9 @@ rod's clips), SEQ files, the marketplace's archive and the census tool.
       (`format-census hkx-members`); 27 are zero or null in every file (runtime state, null
       pointers, empty arrays) and 3 are not data (two runtime binding indices, padding).
       Wired into the behavior runtime: silent events, world-from-model weights, the damping
-      enable, bit bindings. Read but not applied yet (TODO(M13)): sync points, the powered
-      ragdoll's world-from-model mode and bone weights, narrow quadruped foot IK, hkbNode user
-      data. docs/formats/hkx.md, "Class members".
+      enable, bit bindings, the powered ragdoll's world-from-model mode (docs/physics.md,
+      "Motors"). Read but not applied yet (TODO(M13)): sync points, the powered ragdoll's bone
+      weights, narrow quadruped foot IK, hkbNode user data. docs/formats/hkx.md, "Class members".
 
 ## Scripts (PEX)
 

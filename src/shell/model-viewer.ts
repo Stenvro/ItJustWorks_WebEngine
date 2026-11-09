@@ -525,6 +525,7 @@ export class ModelViewer {
       if (reference === PLAYER_REF) this.#seat?.release();
       this.#stage?.killed(reference, killer, silent);
     },
+    dying: (reference) => this.#stage?.dyingClock.until(reference),
     resurrected: (reference) => {
       this.#stage?.resurrected(reference, this.#play?.physics).catch((error: unknown) => {
         this.#terminal.log('actor', `a resurrection: ${String(error)}`, 'warn');

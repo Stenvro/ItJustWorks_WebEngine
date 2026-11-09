@@ -108,6 +108,8 @@ export class ActorEngine {
   readonly #relationRecords = new Map<string, Relationship>();
   /** Actors in a deferred kill: whether their health ran out meanwhile, and by whose blow. */
   readonly #deferred = new Map<number, { due: boolean; killer?: number }>();
+  /** The dying (killed, not yet dead): the kill whose OnDeath is to come, and its end. */
+  readonly #dying = new Map<number, { readonly kill: object; readonly ended: Promise<boolean> }>();
 
   constructor(runtime: ScriptRuntime) {
     this.#runtime = runtime;
@@ -1017,8 +1019,22 @@ export class ActorEngine {
       for (const list of lists)
         await this.#runtime.addItem(reference, this.#runtime.formHandle(list), 1, true);
     }
+    // Dying where the world shows it, until its graph's deathStop or fDyingTimer after the kill
+    // (src/world/dying.ts); elsewhere (not loaded, the player) dead at once. Its scripts' OnDeath
+    // waits for the end (script-events.ts dyingEnd); resurrected meanwhile, it hears none.
+    const dying = this.#runtime.world.dying?.(reference);
+    if (dying !== undefined) {
+      const kill = {};
+      const ended = dying.then(() => {
+        const same = this.#dying.get(reference)?.kill === kill;
+        if (same) this.#dying.delete(reference);
+        return same;
+      });
+      this.#dying.set(reference, { kill, ended });
+    }
     // The hub tells it dying, then dead (TESDeathEvent: OnDying, OnDeath). The engine's own
-    // listeners are waited for; the scripts' handlers are only started (script-events.ts).
+    // listeners (its respawn clock, the kill stats, the location's clearing) hear both at the
+    // kill (inferred, TODO(M13)); they are waited for, the scripts' handlers only started.
     const events = this.#runtime.events;
     await events.emitted('death', { actor: reference, killer, dead: false });
     await events.emitted('death', { actor: reference, killer, dead: true });
@@ -1026,10 +1042,24 @@ export class ActorEngine {
     await this.#runtime.crime.killed(reference, killer, silent);
   }
 
+  /** Whether an actor is dying (killed, its OnDeath still to come: src/world/dying.ts). */
+  dying(reference: number): boolean {
+    return this.#dying.has(reference);
+  }
+
+  /**
+   * A dying actor's end (undefined: not dying): resolves true once it is dead, false if it was
+   * resurrected (or killed anew) meanwhile. Its scripts' OnDeath waits for it.
+   */
+  dyingEnd(reference: number): Promise<boolean> | undefined {
+    return this.#dying.get(reference)?.ended;
+  }
+
   async resurrect(reference: number): Promise<void> {
     const state = this.#runtime.state.actor(reference);
     state.dead = false;
     delete state.killer;
+    this.#dying.delete(reference);
     this.#own(reference, ActorValue.health).damage = 0;
     this.#runtime.world.resurrected?.(reference);
     await this.#runtime.sendEvent(reference, 'OnResurrect');

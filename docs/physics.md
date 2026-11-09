@@ -814,9 +814,19 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   knocked-down actor's ragdoll is powered by its graph's control data every frame (its pose
   of that frame as the target, the bones it names; `ActorBodies`): FullyRagdoll's 0 leaves it
   limp, matching the get-up's first pose (200) pulls its limbs toward it before the get-up
-  blends from it; powered bodies are kept awake. TODO(M13): Havok's controller drives the
-  ragdoll's root by its world-from-model mode, not done; the paralysed's stiff fall. A dying
-  graph's powered bones: the engine's ragdoll drive, below.
+  blends from it; powered bodies are kept awake. The powered controls' world-from-model mode
+  (hkbWorldFromModelModeData; `src/animation/world-from-model.ts`, `ActorKnockdowns.place`)
+  places the character while it lies: every vanilla character has two, FullyRagdoll's (force 0) from the ragdoll (4) and the get-up's matching (200) computed from its three pose matching
+  bones (2), the ragdoll's root first. Lying, its place (its scripts' GetPosition, its
+  distance to others: `ActorStage.livePlacement`) moves by the way its ragdoll's root body has
+  gone since it went limp, facing as it did; matching, it is the frame the get-up's match puts
+  it in (where it then stands up), as the ragdoll until a match is made; mode 0 keeps the last
+  place, 1 and 3 its own. Inferred, TODO(M13): Havok's ragdoll mode takes the root body's whole
+  transform, the actor here stays upright (which point of the ragdoll the engine's reference
+  follows is not read), and none (3) has no meaning for a placed actor. The paralysed's stiff
+  fall: `PhysicsWorld.stiffen` (fixed joints hold its ragdoll in the pose paralysis took it in;
+  docs/completeness/physics.md). A dying graph's powered bones: the engine's ragdoll drive,
+  below.
 
 **The engine's ragdoll drive** (`src/physics/ragdoll-anim.ts`; [RagdollAnim] INI settings, the
 engine's built-in defaults, no shipped INI sets them): a hierarchy controller's control data

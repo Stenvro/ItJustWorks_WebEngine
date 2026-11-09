@@ -76,7 +76,10 @@ interface DeathLog {
  * A runtime for the player's death: the player's health 100, an alias (quest 0x100, alias 1)
  * holding them, essential if `essentialAlias`.
  */
-function dyingEngine(essentialAlias = false): { actors: ActorEngine; log: DeathLog } {
+function dyingEngine(
+  essentialAlias = false,
+  dying?: (actor: number) => Promise<void> | undefined,
+): { actors: ActorEngine; log: DeathLog } {
   const state = new GameState();
   const calls: string[] = [];
   const runtime = {
@@ -98,20 +101,25 @@ function dyingEngine(essentialAlias = false): { actors: ActorEngine; log: DeathL
       bleedout: (actor: number) => {
         calls.push(`bleedout ${actor.toString(16)}`);
       },
+      dying,
     },
     magic: { died: () => Promise.resolve() },
     perks: { leveledLists: () => Promise.resolve([]) },
     crime: { killed: () => Promise.resolve() },
     // The runtime sends an actor's events to it and its aliases (ScriptRuntime.sendEvent).
-    sendEvent: (target: number, event: string, args: readonly unknown[]) => {
+    sendEvent: (target: number, event: string, args: readonly unknown[] = []) => {
       calls.push(`${event} ${target.toString(16)} (${String(args[0])})`);
       return Promise.resolve();
     },
     events: new EventHub(),
+    // OnDeath waits for a dying actor's end (ScriptRuntime.dyingEnd).
+    dyingEnd: (actor: number) => made.engine?.dyingEnd(actor),
   };
+  const made: { engine?: ActorEngine } = {};
   // The hub's events reach the scripts through the relay (script-events.ts).
   relayScriptEvents(runtime as unknown as ScriptEventHost);
   const actors = new ActorEngine(runtime as unknown as ScriptRuntime);
+  made.engine = actors;
   actors.setBase(PLAYER_REF, ActorValue.health, 100);
   return { actors, log: { calls, runtime } };
 }
@@ -167,6 +175,57 @@ describe("the player's death", () => {
     log.runtime.godMode = false;
     await actors.damage(PLAYER_REF, ActorValue.health, 500, 0x1234);
     expect(await actors.isDead(PLAYER_REF)).toBe(true);
+  });
+});
+
+describe('the dying life state', () => {
+  const GUARD = 0x5000;
+
+  it('tells OnDying at the kill and OnDeath only once the world says its dying ended', async () => {
+    let dead = (): void => undefined;
+    const { actors, log } = dyingEngine(false, (actor) =>
+      actor === GUARD
+        ? new Promise<void>((resolve) => {
+            dead = resolve;
+          })
+        : undefined,
+    );
+    actors.setBase(GUARD, ActorValue.health, 50);
+    await actors.damage(GUARD, ActorValue.health, 80, 0x1234);
+    // Dying: IsDead already answers yes, OnDying was told, OnDeath waits.
+    expect(await actors.isDead(GUARD)).toBe(true);
+    expect(actors.dying(GUARD)).toBe(true);
+    expect(log.calls).toEqual(['killed 5000 by 1234', 'OnDying 5000 (actor 1234)']);
+    dead();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(actors.dying(GUARD)).toBe(false);
+    expect(log.calls).toEqual([
+      'killed 5000 by 1234',
+      'OnDying 5000 (actor 1234)',
+      'OnDeath 5000 (actor 1234)',
+    ]);
+  });
+
+  it('sends no OnDeath to one resurrected while it was dying', async () => {
+    let dead = (): void => undefined;
+    const { actors, log } = dyingEngine(
+      false,
+      () =>
+        new Promise<void>((resolve) => {
+          dead = resolve;
+        }),
+    );
+    actors.setBase(GUARD, ActorValue.health, 50);
+    await actors.kill(GUARD, undefined);
+    await actors.resurrect(GUARD);
+    dead();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(log.calls).toEqual([
+      'killed 5000 by undefined',
+      'OnDying 5000 (null)',
+      'OnResurrect 5000 (undefined)',
+    ]);
+    expect(await actors.isDead(GUARD)).toBe(false);
   });
 });
 

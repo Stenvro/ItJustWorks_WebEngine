@@ -1149,6 +1149,11 @@ describe.skipIf(!hasGamedata())('one happening, every sink (headless simulation)
     wolf = await sim.place(await sim.formId('NPC_', 'EncWolf'), PLAYER_REF);
     await sim.cast(await sim.formId('SPEL', 'Firebolt'), wolf);
     await sim.step(1.5);
+    // Its scripts hear OnDeath as its dying ends (fDyingTimer after the kill: src/world/dying.ts).
+    await sim.until(
+      () => sim.scriptEvents({ event: 'OnDeath', target: wolf, since: struck }).length > 0,
+      5,
+    );
   }, 600_000);
   afterAll(async () => {
     await sim.close();

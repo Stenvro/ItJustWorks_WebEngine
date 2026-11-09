@@ -256,6 +256,12 @@ export interface WorldBridge {
   sunPosition?(): Vec3;
   /** An actor died (its ragdoll; silent: no death cry or alarm). */
   killed?(actor: number, killer: number | undefined, silent: boolean): void;
+  /**
+   * A killed actor's dying (the life state between its death and its being dead): resolves once
+   * it is dead (src/world/dying.ts); undefined where the world does not show it dying (not
+   * loaded, the player): dead at once.
+   */
+  dying?(actor: number): Promise<void> | undefined;
   resurrected?(actor: number): void;
   /**
    * Actor.SetRace: the actor's 3D is made again in its new race (the player's keeps its face);
@@ -1481,6 +1487,11 @@ export class ScriptRuntime implements VmHost {
    */
   quiet(reference: number): boolean {
     return this.#scriptless.has(reference) && !this.#heldScripted(reference);
+  }
+
+  /** A dying actor's end, which its OnDeath waits for (ActorEngine.dyingEnd). */
+  dyingEnd(actor: number): Promise<boolean> | undefined {
+    return this.actors.dyingEnd(actor);
   }
 
   /**

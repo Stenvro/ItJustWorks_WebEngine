@@ -886,11 +886,22 @@ TODO(M13): what the engine does on that answer, and how soon, is not read), and 
 graph never adds it, or keeps it keyframed
 or powered, 8 s after it began (TODO(M13): what the engine does with such a graph; before, a
 graph that kept its ragdoll keyframed held the corpse on its feet for good). A killmove's
-victim dies in its paired clip. **Dying, then dead**: not told apart (the stage's `lifeState`
-is dead from the kill; the scripts' OnDying and OnDeath are told at once). TODO(M13): the game
-setting fDyingTimer (engine default 2 s) presumably times the dying life state (1) before dead
-(2), but what reads that state in the original (OnDeath's "finished dying", combat, conditions,
-saves) is not known, so no system here would see it. Seen in the browser (Riverwood): a villager's DeathAnim,
+victim dies in its paired clip. **Dying, then dead** (`src/world/dying.ts`, `ActorStage.dyingClock`):
+killed, an actor of the stage is dying (life state 1: the stage's `lifeState`, which the
+ambient idles read); its scripts hear OnDying at once, and IsDead (GetDead) already answers
+yes. It is dead (2), and its scripts, aliases and magic effects hear OnDeath ("finished
+dying"; `ScriptRuntime.dyingEnd`), when its graph raises deathStop (the engine's
+DeathStopHandler, observed in the original to end the dying) or once fDyingTimer (built-in
+default 2 s; no vanilla plugin sets it, setgs does) has passed since the kill, whichever comes
+first (the creatures' graphs do not declare deathStop, so theirs is the timer; the humans'
+declare it). Leaving the stage it is dead at once; resurrected meanwhile it hears no
+OnDeath. An actor not on a stage (not loaded) and the player are dead at once. The engine's own
+sinks of the death (its respawn clock, the kill stats, the location's clearing, crime and the
+story manager's Kill Actor event) hear it at the kill. Inferred, TODO(M13): that IsDead takes
+the dying with the dead, that fDyingTimer is an upper bound counted from the kill (what starts
+and stops the original's timer is not read), that the engine's sinks do not wait for the
+dying, and that a save keeps no dying (one saved while dying loads dead, its OnDeath not
+sent). Seen in the browser (Riverwood): a villager's DeathAnim,
 AddRagdollToWorld 0.06 s in, AnimateToRagdoll with 18 bones keyframed, limp as FullyRagdoll
 began at 1.2 s; a cow and a dog took DeathAnimation and lay as ragdolls within 0.7 s (the dog's
 DeathAnimation goes to Fully Ragdoll at once: it drops from the pose it stood in).

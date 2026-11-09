@@ -37,6 +37,11 @@ export interface ScriptEventHost {
    * the hub tells every reference of a cell, the scripts hear it where there are scripts.
    */
   quiet?(reference: number): boolean;
+  /**
+   * A dying actor's end (ActorEngine.dyingEnd): its OnDeath waits for it, and is not sent if it
+   * resolves false (resurrected meanwhile). Undefined: dead already.
+   */
+  dyingEnd?(actor: number): Promise<boolean> | undefined;
 }
 
 /** The Papyrus event of each kind and state (for the docs and the tests). */
@@ -148,7 +153,19 @@ export function relayScriptEvents(host: ScriptEventHost): () => void {
         );
       return Promise.all(sends);
     }),
-    hub.on('death', (e) => send(e.actor, e.dead ? 'OnDeath' : 'OnDying', [actor(e.killer)])),
+    hub.on('death', (e) => {
+      if (!e.dead) return send(e.actor, 'OnDying', [actor(e.killer)]);
+      // OnDeath ("finished dying") once its dying ends (src/world/dying.ts); none if it was
+      // resurrected meanwhile.
+      const ended = host.dyingEnd?.(e.actor);
+      if (!ended) return send(e.actor, 'OnDeath', [actor(e.killer)]);
+      ended
+        .then((dead) => (dead ? send(e.actor, 'OnDeath', [actor(e.killer)]) : undefined))
+        .catch((error: unknown) => {
+          events.onError('death', error);
+        });
+      return undefined;
+    }),
     hub.on('destructionStageChanged', (e) =>
       send(e.reference, 'OnDestructionStageChanged', [e.oldStage, e.newStage]),
     ),

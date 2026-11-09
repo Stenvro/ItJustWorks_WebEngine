@@ -72,6 +72,7 @@ import { ActorsAway, type AwayPlace } from './actors-away.ts';
 import type { RouteDoor } from '../ai/routes.ts';
 import { ActorBodies, type BodyHolder } from './actor-bodies.ts';
 import { ActorKnockdowns, type KnockSubject } from './actor-knockdowns.ts';
+import { DyingClock } from '../world/dying.ts';
 import { ActorPackageGear } from './actor-package-gear.ts';
 import { ActorPractice } from './actor-practice.ts';
 import { PlayerKnockSubject } from './player-knockdown.ts';
@@ -319,6 +320,11 @@ export class ActorStage {
   readonly bodies: ActorBodies;
   /** The knocked down: their ragdolls, and their getting up (src/shell/actor-knockdowns.ts). */
   readonly knockdowns: ActorKnockdowns;
+  /**
+   * The dying (life state 1): killed, not yet dead, until their graph's deathStop or
+   * fDyingTimer (src/world/dying.ts); their scripts hear OnDeath as it ends.
+   */
+  readonly dyingClock = new DyingClock();
   /** The packages' weapon and magic practice (UseWeapon, UseMagic, Shout). */
   readonly practice: ActorPractice;
   /** What running packages' flags do to the actors' gear (Weapon Drawn, Wear Sleep Outfit). */
@@ -1685,16 +1691,14 @@ export class ActorStage {
   }
 
   /**
-   * An actor's life state (ACTOR_LIFE_STATE; undefined: not on the stage): dead once killed;
-   * restrained and unconscious as its scripts set it; else its fight's (bleeding out, essential
-   * down) or alive. TODO(M13): the dying state between (fDyingTimer, 2 s) is not told apart;
-   * what in the original reads it is not known here (tests/conformance/animation/
-   * ragdolls-death.test.ts).
+   * An actor's life state (ACTOR_LIFE_STATE; undefined: not on the stage): dying once killed,
+   * until its graph's deathStop or fDyingTimer (src/world/dying.ts), then dead; restrained and
+   * unconscious as its scripts set it; else its fight's (bleeding out, essential down) or alive.
    */
   lifeState(reference: number): number | undefined {
     const staged = this.#actors.get(reference);
     if (!staged) return undefined;
-    if (staged.dead) return LifeState.dead;
+    if (staged.dead) return this.dyingClock.has(reference) ? LifeState.dying : LifeState.dead;
     const state = this.#options.session.scriptsReady?.state.actors.get(reference);
     if (state?.restrained === true) return LifeState.restrained;
     if (state?.unconscious === true) return LifeState.unconscious;
@@ -1714,6 +1718,15 @@ export class ActorStage {
     const staged = this.#actors.get(reference);
     if (!staged || staged.dead) return;
     staged.dead = true;
+    // Dying until its graph's deathStop or fDyingTimer (src/world/dying.ts): its scripts' OnDeath
+    // waits for it (ScriptRuntime.dyingEnd).
+    void this.dyingClock.begin(reference);
+    this.#options.session.scriptsReady
+      ?.gameSetting('fDyingTimer')
+      .then((timer) => {
+        if (typeof timer === 'number') this.dyingClock.retime(reference, timer);
+      })
+      .catch(() => undefined);
     this.ai.remove(reference);
     this.senses.killed(reference);
     this.casting.remove(reference);
@@ -2135,6 +2148,13 @@ export class ActorStage {
     const staged = this.#actors.get(reference);
     if (!staged) return undefined;
     const [x, y, z] = staged.position;
+    // One knocked down is where its graph's world-from-model mode puts it while it lies (its
+    // ragdoll's way, the get-up's match: src/animation/world-from-model.ts).
+    const lying = staged.dead ? undefined : this.knockdowns.place(reference);
+    if (lying) {
+      const [lx, ly, lz] = lying.position;
+      return { position: [lx, ly, lz], rotation: [0, 0, lying.heading] };
+    }
     // A corpse is where its ragdoll carried it (one killed in the air, where it fell to).
     const moved = staged.dead ? this.bodies.moved(reference) : undefined;
     if (moved) {
@@ -2898,6 +2918,7 @@ export class ActorStage {
     this.combat.frame(frame, this.#options.focus?.());
     this.knockdowns.frame(frame);
     this.graphEvents.frame(frame);
+    this.dyingClock.frame(frame);
     this.ambientIdles.frame(this.#options.focus?.(), frame);
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
     this.updateObstacles(frame);
@@ -3219,6 +3240,8 @@ export class ActorStage {
   #remove(staged: StagedActor): void {
     // A corpse leaving (its cell unloading) is kept where its ragdoll laid it.
     this.#keepCorpse(staged);
+    // Dying as it leaves (or is made alive again): its dying ends (dead, unless resurrected).
+    this.dyingClock.end(staged.reference);
     this.graphEvents.remove(staged.reference);
     this.animObjects.remove(staged.reference);
     this.ambientIdles.remove(staged.reference);
