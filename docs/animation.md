@@ -1223,6 +1223,10 @@ the decapitation armor its outfit lost among them, not what was looted from it; 
 beyond the record is taken off; it is then made
 again in that and cut again). TODO(M13): the engine's helper's exact rule (which limb's record
 wins, whether it takes anything off) is not read. IsLimbGone (condition 397) asks the record.
+Tests (tests/conformance/animation/dismemberment.test.ts): a beheaded innkeeper whose
+decapitation armor was taken off wears it again once loaded from a save; a bandit in the
+one-handed decapitation killmove loses his head at his side's 2_Decapitate (0.76 s) and dies by
+his killer at its 2_KillActor (1.69 s).
 
 | Setting                                       | Default | Use                                              |
 | --------------------------------------------- | ------- | ------------------------------------------------ |
@@ -1481,8 +1485,11 @@ The graph's own aim while casting is BSDirectAtModifier_Magic on CastingState: i
 spine (Spine to Spine2, from Spine2) towards the engine's aim for spells (userInfo 2: the aimed
 point, docs/ai.md "Magic in combat"), up to AimHeadingMax and AimPitchMax, enabled by IsNPC; its
 outputs are bAimActive, AimHeadingCurrent and AimPitchCurrent (the graph writes them, the engine
-does not). No modifier aims the arms; Pitch is a graph data channel that no human magic node
-reads. The player's graph is no NPC's (IsNPC 0, observed in the original: [Weapons in
+does not). Measured (tests/conformance/animation/weapons-and-aim.test.ts): a bandit mage casting
+at the player turns by up to a few degrees, bAimActive from its first cast on (ours keeps it as last
+written once CastingState is left; whether Havok clears a deactivated modifier's outputs is not
+read: TODO(M13)). No modifier aims the arms; Pitch is a graph data channel that no human magic
+node reads. The player's graph is no NPC's (IsNPC 0, observed in the original: [Weapons in
 the hands](#weapons-in-the-hands)), so their spine does not turn to a spell's aim; the
 mounted one's (magicmountedbehavior) does not either. TODO(M13): how the engine pitches the
 player's body while casting (the graphs' PitchOverride events) is not reproduced.

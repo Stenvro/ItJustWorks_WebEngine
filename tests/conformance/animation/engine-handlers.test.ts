@@ -162,8 +162,13 @@ describe.skipIf(!hasGamedata())('the handler classes of the response files (data
 });
 
 describe('graph events (todo)', () => {
+  // TODO(M13): which of the player's two graphs' raised events reach the actor's handlers (both,
+  // or the manager's active one) is not read; ours routes them per system (combat and casting
+  // by the view's graph, the rest by the body's).
   it.todo(
     'the player’s first-person graph’s events reach the same handlers as its body’s  [original]',
   );
+  // Ours updates the graphs and dispatches their events on the one thread, so no handler runs
+  // off it; the original's queueing (and the order it gives the flight states) is not read.
   it.todo('a handler run off the main thread is queued to the task queue (flight)  [original]');
 });

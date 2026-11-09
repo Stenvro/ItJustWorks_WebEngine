@@ -22,7 +22,14 @@ import {
   WeaponHitBehavior,
 } from '../../../src/gameplay/combat/dismemberment.ts';
 import { BodyPartFlag } from '../../../src/world/body-part-data.ts';
-import { hasGamedata, openSim, PLAYER_REF, SIM_STEP, type Sim } from '../../helpers/sim.ts';
+import {
+  hasGamedata,
+  loadSim,
+  openSim,
+  PLAYER_REF,
+  SIM_STEP,
+  type Sim,
+} from '../../helpers/sim.ts';
 
 describe('the head’s flight (original)', () => {
   it('from the neck through the head at fDecapInitialSpeed (250)', () => {
@@ -146,7 +153,53 @@ describe.skipIf(!hasGamedata())('a killmove’s decapitation (headless simulatio
   });
 });
 
+// Hulda (the Bannered Mare's innkeeper) beheaded (the Decapitate handler) and killed, her
+// decapitation armor then taken off her (as an outfit put back whole would leave her), saved and
+// loaded again: as her body is made the limb's record dresses her again.
+const HULDA = 0x1a66e;
+
+describe.skipIf(!hasGamedata())('a dismembered corpse loaded again (headless simulation)', () => {
+  let added: number[] = [];
+  let wornAfter: number[] = [];
+  let headGone = false;
+
+  beforeAll(async () => {
+    const sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
+    let bytes: Uint8Array;
+    try {
+      await sim.step(1);
+      const before = await sim.runtime.equipment.worn(HULDA);
+      await sim.world.stage.dismemberment.decapitate(HULDA);
+      await sim.kill(HULDA, PLAYER_REF);
+      await sim.step(3);
+      added = (await sim.runtime.equipment.worn(HULDA)).filter((form) => !before.includes(form));
+      for (const form of added) await sim.runtime.equipment.unequip(HULDA, form);
+      await sim.step(0.5);
+      bytes = await sim.save();
+    } finally {
+      await sim.close();
+    }
+    const after = await loadSim(bytes);
+    try {
+      await after.step(3);
+      wornAfter = await after.runtime.equipment.worn(HULDA);
+      headGone = limbGone(after.runtime.state.actors.get(HULDA)?.dismembered, HEAD_LIMB);
+    } finally {
+      await after.close();
+    }
+  }, 900_000);
+
+  it('a reloaded corpse is re-dressed from its recorded worn objects  [original, M12]', () => {
+    // The cut put her race's decapitation armor on her.
+    expect(added.length).toBeGreaterThan(0);
+    expect(headGone).toBe(true);
+    for (const form of added) expect(wornAfter).toContain(form);
+  });
+});
+
 describe('dismemberment (todo)', () => {
-  it.todo('a reloaded corpse is re-dressed from its recorded worn objects  [original, M12]');
+  // TODO(M13): the original registers the setting but no Skyrim code path is known to read it
+  // (docs/animation.md, "Dismemberment"); what decals a cut leaves (the body part data's
+  // severable impact data set and decal count) is not read.
   it.todo('iDismemberBloodDecalCount (10): the blood decals of a cut  [settings]');
 });
