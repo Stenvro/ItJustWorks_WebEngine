@@ -11,6 +11,7 @@
 import type { CombatCasting, CombatSupport } from './actor-combat-ai.ts';
 import { MAGIC_REACH, type ActorCasting } from './actor-casting.ts';
 import type { EquipOption } from '../ai/combat-tactics.ts';
+import { shoutAttacks } from '../gameplay/combat/spell-score.ts';
 import type { GameSession } from './game-session.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { Delivery, type MagicItemRecord } from '../world/magic-records.ts';
@@ -38,7 +39,7 @@ export function combatCasting(
       const words = shout ? runtime.casting.wordsKnown(actor, shout) : 0;
       const word = shout?.words[Math.max(0, Math.min(words, shout.words.length) - 1)];
       const wordSpell = word ? await runtime.magic.item(word.spell) : undefined;
-      if (shout && words > 0 && wordSpell) {
+      if (shout && words > 0 && wordSpell && shoutAttacks(wordSpell)) {
         options.push(await option(runtime, actor, 'shout', shout.formId, wordSpell, target));
       }
       return options.filter((one) => one.damage > 0);

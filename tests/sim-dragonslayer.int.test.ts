@@ -237,8 +237,10 @@ describe.skipIf(!hasGamedata())('MQ305 Dragonslayer', () => {
 
   // Alduin fights them all from the air (MQ304AlduinFaction names the heroes' faction an enemy,
   // and they his: a faction both are in, FavorExcludedFaction, does not make them allies). The
-  // player's Dragonrend brings him down (MQAlduinIgnoreDragonrend is 0 since 120); there the
-  // player's blow lands. Protected, he dies only by the player's hand; the rest of a fight that a
+  // player's Dragonrend brings him down (MQAlduinIgnoreDragonrend is 0 since 120), again each
+  // time he takes off; on the ground the heroes' blows land, and the player's. Protected, he
+  // dies only by the player's hand (the heroes would bring him to his knees, and his bleedout
+  // has no recovery since 120); the rest of a fight that a
   // first level's fists do not win stands in as one blow of theirs for what is left of his health
   // (TODO(M13): the player's own blows). His death (the alias's OnDeath) is 190: the outro scene
   // begins, the intro's ends. His own FXAlduinScript tears his soul from him (its earthquake, then
@@ -260,8 +262,36 @@ describe.skipIf(!hasGamedata())('MQ305 Dragonslayer', () => {
         ).toBe(true);
       }
       expect(await sim.equip(await sim.formId('SHOU', 'DragonrendShout'))).toBe(true);
-      let shouts = 0;
-      for (; shouts < 30 && sim.world.stage.flight.state(alduin) !== 0; shouts++) {
+      // Each time he is in the air the player's Dragonrend brings him down again; on the ground
+      // the heroes' blows (their weapons, not Clear Skies, which their voices still hold from
+      // the mist and which is no attack) land on him.
+      const heroes = [GORMLAITH, FELLDIR, HAKON].map((hero) => alias(sim, hero));
+      const heroBlows = (): number =>
+        sim
+          .events('hit')
+          .filter(
+            (hit) =>
+              hit.target === alduin &&
+              hit.projectile === undefined &&
+              heroes.includes(hit.aggressor ?? 0),
+          ).length;
+      const full = (await sim.runtime.actors.value(alduin, ActorValue.health)).current;
+      for (let round = 0; round < 60 && heroBlows() === 0; round++) {
+        if (sim.world.stage.flight.state(alduin) !== 0) {
+          const at = await sim.position(alduin);
+          expect(at).toBeDefined();
+          if (!at) return;
+          sim.look(at);
+          await sim.step(0.2);
+          await shoutAll(sim);
+        }
+        await sim.step(3);
+      }
+      expect(heroBlows()).toBeGreaterThan(0);
+      expect((await sim.runtime.actors.value(alduin, ActorValue.health)).current).toBeLessThan(
+        full,
+      );
+      for (let shouts = 0; shouts < 30 && sim.world.stage.flight.state(alduin) !== 0; shouts++) {
         const at = await sim.position(alduin);
         expect(at).toBeDefined();
         if (!at) return;

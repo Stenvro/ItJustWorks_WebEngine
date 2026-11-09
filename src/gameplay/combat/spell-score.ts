@@ -16,6 +16,7 @@
 // its second actor value (a dual value modifier) counts by its own row, by its weight.
 
 import { EffectArchetype, EffectFlag } from '../../world/magic-effects.ts';
+import { Delivery } from '../../world/magic-records.ts';
 
 /** What a caster does for the actor (CombatMagicCaster…); offensive is the hands' attack. */
 export type SpellCaster =
@@ -184,4 +185,16 @@ export function combatSpellScore(
     }
   }
   return { score, caster };
+}
+
+/**
+ * Whether a shout's word is an attack the combat AI may shout at its target: its spell goes out
+ * from the shouter (aimed, or at a target location), not on the shouter itself. Clear Skies'
+ * words are self spells (VoiceClearSkiesSelf1-3: a script effect for 60 s) whose script clears
+ * the weather; scored as a self buff they made Sovngarde's heroes, Clear Skies in their voices
+ * from MQ305's mist, shout it at Alduin again and again from afar instead of fighting him.
+ * Inferred (TODO(M13)): the original's combat inventory may weigh a self shout as a buff.
+ */
+export function shoutAttacks(wordSpell: { readonly delivery: number }): boolean {
+  return wordSpell.delivery !== Delivery.self;
 }

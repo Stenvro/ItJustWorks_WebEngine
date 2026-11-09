@@ -637,7 +637,10 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   keeps the actor value at 0 and takes 1 − it, the same product), counted down with the
   actor's update. A voice power cast while the voice recovers is refused by the caster's cast
   check (except for the player in god mode), and the combat AI picks its voice's shout only
-  while less than fCombatInventoryShoutMaxRecoveryTime (5 s) of recovery is left. The package
+  while less than fCombatInventoryShoutMaxRecoveryTime (5 s) of recovery is left, and only a
+  shout whose word goes out from it (aimed or at a location; inferred, TODO(M13)): Clear Skies'
+  words are self spells (VoiceClearSkiesSelf1-3), and Sovngarde's heroes, Clear Skies in their
+  voices from MQ305's mist, shouted it at Alduin from afar instead of fighting him. The package
   Shout procedure does not wait for it: it turns to its target until within
   fAIShoutToleranceDegrees (5°; with its aim bool, holding the aim fAIShoutMinAimSeconds, 2 s),
   checks that no one stands in the way (within fAIAimBlockedToleranceDegrees, 10°), puts the
