@@ -3601,13 +3601,15 @@ export class BehaviorRuntime {
       state.time = time;
       if (wrapped) state.cycle++;
       state.reverse = false;
-      // Forward through its cycle (over the seam into the next one).
+      // Forward through its cycle (over the seam into the next one). A step back passes nothing:
+      // what lies behind it it passed already, and passes again as its phase moves on (read as
+      // passed backward, a walk and run blend raised its FootLeft and FootRight twice).
       sweeps = wrapped
         ? [
             { from: previous, to: duration, includeFrom: first, cycle: state.cycle - 1 },
             { from: 0, to: time, includeFrom: true, cycle: state.cycle },
           ]
-        : time !== previous || first
+        : time > previous || (first && time === previous)
           ? [{ from: previous, to: time, includeFrom: first, cycle: state.cycle }]
           : [];
     } else {

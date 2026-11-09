@@ -1445,6 +1445,24 @@ describe('syncing blenders', () => {
     expect(Math.abs(runtime.rootMotion().translation[1])).toBeLessThan(0.2);
   });
 
+  it('raises no trigger its phase steps back over, and each once as it moves on past it', () => {
+    // At the phase 0.35 clip a is at 0.25 and b at 0.65; the shift takes them back to 0.17 and
+    // 0.57, behind their triggers (0.2 and 0.6), which they passed already.
+    const runtime = shiftingBlend();
+    const syncLefts = (): number =>
+      runtime.takeRaised().filter((event) => event.name === 'SyncLeft').length;
+    runtime.update(0);
+    runtime.update(0.35);
+    expect(syncLefts()).toBe(2);
+    runtime.setVariable('Speed', 0.5);
+    runtime.update(0.02);
+    expect(runtime.playing().find((c) => c.animation === 'a')?.time).toBeCloseTo(0.17, 5);
+    expect(syncLefts()).toBe(0);
+    // On past them again: each once.
+    runtime.update(0.1);
+    expect(syncLefts()).toBe(2);
+  });
+
   it('moves no stride when that step back crosses the loop’s seam', () => {
     // Clip a just past its start (its time is the phase less 0.1 at this blend, less 0.2 at the
     // next): the shift takes it back over its start, to the end of its loop.
