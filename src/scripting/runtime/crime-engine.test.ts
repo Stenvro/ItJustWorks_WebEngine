@@ -340,3 +340,50 @@ describe('bribes and intimidations', () => {
     expect(crime.persuaded(GUARD, 'bribed')).toBe(false);
   });
 });
+
+describe('how actors regard each other', () => {
+  /** Sovngarde: a hero, Alduin, and the factions they are in (Skyrim.esm's reactions). */
+  const HERO = 0x300;
+  const ALDUIN = 0x301;
+  const FAVOR_EXCLUDED = 0x94393;
+  const ANCIENT_HEROES = 0x44244;
+  const ALDUIN_FACTION = 0x4e9bf;
+  const reactions = new Map<string, number>([
+    [`${String(ANCIENT_HEROES)}>${String(ANCIENT_HEROES)}`, 2],
+    [`${String(ALDUIN_FACTION)}>${String(ANCIENT_HEROES)}`, 1],
+  ]);
+  const factions = new Map<number, [number, number][]>([
+    [
+      HERO,
+      [
+        [FAVOR_EXCLUDED, 0],
+        [ANCIENT_HEROES, 0],
+      ],
+    ],
+    [
+      ALDUIN,
+      [
+        [FAVOR_EXCLUDED, 0],
+        [ALDUIN_FACTION, 0],
+      ],
+    ],
+  ]);
+  const crime = new CrimeEngine({
+    state: new GameState(),
+    actors: {
+      factionsOf: (actor: number) => Promise.resolve(new Map(factions.get(actor) ?? [])),
+      faction: () => Promise.resolve(undefined),
+      factionReaction: (faction: number, other: number) =>
+        Promise.resolve(reactions.get(`${String(faction)}>${String(other)}`)),
+      value: () => Promise.resolve({ base: 1, max: 1, current: 1 }),
+      relationshipRank: () => Promise.resolve(0),
+    },
+  } as unknown as ScriptRuntime);
+
+  it("count the other's factions' reactions where the actor's name none of the other's", async () => {
+    // MQ304AlduinFaction names MQAncientHeroFaction an enemy; the heroes' factions name none of
+    // Alduin's. Both are in FavorExcludedFaction, which weighs less than the enmity.
+    expect(await crime.reaction(ALDUIN, HERO)).toBe('hostile');
+    expect(await crime.reaction(HERO, ALDUIN)).toBe('hostile');
+  });
+});

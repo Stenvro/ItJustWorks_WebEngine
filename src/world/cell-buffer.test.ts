@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CellBuffer, cellBufferSizes } from './cell-buffer.ts';
+import { CellBuffer, cellBufferSizes, CellStore } from './cell-buffer.ts';
 
 describe('the cell buffers', () => {
   it('keeps the most recently left cells; the least recently used leaves as it fills', () => {
@@ -23,5 +23,81 @@ describe('the cell buffers', () => {
     expect(
       cellBufferSizes((_section, key) => (key === 'uInterior Cell Buffer' ? 8 : undefined)),
     ).toEqual({ interior: 8, exterior: 36 });
+  });
+
+  it('keeps the cells in use out of the buffer: three interiors left are all kept', () => {
+    const store = new CellStore<string>({ interior: 3, exterior: 36 });
+    let reads = 0;
+    const visit = (cell: number): string =>
+      store.use(cell, { exterior: false, key: '', hold: true }, () => {
+        reads++;
+        return `${String(cell)}#${String(reads)}`;
+      });
+    // Going through a door: the cell gone into is taken up, then the one left goes to the buffer.
+    let here = 0;
+    const go = (cell: number): string => {
+      const data = visit(cell);
+      if (here !== 0) store.left(here);
+      here = cell;
+      return data;
+    };
+    // The inn, then three houses one after the other: the inn was left three cells ago.
+    const inn = go(1);
+    for (const house of [2, 3, 4]) go(house);
+    expect(go(1)).toBe(inn);
+    expect(store.held).toBe(1);
+    // Four houses: the inn is the least recently left and goes.
+    for (const house of [2, 3, 4, 5]) go(house);
+    expect(go(1)).not.toBe(inn);
+    expect(reads).toBe(6);
+  });
+
+  it('holds a cell while any viewer shows it, and makes it again from other references', () => {
+    const store = new CellStore<object>({ interior: 3, exterior: 2 });
+    const first = store.use(7, { exterior: true, key: 'a', hold: true }, () => ({}));
+    expect(store.use(7, { exterior: true, key: 'a', hold: true }, () => ({}))).toBe(first);
+    store.left(7);
+    expect(store.held).toBe(1);
+    store.left(7);
+    expect(store.held).toBe(0);
+    // Looked into (a far cell's large references): the buffered data, whatever it was made of.
+    expect(store.use(7, { exterior: true, key: 'b', hold: false }, () => ({}))).toBe(first);
+    // A persistent reference walked into it meanwhile: made again with it.
+    const again = store.use(7, { exterior: true, key: 'b', hold: true }, () => ({}));
+    expect(again).not.toBe(first);
+    store.left(7);
+    expect(store.use(7, { exterior: true, key: 'b', hold: true }, () => ({}))).toBe(again);
+  });
+
+  it('keeps the cells left, however many far cells are only looked into', () => {
+    const store = new CellStore<string>({ interior: 3, exterior: 2 });
+    let reads = 0;
+    const read = (cell: number) => (): string => `${String(cell)}#${String(++reads)}`;
+    const left = [1, 2].map((cell) => {
+      const data = store.use(cell, { exterior: true, key: '', hold: true }, read(cell));
+      store.left(cell);
+      return data;
+    });
+    // The large references of a hundred far cells round the camera: each read for the look.
+    for (let cell = 100; cell < 200; cell++) {
+      store.use(cell, { exterior: true, key: '', hold: false }, read(cell));
+    }
+    expect(reads).toBe(102);
+    // A look at a buffered cell takes its data, and leaves its place in the buffer as it was.
+    expect(store.use(1, { exterior: true, key: '', hold: false }, read(1))).toBe(left[0]);
+    // The two cells left are still buffered: going back to them reads nothing.
+    expect(store.use(2, { exterior: true, key: '', hold: true }, read(2))).toBe(left[1]);
+    expect(store.use(1, { exterior: true, key: '', hold: true }, read(1))).toBe(left[0]);
+    expect(reads).toBe(102);
+  });
+
+  it('keeps no data that failed', () => {
+    const store = new CellStore<string>({ interior: 3, exterior: 36 });
+    const failed = store.use(1, { exterior: false, key: '', hold: true }, () => 'failed');
+    store.forget(1, failed);
+    expect(store.held).toBe(0);
+    expect(store.use(1, { exterior: false, key: '', hold: true }, () => 'read again')).toBe(
+      'read again',
+    );
   });
 });

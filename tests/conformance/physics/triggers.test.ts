@@ -249,6 +249,9 @@ describe.skipIf(!hasGamedata())('what comes into a trigger box (headless simulat
   it('tells a trigger a dead body in it (L_DEADBIP), and OnTriggerLeave as it is deleted  [COLL, original]', async () => {
     const from = sim.events('triggerEnterLeave').length;
     const actor = await sim.place(await sim.formId('NPC_', 'Hulda'), PLAYER_REF);
+    // Her AI off, she stays in the box: her package takes her back to the Bannered Mare through
+    // the house's door beside it (gone within a second, set down on the floor at once).
+    await sim.native(handle(actor), 'Actor', 'EnableAI', [false]);
     await sim.step(1);
     expect(told(actor, from)).toEqual([true]);
     await sim.native(handle(actor), 'ObjectReference', 'Disable', [false]);

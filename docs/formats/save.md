@@ -158,8 +158,9 @@ player's cell loads.
   quests (stages, objectives, aliases, log, story manager event); per-reference changes (moved,
   enabled, deleted, taken, destroyed, open, locked, owners, harvested, links, created
   references and created forms); actors' deaths and states; factions and crime (bounties,
-  stolen items, jail, favor); locations (cleared) and the cell reset clocks (`cellVisits`,
-  `cellDetached`, `zoneTimes`, `deathHours`); relationships, the local maps' fog, the map
+  stolen items, jail, favor); locations (cleared) and the cell reset clocks (`cellDetached`,
+  `cellResetsForced`, `zoneTimes`, `deathHours`, and `resets`: the times each reference reset,
+  which seeds its leveled lists anew); relationships, the local maps' fog, the map
   marker, favorites and hotkeys, books read, tutorials, active magic effects, the
   ingredients' known effects and use counts (`ingredientUses`), the dead counts by actor base,
   the factions' crime counts.

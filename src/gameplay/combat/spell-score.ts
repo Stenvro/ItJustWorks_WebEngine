@@ -185,3 +185,18 @@ export function combatSpellScore(
   }
   return { score, caster };
 }
+
+/**
+ * Whether a shout's word is an attack the combat AI may shout at its target: some effect of the
+ * word's spell is hostile (MGEF DATA 0x1), as a staff's enchantment is taken (inferred,
+ * TODO(M13)). Its delivery does not decide it: Storm Call's words and Alduin's Firestorm
+ * (AlduinFirestormShout: DragonVoiceStormCall) are self spells whose hostile area effect strikes
+ * those around the shouter, and DragonVoiceStormCall carries VoiceStormCallEmptyAIScriptEffect
+ * ("Script Effect for AI use of Storm Call") for the combat AI to shout it. Clear Skies' words
+ * (VoiceClearSkiesSelf1-3: a script effect that clears the weather) have no hostile effect;
+ * scored as a self buff they made Sovngarde's heroes, Clear Skies in their voices from MQ305's
+ * mist, shout it at Alduin again and again from afar instead of fighting him.
+ */
+export function shoutAttacks(effects: readonly { readonly flags: number }[]): boolean {
+  return effects.some((effect) => (effect.flags & EffectFlag.hostile) !== 0);
+}

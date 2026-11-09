@@ -198,6 +198,39 @@ export function groundActor(
 }
 
 /**
+ * What a ray straight down from `from` meets within `length` that an actor set down there
+ * stands on: what character controllers collide with, but no living actor's controller. One
+ * placed or moved where another stands (PlaceAtMe and MoveTo on the player, an actor on a
+ * door's arrival point as the player comes through) is set on the ground under them both, and
+ * the two controllers part by penetration recovery (CharacterBody); its ray, started inside the
+ * other's capsule, met that capsule at once and set it some 30 units up, in or on the other.
+ * A creature's bodies that hold controllers off (L_BIPED_NO_CC) still count, and corpses' are
+ * on L_DEADBIP, which no controller meets. Every ray for an actor's ground goes by it: the
+ * set-down, the controller's position check, MoveTo's, a stuck actor's (ActorMovers #unstick),
+ * the fall watch's (#watchFall), a knocked-down actor's get-up (ActorKnockdowns) and a flier's
+ * (ActorFlight). `own`, an actor's reference, leaves out all of its own bodies (Havok keeps an
+ * actor's bodies in one system group that does not collide with itself). TODO(M13): inferred,
+ * the rule the original's ground check uses for other actors is not known.
+ */
+export function actorGround(
+  physics: PhysicsWorld,
+  from: Vec3,
+  length: number,
+  own?: number,
+): GroundHit | undefined {
+  const hit = physics.raycast(
+    from,
+    [0, 0, -1],
+    length,
+    Layer.charController,
+    undefined,
+    own,
+    (collider) => physics.isActorController(collider),
+  );
+  return hit && { point: hit.point, normal: hit.normal };
+}
+
+/**
  * A script moved an actor (MoveTo, SetPosition): it stands at the new place, turned to the
  * new heading, on the ground there (if the physics world has some under it, within `reach`
  * of a ray from GROUND_ABOVE over it).
@@ -222,7 +255,7 @@ export function moveActor(
     !placed.inFurniture &&
     !placed.actor.startsDead &&
     standsOnGround(placed.look.raceFlags)
-      ? physics.raycast([x, y, z + GROUND_ABOVE], [0, 0, -1], reach, Layer.charController)
+      ? actorGround(physics, [x, y, z + GROUND_ABOVE], reach)
       : undefined;
   instance.world.set(
     hit
@@ -582,6 +615,8 @@ export class ActorPlacer {
     this.#resolver = new ActorResolver(db);
     this.#resolver.leveledPick = (reference) =>
       this.#session.scriptsReady?.state.actors.get(reference)?.leveledBase;
+    this.#resolver.resets = (reference) =>
+      this.#session.scriptsReady?.state.resets.get(reference) ?? 0;
   }
 
   #cached<K, V>(

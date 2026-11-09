@@ -466,9 +466,15 @@ export interface AnimatedCameraRequest {
   readonly transition: number;
 }
 
-/** The player's stance that goes with them into the next place (Player.keepStance). */
+/** What of the player goes with them into the next place as it is (Player.keepStance). */
 export interface PlayerStance {
   readonly sneaking: boolean;
+  /** The point of view they chose (the one the vanity camera goes back to). */
+  readonly pov: Pov;
+  /** The third-person zoom the wheel left (0 = fVanityModeMinDist, 1 = fVanityModeMaxDist). */
+  readonly zoom: number;
+  /** Toggle Always Run's state. */
+  readonly alwaysRun: boolean;
 }
 
 export class Player implements Camera {
@@ -1442,19 +1448,33 @@ export class Player implements Camera {
     return [...at];
   }
 
-  /** What of the player's stance goes with them through a load door (keepStance there). */
+  /** What of the player goes with them into the next place (keepStance there). */
   get stance(): PlayerStance {
-    return { sneaking: this.sneaking };
+    return {
+      sneaking: this.sneaking,
+      pov: this.#vanityPov ?? this.pov,
+      zoom: this.#zoomTarget,
+      alwaysRun: this.#alwaysRun,
+    };
   }
 
   /**
-   * The player comes out of a load door as they went in: each place builds its own Player, and
-   * the one who sneaked in sneaks on (swimming ends it at the next step, as anywhere). Before,
-   * every door stood the player up. TODO(M13): inferred, not observed in the original: the
-   * player's actor keeps its movement state as it moves to another cell, as a save keeps it.
+   * The player comes into another place as they left the last (a load door, a script's MoveTo,
+   * fast travel, the console's travel): each place builds its own Player, and the one who
+   * sneaked sneaks on (swimming ends it at the next step, as anywhere), the camera stays in the
+   * point of view and at the zoom they chose, and Toggle Always Run stays as they left it.
+   * Before, every place stood the player up, put the camera back in first person and always-run
+   * back to bAlwaysRunByDefault. A loaded save or a new game takes none of it (the save's own
+   * camera and sneaking: ActorStage's #restorePlayer). TODO(M13): inferred, not observed in the
+   * original: the player's actor and the player camera are the same ones in every cell, so
+   * their movement and camera state go on as they move.
    */
   keepStance(stance: PlayerStance): void {
     this.sneaking = stance.sneaking;
+    this.#alwaysRun = stance.alwaysRun;
+    this.#zoomTarget = stance.zoom;
+    this.#zoom = stance.zoom;
+    this.setPov(stance.pov);
   }
 
   /** First or third person (third: zoomed out at least to the shoulder). */

@@ -45,6 +45,7 @@ import {
   aimDirection,
   comesAt,
   normalize,
+  WARD_MAGICKA_CAST_LIMIT,
   wardHeld,
   WORLD_GRAVITY,
 } from '../gameplay/magic/projectile-flight.ts';
@@ -244,9 +245,10 @@ interface Shown {
   holdFor: number | undefined;
   /**
    * An NPC's ward (a spell on WardPower) without a target: held for fCombatMagicWardMinCastTime,
-   * then while something flies at it (projectile-flight.ts wardHeld); its seconds held.
+   * then while something flies at it and its magicka share (looked at each hold check) is at
+   * least fCombatMagicWardMagickaCastLimit (projectile-flight.ts wardHeld); its seconds held.
    */
-  ward?: { minimum: number; held: number };
+  ward?: { minimum: number; held: number; castLimit: number; magicka: number };
   /**
    * An NPC's held healing spell goes on while this holds of its health share (the combat AI's
    * restore stop threshold: combat-subtrees.ts holdsRestore); without it, until it is whole.
@@ -996,7 +998,16 @@ export class ActorCasting {
         if (cast.hand.phase === 'ready') void this.letGo(cast.actor, cast.source);
         if (cast.hand.phase === 'casting' && shown.ward) {
           shown.ward.held += seconds;
-          if (!wardHeld(shown.ward.held, shown.ward.minimum, this.#threatened(cast.actor)))
+          const { ward } = shown;
+          if (
+            !wardHeld(
+              ward.held,
+              ward.minimum,
+              this.#threatened(cast.actor),
+              ward.magicka,
+              ward.castLimit,
+            )
+          )
             void this.letGo(cast.actor, cast.source);
         } else if (cast.hand.phase === 'casting' && shown.holdFor !== undefined) {
           shown.holdFor -= seconds;
@@ -1006,6 +1017,7 @@ export class ActorCasting {
           shown.holdCheck -= seconds;
           if (shown.holdCheck <= 0) {
             shown.holdCheck = HOLD_CHECK_SECONDS;
+            void this.#wardMagicka(runtime, shown);
             void this.#serves(runtime, shown).then((serves) => {
               if (!serves && !shown.done) void this.letGo(cast.actor, cast.source);
             });
@@ -1088,7 +1100,21 @@ export class ActorCasting {
     const main = await runtime.casting.mainEffect(shown.cast.castable.item);
     if (main?.actorValue !== MagicValue.wardPower) return;
     const minimum = await runtime.gameSetting('fCombatMagicWardMinCastTime');
-    shown.ward = { minimum: typeof minimum === 'number' ? minimum : WARD_MIN_CAST_TIME, held: 0 };
+    const castLimit = await runtime.gameSetting('fCombatMagicWardMagickaCastLimit');
+    shown.ward = {
+      minimum: typeof minimum === 'number' ? minimum : WARD_MIN_CAST_TIME,
+      held: 0,
+      castLimit: typeof castLimit === 'number' ? castLimit : WARD_MAGICKA_CAST_LIMIT,
+      magicka: 1,
+    };
+  }
+
+  /** An NPC's magicka share as its held ward last looked (wardHeld's cast limit). */
+  async #wardMagicka(runtime: ScriptRuntime, shown: Shown): Promise<void> {
+    const ward = shown.ward;
+    if (!ward) return;
+    const magicka = await runtime.actors.value(shown.cast.actor, ActorValue.magicka);
+    ward.magicka = magicka.max > 0 ? magicka.current / magicka.max : 0;
   }
 
   /**

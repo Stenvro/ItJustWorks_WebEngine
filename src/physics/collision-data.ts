@@ -132,6 +132,17 @@ export interface CollisionConstraint {
    * maxErrorDistance, Havok units).
    */
   readonly maxError?: number;
+  /**
+   * A chain link's chain (bhkBallSocketConstraintChain): which of the model's chains, solved as
+   * one, with its own tau, damping and constraint force mixing, which Havok's solver takes in
+   * place of the world's.
+   */
+  readonly chain?: {
+    readonly index: number;
+    readonly tau: number;
+    readonly damping: number;
+    readonly constraintForceMixing: number;
+  };
 }
 
 export interface CollisionData {
@@ -806,6 +817,7 @@ export function buildCollision(
     b: Ref,
     data: ConstraintData,
     breakable?: CollisionConstraint['breakable'],
+    chain?: CollisionConstraint['chain'],
     maxError?: number,
   ): void => {
     const bodyA = bodyOfBlock.get(a);
@@ -819,25 +831,34 @@ export function buildCollision(
       bodyB: bodyB.index,
       data: scaleConstraint(data, bodyA.scale, bodyB.scale),
       ...(breakable && { breakable }),
+      ...(chain && { chain }),
       ...(maxError !== undefined && { maxError }),
     });
   };
+  let chains = 0;
   for (const ref of constraintRefs) {
     const block = file.blocks[ref];
     if (block?.kind === 'constraint') {
       link(block.entityA, block.entityB, block.data, block.breakable);
     } else if (block?.kind === 'constraint-chain') {
       // Its links are balls and sockets whose error is clipped to the chain's maxErrorDistance
-      // (0.1 in every chain of the data). Its constraint force mixing (its softness) is float
-      // epsilon in every chain and its tau 1: stiff, as Rapier's joints are. TODO(M13): its
-      // damping (0.6 in every chain: the share of the links' speed error taken out a step);
-      // Rapier's joints take all of it.
+      // (0.1 in every chain of the data). Havok solves a chain's links as one with its own tau
+      // (1 in every chain), damping (0.6: the share of the links' speed error an iteration
+      // takes out) and constraint force mixing (float epsilon): so the engine's solve of a
+      // breakable joint's group does (joint-impulses.ts). Rapier's joints are stiff: four
+      // iterations of damping 0.6 leave 2.6% of a step's speed error, which is not seen.
+      const chain = {
+        index: chains++,
+        tau: block.tau,
+        damping: block.damping,
+        constraintForceMixing: block.constraintForceMixing,
+      };
       block.links.forEach(({ pivotA, pivotB }, i) => {
         const a = block.entities[i];
         const b = block.entities[i + 1];
         if (a !== undefined && b !== undefined) {
           const data: ConstraintData = { type: 'ball-and-socket', pivotA, pivotB };
-          link(a, b, data, undefined, block.maxErrorDistance);
+          link(a, b, data, undefined, chain, block.maxErrorDistance);
         }
       });
     }

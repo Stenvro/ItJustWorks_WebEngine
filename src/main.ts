@@ -34,6 +34,7 @@ import { PLAYER_REF } from './scripting/runtime/forms.ts';
 import { QuestPanel } from './shell/quest-panel.ts';
 import { SceneTrace } from './shell/scene-trace.ts';
 import { PlayMode, type PlayWorld } from './shell/play-mode.ts';
+import type { PlayerStance } from './shell/player.ts';
 import { Launcher } from './shell/launcher.ts';
 import { keepPointerLockInPage } from './shell/automation-pointer-lock.ts';
 
@@ -547,6 +548,13 @@ async function main(): Promise<void> {
     session.timeSpeed = nextClockSpeed(session.timeSpeed);
     showClockSpeed(ui.viewer.sky, session.timeScale, session.timeSpeed);
   });
+  /**
+   * What of the player goes with them into the next place: any change of place (a load door, a
+   * script's MoveTo, fast travel, the console's travel) builds a new Player, who comes as they
+   * left (Player.keepStance). Out of the world (a new game, a loaded save) none.
+   */
+  const stanceNow = (): PlayerStance | undefined =>
+    (worldViewer.playerView ?? modelViewer.playerView)?.play.player.stance;
   // Load doors: the player goes to the door on the other side, inside or out (in Play behind a
   // loading screen).
   const travel = async (teleport: Teleport): Promise<void> => {
@@ -570,8 +578,8 @@ async function main(): Promise<void> {
       false,
     );
     terminal.log('door', `to ${destination.name || hexId(destination.cell)}`);
-    // The player goes through as they are: sneaking on (Player.keepStance).
-    const stance = (worldViewer.playerView ?? modelViewer.playerView)?.play.player.stance;
+    // The player goes through as they are.
+    const stance = stanceNow();
     if (destination.world === undefined) {
       await modelViewer.showCell(destination.cell, arrival, stance);
     } else {
@@ -597,15 +605,17 @@ async function main(): Promise<void> {
   // The quest panel's go to: a journey to the cell or worldspace of the place, as a door's.
   const journeyTo = (at: Placement): void => {
     const arrival = { position: at.position, heading: at.rotation[2] };
+    const stance = stanceNow();
     const going =
       at.world !== undefined
         ? worldViewer.open(
             at.world,
             [Math.floor(at.position[0] / CELL_SIZE), Math.floor(at.position[1] / CELL_SIZE)],
             arrival,
+            stance,
           )
         : at.cell !== undefined
-          ? modelViewer.showCell(at.cell, arrival)
+          ? modelViewer.showCell(at.cell, arrival, stance)
           : Promise.resolve();
     going.catch((error: unknown) => {
       terminal.log('papyrus', `the player cannot go there: ${describeError(error)}`, 'error');
@@ -641,14 +651,17 @@ async function main(): Promise<void> {
       const arrival = { position: at.position, heading: at.rotation[2] };
       // Fast travel and journeys: the followers, and the player's horse, come along.
       await (worldViewer.playing ? worldViewer : modelViewer).bringFollowers(at, true);
+      // The player comes as they left (a new game or a loaded save: out of the world, none).
+      const stance = stanceNow();
       if (at.world !== undefined) {
         await worldViewer.open(
           at.world,
           [Math.floor(at.position[0] / CELL_SIZE), Math.floor(at.position[1] / CELL_SIZE)],
           arrival,
+          stance,
         );
       } else if (at.cell !== undefined) {
-        await modelViewer.showCell(at.cell, arrival);
+        await modelViewer.showCell(at.cell, arrival, stance);
       }
       await settled();
     },
