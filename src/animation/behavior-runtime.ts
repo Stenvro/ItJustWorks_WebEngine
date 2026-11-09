@@ -2013,8 +2013,17 @@ export class BehaviorRuntime {
       }
       return undefined;
     }
-    // Played backward (a negative speed, a ping-pong's way back; over its start into the end of
-    // the cycle before, the way from there taken backward), or a sync phase stepping back.
+    // A ping-pong clip never jumps over a seam: it retraces its way at each turn, so a step moves
+    // the root by the net way between where it was and where it is (the sweeps up and back down
+    // past a turn cancel), backward when it ends before where it began.
+    if (node.mode === CLIP_MODE.pingPong) {
+      const back = state.time < state.previous;
+      const from = Math.min(state.time, state.previous) + crop;
+      const to = Math.max(state.time, state.previous) + crop;
+      return asMotion(rootMotion(node.name, from, to), back ? -1 : 1);
+    }
+    // Played backward (a negative speed; over its start into the end of the cycle before, the
+    // way from there taken backward), or a sync phase stepping back.
     const backward = state.reverse || (state.time < state.previous && !state.wrapped);
     const from = (backward ? state.time : state.previous) + crop;
     const to = (backward ? state.previous : state.time) + crop;

@@ -1625,6 +1625,9 @@ aux bones' walk) and 91 at a negative speed.
   it wraps from its start to its end the same way.
 - Ping-pong: at an end it turns; the step passes the way to the end and the way back (a trigger
   just before the end raises twice in one step). A negative speed plays it the other way first.
+  Its root motion over a step is the net way from where it was to where it is (it retraces its
+  way at a turn, so the stretch up to the end and back cancels; never read as a loop over the
+  seam, which was a cycle's jump at a turn that ended short of where the step began).
 - User controlled: the step is from where the clip was to where its variable puts it, either
   way.
 - In a syncing blender: forward from where the clip was to its phase (over the seam into the

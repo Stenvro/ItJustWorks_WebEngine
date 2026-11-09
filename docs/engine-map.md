@@ -136,7 +136,7 @@ These run through every area and explain most of what breaks in play.
 ### Animation and bodies
 
 The item-by-item checklist (behavior classes and fields, annotations, idles, actions, settings,
-mechanics): [completeness/animation.md](completeness/animation.md), 1119 of 1148 done
+mechanics): [completeness/animation.md](completeness/animation.md), 1119 of 1149 done
 (2026-11-03, round 8).
 
 | System               | Status   | Main gaps                                                                                                                                                                                                                                                      |

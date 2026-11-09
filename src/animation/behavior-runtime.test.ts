@@ -1276,6 +1276,33 @@ describe('transitions as Havok runs them', () => {
     expect(motion.yaw).toBeCloseTo(-0.5);
   });
 
+  it("moves a ping-pong clip's root by its net way across both turns, not a cycle's", () => {
+    // Ten units a second of clip time; the host reads a later start than end as a loop over its
+    // seam (as it does for looping clips), which a ping-pong turn must never be taken for.
+    const runtime = new BehaviorRuntime({
+      root: graph(clip('a', 3), []),
+      host: {
+        ...host({ a: animation(0, 1) }),
+        rootMotion: (_generator, from, to) => ({
+          translation: [0, 10 * (to >= from ? to - from : 1 - from + to), 0],
+          rotation: [0, 0, 0, 1],
+        }),
+      },
+      skeleton,
+    });
+    runtime.update(0);
+    runtime.update(0.99);
+    // The end turn: 0.99 up to 1 and back down to 0.995, 0.005 on net.
+    runtime.update(0.015);
+    expect(runtime.playing()[0]?.time).toBeCloseTo(0.995, 5);
+    expect(runtime.rootMotion().translation[1]).toBeCloseTo(0.05, 5);
+    // Down to 0.035, then the start turn: down to 0 and back up to 0.015, 0.02 back on net.
+    runtime.update(0.96);
+    runtime.update(0.05);
+    expect(runtime.playing()[0]?.time).toBeCloseTo(0.015, 5);
+    expect(runtime.rootMotion().translation[1]).toBeCloseTo(-0.2, 5);
+  });
+
   it('starts a state over that it blends back into while it still blends out of it', () => {
     const root = machine('Machine', [
       state(0, 'A', clip('a', 0), [transition(0, 1, { effect: effect(1) })]),
