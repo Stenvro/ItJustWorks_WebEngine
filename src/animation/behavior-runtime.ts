@@ -66,6 +66,7 @@ import {
   isPaired,
   ownEventPrefix,
   ownPairedEvent,
+  partnerEventPrefix,
   PARTNER_PREFIX,
   pairedTrackBones,
   type PairedSide,
@@ -1704,9 +1705,20 @@ export class BehaviorRuntime {
    * this side's prefix reaches the engine without it, and the graph is sent it so: a rider's
    * NPCpairedStop takes its graph to HorseRider_State by pairedStop (src/ai/mounts.ts), the
    * dragon's 2_PairEnd ends its grapple's ST_Ground_KillMove by PairEnd. Its name as the graph
-   * has it (scripts register for it) stays whole. Another event raises as it is.
+   * has it (scripts register for it) stays whole.
+   *
+   * An event of the other side's prefix (an authoring slip: the one-handed bleedout kill's
+   * killer side, Paired_1HMBleedOutKill, raises 2_KillActor and 2_KillMoveEnd at 3.33 s, its
+   * victim's side its own at 2.80 s; the troll killmoves' clip files annotate both
+   * SoundPlay.NPCKill1HMD and 2_SoundPlay.NPCKill1HMD, which both sides read; a few victims'
+   * sides raise NPCpairedStop or NPCFootScuffLeft) is the partner's, not this actor's: the
+   * engine does not hear it from this side (KillActor would kill the killer). Each such
+   * killmove's end its partner's clip raises itself. Its graph still handles it as its own
+   * event. Inferred from the data, TODO(M13). An event of no side's prefix, and NPCSoundPlay
+   * (paired-clips.ts), raises as it is.
    */
   #ownEvent(text: string, payload: string | undefined, own: string | undefined): void {
+    if (own !== undefined && ownPairedEvent(text, partnerEventPrefix(own)) !== undefined) return;
     const stripped = own === undefined ? undefined : ownPairedEvent(text, own);
     if (stripped === undefined) {
       this.#emit(text, payload);

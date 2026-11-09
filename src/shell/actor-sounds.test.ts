@@ -51,6 +51,20 @@ describe('actorSounds, SoundPlay', () => {
     expect(footstep).not.toHaveBeenCalled();
   });
 
+  it('sounds a descriptor once per update: a paired clip’s twins (the troll killmoves’)', () => {
+    const { handle, playNamed } = setup([0, 0, 0], undefined);
+    // The troll's side reads its clip file's SoundPlay.NPCKill1HMD and its own
+    // 2_SoundPlay.NPCKill1HMD (without its prefix: SoundPlay) at 0.03 s.
+    handle([
+      graphEvent('SoundPlay.NPCKill1HMD'),
+      { name: 'SoundPlay', payload: 'NPCKill1HMD', text: '2_SoundPlay.NPCKill1HMD' },
+    ]);
+    expect(playNamed).toHaveBeenCalledTimes(1);
+    // The next update's sounds again.
+    handle([graphEvent('SoundPlay.NPCKill1HMD')]);
+    expect(playNamed).toHaveBeenCalledTimes(2);
+  });
+
   it('stops what SoundPlay started: SoundStop at once, SoundRelease letting it end', async () => {
     const stops: (boolean | undefined)[] = [];
     const loop = { ended: false, stop: (immediately?: boolean) => void stops.push(immediately) };

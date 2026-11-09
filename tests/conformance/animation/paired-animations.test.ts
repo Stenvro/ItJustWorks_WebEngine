@@ -8,12 +8,13 @@
 //   meshes\actors\character\animations\paired_*.hkx; `node tools/hkx-anim.ts`).
 // - The response files: pairedStop (PairedStopHandler), a killmove victim's 2_KillMoveEnd,
 //   2_Decapitate, 2_KillActor reach the victim's graph (docs/animation.md, "Killmoves").
+// - The vanilla synchronized clips' triggers and annotations (docs/animation.md, "Paired
+//   events"): each side's own prefix, and the other side's slips (Paired_1HMBleedOutKill).
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BehaviorRuntime } from '../../../src/animation/behavior-runtime.ts';
 import {
   GraphEventDispatch,
-  graphEvent,
   pairedEvent,
   type GraphEvent,
   type GraphEventSource,
@@ -27,7 +28,7 @@ import {
   pairedSide,
   pairedTrackBones,
 } from '../../../src/animation/paired-clips.ts';
-import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
+import { hasGamedata, openSim, PLAYER_REF, SIM_STEP, type Sim } from '../../helpers/sim.ts';
 
 const HUMAN = ['NPC Root [Root]', 'NPC Pelvis [Pelv]', 'NPC Head [Head]'];
 const HORSE = ['HorseRoot', 'Horse Pelvis', 'Horse Head'];
@@ -86,7 +87,16 @@ const SECOND: AnimationBinding = {
   floatTrackToSlot: undefined,
   additive: false,
 };
-const EVENTS = ['2_KillActor', '2_PairEnd', 'NPCHitFrame', 'PairEnd', 'Done', 'KillActor'];
+const EVENTS = [
+  '2_KillActor',
+  '2_PairEnd',
+  'NPCHitFrame',
+  'PairEnd',
+  'Done',
+  'KillActor',
+  'NPCSoundPlay.NPCKillChop',
+  'NPCSoundPlay.NPCVampireLordFeed',
+];
 const event = (name: string): number => EVENTS.indexOf(name);
 
 /**
@@ -167,19 +177,39 @@ function sideOf(prefix: string | undefined, raised: readonly string[]): Behavior
 
 describe('the events of a paired clip go to each side by their prefix (inferred from the data)', () => {
   it('the second side (SyncAnimPrefix 2_) takes its 2_ events as its own, the prefix off', () => {
-    const victim = sideOf('2_', ['2_KillActor', 'NPCHitFrame']);
+    const victim = sideOf('2_', ['2_KillActor', 'Done']);
     victim.update(0.25);
     expect(victim.takeRaised()).toEqual([
       { name: 'KillActor', text: '2_KillActor' },
-      { name: 'NPCHitFrame', text: 'NPCHitFrame' },
+      { name: 'Done', text: 'Done' },
     ]);
   });
   it('the first side (no prefix of its clip’s own) takes its NPC events as its own', () => {
-    const killer = sideOf(undefined, ['NPCHitFrame', '2_KillActor']);
-    killer.update(0.25);
+    // The second side's 2_KillActor on the first side's clip (Paired_1HMBleedOutKill raises it
+    // at 3.33 s, its victim's side its own at 2.80 s) is its partner's: the engine does not
+    // hear it from the killer, which it would kill.
+    const killer = sideOf(undefined, ['NPCHitFrame', '2_KillActor', 'Done']);
+    killer.update(0.35);
     expect(killer.takeRaised()).toEqual([
       { name: 'HitFrame', text: 'NPCHitFrame' },
-      { name: '2_KillActor', text: '2_KillActor' },
+      { name: 'Done', text: 'Done' },
+    ]);
+    // So the second side the first's.
+    const victim = sideOf('2_', ['NPCHitFrame', '2_KillActor']);
+    victim.update(0.25);
+    expect(victim.takeRaised()).toEqual([{ name: 'KillActor', text: '2_KillActor' }]);
+  });
+  it('NPCSoundPlay is an event of its own on either side, not the first side’s SoundPlay', () => {
+    const killer = sideOf(undefined, ['NPCSoundPlay.NPCKillChop']);
+    killer.update(0.15);
+    expect(killer.takeRaised()).toEqual([
+      { name: 'NPCSoundPlay', payload: 'NPCKillChop', text: 'NPCSoundPlay.NPCKillChop' },
+    ]);
+    // The vampire lord's victim's clip annotates NPCSoundPlay.NPCVampireLordFeed.
+    const victim = sideOf('2_', ['NPCSoundPlay.NPCVampireLordFeed']);
+    victim.update(0.15);
+    expect(victim.takeRaised().map((event) => event.text)).toEqual([
+      'NPCSoundPlay.NPCVampireLordFeed',
     ]);
   });
   it('the side’s graph is sent its own event without the prefix (2_PairEnd ends its clip)', () => {
@@ -245,20 +275,68 @@ describe.skipIf(!hasGamedata())('a pair’s end (headless simulation)', () => {
     expect(paired()).toEqual([false, false]);
   });
 
-  it('a vampire feeding pair (pa_VampireFeed*): VampireFeedEnd ends both sides’ feeding  [original, inferred]', () => {
+  it('the feeder’s VampireFeedEnd ends its feeding (GetVampireFeed)  [inferred]', () => {
     const state = sim.runtime.state;
     const feeding = (): boolean => state.actors.get(PLAYER_REF)?.feeding !== undefined;
     state.actor(PLAYER_REF).feeding = { kind: 'vampire', until: state.realTime + 6 };
     sim.world.stage.combat.pairIdle(PLAYER_REF, HULDA, 'pa_VampireFeedStanding_Front');
-    // The feeder's clip raises it (NPCVampireFeedEnd, 1.07 s before its end): GetVampireFeed
-    // holds no more.
+    // The feeder's clip raises it (Paired_VampFeedFront_Player's NPCVampireFeedEnd, 1.07 s
+    // before its end; no other vanilla clip raises VampireFeedEnd).
     raise(PLAYER_REF, [pairedEvent('NPCVampireFeedEnd', 'VampireFeedEnd')]);
-    expect(feeding()).toBe(false);
-    // Raised by the side fed on, the feeder's feeding ends too.
-    state.actor(PLAYER_REF).feeding = { kind: 'vampire', until: state.realTime + 6 };
-    raise(HULDA, [graphEvent('VampireFeedEnd')]);
     expect(feeding()).toBe(false);
     raise(PLAYER_REF, [pairedEvent('NPCpairedStop', 'pairedStop')]);
     expect(paired()).toEqual([false, false]);
   });
+
+  it('a pair kept by a save keeps its partners: pairedStop ends both after a load  [M12, inferred]', () => {
+    // Not a killmove (no killer to find the partner by): a paired idle, as a feeding is.
+    const combat = sim.world.stage.combat;
+    combat.pairIdle(PLAYER_REF, HULDA, 'pa_PairedTest');
+    const player = combat.saveDown(PLAYER_REF);
+    const hulda = combat.saveDown(HULDA);
+    expect(player?.paired?.partner).toBe(HULDA);
+    expect(hulda?.paired?.partner).toBe(PLAYER_REF);
+    raise(PLAYER_REF, [pairedEvent('NPCpairedStop', 'pairedStop')]);
+    expect(paired()).toEqual([false, false]);
+    // Put back as a loaded save puts them back, the second first.
+    if (hulda) combat.restoreDown(HULDA, hulda);
+    if (player) combat.restoreDown(PLAYER_REF, player);
+    expect(paired()).toEqual([true, true]);
+    expect(combat.partnerOf(HULDA)).toBe(PLAYER_REF);
+    raise(HULDA, [pairedEvent('2_pairedStop', 'pairedStop')]);
+    expect(paired()).toEqual([false, false]);
+  });
+
+  it('a killer does not die by its clip’s 2_KillActor (Paired_1HMBleedOutKill)  [data, inferred]', async () => {
+    // The player, an iron sword drawn, leads the one-handed killing blow on a bleeding-out
+    // victim (pa_KillingBlow: 1hm_behavior's BleedOutKillingBlow, Paired_1HMBleedOutKill), whose
+    // first side raises the victim's 2_KillActor and 2_KillMoveEnd at 3.33 s.
+    const sword = await sim.formId('WEAP', 'IronSword');
+    await sim.runtime.addItem(PLAYER_REF, sim.runtime.formHandle(sword), 1, true);
+    await sim.equip(sword);
+    // Drawn by its first swing, which is let end.
+    await sim.attack(0.1);
+    await sim.step(1);
+    const body = sim.world.playerView?.avatar?.body.behavior;
+    expect(body?.wouldHandle('pa_KillingBlow')).toBe(true);
+    sim.world.stage.combat.pairIdle(PLAYER_REF, HULDA, 'pa_KillingBlow');
+    body?.sendEvent('pa_KillingBlow');
+    let played = 0;
+    for (let t = 0; t < 4.5; t += SIM_STEP) {
+      await sim.step(SIM_STEP);
+      const clip = body?.synchronizedClip()?.animation.toLowerCase() ?? '';
+      if (clip.includes('paired_1hmbleedoutkill')) played = t;
+    }
+    // Its side played to its last frame, 3.33 s, which raises them.
+    expect(played).toBeGreaterThan(3.3);
+    expect(await sim.runtime.actors.isDead(PLAYER_REF)).toBe(false);
+    expect(sim.deaths().some((death) => death.actor === PLAYER_REF)).toBe(false);
+  });
+});
+
+describe('paired animations (todo)', () => {
+  // TODO(M11): our AI runs no vampire feeding procedure (docs/animation.md, the handlers'
+  // table: VampireFeedEnd), so neither side's procedure can be ended; the feeder's
+  // GetVampireFeed ends at its VampireFeedEnd (above).
+  it.todo('a vampire feeding pair (pa_VampireFeed*) ends both sides’ procedures  [original]');
 });

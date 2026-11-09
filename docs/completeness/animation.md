@@ -187,8 +187,8 @@ what fills it was not found).
       actor-sounds.ts), SoundPlay, NPCSoundPlay, SoundStop, SoundRelease, the response files'
       events (weaponSwing, HitFrame, PreHitFrame, ...), the graphs' own events (SyncLeft,
       SyncRight, FlightLandingEffect, the dogs' and wolves' sounds by their graph events, ...),
-      paired clips' own events of each side ("2_" and "NPC", the prefix off: docs/animation.md
-      "Paired events").
+      paired clips' own events of each side ("2_" and "NPC", the prefix off; the other side's
+      not heard; NPCSoundPlay keeps its name: docs/animation.md "Paired events").
 - [x] SyncLeft, SyncRight and the other sync points (EVENT_FLAGS.syncPoint): they sync the
       clips of syncing blenders (round 2; by hand below).
 - [x] FrontFoot (26), BackFoot (25), Spellfire (2), FrootBack (4), FootFornt (3), FottFront (1),
@@ -297,8 +297,8 @@ what fills it was not found).
       rule, for a mod's.
 - [x] Engine handlers: the response files' 95 of 97 (above).
 - [x] An event no node takes is reported as not handled (BehaviorRuntime.answered): a death
-      idle its graph does not take lets the body go at once (tests/conformance/animation/
-      graph-runtime.test.ts). (bDisableInterp has no setter in the engine, observed in the
+      idle its graph does not take lets the body go at once (inferred, TODO(M13);
+      tests/conformance/animation/graph-runtime.test.ts). (bDisableInterp has no setter in the engine, observed in the
       original: the graphs set it; it is read with bIsSynced and bSpeedSynced: round 8.)
 - [x] Head tracking (docs/animation.md, "Head tracking"; the settings above).
 - [x] Look-at, direct-at (BSLookAtModifier, BSDirectAtModifier) and limb IK.
@@ -307,8 +307,11 @@ what fills it was not found).
 - [ ] Faces: the expression change rate.
 - [x] Lip sync (.lip, .fuz) with the dialogue.
 - [x] Paired animations: the support's mark, its side to the clip's end, death limp.
-- [x] Paired animations: events routed per side by their prefix ("2_", "NPC"); pairedStop ends
-      the pair for both (inferred; tests/conformance/animation/paired-animations.test.ts).
+- [x] Paired animations: events routed per side by their prefix ("2_", "NPC"; the other side's
+      not heard from it); pairedStop ends the pair for both, also after a load (inferred;
+      tests/conformance/animation/paired-animations.test.ts).
+- [ ] Paired animations: a vampire feeding pair ends the feeding procedures. TODO(M11): our AI
+      runs no feeding procedure; VampireFeedEnd ends the feeder's GetVampireFeed (inferred).
 - [x] Kill moves (docs/animation.md, "Killmoves").
 - [x] Dismemberment and decapitation (the head's flight, the stump, persistence).
 - [ ] The severed head's flight into MQ101's basket: it reaches the rim's height over the near

@@ -88,10 +88,11 @@ interface Dying {
 const DEATH_WAIT = 8;
 /**
  * A death idle its graph does not take (no active state answers it: a cow's DeathAnimation
- * while it grazes) lets the body go at once: observed in the original, the graph reports an
- * event no active node takes as not handled (BehaviorRuntime.answered, read the update after it
- * was sent). A graph that has not answered this long after (seconds) is judged by its states:
- * unchanged, it did not take it.
+ * while it grazes). The engine's graphs report an event no active node takes as not handled;
+ * ours reads that answer the update after the idle was sent (BehaviorRuntime.answered) and lets
+ * the body go at once (inferred, TODO(M13): what the engine does on that answer, and how soon,
+ * is not read). A graph that has not answered this long after (seconds) is judged by its
+ * states: unchanged, it did not take it.
  */
 const DEATH_TAKEN = 0.3;
 /** A death cry waiting for its graph's DeathEmote is said after this at the latest (seconds). */
@@ -405,17 +406,15 @@ export class ActorGraphEvents {
       this.#activations.delete(source.reference);
       waiting?.done();
     });
-    // A vampire's feeding ended (the feeder's clip's NPCVampireFeedEnd: src/animation/
-    // behavior-runtime.ts #ownEvent): observed in the original, the feeding procedure is done.
-    // Its pair's both sides: the feeder's feeding (StartVampireFeed: GetVampireFeed) ends, and
-    // the one it fed on, whose side's clip raises none, is done with it too (inferred).
+    // A vampire's feeding ended (the feeder's clip's NPCVampireFeedEnd, the only VampireFeedEnd
+    // in the vanilla behaviors: src/animation/behavior-runtime.ts #ownEvent). Observed in the
+    // original, an actor running a vampire feeding package procedure is done with it here.
+    // TODO(M11): our AI runs no feeding procedure. Ours ends the feeder's feeding
+    // (StartVampireFeed: GetVampireFeed) here, before its clip ends (Paired_VampFeedFront_Player
+    // raises it 1.07 s before its end): inferred, TODO(M13): when the engine clears the feeding
+    // state is not read.
     d.handle('VampireFeedEndHandler', (source) => {
-      const runtime = this.#options.session.scriptsReady;
-      if (!runtime) return;
-      const partner = stage.combat.partnerOf(source.reference);
-      for (const actor of [source.reference, partner]) {
-        if (actor !== undefined) runtime.feedingDone(actor);
-      }
+      this.#options.session.scriptsReady?.feedingDone(source.reference);
     });
     // The graph attaches the actor to a node of the furniture it uses, or lets it go.
     d.handle('NPCAttachHandler', (source, event) => {

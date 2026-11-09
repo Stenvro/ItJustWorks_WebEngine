@@ -974,7 +974,8 @@ export class ActorCombat implements CombatBridge {
   /**
    * What a save keeps of an actor's bleedout and paired animation (the original's actor state
    * keeps its life state and its process the killmove and the paired idle): bleeding out for
-   * how long, its side of a pair, whether a killmove, how long in it, and a victim's killer.
+   * how long, its side of a pair, whether a killmove, how long in it, a victim's killer, and
+   * its partner (pairedStop ends a loaded pair for both: a feeding, a paired idle as well).
    */
   saveDown(actor: number): SavedDown | undefined {
     const fighter = this.#fighters.get(actor);
@@ -988,6 +989,8 @@ export class ActorCombat implements CombatBridge {
             killMove: state.killMove,
             seconds: fighter.pairedFor,
             ...(fighter.killer !== undefined && { killer: fighter.killer }),
+            ...(state.paired !== undefined &&
+              fighter.pairedWith !== undefined && { partner: fighter.pairedWith }),
           }
         : undefined;
     if (bleedout === undefined && !paired) return undefined;
@@ -1024,15 +1027,19 @@ export class ActorCombat implements CombatBridge {
       state.killMove = paired.killMove;
       fighter.pairedFor = paired.seconds;
       fighter.killer = paired.killer;
-      // A killmove's victim knows its killer; the killer finds its victim as that one comes back.
-      fighter.pairedWith = paired.killer;
-      if (paired.killer !== undefined) {
-        const killer = this.#fighters.get(paired.killer);
-        if (killer?.state.paired === 'lead') killer.pairedWith = fighter.reference;
-      }
-      for (const other of this.#fighters.values()) {
-        if (paired.side === 'lead' && other.killer === fighter.reference) {
-          fighter.pairedWith = other.reference;
+      // Its partner as saved (any pair: a feeding, a paired idle). A save that kept none (made
+      // before partners were kept): a killmove's victim knows its killer, and the killer finds
+      // its victim as that one comes back.
+      fighter.pairedWith = paired.partner ?? paired.killer;
+      if (paired.partner === undefined) {
+        if (paired.killer !== undefined) {
+          const killer = this.#fighters.get(paired.killer);
+          if (killer?.state.paired === 'lead') killer.pairedWith = fighter.reference;
+        }
+        for (const other of this.#fighters.values()) {
+          if (paired.side === 'lead' && other.killer === fighter.reference) {
+            fighter.pairedWith = other.reference;
+          }
         }
       }
       const side = paired.side === 'lead' ? 'first' : paired.side ? 'second' : undefined;

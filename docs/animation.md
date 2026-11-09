@@ -831,7 +831,7 @@ come before the response files are read wait for them.
 | MountDismountEnd (MountEnd, DismountEnd)                          | ends the mount or dismount under way for rider and horse                                                                                                                      | the ride's phase ends (as at its paired end)                                                                                                                                                                                                   |
 | EndSummonAnimation (summonStop)                                   | a summoned actor's arrival is over: it takes its commander's combat target                                                                                                    | as the engine                                                                                                                                                                                                                                  |
 | ActionActivateDone (ActivationDone)                               | the object the actor's process holds is activated, the procedure done                                                                                                         | an NPC's activation with an ActionActivate idle waits for it (3 s at most)                                                                                                                                                                     |
-| VampireFeedEnd                                                    | a vampire feeding procedure is done                                                                                                                                           | the feeding (StartVampireFeed: GetVampireFeed) of the actor whose graph raised it and of its partner in the pair ends (the feeder's clip's NPCVampireFeedEnd); its six seconds are the fallback. TODO(M11): an AI feeding procedure            |
+| VampireFeedEnd                                                    | a vampire feeding procedure is done                                                                                                                                           | the feeding (StartVampireFeed: GetVampireFeed) of the actor whose graph raised it ends (the feeder's NPCVampireFeedEnd, 1.07 s before its clip ends: inferred, TODO(M13)); else in six seconds. TODO(M11): our AI runs no feeding procedure    |
 | PairedStop (pairedStop)                                           | the paired animation ends                                                                                                                                                     | for both of its actors (inferred: [Killmoves](#killmoves))                                                                                                                                                                                     |
 | NPCAttach / NPCDetach                                             | attach the actor to its furniture's node the payload names, or detach it                                                                                                      | recorded. TODO(M13): our furniture keeps markers, not animated nodes                                                                                                                                                                           |
 | CameraShake (payload: strength)                                   | shakes the camera from the actor's place (src/shell/camera-shake.ts)                                                                                                          | as the engine                                                                                                                                                                                                                                  |
@@ -849,9 +849,10 @@ victim is paired, in furniture, bleeding out, swimming, or half the time, else D
 idles' conditions on their target see the killer (inferred, TODO(M13)). A Ragdoll idle, or none,
 lets the ragdoll go at once; an animated death keeps the body on its graph (still animating
 while dead) until the graph adds the ragdoll; one whose graph did not take the idle goes limp at
-once (observed in the original: the graph reports an event no active node takes as not handled;
-ours reads the graph's answer the update after the idle was sent, `BehaviorRuntime.answered`, and
-a graph that has not answered 0.3 s on by its states, unchanged: not taken), and so does one whose
+once (the graph reports an event no active node takes as not handled; ours reads the graph's
+answer the update after the idle was sent, `BehaviorRuntime.answered`, and a graph that has not
+answered 0.3 s on by its states, unchanged: not taken. Letting it go at once is inferred,
+TODO(M13): what the engine does on that answer, and how soon, is not read), and so does one whose
 graph never adds it, or keeps it keyframed
 or powered, 8 s after it began (TODO(M13): what the engine does with such a graph; before, a
 graph that kept its ragdoll keyframed held the corpse on its feet for good). A killmove's
@@ -946,8 +947,8 @@ engine's routing is not read). Each actor's graph plays its own side of the clip
 triggers name its own events with its prefix: the second actor's `2_` (the side whose
 synchronized clip names SyncAnimPrefix "2_": a killmove victim's 2_KillActor, 2_Decapitate,
 2_DeathEmote, 2_SoundPlay.*), the first actor's `NPC`, after its placement track (the side
-whose clip names none: the killer's NPCweaponSwing, NPCHitFrame, NPCSoundPlay.NPCKillChop,
-NPCpairedStop; a rider's NPCpairedStop and NPCHorseExitOut; a feeding vampire's
+whose clip names none: the killer's NPCweaponSwing, NPCHitFrame, NPCpairedStop; a rider's
+NPCpairedStop and NPCHorseExitOut; a feeding vampire's
 NPCVampireFeedEnd). Of the triggers on the vanilla synchronized clips, 1,165 of 1,222 on the
 "2_" sides begin "2_" and 4,657 of 4,787 on the others "NPC". The response files name the
 events without the prefix (KillActor, HitFrame, VampireFeedEnd: no other trigger raises
@@ -955,8 +956,25 @@ VampireFeedEnd), so an event of the side's own prefix reaches the engine without
 and payload; its name as the graph has it, which scripts register for, stays whole), and the
 graph that raised it is sent it so: a rider's NPCpairedStop takes its graph to
 HorseRider_State by pairedStop, the dragon's 2_PairEnd ends its grapple's ST_Ground_KillMove
-by PairEnd. The other side's events in a clip (a few authoring slips) raise as they are.
-Test: tests/conformance/animation/paired-animations.test.ts.
+by PairEnd.
+
+The other side's events in a side's clip (authoring slips, and the clip files' annotations,
+which both sides read) are the partner's: the engine does not hear them from this side. The
+one-handed bleedout kill's killer side (Paired_1HMBleedOutKill, character and \_1stperson
+1hm_behavior) raises 2_KillActor and 2_KillMoveEnd at 3.33 s; taken as the killer's own events
+they killed the killer (the player too). Its victim's side (NPCPaired_1HMBleedOutKill) raises
+its own at 2.80 s. The rest: 2_SoundPlay.NPCKill1HMD (the troll killmoves' and
+Paired_1HMKillMove_ShortD's clip files annotate it beside SoundPlay.NPCKill1HMD),
+2_SoundPlay.NPCKillS1OASD and 2_FootScuffRight on killers' sides; NPCpairedStop, NPCPairEnd,
+NPCFootScuffLeft/Right and NPCPlayAnim01 on victims' sides (their killers' sides mostly raise
+their own NPCpairedStop). The graph still handles them as its own events. A leader's combat
+state ignores a victim's 2_KillActor, 2_Decapitate, 2_KillMoveEnd and 2_PairEnd that reach it
+some other way (src/gameplay/combat/combat-state.ts). NPCSoundPlay is no side's prefixed SoundPlay but an event
+of its own (docs/audio.md): both sides raise it, and it keeps its name. One actor's graph sounds
+a descriptor once per update (src/shell/actor-sounds.ts: the troll's side reads its clip's
+SoundPlay.NPCKill1HMD and its own 2_SoundPlay.NPCKill1HMD at 0.03 s; inferred, TODO(M13)).
+Tests: tests/conformance/animation/paired-animations.test.ts,
+src/gameplay/combat/combat-state.test.ts, src/shell/actor-sounds.test.ts.
 
 **The end.** The victim's side raises its events with the prefix: 2_KillActor (KillActorHandler:
 it dies by its killer), 2_KillMoveEnd (KillMoveEndHandler: an actor with a killer dies by it, its

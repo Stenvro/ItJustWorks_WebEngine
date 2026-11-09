@@ -23,8 +23,8 @@ const IDLE_CANNIBAL_FEED = 0xfe09d;
 /**
  * How long a feeding lasts at most (real seconds: GetVampireFeed holds meanwhile, the perks'
  * Feed is not offered again). Its graph ends it sooner as its clip raises VampireFeedEnd
- * (ScriptRuntime.feedingDone). TODO(M13): a feeding whose graph raises none (a cannibal's,
- * the bed's) ends by this.
+ * (ScriptRuntime.feedingDone; inferred). TODO(M13): when the engine ends it is not read; a
+ * feeding whose graph raises none (a cannibal's, the bed's) ends by this.
  */
 const FEEDING_SECONDS = 6;
 
