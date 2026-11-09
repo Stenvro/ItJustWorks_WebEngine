@@ -119,10 +119,45 @@ export interface EffectShaderRecord {
      */
     readonly animation: ParticleAnimation;
   };
+  /** DEBR: the models hung on what it covers while it plays. */
   readonly addonModels: number | undefined;
+  /** How the addon models come and go (DATA 284 .. 304). */
+  readonly addon: AddonTiming;
+  /** How the holes texture (NAM7) burns its target away (DATA 248 .. 271). */
+  readonly holes: HolesTiming;
   readonly ambientSound: number | undefined;
   /** Its colour's overall scale. */
   readonly colorScale: number;
+}
+
+/**
+ * EFSH DATA's holes (xEdit "Holes - Start Time" .. "Holes - End Val", then the edge's width in
+ * alpha units and colour): the threshold the holes texture is cut at moves from its start value
+ * to its end value (0..255) between the two times (seconds after the shader began). 255 leaves
+ * the target whole and 0 cuts all of it away: TimeFadeOut01FXS goes 255 to 0, TimeFadeIn01FXS
+ * and the Boneman's summon 0 to 255.
+ */
+export interface HolesTiming {
+  readonly startTime: number;
+  readonly endTime: number;
+  readonly startValue: number;
+  readonly endValue: number;
+  readonly edgeWidth: number;
+  readonly edgeColor: Rgb;
+}
+
+/**
+ * EFSH DATA's addon models block (xEdit "Addon Models - Fade In Time" .. "Scale Out Time"):
+ * seconds to fade in and out, and the scale they start at and grow to, with the seconds that
+ * takes as they come and as they go.
+ */
+export interface AddonTiming {
+  readonly fadeIn: number;
+  readonly fadeOut: number;
+  readonly scaleStart: number;
+  readonly scaleEnd: number;
+  readonly scaleIn: number;
+  readonly scaleOut: number;
 }
 
 /** EFSH DATA's Particle Shader Animated block (xEdit; u32 each, offsets 356 .. 380). */
@@ -228,6 +263,22 @@ export function parseEffectShader(record: RecordSource): EffectShaderRecord {
       },
     },
     addonModels: form(244),
+    addon: {
+      fadeIn: f32(284),
+      fadeOut: f32(288),
+      scaleStart: f32(292),
+      scaleEnd: f32(296),
+      scaleIn: f32(300),
+      scaleOut: f32(304),
+    },
+    holes: {
+      startTime: f32(248),
+      endTime: f32(252),
+      startValue: f32(256),
+      endValue: f32(260),
+      edgeWidth: f32(264),
+      edgeColor: rgb(268),
+    },
     ambientSound: form(308),
     colorScale: f32(344) || 1,
   };
@@ -281,4 +332,58 @@ export function fillColor(shader: EffectShaderRecord, t: number): Rgb {
   }
   const last = keys.reduce((best, key, i) => (key.time >= (keys[best]?.time ?? 0) ? i : best), 0);
   return scaled[last] ?? [1, 1, 1];
+}
+
+/**
+ * The holes threshold `t` seconds after the shader began (0..255): its start value until its
+ * start time, then straight on to its end value at its end time, held there after.
+ */
+export function holesValue(holes: HolesTiming, t: number): number {
+  const { startTime, endTime, startValue, endValue } = holes;
+  if (t <= startTime) return startValue;
+  if (t >= endTime) return endValue;
+  return startValue + (endValue - startValue) * ((t - startTime) / (endTime - startTime));
+}
+
+/**
+ * The share of its target a shader's holes have cut away `t` seconds after it began (0: whole,
+ * 1: gone); 0 without a holes texture (NAM7), whose threshold fields then carry no meaning (most
+ * shaders that never cut hold 0 to 10 seconds, 255 to 0). The holes texture's texels under the
+ * threshold stay, so a threshold of v leaves about v / 255 of a texture whose values spread
+ * evenly. TODO(M13): the cut follows the holes texture's own pattern and draws its edge (width
+ * and colour); here the share is dithered away as a distance fade is.
+ */
+export function holesShare(
+  shader: Pick<EffectShaderRecord, 'holesTexture' | 'holes'>,
+  t: number,
+): number {
+  if (shader.holesTexture === '') return 0;
+  return Math.min(1, Math.max(0, 1 - holesValue(shader.holes, t) / 255));
+}
+
+/**
+ * The addon models' look `age` seconds after the shader began, `ending` seconds after it was told
+ * to stop (undefined: playing on): their alpha fades in over the fade-in time and out over the
+ * fade-out time; their scale goes from Scale Start to Scale End over the scale-in time and back
+ * to Scale Start over the scale-out time as they go; `done` once both have gone out. TODO(M13):
+ * inferred from the field names (no document says what the scale returns to as they go).
+ */
+export function addonLook(
+  addon: AddonTiming,
+  age: number,
+  ending?: number,
+): { readonly alpha: number; readonly scale: number; readonly done: boolean } {
+  let alpha = addon.fadeIn > 0 ? Math.min(1, Math.max(0, age / addon.fadeIn)) : 1;
+  let scale =
+    addon.scaleIn > 0 && age < addon.scaleIn
+      ? addon.scaleStart + (addon.scaleEnd - addon.scaleStart) * Math.max(0, age / addon.scaleIn)
+      : addon.scaleEnd;
+  let done = false;
+  if (ending !== undefined) {
+    alpha *= addon.fadeOut > 0 ? Math.max(0, 1 - ending / addon.fadeOut) : 0;
+    const back = addon.scaleOut > 0 ? Math.min(1, ending / addon.scaleOut) : 1;
+    scale += (addon.scaleStart - scale) * back;
+    done = ending >= Math.max(addon.fadeOut, addon.scaleOut);
+  }
+  return { alpha, scale, done };
 }

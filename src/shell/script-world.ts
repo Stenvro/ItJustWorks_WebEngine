@@ -157,7 +157,14 @@ export interface ScriptView {
   magicEffect?(shown: MagicEffectShown): void;
   /** EffectShader.Play / Stop and VisualEffect.Play / Stop on a reference of the view. */
   effectShader?(shader: number, target: number, play: boolean, duration: number): void;
-  visualEffect?(effect: number, target: number, play: boolean, duration: number): void;
+  /** `facing`: the reference a Face Target visual effect's art turns to (Play's third argument). */
+  visualEffect?(
+    effect: number,
+    target: number,
+    play: boolean,
+    duration: number,
+    facing: number | undefined,
+  ): void;
   /** An art object on an actor of the view for a while (WorldBridge.artEffect). */
   artEffect?(art: number, target: number, seconds: number): void;
   /** The package an actor of the view runs now (its AI), if any. */
@@ -1126,13 +1133,19 @@ export class ScriptWorld implements WorldBridge {
     for (const view of this.#views) view.effectShader?.(shader, target, play, duration);
   }
 
-  /** VisualEffect.Play (seconds; −1 until Stop) and Stop (TODO(M13): facing its target). */
   artEffect(art: number, target: number, seconds: number): void {
     for (const view of this.#views) view.artEffect?.(art, target, seconds);
   }
 
-  visualEffect(effect: number, target: number, play: boolean, duration: number): void {
-    for (const view of this.#views) view.visualEffect?.(effect, target, play, duration);
+  /** VisualEffect.Play (seconds; −1 until Stop, its art facing `facing`) and Stop. */
+  visualEffect(
+    effect: number,
+    target: number,
+    play: boolean,
+    duration: number,
+    facing: number | undefined,
+  ): void {
+    for (const view of this.#views) view.visualEffect?.(effect, target, play, duration, facing);
   }
 
   music(type: number, add: boolean): void {

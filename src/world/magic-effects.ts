@@ -226,6 +226,18 @@ export interface MagicEffectRecord {
   readonly scripted: boolean;
 }
 
+/**
+ * RFCT DATA flags (xEdit; CommonLibSSE BGSReferenceEffect::Flag): its art turns to face the
+ * reference VisualEffect.Play names to face (the absorb streams, soul trap's), it hangs at the
+ * camera instead of its target (the camera-attached dust, fog and snow), and it turns with the
+ * camera there.
+ */
+export const VisualEffectFlag = {
+  faceTarget: 0x1,
+  attachToCamera: 0x2,
+  inheritRotation: 0x4,
+} as const;
+
 /** RFCT (xEdit: DATA, Effect Art, Shader, Flags): what a visual effect shows. */
 export interface VisualEffectRecord {
   readonly art: number | undefined;

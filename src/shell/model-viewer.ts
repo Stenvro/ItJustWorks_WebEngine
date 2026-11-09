@@ -465,8 +465,8 @@ export class ModelViewer {
     effectShader: (shader, target, play, duration) => {
       this.#stage?.effects.shader(shader, target, play, duration);
     },
-    visualEffect: (effect, target, play, duration) => {
-      this.#stage?.effects.visual(effect, target, play, duration);
+    visualEffect: (effect, target, play, duration, facing) => {
+      this.#stage?.effects.visual(effect, target, play, duration, facing);
     },
     artEffect: (art, target, seconds) => {
       this.#stage?.effects.art(art, target, seconds);

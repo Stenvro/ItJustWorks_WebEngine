@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { itemGlow } from '../../../src/gameplay/magic/enchantment-glow.ts';
 import { animatedFrame } from '../../../src/shell/surface-particles.ts';
 import type { SoundInstance } from '../../../src/audio/sound-instance.ts';
-import type { GpuScene } from '../../../src/render/scene-renderer.ts';
+import type { GpuScene, ModelInstance } from '../../../src/render/scene-renderer.ts';
 import { PLAYER_REF } from '../../../src/scripting/runtime/forms.ts';
 import type { MagicEffectShown } from '../../../src/scripting/runtime/magic-engine.ts';
 import { Vfs } from '../../../src/vfs/vfs.ts';
@@ -345,10 +345,94 @@ describe.skipIf(!hasGamedata())('the visuals in the sim', () => {
     const last = tints.at(-1);
     expect(first && last && first.some((c, i) => Math.abs(c - (last[i] ?? 0)) > 1e-3)).toBe(true);
   }, 120_000);
-});
 
-describe('what the original shows that we do not yet', () => {
-  it.todo(
-    'an effect shader’s holes (NAM7: its target burnt away by the holes texture between its start and end values) and addon models (DEBR)',
-  );
+  it('cuts its target away by its holes (NAM7) and hangs its addon models (DEBR) on it', async () => {
+    const stage = sim.world.stage;
+    const scene = sim.world.session.render.scene;
+    // TimeFadeOut01FXS: holes from 255 at 0.1 s to 0 at 2.1 s; FrostIceFormFXShader: the ice
+    // chunks of IceFormDebris.
+    const holed = await sim.formId('EFSH', 'TimeFadeOut01FXS');
+    const iced = await sim.formId('EFSH', 'FrostIceFormFXShader');
+    const staged = sim.actors()[0];
+    expect(staged).toBeDefined();
+    if (!staged) return;
+    const actor = staged.reference;
+    const created: ModelInstance[][] = [];
+    const createScene = scene.createScene.bind(scene);
+    scene.createScene = (instances, ...rest) => {
+      created.push([...instances]);
+      return createScene(instances, ...rest);
+    };
+    try {
+      stage.effects.shader(holed, actor, true, -1);
+      stage.effects.shader(iced, actor, true, -1);
+      for (let t = 0; t < 1.5; t += 0.25) await sim.step(0.25);
+      // About 1.5 s in: some 70% of it cut away, its veil carrying the share.
+      const share = stage.effects.holes(actor);
+      expect(share).toBeGreaterThan(0.5);
+      expect(share).toBeLessThan(0.9);
+      expect(staged.placed.instances[0]?.fade?.veil ?? 0).toBeGreaterThanOrEqual(share - 0.15);
+      const addons = created.find((list) =>
+        list.some(
+          (instance) => instance.fade?.kind === 'object' && instance.fade.byDistance === false,
+        ),
+      );
+      expect(addons?.length ?? 0).toBeGreaterThan(0);
+      stage.effects.shader(holed, actor, false, 0);
+      stage.effects.shader(iced, actor, false, 0);
+      for (let t = 0; t < 2.5; t += 0.25) await sim.step(0.25);
+      expect(stage.effects.holes(actor)).toBe(0);
+    } finally {
+      scene.createScene = createScene;
+    }
+  }, 120_000);
+
+  it('turns a Face Target visual effect’s (RFCT) art towards the reference it faces', async () => {
+    const stage = sim.world.stage;
+    const scene = sim.world.session.render.scene;
+    // SoulTrapPVFX01: Face Target, art SoulTrapTargetPointFX (soul trap's stream to its caster).
+    const visual = await sim.formId('RFCT', 'SoulTrapPVFX01');
+    // Two of the Bannered Mare's people: the stream on one faces the other.
+    const [target, other] = sim.actors();
+    const targetWorld = target?.placed.instances[0]?.world;
+    const there = other?.placed.instances[0]?.world;
+    expect(target && targetWorld && other && there).toBeTruthy();
+    if (!target || !targetWorld || !other || !there) return;
+    const created: ModelInstance[][] = [];
+    const createScene = scene.createScene.bind(scene);
+    scene.createScene = (instances, ...rest) => {
+      created.push([...instances]);
+      return createScene(instances, ...rest);
+    };
+    let art: ModelInstance | undefined;
+    try {
+      stage.effects.visual(visual, target.reference, true, -1, other.reference);
+      for (let t = 0; t < 1; t += 0.25) await sim.step(0.25);
+      // The art's model, by its root node's name.
+      art = created
+        .flat()
+        .find((instance) => instance.model.nodeWorlds.has('soultraptargetpointfx'));
+      expect(art).toBeDefined();
+      // Placed as a frame's animation ends, and measured as it is placed (the people may walk
+      // on within a step after their art was placed).
+      stage.effects.afterAnimate();
+      const d = [0, 1, 2].map((i) => (there[12 + i] ?? 0) - (targetWorld[12 + i] ?? 0));
+      const length = Math.hypot(...d);
+      const w = art?.world;
+      expect(length).toBeGreaterThan(1);
+      expect(w).toBeDefined();
+      if (!w) return;
+      const forward = [w[4] ?? 0, w[5] ?? 0, w[6] ?? 0];
+      const dot =
+        forward.reduce((sum, f, i) => sum + f * (d[i] ?? 0), 0) / (Math.hypot(...forward) * length);
+      expect(dot).toBeGreaterThan(0.99);
+      // Where its target stands.
+      expect(w[12]).toBeCloseTo(targetWorld[12] ?? 0, 1);
+      expect(w[13]).toBeCloseTo(targetWorld[13] ?? 0, 1);
+    } finally {
+      stage.effects.visual(visual, target.reference, false, 0);
+      await sim.step(0.1);
+      scene.createScene = createScene;
+    }
+  }, 120_000);
 });
