@@ -60,7 +60,7 @@ import { EquipmentEngine } from './equipment-engine.ts';
 import { ProgressionEngine } from './progression-engine.ts';
 import { CastingEngine } from './casting-engine.ts';
 import { MagicEngine, type MagicEffectShown } from './magic-engine.ts';
-import { CraftingEngine } from './crafting-engine.ts';
+import { CraftingEngine, type ItemsLeft } from './crafting-engine.ts';
 import { CrimeEngine } from './crime-engine.ts';
 import { PerkEngine } from './perk-engine.ts';
 import { actorActivation } from './actor-activation.ts';
@@ -2941,9 +2941,8 @@ export class ScriptRuntime implements VmHost {
     this.world.enableChanged?.(reference, false);
     const items = await this.inventory(container);
     items.set(base, (items.get(base) ?? 0) + count);
-    // An improved item taken keeps its improvement (its stack's health).
-    const health = await this.itemHealth(reference);
-    if (health !== 1) this.crafting.addStack(container, base, health, count, false);
+    // An improved item taken keeps its improvement, a soul gem its partial soul.
+    await this.#stackTaken(reference, container, base, count);
     if (!silent && container === PLAYER_REF) this.detach(this.#itemMessage(base, count, true));
     this.events.emit('containerChanged', { from, to: container, item: base, count, reference });
     await this.equipment.itemsGiven(container, base);
@@ -2961,9 +2960,30 @@ export class ScriptRuntime implements VmHost {
     return view(health).getInt32(0, true) / 100;
   }
 
-  /** An item placed in the world from an inventory keeps the health it left it with. */
-  dropped(reference: number, health: number): void {
-    if (health !== 1) this.state.reference(reference).health = health;
+  /**
+   * An item placed in the world from an inventory keeps what it left it with (removeItem): its
+   * health, a soul gem's partial soul.
+   */
+  dropped(reference: number, left: ItemsLeft): void {
+    if (left.health !== 1) this.state.reference(reference).health = left.health;
+    if (left.soul !== undefined && left.soul > 0) this.state.reference(reference).soul = left.soul;
+  }
+
+  /**
+   * An item reference taken into a container (a count of its base): its stack there gets what
+   * it carries of its own (an improved one's health, a soul gem's partial soul).
+   */
+  async #stackTaken(
+    reference: number,
+    container: number,
+    base: number,
+    count: number,
+  ): Promise<void> {
+    const health = await this.itemHealth(reference);
+    if (health !== 1) this.crafting.addStack(container, base, health, count, false);
+    const soul = this.state.references.get(reference)?.soul;
+    if (soul !== undefined && soul > 0)
+      this.crafting.addStack(container, base, 1, count, false, undefined, soul);
   }
 
   async itemCountOf(container: number, form: Value): Promise<number> {
@@ -3020,6 +3040,10 @@ export class ScriptRuntime implements VmHost {
     }
   }
 
+  /**
+   * Items leave a container (to another, or out of any: dropped, used, removed). What they
+   * carry of their own, if all came from one stack (ItemsLeft: what is dropped keeps it).
+   */
   async removeItem(
     container: number,
     form: Value,
@@ -3028,17 +3052,20 @@ export class ScriptRuntime implements VmHost {
     to: number | undefined,
     /** Which of the item's stacks (improved ones: the crafting engine's) leaves first. */
     stack?: number,
-  ): Promise<number> {
+  ): Promise<ItemsLeft> {
     const items = await this.inventory(container);
-    let health = 1;
+    let left: ItemsLeft = { health: 1 };
     for (const item of await this.#expand(form)) {
       const have = items.get(item) ?? 0;
       const moved = Math.min(have, count);
       if (moved <= 0) continue;
       // Items with data of their own leave as asked, else after the plain ones; all of one
-      // improved stack: their health (what is dropped keeps it).
+      // stack: its health and partial soul (what is dropped keeps them).
       const improved = this.crafting.itemsMoved(container, to, item, moved, have, stack);
-      if (improved.length === 1 && improved[0]?.count === moved) health = improved[0].health;
+      const only = improved.length === 1 ? improved[0] : undefined;
+      if (only?.count === moved) {
+        left = { health: only.health, ...(only.soul !== undefined && { soul: only.soul }) };
+      }
       items.set(item, have - moved);
       const references = this.#referencesMoved(container, to, item, moved, have);
       // Stolen items leave last and stay stolen where they go (crime-engine.ts).
@@ -3068,7 +3095,7 @@ export class ScriptRuntime implements VmHost {
       }
       if (to !== undefined) await this.equipment.itemsGiven(to, item);
     }
-    return health;
+    return left;
   }
 
   /** The reference of an item a container holds that leaves it first (#referencesMoved), if any. */
@@ -3129,9 +3156,8 @@ export class ScriptRuntime implements VmHost {
     this.state.reference(reference).container = { holder: by, base, count: Math.max(1, count) };
     this.world.enableChanged?.(reference, false);
     items.set(base, (items.get(base) ?? 0) + Math.max(1, count));
-    // An improved item taken keeps its improvement (its stack's health).
-    const health = await this.itemHealth(reference);
-    if (health !== 1) this.crafting.addStack(by, base, health, Math.max(1, count), false);
+    // An improved item taken keeps its improvement, a soul gem its partial soul.
+    await this.#stackTaken(reference, by, base, Math.max(1, count));
     this.events.emit('containerChanged', {
       from: undefined,
       to: by,

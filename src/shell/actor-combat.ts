@@ -5066,7 +5066,7 @@ export class ActorCombat implements CombatBridge {
       // MQ303's staff, given to the priest by AddItem (as a new weapon on the ground its alias
       // lost it, and with it the way into Sovngarde). TODO(M13): inferred from that scene.
       if (runtime.heldReference(reference, weapon) !== undefined) continue;
-      const health = await runtime.removeItem(
+      const left = await runtime.removeItem(
         reference,
         runtime.formHandle(weapon),
         1,
@@ -5074,7 +5074,7 @@ export class ActorCombat implements CombatBridge {
         undefined,
       );
       const dropped = await runtime.placeAt(weapon, reference, 1);
-      runtime.dropped(dropped, health);
+      runtime.dropped(dropped, left);
       const hand = runtime.world.nodePlacement?.(reference, node);
       const at = hand?.position ?? (await runtime.placement(reference))?.position;
       if (!at) continue;

@@ -357,15 +357,9 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     const item = formOf(call.args[0]);
     if (reference === undefined || item === undefined) return null;
     const count = Math.max(1, int(call.args[1], 1));
-    const health = await runtime.removeItem(
-      reference,
-      call.args[0] ?? null,
-      count,
-      true,
-      undefined,
-    );
+    const left = await runtime.removeItem(reference, call.args[0] ?? null, count, true, undefined);
     const dropped = await runtime.placeAt(item, reference, count);
-    runtime.dropped(dropped, health);
+    runtime.dropped(dropped, left);
     return runtime.referenceHandle(dropped);
   });
   // An item reference's health as a fraction (1: whole; a tempered one's 1.1 and up): its own

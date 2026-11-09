@@ -79,6 +79,12 @@ export interface ReferenceState {
    */
   health?: number;
   /**
+   * The partial soul an empty soul gem lying in the world holds (1 petty .. 5 grand: the
+   * game's ExtraSoul on the reference), dropped with it from an inventory and taken with it
+   * again (ItemStack.soul).
+   */
+  soul?: number;
+  /**
    * The failed tries on its lock (the lock data's tries), which ObjectReference.IsLockBroken
    * reads. TODO(M13): what adds to them in the original is not read (broken lockpicks do not).
    */

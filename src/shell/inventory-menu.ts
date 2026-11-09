@@ -171,7 +171,7 @@ export function inventoryModel(
         await notify('sDropQuestItemWarning');
         return;
       }
-      const health = await game.removeItem(
+      const left = await game.removeItem(
         PLAYER_REF,
         game.formHandle(formId),
         amount,
@@ -180,7 +180,7 @@ export function inventoryModel(
         typeof stack === 'number' ? stack : undefined,
       );
       const dropped = await dropAtFeet(game, formId, amount);
-      if (dropped !== undefined) game.dropped(dropped, health);
+      if (dropped !== undefined) game.dropped(dropped, left);
       // The story manager's Player Remove Item, with the item lying in the world.
       game.detach(game.storyEvents.removeFromPlayer(formId, RemoveType.drop, dropped));
     },

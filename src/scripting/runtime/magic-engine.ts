@@ -1538,9 +1538,9 @@ export class MagicEngine {
    */
   async #dropWeapon(actor: number, weapon: number): Promise<void> {
     const runtime = this.#runtime;
-    const health = await runtime.removeItem(actor, runtime.formHandle(weapon), 1, true, undefined);
+    const left = await runtime.removeItem(actor, runtime.formHandle(weapon), 1, true, undefined);
     const dropped = await runtime.placeAt(weapon, actor, 1);
-    runtime.dropped(dropped, health);
+    runtime.dropped(dropped, left);
     const hand = runtime.world.nodePlacement?.(actor, 'WEAPON');
     const at = hand?.position ?? (await runtime.placement(actor))?.position;
     if (!at) return;
