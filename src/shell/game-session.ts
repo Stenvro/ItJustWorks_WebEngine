@@ -88,7 +88,7 @@ import { PackageData } from '../ai/package-data.ts';
 import { packageStart, type GameTime, type PackageStart } from '../ai/package-start.ts';
 import type { ActorMind } from '../world/actors.ts';
 import { loadCellData, type CellActor, type CellData } from '../world/cell-loader.ts';
-import { CellBuffer, cellBufferSizes } from '../world/cell-buffer.ts';
+import { cellBufferSizes, CellStore } from '../world/cell-buffer.ts';
 import { ScriptLibrary } from '../scripting/script-library.ts';
 import { PapyrusScheduler } from '../scripting/scheduler.ts';
 import { ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -222,35 +222,41 @@ export class GameSession {
   }
 
   #ini: IniSettings | undefined;
-  #cellBuffers:
-    | {
-        readonly interior: CellBuffer<Promise<CellData>>;
-        readonly exterior: CellBuffer<Promise<CellData>>;
-      }
-    | undefined;
+  #cells: CellStore<Promise<CellData>> | undefined;
 
   /**
-   * A cell's data as the plugins make it (src/world/cell-buffer.ts): read again only once it has
-   * left its buffer (uInterior Cell Buffer, uExterior Cell Buffer), so a cell the player just
-   * left loads again without reading its records. `persistent`: an exterior cell's references
-   * kept in its world's persistent cell.
+   * A cell's data as the plugins make it (src/world/cell-buffer.ts): held while the loaded area
+   * shows it (`hold`, until cellLeft), then kept in its buffer (uInterior Cell Buffer,
+   * uExterior Cell Buffer: the cells left lately) and read again only once it has left that, so
+   * a cell the player just left loads again without reading its records. `persistent`: an
+   * exterior cell's references kept in its world's persistent cell (those standing in it now:
+   * one that came in meanwhile has it made again). Without `hold`, only looked into (a far
+   * cell's large references: kept nowhere, the buffers left as they are).
    */
-  cellData(cell: number, persistent?: readonly number[]): Promise<CellData> {
-    const sizes = cellBufferSizes((section, key) => this.ini.lookup(section, key));
-    this.#cellBuffers ??= {
-      interior: new CellBuffer(sizes.interior),
-      exterior: new CellBuffer(sizes.exterior),
-    };
-    const buffer = persistent ? this.#cellBuffers.exterior : this.#cellBuffers.interior;
-    const buffered = buffer.get(cell);
-    if (buffered) return buffered;
-    const loading = this.db.then((db) => loadCellData(db, cell, persistent));
-    buffer.set(cell, loading);
-    // A cell that failed to read is not kept.
-    loading.catch(() => {
-      buffer.delete(cell, loading);
-    });
-    return loading;
+  cellData(cell: number, persistent?: readonly number[], hold = true): Promise<CellData> {
+    this.#cells ??= new CellStore(cellBufferSizes((section, key) => this.ini.lookup(section, key)));
+    const store = this.#cells;
+    return store.use(
+      cell,
+      {
+        exterior: persistent !== undefined,
+        key: persistent ? [...persistent].sort((a, b) => a - b).join(',') : '',
+        hold,
+      },
+      () => {
+        const loading = this.db.then((db) => loadCellData(db, cell, persistent));
+        // A cell that failed to read is not kept.
+        loading.catch(() => {
+          store.forget(cell, loading);
+        });
+        return loading;
+      },
+    );
+  }
+
+  /** The loaded area let go of a cell it held (cellData): it goes into its buffer. */
+  cellLeft(cell: number): void {
+    this.#cells?.left(cell);
   }
 
   /** The blood on the screen when the player is hit (src/shell/screen-blood-view.ts). */
@@ -1487,7 +1493,10 @@ export class GameSession {
     }
     // The cell the view has them in (an exterior's once the cell at their place has loaded).
     const cell = this.scriptWorld.livePlacement(PLAYER_REF)?.cell;
-    if (cell !== undefined) runtime.actorLocations.inCell(PLAYER_REF, String(cell), cell);
+    if (cell === undefined) return;
+    runtime.actorLocations.inCell(PLAYER_REF, String(cell), cell);
+    // Where a script sent them is where they are once the world has them (attached area).
+    runtime.playerInCell(cell);
   }
 
   /**

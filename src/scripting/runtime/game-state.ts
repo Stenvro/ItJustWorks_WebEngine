@@ -79,6 +79,12 @@ export interface ReferenceState {
    */
   health?: number;
   /**
+   * The partial soul an empty soul gem lying in the world holds (1 petty .. 5 grand: the
+   * game's ExtraSoul on the reference), dropped with it from an inventory and taken with it
+   * again (ItemStack.soul).
+   */
+  soul?: number;
+  /**
    * The failed tries on its lock (the lock data's tries), which ObjectReference.IsLockBroken
    * reads. TODO(M13): what adds to them in the original is not read (broken lockpicks do not).
    */
@@ -104,7 +110,7 @@ export interface ReferenceState {
   actorCause?: number;
   /**
    * Flora harvested (harvest-engine.ts): when (game days) and in which cell; it grows again as
-   * that cell resets.
+   * it resets with its cell (cell-reset.ts).
    */
   harvested?: { readonly at: number; readonly cell?: number };
   /**
@@ -221,6 +227,11 @@ export interface ActorState {
   vehicle?: number;
   /** SetAlpha: how opaque it is drawn (0..1; none: 1). */
   alpha?: number;
+  /**
+   * The refraction an Invisibility effect drew it with as the effect last started or stopped
+   * (src/gameplay/magic/invisibility.ts invisibilityRefraction; none: 0).
+   */
+  refraction?: number;
   /** SetHeadTracking(false): its head tracks nothing. */
   headTrackingOff?: boolean;
   /** SetLookAt: what scripts have it look at, until ClearLookAt. */
@@ -378,6 +389,11 @@ export interface ActiveEffectState {
   readonly taper?: number;
   readonly taperMagnitude?: number;
   /**
+   * A Dual Value Modifier's (or Enhance Weapon's) second actor value weight as its caster's
+   * perks left it (Mod Secondary Value Weight); none: its magic effect's.
+   */
+  readonly secondWeight?: number;
+  /**
    * Held by a concentration spell, without a duration of its own: it lasts while the spell is
    * held, a value effect acting each frame (magic-engine.ts endHeld).
    */
@@ -496,13 +512,18 @@ export class GameState {
   readonly factions = new Map<number, FactionState>();
   readonly locations = new Map<number, LocationState>();
   readonly cells = new Map<number, CellState>();
-  /** When (game days) the player was last in each cell (cells reset after). */
-  readonly cellVisits = new Map<number, number>();
   /**
    * When (whole game hours) each cell last left the loaded area: its reset waits from then
    * (cell-reset.ts).
    */
   readonly cellDetached = new Map<number, number>();
+  /** Cells that reset as they next come into the loaded area, whatever their clocks say. */
+  readonly cellResetsForced = new Set<number>();
+  /**
+   * How many times each reference has been reset with its cell: its leveled lists (a
+   * container's items, a leveled actor's pick) are drawn anew each time (cell-reset.ts).
+   */
+  readonly resets = new Map<number, number>();
   /** The encounter zones' clocks (cell-reset.ts). */
   readonly zoneTimes = new Map<number, ZoneTimes>();
   /** When (whole game hours) each actor died: its respawn and its corpse's clearing wait. */

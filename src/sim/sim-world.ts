@@ -68,8 +68,10 @@ import { connectPlayerTime } from '../shell/time-flow.ts';
 import { FlyCamera } from '../render/fly-camera.ts';
 import type { Vfs } from '../vfs/vfs.ts';
 import { cellSceneLighting, pointLights } from '../world/cell-lighting.ts';
+import { loadedGridRadius } from '../world/loaded-grid.ts';
 import {
   cellArrival,
+  cellReferences,
   doorDestination,
   referenceMatrix,
   type CellData,
@@ -110,8 +112,6 @@ import { VirtualClock } from './virtual-clock.ts';
 export const SIM_STEP = 1 / 60;
 /** A step's settling waits at most this many rounds of the event loop for its work. */
 const SETTLE_ROUNDS = 10_000;
-/** Exterior cells loaded around the player's: uGridsToLoad 5 loads two on each side. */
-const DEFAULT_GRID_RADIUS = 2;
 /** A cell and the eight around it (offsets), the cell itself first. */
 const NEIGHBOURHOOD: readonly (readonly [number, number])[] = [
   [0, 0],
@@ -131,8 +131,13 @@ export interface SimOptions {
   readonly opening?: boolean;
   /** The seed of the simulation's dice (Math.random while it runs). */
   readonly seed?: number;
-  /** Exterior cells loaded on each side of the player's (default 2: uGridsToLoad 5). */
+  /** Exterior cells loaded on each side of the player's (default: the INI's uGridsToLoad). */
   readonly gridRadius?: number;
+  /**
+   * INI settings of the player's own ("Section:key" to a number), as their SkyrimPrefs.ini or
+   * Skyrim.ini would set them over the installation's: set before the game starts.
+   */
+  readonly ini?: Readonly<Record<string, number>>;
   /**
    * The game folder's reads in flight: a step waits for the reads its work started, so that
    * every run loads what it loads in the same step (without, a load may land a step later).
@@ -183,6 +188,8 @@ interface SimCell {
   readonly waterType: number | undefined;
   readonly land: LandData | undefined;
   scriptsAttached: boolean;
+  /** Its data is held (GameSession.cellData) until it is freed: then it goes to its buffer. */
+  held: boolean;
 }
 
 /** Where the simulation is: an interior cell, or a worldspace streamed around the player. */
@@ -399,6 +406,8 @@ export class SimWorld {
       voices,
       storage: null,
     });
+    for (const [setting, value] of Object.entries(options.ini ?? {}))
+      session.preferences.set(setting, value);
     // The game's HUD and menus listen (as in Play): notifications go to the HUD.
     log.attachSession(session);
     const runtime = await awaitReading(
@@ -414,7 +423,8 @@ export class SimWorld {
       log,
       terminal,
       clock,
-      options.gridRadius ?? DEFAULT_GRID_RADIUS,
+      // The loaded grid round the player: the INI's uGridsToLoad (5 built in: two on each side).
+      options.gridRadius ?? loadedGridRadius(session.ini.number('General', 'uGridsToLoad')),
       options.reads,
     );
   }
@@ -448,6 +458,12 @@ export class SimWorld {
   /** A loaded cell's form id by the stage's key. */
   cellFormId(key: string): number | undefined {
     return this.#cells.get(key)?.formId;
+  }
+
+  /** A loaded cell's data as read from the plugins (its references), by its form id. */
+  cellData(formId: number): CellData | undefined {
+    for (const cell of this.#cells.values()) if (cell.formId === formId) return cell.data;
+    return undefined;
   }
 
   /** Every placed object of the loaded cells. */
@@ -498,13 +514,16 @@ export class SimWorld {
 
   // --- Opening places ---------------------------------------------------------------------
 
-  /** Opens an interior cell, the player arriving as through its door (or at `arrival`). */
+  /**
+   * Opens an interior cell, the player arriving as through its door (or at `arrival`): from a
+   * place open now, as they left it (Player.keepStance: any change of place, as Play's).
+   */
   openInterior(formId: number, arrival?: Arrival): Promise<void> {
     return this.#drive(() => this.#openInterior(formId, arrival));
   }
 
-  /** `stance`: the player's as they come through a load door (Player.keepStance). */
-  async #openInterior(formId: number, arrival?: Arrival, stance?: PlayerStance): Promise<void> {
+  async #openInterior(formId: number, arrival?: Arrival): Promise<void> {
+    const stance = this.#play?.player.stance;
     this.#close();
     const db = await this.session.db;
     this.#place = { kind: 'interior', cell: formId };
@@ -531,7 +550,8 @@ export class SimWorld {
    * (in front of the nearest load door, else at the nearest map marker); the cells around them
    * load as they move, the sky takes the climate and the weather regions they walk into.
    * Outdoors the sky lights the actors as the page's sky does (its weather and the hour: the
-   * daylight detection sees by). TODO(sim): the player's regions.
+   * daylight detection sees by). From a place open now the player comes as they left it
+   * (Player.keepStance). TODO(sim): the player's regions.
    */
   openExterior(
     formId: number,
@@ -543,8 +563,8 @@ export class SimWorld {
   async #openExterior(
     formId: number,
     at: { readonly cell: readonly [number, number] } | { readonly arrival: Arrival },
-    stance?: PlayerStance,
   ): Promise<void> {
+    const stance = this.#play?.player.stance;
     this.#close();
     const world = await this.session.worldspace(formId);
     this.#place = { kind: 'exterior', world, radius: this.#gridRadius };
@@ -613,11 +633,9 @@ export class SimWorld {
       },
       false,
     );
-    // The player goes through as they are: sneaking on (Play's load doors: main.ts).
-    const stance = this.#play?.player.stance;
-    if (destination.world === undefined) {
-      await this.#openInterior(destination.cell, arrival, stance);
-    } else await this.#openExterior(destination.world, { arrival }, stance);
+    // The player goes through as they are (the place they leave hands on their stance).
+    if (destination.world === undefined) await this.#openInterior(destination.cell, arrival);
+    else await this.#openExterior(destination.world, { arrival });
   }
 
   // --- Stepping ---------------------------------------------------------------------------
@@ -786,6 +804,7 @@ export class SimWorld {
   /** Releases the world: the physics, the virtual clock (the page's clock and dice return). */
   dispose(): void {
     this.#close();
+    this.#letGo();
     this.clock.restore();
   }
 
@@ -808,6 +827,7 @@ export class SimWorld {
     // It resets if its time has come, before its references load (cell-reset.ts).
     await this.runtime.cellResets.attaching(formId, persistent);
     const data = await session.cellData(formId, grid && world ? persistent : undefined);
+    this.#letGo();
     for (const skipped of data.skipped) this.terminal.log('cell', skipped, 'warn');
     const toggles = findToggles(data);
     const isEnabled = this.#enableState(formId, data, toggles);
@@ -896,6 +916,7 @@ export class SimWorld {
       waterType: water ? water.type : undefined,
       land,
       scriptsAttached: false,
+      held: true,
     };
     this.#cells.set(key, cell);
     for (const object of objects) {
@@ -987,12 +1008,9 @@ export class SimWorld {
     this.#refreshCell(cell);
     const loaded = new Set(this.#cellLoadedReferences(cell));
     await runtime.cellAttached(
-      [
-        ...cell.data.objects.map((object) => object.reference),
-        ...cell.data.primitives.map((primitive) => primitive.reference),
-        ...this.stage.referencesIn(cell.key),
-      ],
+      [...cellReferences(cell.data), ...this.stage.referencesIn(cell.key)],
       (reference) => loaded.has(reference),
+      cell.formId,
     );
     for (const [reference, state] of runtime.state.references) {
       if (!runtime.state.created.has(reference)) continue;
@@ -1089,19 +1107,23 @@ export class SimWorld {
     };
   }
 
-  /** A cell goes: its scripts hear it detach, its actors and collision leave. */
-  #free(cell: SimCell): void {
+  /**
+   * A cell goes: its scripts hear it detach, its actors and collision leave; its data goes into
+   * its buffer (cell-buffer.ts), now or (`later`) once the next place's first cell is taken up.
+   */
+  #free(cell: SimCell, later = false): void {
+    if (cell.held) {
+      if (later) this.#leaving.push(cell.formId);
+      else this.session.cellLeft(cell.formId);
+    }
+    cell.held = false;
     const loaded = new Set(this.#cellLoadedReferences(cell));
     // Its moved objects keep their places; its reset waits from now (cell-reset.ts).
     const left = noteMoved(cell.placed, this.runtime.state, this.#exteriorOf(cell));
     this.runtime.detach(this.runtime.cellResets.detached(cell.formId));
     this.runtime.detach(
       this.runtime.cellDetached(
-        [
-          ...cell.data.objects.map((object) => object.reference),
-          ...cell.data.primitives.map((primitive) => primitive.reference),
-          ...this.stage.referencesIn(cell.key),
-        ],
+        [...cellReferences(cell.data), ...this.stage.referencesIn(cell.key)],
         (reference) => loaded.has(reference),
       ),
     );
@@ -1121,9 +1143,19 @@ export class SimWorld {
     for (const reference of left) void Promise.resolve().then(() => this.#showCreated(reference));
   }
 
+  /** The cells of the place left whose data waits to go into the buffers (#close). */
+  readonly #leaving: number[] = [];
+
+  /** The place left's cells go into their buffers. */
+  #letGo(): void {
+    for (const cell of this.#leaving.splice(0)) this.session.cellLeft(cell);
+  }
+
   /** Leaves the place open now: its cells, the play and the player's body. */
   #close(): void {
-    for (const cell of this.#cells.values()) this.#free(cell);
+    // Their data goes into the buffers once the next place's cells are taken up (#letGo): a
+    // cell gone back to is found before the one left takes room in its buffer.
+    for (const cell of this.#cells.values()) this.#free(cell, true);
     this.#cells.clear();
     this.stage.clear();
     this.#created.clear(this.#play);
@@ -1145,8 +1177,8 @@ export class SimWorld {
   // --- The player -------------------------------------------------------------------------
 
   /**
-   * The player in a new physics world, standing at `feet` once the ground there is in, in the
-   * stance they came through a load door in.
+   * The player in a new physics world, standing at `feet` once the ground there is in, as they
+   * left the place before (`stance`: Player.keepStance).
    */
   async #startPlay(
     feet: [number, number, number],
@@ -1969,7 +2001,7 @@ export class SimWorld {
     return true;
   }
 
-  /** The player is sent to another place: it opens with them there. */
+  /** The player is sent to another place: it opens with them there, as they left this one. */
   async #journey(at: Placement): Promise<void> {
     const arrival: Arrival = { position: at.position, heading: at.rotation[2] };
     if (at.world !== undefined) await this.#openExterior(at.world, { arrival });

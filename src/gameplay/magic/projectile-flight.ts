@@ -295,11 +295,70 @@ export function sweepCone<K extends number>(
  * Whether a projectile stays where it struck: a Light effect's (Magelight: "sticks where it
  * strikes") on a surface, shining its effect's light there for the effect's duration; on an actor
  * the effect takes hold on it instead (its light on the actor). One of each at a time for a caster
- * (lightsGivingWay; magic-engine.ts for the one on an actor). TODO(M13): whether it follows a
- * moving object it struck (read from the data: the vanilla Light effects that fly are Magelight's).
+ * (lightsGivingWay; magic-engine.ts for the one on an actor). On a moving object's body (a
+ * dynamic or keyframed one: a basket knocked over, a swinging trap) it is carried with the body
+ * where it struck it (stuckOnBody); on the fixed world it stays put. TODO(M13): inferred, as an
+ * arrow stuck in a moving object is carried; the vanilla Light effects that fly are Magelight's.
  */
 export function sticksAsLight(archetype: number | undefined, struck: 'surface' | 'actor'): boolean {
   return archetype === EffectArchetype.light && struck === 'surface';
+}
+
+/** iMaxPlayerRunes as Skyrim.esm sets it (the engine's own default is 6). */
+export const MAX_PLAYER_RUNES = 1;
+
+/**
+ * The runes at rest that give way to a caster's newest (the player's: iMaxPlayerRunes, as Mod
+ * Max Placeable Mines leaves it; observed in the original: the engine asks that entry point of
+ * the player for the setting): the caster's beyond `max`, oldest first. TODO(M13): inferred
+ * that the oldest go (UESP "Skyrim:Rune": a new rune takes the last one's place).
+ */
+export function runesGivingWay<R extends { readonly caster: number; readonly restedAt: number }>(
+  runes: Iterable<R>,
+  caster: number,
+  max: number,
+): R[] {
+  const own = [...runes]
+    .filter((rune) => rune.caster === caster)
+    .sort((a, b) => a.restedAt - b.restedAt);
+  return own.slice(0, Math.max(0, own.length - Math.max(0, Math.floor(max))));
+}
+
+/** A moving body's pose in the world (game units; its turn as a quaternion x, y, z, w). */
+export interface BodyPose {
+  readonly position: Vec3;
+  readonly rotation: readonly [number, number, number, number];
+}
+
+/** v turned by the quaternion q (x, y, z, w). */
+function turn(q: BodyPose['rotation'], v: Vec3): Vec3 {
+  const [x, y, z, w] = q;
+  const tx = 2 * (y * v[2] - z * v[1]);
+  const ty = 2 * (z * v[0] - x * v[2]);
+  const tz = 2 * (x * v[1] - y * v[0]);
+  return [
+    v[0] + w * tx + (y * tz - z * ty),
+    v[1] + w * ty + (z * tx - x * tz),
+    v[2] + w * tz + (x * ty - y * tx),
+  ];
+}
+
+/**
+ * Where a point struck on a moving body lies in the body's own frame (sticksAsLight): what
+ * stays the same however the body moves and turns.
+ */
+export function stuckOnBody(pose: BodyPose, point: Vec3): Vec3 {
+  const [x, y, z, w] = pose.rotation;
+  return turn(
+    [-x, -y, -z, w],
+    [point[0] - pose.position[0], point[1] - pose.position[1], point[2] - pose.position[2]],
+  );
+}
+
+/** Where a point held in a moving body's frame (stuckOnBody) is in the world now. */
+export function carriedByBody(pose: BodyPose, local: Vec3): Vec3 {
+  const turned = turn(pose.rotation, local);
+  return [pose.position[0] + turned[0], pose.position[1] + turned[1], pose.position[2] + turned[2]];
 }
 
 /**
@@ -313,13 +372,24 @@ export function comesAt(position: Vec3, velocity: Vec3, at: Vec3, reach: number)
   return way[0] * velocity[0] + way[1] * velocity[1] + way[2] * velocity[2] > 0;
 }
 
+/** fCombatMagicWardMagickaCastLimit's built-in default (the engine's; no plugin sets it). */
+export const WARD_MAGICKA_CAST_LIMIT = 0.25;
+
 /**
  * Whether an NPC holds its ward on: always until the combat AI's fCombatMagicWardMinCastTime
- * (1.5 s), then while something flies at it. TODO(M13): the combat AI's own rule past the minimum
- * (its ward behaviour's conditions) is not read; a spell or arrow coming is what a ward is for.
+ * (1.5 s), then while something flies at it and its magicka share is at least the ward caster's
+ * fCombatMagicWardMagickaCastLimit (0.25: what it needs to begin one, chooseCaster). TODO(M13):
+ * inferred: the combat AI's own rule past the minimum (its ward caster's checks) is not read; a
+ * spell or arrow coming is what a ward is for, and the cast limit the caster's own measure.
  */
-export function wardHeld(held: number, minimum: number, threatened: boolean): boolean {
-  return held < minimum || threatened;
+export function wardHeld(
+  held: number,
+  minimum: number,
+  threatened: boolean,
+  magicka = 1,
+  castLimit = WARD_MAGICKA_CAST_LIMIT,
+): boolean {
+  return held < minimum || (threatened && magicka >= castLimit);
 }
 
 /** An actor as projectiles meet it: an upright capsule from its feet. */

@@ -32,6 +32,11 @@ export interface ScriptEventHost {
   itemScripted(item: number): Promise<boolean>;
   /** Whether a reference was deleted (its reset is not told). */
   deleted(reference: number): boolean;
+  /**
+   * Whether a reference's scripts cannot hear its cell's events (none of its own, no alias):
+   * the hub tells every reference of a cell, the scripts hear it where there are scripts.
+   */
+  quiet?(reference: number): boolean;
 }
 
 /** The Papyrus event of each kind and state (for the docs and the tests). */
@@ -120,7 +125,9 @@ export function relayScriptEvents(host: ScriptEventHost): () => void {
       else if (await host.itemScripted(e.book)) await send(e.book, 'OnRead');
     }),
     hub.on('cellAttachDetach', (e) =>
-      send(e.reference, e.attached ? 'OnCellAttach' : 'OnCellDetach'),
+      host.quiet?.(e.reference) === true
+        ? undefined
+        : send(e.reference, e.attached ? 'OnCellAttach' : 'OnCellDetach'),
     ),
     hub.on('cellFullyLoaded', (e) =>
       Promise.all(e.references.map((reference) => send(reference, 'OnCellLoad'))),

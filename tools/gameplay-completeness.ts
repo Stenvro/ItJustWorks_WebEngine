@@ -126,6 +126,10 @@ const EXPLAINED: ReadonlyMap<string, string> = new Map([
     'src/scripting/runtime/magic-engine.ts: a Script effect does nothing but run its scripts (OnEffectStart, OnEffectFinish) and its actor value, as every effect does',
   ],
   [
+    'Magic effect archetypes|concussion',
+    'src/scripting/runtime/magic-engine.ts: observed in the original, its effect adds nothing to what every effect does (its scripts, visuals and sounds); fConcussionTimer is registered and never read',
+  ],
+  [
     'Magic effect archetypes|valueModifier',
     'src/scripting/runtime/magic-engine.ts: the default archetype: its actor value changed by the magnitude',
   ],
@@ -201,12 +205,7 @@ const INERT: readonly (readonly [RegExp, string])[] = [
 ];
 
 /** Why an open item stays open, by name (the checklist's reason). */
-const OPEN: ReadonlyMap<string, string> = new Map([
-  [
-    'fInvisibilityMaxRefraction',
-    'the refraction shimmer through an invisible actor is not drawn yet (rendering: src/gameplay/magic/invisibility.ts dithers it)',
-  ],
-]);
+const OPEN: ReadonlyMap<string, string> = new Map<string, string>();
 
 /**
  * Items the engine reads under another name than the table's (the parser turns the bit into a

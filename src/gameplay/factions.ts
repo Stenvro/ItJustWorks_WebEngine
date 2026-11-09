@@ -57,9 +57,13 @@ export interface ReactionInputs {
  * How an actor regards another (Creation Kit: Faction "Combat Reaction", Relationship ranks;
  * CommonLibSSE Actor::GetFactionReaction): itself a friend; frenzied, a crime against them, a
  * script's combat or a relationship of enemy or worse: hostile; else its closest tie: a friend
- * (friend reaction or a relationship of friend or better), an ally (ally reaction, a shared
- * faction), hostile where a faction of its regards one of theirs as an enemy, else neutral.
- * TODO(M13): the engine's precedence between a faction's enmity and another's friendship.
+ * (friend reaction or a relationship of friend or better), an ally (ally reaction), hostile
+ * where a faction of its regards one of theirs as an enemy, an ally where they merely share a
+ * faction, else neutral. A shared faction weighs less than a named enmity (inferred, TODO(M13)):
+ * the data needs it so. Sovngarde's heroes and Alduin share FavorExcludedFaction, a list of
+ * those left out of favors, and MQ304AlduinFaction names MQAncientHeroFaction an enemy; MQ305
+ * has them fight. TODO(M13): the engine's precedence between a faction's enmity and another's
+ * friendship.
  */
 export function reaction(inputs: ReactionInputs): Reaction {
   if (inputs.self) return 'friend';
@@ -71,9 +75,9 @@ export function reaction(inputs: ReactionInputs): Reaction {
   ) {
     return 'friend';
   }
-  if (inputs.sameFaction || inputs.factionReactions.includes(CombatReaction.ally)) return 'ally';
+  if (inputs.factionReactions.includes(CombatReaction.ally)) return 'ally';
   if (inputs.factionReactions.includes(CombatReaction.enemy)) return 'hostile';
-  return 'neutral';
+  return inputs.sameFaction ? 'ally' : 'neutral';
 }
 
 /**

@@ -140,6 +140,16 @@ export class CellResets {
   }
 
   /**
+   * A cell resets as it next comes into the loaded area, whatever its clocks say: the cell the
+   * player is jailed in (crime-engine.ts jail; the original forces its detach time). Inferred:
+   * forced past its encounter zone too (the vanilla jails have none) and for a cell met the
+   * first time. TODO(M13): the time the engine forces, and what it does for a loaded cell.
+   */
+  force(cell: number): void {
+    this.#runtime.state.cellResetsForced.add(cell);
+  }
+
+  /**
    * A cell is about to come into the loaded area (`references`: its own and those of its
    * worldspace's persistent cell that stand in it): it resets if its time has come; its
    * references' state is reset now and told as they attach. Returns the references reset.
@@ -168,13 +178,16 @@ export class CellResets {
     state.cellDetached.delete(cell);
     const location = zoneData?.location ?? (await this.#ownLocation(cell));
     const cleared = this.#cleared(location);
-    const decision = cellReturn({
-      now,
-      detached,
-      cleared,
-      ...(zone !== undefined && zoneData && { zone: { neverResets, times: this.#times(zone) } }),
-      waits,
-    });
+    const decision = state.cellResetsForced.delete(cell)
+      ? { reset: true, returning: true }
+      : cellReturn({
+          now,
+          detached,
+          cleared,
+          ...(zone !== undefined &&
+            zoneData && { zone: { neverResets, times: this.#times(zone) } }),
+          waits,
+        });
     if (!decision.returning) return [];
     const ids = [...new Set([...runtime.forms.db.cellReferences(cell), ...references])];
     const reset: number[] = [];
@@ -219,15 +232,37 @@ export class CellResets {
       const data = baseRecord.fields.first('DATA');
       return ((data?.[0] ?? 0) & CONTAINER_RESPAWNS) !== 0;
     }
-    if (baseRecord?.type === 'NPC_') return (npcFlags(baseRecord) & NpcFlag.respawn) !== 0;
-    return (record.flags & RecordFlag.noRespawn) === 0;
+    const noRespawn = (record.flags & RecordFlag.noRespawn) !== 0;
+    if (baseRecord?.type === 'NPC_') {
+      if ((npcFlags(baseRecord) & NpcFlag.respawn) !== 0) return true;
+      // A leveled actor (its base comes down through a leveled list) unless No Respawn.
+      return !noRespawn && (await this.#leveled(baseRecord));
+    }
+    if (baseRecord?.type === 'LVLN') return !noRespawn;
+    return !noRespawn;
+  }
+
+  /** Whether an NPC_ comes down through a leveled list (LVLN) along its templates (TPLT). */
+  async #leveled(npc: GameRecord): Promise<boolean> {
+    let current: GameRecord | undefined = npc;
+    for (let depth = 0; current?.type === 'NPC_' && depth < 16; depth++) {
+      const template = current.formIdField('TPLT');
+      if (!template || templateFlags(current) === 0) return false;
+      current = await this.#runtime.forms.record(template);
+    }
+    return current?.type === 'LVLN';
   }
 
   /** A reference goes back to how its records make it (see the file's comment). */
   #reset(record: GameRecord): void {
-    const state = this.#runtime.state;
+    const runtime = this.#runtime;
+    const state = runtime.state;
     const reference = record.formId;
     const entry = state.references.get(reference);
+    // A dead actor respawns at its editor place, a persistent one too (inferred: a persistent
+    // actor alive keeps its place. TODO(M13): read where the engine puts a persistent actor
+    // that respawns).
+    const respawning = record.type === 'ACHR' && state.actors.get(reference)?.dead === true;
     if (entry) {
       delete entry.openState;
       delete entry.locked;
@@ -240,7 +275,8 @@ export class CellResets {
       // Enabled or disabled as the plugins made it (the engine sets it again as it resets).
       // TODO(M13): read whether the engine sets the initial state or the one it had last.
       delete entry.enabled;
-      if ((record.flags & RecordFlag.persistent) === 0 && entry.container === undefined) {
+      const persistent = (record.flags & RecordFlag.persistent) !== 0;
+      if ((!persistent || respawning) && entry.container === undefined) {
         delete entry.position;
         delete entry.rotation;
         delete entry.cell;
@@ -249,8 +285,9 @@ export class CellResets {
         state.created.delete(reference);
       }
     }
-    state.inventories.delete(reference);
-    state.itemStacks.delete(reference);
+    // What it holds is its records' again, its leveled lists drawn anew (a container's items,
+    // an actor's pick and inventory).
+    if (record.type === 'ACHR' || state.inventories.has(reference)) runtime.resetHeld(reference);
     state.graphs.delete(reference);
     state.leveledLevels.delete(reference);
     if (record.type === 'ACHR') {
@@ -331,5 +368,13 @@ function npcFlags(record: GameRecord): number {
   const acbs = record.fields.first('ACBS');
   return acbs && acbs.length >= 4
     ? new DataView(acbs.buffer, acbs.byteOffset, acbs.byteLength).getUint32(0, true)
+    : 0;
+}
+
+/** NPC_ ACBS template data flags (u16 at 18): the parts it takes from its template. */
+function templateFlags(record: GameRecord): number {
+  const acbs = record.fields.first('ACBS');
+  return acbs && acbs.length >= 20
+    ? new DataView(acbs.buffer, acbs.byteOffset, acbs.byteLength).getUint16(18, true)
     : 0;
 }

@@ -5066,7 +5066,7 @@ export class ActorCombat implements CombatBridge {
       // MQ303's staff, given to the priest by AddItem (as a new weapon on the ground its alias
       // lost it, and with it the way into Sovngarde). TODO(M13): inferred from that scene.
       if (runtime.heldReference(reference, weapon) !== undefined) continue;
-      const health = await runtime.removeItem(
+      const left = await runtime.removeItem(
         reference,
         runtime.formHandle(weapon),
         1,
@@ -5074,7 +5074,7 @@ export class ActorCombat implements CombatBridge {
         undefined,
       );
       const dropped = await runtime.placeAt(weapon, reference, 1);
-      runtime.dropped(dropped, health);
+      runtime.dropped(dropped, left);
       const hand = runtime.world.nodePlacement?.(reference, node);
       const at = hand?.position ?? (await runtime.placement(reference))?.position;
       if (!at) continue;
@@ -5346,12 +5346,13 @@ export class ActorCombat implements CombatBridge {
   /**
    * A Stagger effect on an actor (its magnitude: Unrelenting Force's 0.75, 1.25, 1.5; the
    * spells' 0.05 .. 1; KnockAreaEffect's), weighed against its mass as a hit's stagger is
-   * (stagger.ts), from its caster's side (`from` where the caster is no fighter).
+   * (stagger.ts); from `from` when its source gives a place (a trap's hit: ProcessTrapHit's
+   * position; KnockAreaEffect's reference), else from no direction.
    */
-  staggerEffect(reference: number, magnitude: number): void {
+  staggerEffect(reference: number, magnitude: number, from?: Vec3): void {
     const fighter = this.#fighters.get(reference);
     if (!fighter) return;
-    void this.#staggerEffect(reference, fighter, magnitude).catch((error: unknown) => {
+    void this.#staggerEffect(reference, fighter, magnitude, from).catch((error: unknown) => {
       console.warn(`stagger effect on ${reference.toString(16)}: ${String(error)}`);
     });
   }
@@ -5359,9 +5360,16 @@ export class ActorCombat implements CombatBridge {
   /**
    * The Stagger effect weighed as a hit is, by the target's Mass actor value (the player's Ã—
    * fStaggerPlayerMassMult), with the target's Mod Incoming Stagger; observed in the original,
-   * it comes from no direction (staggerDirection 0, whoever cast it).
+   * a spell's comes from no direction (staggerDirection 0, whoever cast it). One given a place
+   * (`from`) comes from there, as a hit does (hitDirection). TODO(M13): a trap's, from where it
+   * hit, is inferred from ProcessTrapHit carrying the hit's position.
    */
-  async #staggerEffect(reference: number, fighter: Fighter, magnitude: number): Promise<void> {
+  async #staggerEffect(
+    reference: number,
+    fighter: Fighter,
+    magnitude: number,
+    from?: Vec3,
+  ): Promise<void> {
     const runtime = this.#options.session.scriptsReady;
     const targetMass = runtime
       ? (await runtime.actors.value(reference, ActorValue.mass)).current
@@ -5379,7 +5387,7 @@ export class ActorCombat implements CombatBridge {
       },
       this.#settings,
     );
-    this.stagger(reference, weighed, undefined);
+    this.stagger(reference, weighed, from);
   }
 }
 

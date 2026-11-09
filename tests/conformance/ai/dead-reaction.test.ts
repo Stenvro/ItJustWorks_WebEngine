@@ -10,8 +10,8 @@
 //   actor it detects, within fDeadReactionDistance (400), once per body).
 // - Inferred (TODO(M13) in src/ai/detection.ts): fDeadReactionDistance's built-in value 400; no
 //   plugin stores the setting.
-// - Known to differ (it.fails): an actor's first reaction is lost while the senses still read
-//   its package's record, so this actor raises the event but does not walk to the body.
+// - The reaction is this actor's first: it goes by the running package's interrupt flags at once
+//   (no record is read for it first, so it is not lost while the body is marked as seen).
 // - The data (Skyrim.esm): DB09Noble1 [0005A92D] runs DefaultStayAtEditorLocation, whose
 //   interrupt flags allow greeting corpses (PKDT 0x8); Brenuin [00013BA7] is the dead. Tamriel
 //   2,-3 is open tundra west of Whiterun (its land rises no more than 424 units over the cell).
@@ -167,12 +167,8 @@ describe.skipIf(!hasGamedata())(
       expect(near.told).toBe(1);
     });
 
-    it.fails(
-      'the same body within it later: the actor walks to it and looks at it (the corpse reaction) ' +
-        'TODO(M13): the first reaction of an actor whose package record is not read yet is lost',
-      () => {
-        expect(near.reacted).toBe(true);
-      },
-    );
+    it('the same body within it later: the actor walks to it and looks at it (the corpse reaction, its first)', () => {
+      expect(near.reacted).toBe(true);
+    });
   },
 );

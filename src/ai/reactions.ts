@@ -53,6 +53,8 @@ export interface Situation {
   readonly at?: Vec3 | undefined;
   /** It is over (the fight's last blow is old, the warning was lifted, the one searched for found). */
   readonly over?: boolean;
+  /** Spectating: how long ago the fight's last blow fell (seconds), if it is known. */
+  readonly since?: number | undefined;
 }
 
 /** A searcher looks round this many times. */
@@ -222,9 +224,15 @@ export class Reaction {
   /** Spectating: kept from the fight, facing it, while it lasts. */
   #watch(here: Vec3, seconds: number, situation: Situation): boolean {
     const distance = flat(here, this.#at);
-    // The fight's blows keep it watching; once they stop it watches on a while.
+    // The fight's blows keep it watching; once they stop it watches on until the last one is
+    // fAISpectatorRememberThreatTimer old (counted from the blow when it is known).
+    const remember = this.#settings.spectatorRememberTimer;
     this.#left =
-      situation.over === true ? this.#left - seconds : this.#settings.spectatorRememberTimer;
+      situation.since !== undefined
+        ? remember - situation.since
+        : situation.over === true
+          ? this.#left - seconds
+          : remember;
     if (this.#left <= 0 || distance > this.#settings.spectatorShutdownDistance) return this.#end();
     const keep = this.#settings.spectatorDistance;
     if (this.#walking && !this.#walked) return true;

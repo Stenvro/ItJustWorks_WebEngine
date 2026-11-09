@@ -167,6 +167,17 @@ const NO_PERKS: CraftingPerks = {
   ingredientEffectsLearned: () => Promise.resolve(1),
 };
 
+/**
+ * What items that left a container carry of their own, when they all came from one stack
+ * (ScriptRuntime.removeItem): a reference made of them in the world keeps it (dropped).
+ */
+export interface ItemsLeft {
+  /** ExtraHealth (1: plain). */
+  readonly health: number;
+  /** ExtraSoul: an empty soul gem's partial soul. */
+  readonly soul?: number;
+}
+
 /** An item of a container as the menus list it: its plain ones, or one of its stacks. */
 export interface ItemInstance {
   /** The stack (an index into the base's stacks); undefined: the plain ones. */
@@ -410,7 +421,8 @@ export class CraftingEngine {
 
   /**
    * Items of a container get data of their own (they are counted in its inventory already): a
-   * health (improved) and the charge left (used); those alike in both stack.
+   * health (improved), the charge left (used) and the partial soul an empty soul gem holds;
+   * those alike in all stack.
    */
   addStack(
     container: number,
@@ -419,10 +431,19 @@ export class CraftingEngine {
     count = 1,
     worn = false,
     charge?: number,
+    soul?: number,
   ): void {
-    if (count <= 0 || (health === 1 && charge === undefined)) return;
+    const souled = soul !== undefined && soul > 0;
+    if (count <= 0 || (health === 1 && charge === undefined && !souled)) return;
     const list = this.#list(container, base, true) ?? [];
-    const same = list.find((stack) => stack.health === health && stack.charge === charge);
+    const same = list.find(
+      (stack) =>
+        stack.health === health &&
+        stack.charge === charge &&
+        (stack.soul ?? 0) === (souled ? soul : 0) &&
+        // A partial soul stacks with the gems alike that are not worn (addSoul).
+        (!souled || !stack.worn),
+    );
     if (same) {
       same.count += count;
       if (worn) same.worn = true;
@@ -432,6 +453,7 @@ export class CraftingEngine {
         health,
         ...(charge !== undefined && { charge }),
         ...(worn && { worn }),
+        ...(souled && { soul }),
       });
       list.sort((a, b) => b.health - a.health);
     }
@@ -440,7 +462,8 @@ export class CraftingEngine {
   /**
    * Items left a container (ScriptRuntime.removeItem; `had` of the base before): the stack
    * asked for first (a menu's row), then the plain ones, then the least improved; the stacks
-   * that leave join `to`'s. What left of the stacks (their health and count).
+   * that leave join `to`'s with what they carry (their health, charge and partial soul). What
+   * left of the stacks (their health, partial soul and count).
    */
   itemsMoved(
     from: number,
@@ -449,9 +472,9 @@ export class CraftingEngine {
     moved: number,
     had: number,
     stack?: number,
-  ): { readonly health: number; readonly count: number }[] {
+  ): { readonly health: number; readonly soul?: number; readonly count: number }[] {
     const list = this.#list(from, base);
-    const left: { health: number; count: number }[] = [];
+    const left: { health: number; soul?: number; count: number }[] = [];
     if (!list || moved <= 0) return left;
     const stacked = list.reduce((sum, entry) => sum + entry.count, 0);
     let remaining = moved;
@@ -459,8 +482,13 @@ export class CraftingEngine {
       if (count <= 0) return;
       entry.count -= count;
       remaining -= count;
-      left.push({ health: entry.health, count });
-      if (to !== undefined) this.addStack(to, base, entry.health, count, false, entry.charge);
+      left.push({
+        health: entry.health,
+        ...(entry.soul !== undefined && entry.soul > 0 && { soul: entry.soul }),
+        count,
+      });
+      if (to !== undefined)
+        this.addStack(to, base, entry.health, count, false, entry.charge, entry.soul);
     };
     const chosen = stack === undefined ? undefined : list[stack];
     if (chosen) take(chosen, Math.min(chosen.count, remaining));
@@ -655,10 +683,7 @@ export class CraftingEngine {
    * the gem can hold stays in the empty gem (a grand gem with a petty soul), not its filled form.
    */
   addSoul(container: number, gem: number, soul: number): void {
-    const list = this.#list(container, gem, true) ?? [];
-    const stack = list.find((entry) => entry.soul === soul && !entry.worn);
-    if (stack) stack.count++;
-    else list.push({ count: 1, health: 1, soul });
+    this.addStack(container, gem, 1, 1, false, undefined, soul);
   }
 
   /** The greatest partial soul in a container's empty gems of a base (0: none). */

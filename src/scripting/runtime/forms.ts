@@ -231,9 +231,15 @@ export class FormIndex {
   /**
    * The scripts attached to a form: a reference's own (VMAD) and its base object's (the
    * reference's property values win for a script both name), a quest's, an alias's. `scriptBase`
-   * replaces the reference's base for its scripts (an actor's: the NPC_ it takes them from).
+   * replaces the reference's base for its scripts (an actor's: the NPC_ it takes them from);
+   * `ownBases`, NPC_s whose own scripts run too, nearest first (an actor's template links that
+   * take their template's scripts and have their own), each over the ones after it.
    */
-  async attachedScripts(target: ObjectHandle, scriptBase?: number): Promise<AttachedScriptInfo[]> {
+  async attachedScripts(
+    target: ObjectHandle,
+    scriptBase?: number,
+    ownBases: readonly number[] = [],
+  ): Promise<AttachedScriptInfo[]> {
     if (target.alias >= 0) {
       const record = await this.record(target.formId);
       const attachments = await this.attachments(target.formId);
@@ -250,27 +256,46 @@ export class FormIndex {
       own.filter((script) => !scriptAttached(script)).map((s) => s.name.toLowerCase()),
     );
     if (record.type === 'REFR' || record.type === 'ACHR' || record.type === 'PGRE') {
-      const base = scriptBase ?? record.formIdField('NAME');
-      const baseRecord = base === undefined ? undefined : await this.record(base);
-      const baseScripts = base === undefined ? [] : ((await this.attachments(base))?.scripts ?? []);
-      for (const script of baseScripts.filter(scriptAttached)) {
-        if (!baseRecord) break;
-        if (removed.has(script.name.toLowerCase())) continue;
-        const info = this.#info(baseRecord, script);
-        const mine = scripts.find(
-          (entry) => entry.name.toLowerCase() === script.name.toLowerCase(),
-        );
-        if (!mine) {
-          scripts.push(info);
-          continue;
-        }
-        // The base's values for the properties the reference does not set.
-        const merged = new Map(info.properties);
-        for (const [name, value] of mine.properties) merged.set(name, value);
-        scripts[scripts.indexOf(mine)] = { name: mine.name, properties: merged };
-      }
+      const last = scriptBase ?? record.formIdField('NAME');
+      // The NPC_s that also give theirs (nearest first), then the base.
+      const bases = last === undefined ? ownBases : [...ownBases, last];
+      for (const base of bases) await this.#mergeBase(scripts, removed, base);
     }
     return scripts;
+  }
+
+  /** The scripts of base forms together, each over the ones after it (an actor's NPC_s). */
+  async baseScripts(bases: readonly number[]): Promise<AttachedScriptInfo[]> {
+    const scripts: AttachedScriptInfo[] = [];
+    for (const base of bases) await this.#mergeBase(scripts, new Set(), base);
+    return scripts;
+  }
+
+  /**
+   * A base's scripts added to those a reference runs: one not there yet joins them, one there
+   * takes the base's values for the properties it does not set.
+   */
+  async #mergeBase(
+    scripts: AttachedScriptInfo[],
+    removed: ReadonlySet<string>,
+    base: number,
+  ): Promise<void> {
+    const baseRecord = await this.record(base);
+    if (!baseRecord) return;
+    const baseScripts = (await this.attachments(base))?.scripts ?? [];
+    for (const script of baseScripts.filter(scriptAttached)) {
+      if (removed.has(script.name.toLowerCase())) continue;
+      const info = this.#info(baseRecord, script);
+      const mine = scripts.find((entry) => entry.name.toLowerCase() === script.name.toLowerCase());
+      if (!mine) {
+        scripts.push(info);
+        continue;
+      }
+      // The base's values for the properties the reference does not set.
+      const merged = new Map(info.properties);
+      for (const [name, value] of mine.properties) merged.set(name, value);
+      scripts[scripts.indexOf(mine)] = { name: mine.name, properties: merged };
+    }
   }
 
   #info(

@@ -69,9 +69,9 @@ import type { ActorTarget } from './actors.ts';
 import { turnSwing } from './open-close.ts';
 import {
   bodyOnPose,
+  poseObjectRagdoll,
   poseRagdoll,
   type RagdollData,
-  type RagdollPoseLocals,
 } from '../world/ragdoll-data.ts';
 import { placeCorpsePose, type CorpsePose } from '../animation/corpse-pose.ts';
 
@@ -125,8 +125,10 @@ const ownReference = (hit: PickHit): number | undefined =>
 /**
  * A door that is not a load door, or a container, whose model has an open sequence: its
  * sequence state (doors open and close as they are activated, containers while their menu is
- * open). A door comes in open as the scripts left it (`openState`, GetOpenState's 1 open .. 4
- * closing), else as placed (ONAM): its open sequence played long ago, held at its end.
+ * open). A door or a container comes in open as the game left it (`openState`, GetOpenState's
+ * 1 open .. 4 closing: a script's SetOpen, a door's swing), else as placed (a door's ONAM): its
+ * open sequence played long ago, held at its end. Kept with the reference until its cell
+ * resets (the Creation Kit's SetOpen: a door's or a container's).
  */
 export function openable(
   object: CellObject,
@@ -140,8 +142,9 @@ export function openable(
     return undefined;
   }
   const open =
-    object.baseType === 'DOOR' &&
-    (openState === undefined ? object.openByDefault === true : openState === 1 || openState === 2);
+    openState === undefined
+      ? object.baseType === 'DOOR' && object.openByDefault === true
+      : openState === 1 || openState === 2;
   return open ? { sequence: 'open', start: -OPENED_LONG_AGO } : { sequence: undefined, start: 0 };
 }
 
@@ -652,25 +655,6 @@ export interface CellCollision {
    * comes back when a script enables it). All are enabled without.
    */
   readonly isEnabled?: (reference: number) => boolean;
-}
-
-/**
- * Poses an articulated object's nodes (its pose in its rest pose) and its bodies by its placed
- * ragdoll pose. What the walk applied (undefined: it has none, or nothing matched).
- */
-function poseObjectRagdoll(
-  physics: PhysicsWorld,
-  placed: PlacedCollision,
-  pose: ActorPose,
-  collision: CollisionData,
-  object: { readonly world: Mat4; readonly ragdoll?: RagdollData },
-): RagdollPoseLocals | undefined {
-  if (!object.ragdoll) return undefined;
-  const rest = pose.worlds.slice();
-  const posed = poseRagdoll(pose, collision, { bones: object.ragdoll.bones });
-  if (!posed || posed.locals.size === 0) return undefined;
-  physics.poseBodies(placed, object.world, ({ data }) => bodyOnPose(pose, rest, data));
-  return posed;
 }
 
 /** A dead actor's ragdoll: its skeleton's bodies (skeleton.nif) moving its pose's nodes. */

@@ -3,14 +3,13 @@
 // ingredient, or a leveled list resolved) by the season's chance (PFPC), as many as the
 // harvester's perks make one (Mod Ingredients Harvested: Green Thumb's two), with the harvest
 // sound (SNAM) and the item's message; the reference is harvested from then on (the world
-// shows its model's harvested look). A harvested flora grows again as its cell resets (UESP
-// "Skyrim:Respawning"): once the player has not been in that cell for iHoursToRespawnCell game
-// hours (iHoursToRespawnCellCleared where its location is cleared; never in an interior whose
-// encounter zone Never Resets). Platform-independent.
+// shows its model's harvested look). A harvested flora grows again as it resets with its cell
+// (cell-reset.ts: the cell's or its encounter zone's clock; not a reference flagged No Respawn,
+// as a coin purse placed so that it never comes back). Platform-independent.
 
 import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
 import { parseFlora, productionChance, type FloraRecord } from '../../world/flora-records.ts';
-import { EncounterZoneFlag, parseEncounterZone } from '../../world/leveling-records.ts';
+import { RESET_DEFAULTS } from './cell-reset.ts';
 import { PLAYER_REF } from './forms.ts';
 import type { ScriptRuntime } from './runtime.ts';
 
@@ -23,11 +22,7 @@ export interface Harvest {
   readonly sound: number | undefined;
 }
 
-/** iHoursToRespawnCell, iHoursToRespawnCellCleared (the engine's values, Skyrim.esm's too). */
-const RESPAWN_HOURS = 240;
-const RESPAWN_HOURS_CLEARED = 720;
-
-/** How often the player's cell is noted and harvested flora looked at (real seconds). */
+/** How often harvested flora without a cell is looked at (real seconds). */
 const SWEEP_SECONDS = 2;
 
 export class HarvestEngine {
@@ -35,8 +30,6 @@ export class HarvestEngine {
   readonly #floras = new Map<number, Promise<FloraRecord | undefined>>();
   #sinceSweep = SWEEP_SECONDS;
   #sweeping = false;
-  /** Called as a reference grows again (the world shows it unharvested). */
-  onRegrown: ((reference: number) => void) | undefined;
 
   constructor(runtime: ScriptRuntime) {
     this.#runtime = runtime;
@@ -95,62 +88,40 @@ export class HarvestEngine {
     return this.#runtime.world.livePlacement?.(PLAYER_REF)?.cell;
   }
 
-  /** Every frame: the player's cell is noted (its flora's reset waits), harvested flora regrow. */
+  /**
+   * Every frame: harvested flora whose harvest noted no cell grows again by its own clock.
+   * Flora of a cell grows again only with its cell's reset (cell-reset.ts).
+   */
   update(realSeconds: number): void {
     this.#sinceSweep += realSeconds;
     if (this.#sinceSweep < SWEEP_SECONDS || this.#sweeping) return;
     this.#sinceSweep = 0;
-    const state = this.#runtime.state;
-    const cell = this.#playerCell();
-    if (cell !== undefined) state.cellVisits.set(cell, state.gameDaysPassed);
     this.#sweeping = true;
-    void this.#regrow(cell).finally(() => {
+    void this.#regrow().finally(() => {
       this.#sweeping = false;
     });
   }
 
-  /** Harvested flora whose cell has reset grow again (not the cell the player is in). */
-  async #regrow(playerCell: number | undefined): Promise<void> {
+  /**
+   * Harvested flora without a cell grows again once more than iHoursToRespawnCell game hours
+   * have passed since its harvest. Inferred: such flora has no cell to reset with. TODO(M13):
+   * what the engine does with harvested flora that has no cell.
+   */
+  async #regrow(): Promise<void> {
     const state = this.#runtime.state;
-    for (const [reference, entry] of state.references) {
+    let hours: number | undefined;
+    for (const entry of state.references.values()) {
       const harvested = entry.harvested;
-      if (!harvested || (harvested.cell !== undefined && harvested.cell === playerCell)) continue;
-      const hours = await this.respawnHours(harvested.cell);
-      const last = Math.max(
-        harvested.at,
-        harvested.cell === undefined ? 0 : (state.cellVisits.get(harvested.cell) ?? 0),
-      );
-      if ((state.gameDaysPassed - last) * 24 < hours) continue;
+      if (!harvested || harvested.cell !== undefined) continue;
+      hours ??= await this.#respawnHours();
+      if ((state.gameDaysPassed - harvested.at) * 24 < hours) continue;
       delete entry.harvested;
-      this.onRegrown?.(reference);
     }
   }
 
-  /**
-   * Game hours a cell takes to reset: iHoursToRespawnCell, iHoursToRespawnCellCleared where its
-   * location is cleared, never for an interior whose encounter zone Never Resets.
-   */
-  async respawnHours(cell: number | undefined): Promise<number> {
-    const runtime = this.#runtime;
-    const setting = async (name: string, fallback: number): Promise<number> => {
-      const value = await runtime.gameSetting(name);
-      return typeof value === 'number' ? value : fallback;
-    };
-    const record = cell === undefined ? undefined : await runtime.forms.record(cell);
-    if (!record) return setting('iHoursToRespawnCell', RESPAWN_HOURS);
-    const interior = runtime.forms.db.worldOfCell(record.formId) === undefined;
-    const zoneId = record.formIdField('XEZN');
-    const zone = zoneId === undefined ? undefined : await runtime.forms.record(zoneId);
-    if (interior && zone && (parseEncounterZone(zone).flags & EncounterZoneFlag.neverResets) !== 0)
-      return Number.POSITIVE_INFINITY;
-    const location = record.formIdField('XLCN');
-    if (location !== undefined && cleared(runtime, location))
-      return setting('iHoursToRespawnCellCleared', RESPAWN_HOURS_CLEARED);
-    return setting('iHoursToRespawnCell', RESPAWN_HOURS);
+  /** iHoursToRespawnCell (game hours). */
+  async #respawnHours(): Promise<number> {
+    const value = await this.#runtime.gameSetting('iHoursToRespawnCell');
+    return typeof value === 'number' ? value : RESET_DEFAULTS.iHoursToRespawnCell;
   }
-}
-
-/** Whether a location is cleared (Location.SetCleared, the dungeons' bosses). */
-function cleared(runtime: ScriptRuntime, location: number): boolean {
-  return runtime.state.locations.get(location)?.cleared === true;
 }
