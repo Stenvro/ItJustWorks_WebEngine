@@ -1604,8 +1604,10 @@ export class Player implements Camera {
 
   /**
    * PitchOverrideStart / PitchOverrideEnd: observed in the original, set on the
-   * third-person camera while it is the camera's state. TODO(M13): what the third-person camera
-   * does with it is not known; nothing reads it yet.
+   * third-person camera while it is the camera's state (the equip and unequip clips raise them
+   * at their first frame and their end). Ours: the body's pitch from the view is held level
+   * while it is on, in third person (src/animation/pitch-override.ts; inferred, TODO(M13): what
+   * the original's camera does with it).
    */
   pitchOverride = false;
 

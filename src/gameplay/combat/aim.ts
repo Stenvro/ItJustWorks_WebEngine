@@ -4,6 +4,8 @@
 // shot) and the stray of an NPC's arrows. Angles are radians: heading 0 north (+Y), π/2 east
 // (+X); pitch up positive. Platform-independent.
 
+import { AmmoFlag } from '../../world/item-records.ts';
+
 type Vec3 = readonly [number, number, number];
 
 /** The game settings aiming reads (GMST), with the engine's built-in values. */
@@ -67,6 +69,21 @@ export function readAimSettings(get: (name: string) => number | undefined): AimS
     magicConcentrationAimVariance:
       get('fCombatMagicConcentrationAimVariance') ?? d.magicConcentrationAimVariance,
   };
+}
+
+/** The hand node a crossbow's bolt is held on (observed in the original). */
+export const BOLT_NODE = 'NPC R MagicNode [RMag]';
+
+/**
+ * The node a bow's or crossbow's shot leaves from, by its ammunition's AMMO flags: where the
+ * nocked shot is held (observed in the original: an arrow on WEAPON, the drawing hand, where the
+ * bow animations hold it; a bolt on NPC R MagicNode [RMag], where the crossbow's clips lay it),
+ * a non-playable one too (it is not shown, it still leaves from there). The crossbow's models
+ * carry no node of their own for it (CrossbowRoot, its string, cocking and trigger bones).
+ * Inferred, TODO(M13): the original's launch node for a bolt was not read (ours: where it lies).
+ */
+export function shotLaunchNode(ammoFlags: number): string {
+  return (ammoFlags & AmmoFlag.nonBolt) !== 0 ? 'WEAPON' : BOLT_NODE;
 }
 
 /** A direction as angles. */

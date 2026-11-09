@@ -64,7 +64,7 @@ import {
   readCombatDialogueSettings,
   spectatorComments,
 } from '../ai/combat-dialogue.ts';
-import { CombatProfiles, NO_STYLE, type CombatProfile } from '../ai/combat-profile.ts';
+import { CombatProfiles, NO_STYLE, carriedAmmo, type CombatProfile } from '../ai/combat-profile.ts';
 import { FightReaction, reactionOf } from '../ai/combat-reactions.ts';
 import {
   abortsRun,
@@ -129,8 +129,9 @@ import {
   castChance,
   chooseAttack,
   chooseEquipment,
-  leftHandSpell,
-  leftHandWeapon,
+  bestAmmo,
+  leftHandChoice,
+  nextEquipWeighing,
   powerAttackCooling,
   shoutAim,
   restoreShare,
@@ -143,7 +144,6 @@ import {
   maneuverDirection,
   maneuverTime,
   maxOptimalRange,
-  minEquipTime,
   offensiveMult,
   rangedAttackChance,
   specialAttackChance,
@@ -183,7 +183,7 @@ import type { MagicAiState } from '../scripting/runtime/magic-engine.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { ActorValue } from '../world/actor-values.ts';
-import { AmmoFlag, WeaponType } from '../world/item-records.ts';
+import { WeaponType } from '../world/item-records.ts';
 import { seededRandom } from '../world/actors.ts';
 import type { ActorAi } from './actor-ai.ts';
 import type { ActorMovers } from './actor-movers.ts';
@@ -225,6 +225,8 @@ export interface FighterGear {
   readonly speed?: number;
   /** A one-handed weapon in its left hand (it dual wields). */
   readonly leftWeapon?: boolean;
+  /** That left weapon (WEAP), where it holds one. */
+  readonly leftWeaponForm?: number;
   /** Its race's DATA flags (RaceAiFlag). */
   readonly raceFlags?: number;
   /** The spell its right and left hands hold (undefined: none). */
@@ -464,6 +466,13 @@ interface Mind {
   equipped: EquipOption | undefined;
   nextEquip: number;
   equipping: boolean;
+  /** Its equipment being weighed now (the casting's options awaited). */
+  weighing: boolean;
+  /** Its spells as equipment options (CombatCasting.options), as last read, and when. */
+  spellOptions: readonly EquipOption[];
+  spellsRead: number;
+  /** What its left hand took up last is kept until then (fCombatInventoryMinEquipTime*). */
+  leftKeptUntil: number;
   search: CombatSearch | undefined;
   nextLine: number;
   /** Since when an actor stands in its shot's way (undefined: its line is clear). */
@@ -1194,6 +1203,10 @@ export class ActorCombatAi {
         equipped: undefined,
         nextEquip: 0,
         equipping: false,
+        weighing: false,
+        spellOptions: [],
+        spellsRead: -Infinity,
+        leftKeptUntil: 0,
         search: undefined,
         nextLine: 0,
         fleeWay: undefined,
@@ -1809,6 +1822,8 @@ export class ActorCombatAi {
     mind.sheatheAt = undefined;
     mind.nextLine = this.#clock + firstTauntTime(this.#random, this.#settings);
     mind.nextEquip = 0;
+    mind.spellsRead = -Infinity;
+    mind.leftKeptUntil = 0;
     // The fight's confidence modifier, drawn once; its strengths weighed at once.
     mind.modifier = drawConfidenceModifier(this.#random, this.#settings);
     mind.confidenceBoost = 0;
@@ -2222,13 +2237,18 @@ export class ActorCombatAi {
       ? Math.hypot(feet[0] - there[0], feet[1] - there[1], feet[2] - there[2])
       : flat(feet, there);
     const facing = headingTo(feet, there);
-    // What it fights with (its style's scores), now and then.
-    if (this.#clock >= mind.nextEquip && !mind.equipping) {
-      mind.nextEquip = this.#clock + this.#equipWait(mind.equipped?.kind);
-      void this.#chooseEquipment(mind, view, distance).catch((error: unknown) => {
-        mind.equipping = false;
-        this.#warn(`${reference.toString(16)} equipment: ${describe(error)}`);
-      });
+    // What it fights with (its style's scores): weighed continuously, once what it took up has
+    // been kept its kind's minimum time (nextEquipWeighing), one weighing at a time.
+    if (this.#clock >= mind.nextEquip && !mind.equipping && !mind.weighing) {
+      mind.weighing = true;
+      void this.#chooseEquipment(mind, view, distance)
+        .catch((error: unknown) => {
+          mind.equipping = false;
+          this.#warn(`${reference.toString(16)} equipment: ${describe(error)}`);
+        })
+        .finally(() => {
+          mind.weighing = false;
+        });
     }
     if (mind.equipping) return;
     // Swimming, its graph takes no draw (Swim_State): its weapon away, it makes for the shore
@@ -4285,7 +4305,7 @@ export class ActorCombatAi {
         await this.#equipAmmo(mind.reference, base, runtime);
       }
       mind.profileRead = -Infinity;
-      mind.nextEquip = this.#clock + this.#equipWait('melee');
+      mind.nextEquip = this.#equipWait('melee');
     } finally {
       mind.equipping = false;
     }
@@ -4358,11 +4378,23 @@ export class ActorCombatAi {
   }
 
   /**
-   * How long what it took up is kept before it weighs again: its kind's
-   * fCombatInventoryMinEquipTime*, and no sooner than what it carries is read again.
+   * When it weighs its equipment again (nextEquipWeighing): at once when it kept what it holds,
+   * after its kind's fCombatInventoryMinEquipTime* when it took something up.
    */
-  #equipWait(kind: EquipKind | undefined): number {
-    return Math.max(minEquipTime(kind, this.#settings), PROFILE_SECONDS);
+  #equipWait(takenUp: EquipKind | undefined): number {
+    return nextEquipWeighing(this.#clock, takenUp, this.#settings);
+  }
+
+  /**
+   * Its spells, staffs and shout as equipment options (CombatCasting.options): read again once
+   * PROFILE_SECONDS passed (as what it carries is), weighed in between as they were read.
+   */
+  async #spellOptions(mind: Mind): Promise<readonly EquipOption[]> {
+    if (this.#clock - mind.spellsRead < PROFILE_SECONDS) return mind.spellOptions;
+    const casting = this.#options.casting?.();
+    mind.spellOptions = casting ? await casting.options(mind.reference, mind.target) : [];
+    mind.spellsRead = this.#clock;
+    return mind.spellOptions;
   }
 
   /**
@@ -4373,8 +4405,8 @@ export class ActorCombatAi {
     const profile = mind.profile;
     const runtime = this.#options.session.scriptsReady;
     if (!profile || !runtime) return;
-    const casting = this.#options.casting?.();
-    const spells = casting ? await casting.options(mind.reference, mind.target) : [];
+    const fresh = this.#clock - mind.spellsRead >= PROFILE_SECONDS;
+    const spells = await this.#spellOptions(mind);
     const current = view.gear?.weapon;
     const options = [...profile.options, ...spells].map((option) => ({
       ...option,
@@ -4397,11 +4429,16 @@ export class ActorCombatAi {
     if (!best.equipped && attacking(view.state)) return;
     mind.equipped = best;
     if (best.equipped) {
-      await this.#fillLeftHand(mind, view, spells, distance, runtime);
+      mind.nextEquip = this.#equipWait(undefined);
+      // Its bow's arrows weighed as what it carries is read again: the best it has left.
+      if (fresh && best.kind === 'ranged' && best.id !== undefined) {
+        await this.#equipAmmo(mind.reference, best.id, runtime);
+      }
+      await this.#fillLeftHand(mind, view, spells, distance, runtime, fresh);
       return;
     }
     // Taken up, it is kept a while (fCombatInventoryMinEquipTime*).
-    mind.nextEquip = this.#clock + this.#equipWait(best.kind);
+    mind.nextEquip = this.#equipWait(best.kind);
     // Spells are taken up as they are cast (castAt); a staff is a weapon in the hand.
     if (best.kind === 'magic' || best.kind === 'shout') return;
     // Another weapon: sheathed first, then taken up (and arrows for a bow), then drawn again.
@@ -4432,8 +4469,10 @@ export class ActorCombatAi {
   }
 
   /**
-   * A free left hand beside its one-handed weapon takes up its best spell (leftHandSpell): the
-   * combat tree's left-hand casting (mayCastLeft) then casts it beside its blows.
+   * The left hand beside its one-handed weapon: the best of a second weapon and its spells
+   * (leftHandChoice), weighed again once what it took up there has been kept its kind's
+   * minimum time; the combat tree's left-hand casting (mayCastLeft) casts a spell there beside
+   * its blows. Else a torch in the dark.
    */
   async #fillLeftHand(
     mind: Mind,
@@ -4441,10 +4480,11 @@ export class ActorCombatAi {
     spells: readonly EquipOption[],
     distance: number,
     runtime: ScriptRuntime,
+    fresh: boolean,
   ): Promise<void> {
     const gear = view.gear;
     const profile = mind.profile;
-    if (!gear || !profile || gear.weapon === undefined || gear.leftSpell !== undefined) return;
+    if (!gear || !profile || gear.weapon === undefined) return;
     // A torch it took up in this fight: kept its while, then while it is dark.
     if (gear.torch === true) {
       const torch = mind.torch;
@@ -4466,43 +4506,43 @@ export class ActorCombatAi {
       }
       return;
     }
-    // A race that can dual wield, its style allowing it: a second one-handed weapon first.
-    const weapon = leftHandWeapon(
+    // What the left hand took up is kept its kind's minimum time.
+    if (this.#clock < mind.leftKeptUntil) return;
+    // A second one-handed weapon (a race that can dual wield, its style allowing it) and its
+    // spells weighed together, against what the hand holds (leftHandChoice).
+    const pick = leftHandChoice(
       {
         weapon: gear.weapon,
         weaponType: gear.weaponType,
         shield: gear.shield,
-        leftWeapon: gear.leftWeapon === true,
-        leftSpell: false,
+        leftWeapon: gear.leftWeapon === true ? gear.leftWeaponForm : undefined,
+        leftSpell: gear.leftSpell,
       },
       gear.raceFlags ?? 0,
       profile.options,
-      distance,
-      profile.style,
-      this.#settings,
-    );
-    if (weapon !== undefined) {
-      await runtime.equipment.equip(mind.reference, weapon, { hand: 'left' });
-      return;
-    }
-    const spell = leftHandSpell(
-      {
-        weaponType: gear.weaponType,
-        shield: gear.shield,
-        leftWeapon: gear.leftWeapon === true,
-      },
       spells,
       distance,
       profile.style,
       this.#settings,
     );
-    if (spell !== undefined) {
-      await runtime.equipment.equipSpell(mind.reference, spell, CastingSource.left);
+    if (pick !== undefined) {
+      mind.leftKeptUntil = nextEquipWeighing(
+        this.#clock,
+        pick.kind === 'spell' ? 'magic' : 'melee',
+        this.#settings,
+      );
+      if (pick.kind === 'weapon') {
+        await runtime.equipment.equip(mind.reference, pick.id, { hand: 'left' });
+      } else {
+        await runtime.equipment.equipSpell(mind.reference, pick.id, CastingSource.left);
+      }
       return;
     }
-    // Nothing else for the free hand: a torch it carries, in the dark (torchInFight).
+    // Nothing else for the free hand: a torch it carries, in the dark (torchInFight), looked
+    // for as what it carries is read again.
     const oneHanded = gear.weaponType >= 1 && gear.weaponType <= 4;
     if (!oneHanded || gear.shield || gear.leftWeapon === true) return;
+    if (gear.leftSpell !== undefined || !fresh) return;
     const dark = this.#dark(mind.reference);
     if (!dark) return;
     const torch = await this.#carriedTorch(mind.reference, runtime);
@@ -4554,16 +4594,9 @@ export class ActorCombatAi {
   /** Arrows for a bow, bolts for a crossbow: the best it carries. */
   async #equipAmmo(actor: number, weapon: number, runtime: ScriptRuntime): Promise<void> {
     const equipment = runtime.equipment;
-    const arrows = (await equipment.item(weapon))?.weapon?.weaponType === WeaponType.bow;
-    let best: { id: number; damage: number } | undefined;
-    for (const [form, count] of await runtime.inventory(actor)) {
-      if (count <= 0) continue;
-      const item = await equipment.item(form);
-      if (item?.type !== 'AMMO') continue;
-      if ((((item.ammoFlags ?? 0) & AmmoFlag.nonBolt) !== 0) !== arrows) continue;
-      const damage = item.ammoDamage ?? 0;
-      if (!best || damage > best.damage) best = { id: form, damage };
-    }
+    const type = (await equipment.item(weapon))?.weapon?.weaponType;
+    if (type !== WeaponType.bow && type !== WeaponType.crossbow) return;
+    const best = bestAmmo(await carriedAmmo(runtime, actor), type === WeaponType.crossbow);
     if (best && (await equipment.ammo(actor)) !== best.id) await equipment.equip(actor, best.id);
   }
 

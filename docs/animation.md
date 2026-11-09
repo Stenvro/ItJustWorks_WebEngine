@@ -199,7 +199,12 @@ screenshots; the graph states the hand variables select, offline (`node tools/we
 
 The nocked shot's node is the ammunition's (observed in the original, from the engine's arrow attaching):
 an arrow (AMMO flag Non-Bolt) on WEAPON, a crossbow's bolt on NPC R MagicNode [RMag]; a
-non-playable ammunition shows none.
+non-playable ammunition shows none. The shot leaves from the node it is nocked on
+(`shotLaunchNode`, src/gameplay/combat/aim.ts): an arrow from WEAPON, a bolt from NPC R MagicNode
+[RMag], a non-playable one from there too though it is not shown; the first-person arms' node in
+first person. The crossbows' models carry no node of their own for it (CrossbowRoot, the limbs,
+strings, cocking and trigger bones: `Crossbow.nif` of DLC01). Inferred, TODO(M13): the node the
+original launches a bolt from was not read (ours: where the bolt lies).
 
 **The rarer actions** (`src/gameplay/combat/combat-actions.ts`; the trees tested in
 `tests/engine-actions.int.test.ts`). Each goes through the idle tree as the others do (the
@@ -866,7 +871,7 @@ come before the response files are read wait for them.
 | NPCAttach / NPCDetach                                             | attach the actor to its furniture's node the payload names, or detach it                                                                                                      | recorded. TODO(M13): our furniture keeps markers, not animated nodes                                                                                                                                                                           |
 | CameraShake (payload: strength)                                   | shakes the camera from the actor's place (src/shell/camera-shake.ts)                                                                                                          | as the engine                                                                                                                                                                                                                                  |
 | AnimatedCameraStart / DeltaStart / End (player)                   | the camera goes over (iAnimatedTransitionMillis) to ride the node the payload names in the player's body, or the third-person camera adds its motion; the end returns         | as the engine in third person. TODO(M13): the node's view axis (+y inferred)                                                                                                                                                                   |
-| PitchOverrideStart/End, ZeroPitch (player)                        | a flag on the third-person camera; the camera's pitch to level                                                                                                                | the flag is kept (TODO(M13): what reads it); the pitch set to 0                                                                                                                                                                                |
+| PitchOverrideStart/End, ZeroPitch (player)                        | a flag on the third-person camera; the camera's pitch to level                                                                                                                | the flag holds the body's pitch from the view level in third person (inferred, TODO(M13): [PitchOverride](#casting)); the pitch set to 0                                                                                                       |
 | AnimationObjectLoad / Draw (AnimObjLoad, AnimObjDraw)             | load / show the animation object the payload names                                                                                                                            | the animation objects ([above](#animation-objects))                                                                                                                                                                                            |
 | Decapitate (Decapitate; a killmove victim's 2_Decapitate)         | the actor wears its race's decapitation armor, its head is recorded gone, the cut is queued: the head copied into a piece of its own that flies off ([below](#dismemberment)) | as the engine                                                                                                                                                                                                                                  |
 | PickNewIdle                                                       | the process wants a new idle                                                                                                                                                  | as the engine ([Ambient idles](#ambient-idles))                                                                                                                                                                                                |
@@ -1564,8 +1569,23 @@ written once CastingState is left; whether Havok clears a deactivated modifier's
 read: TODO(M13)). No modifier aims the arms; Pitch is a graph data channel that no human magic
 node reads. The player's graph is no NPC's (IsNPC 0, observed in the original: [Weapons in
 the hands](#weapons-in-the-hands)), so their spine does not turn to a spell's aim; the
-mounted one's (magicmountedbehavior) does not either. TODO(M13): how the engine pitches the
-player's body while casting (the graphs' PitchOverride events) is not reproduced.
+mounted one's (magicmountedbehavior) does not either.
+
+**PitchOverride.** The equip and unequip clips (1HM_Equip, 1HM_Unequip and the dual ones,
+CrossBow_Equip, the bound sword's and bow's equips) raise PitchOverrideStart at their first frame
+and PitchOverrideEnd at their end (0.59 s into 1HM_Equip, 1.1 s into 1HM_Unequip, 1.2 s into
+CrossBow_Equip); the engine sets a flag of the third-person camera on them (observed in the
+original). A spell's equip has no such clip events: 0_master's Magic_Equip_State (the body's
+graph and the first-person one alike) sets the graph's bool PitchOverride while it is active
+(PitchOverride_IsActiveMod, a BSIsActiveModifier), and no node of the graphs reads that variable:
+it is the engine's. Ours (src/animation/pitch-override.ts, `OverriddenPitch`): while either is on
+the pitch the player's body and arms take from the view is held level, the body's Pitch channel
+in third person (the camera's flag or the body graph's variable) and the first-person arms'
+placement in first person (the arms graph's variable), so an equip's hand reaches the sheath,
+the back or the hip where the clip puts it; it eases to level and back at π radians a second and
+follows the view at once again when caught up. Inferred, TODO(M13): what the original's camera
+and the player's update do with the flag and the variable was not read (the rule, the easing and
+its rate are ours).
 
 **Casting art** (MGEF casting art: Fireball01HandEffects, ShockHandEffects, ...) carries its own
 graph (BGED `Magic\CastingBasic.hkx`: mIntro → mIdle, mCharge on a start, mReady on

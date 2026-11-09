@@ -10,6 +10,8 @@ import {
   leadPoint,
   npcSpread,
   readAimSettings,
+  BOLT_NODE,
+  shotLaunchNode,
 } from './aim.ts';
 import { fly, launch, WORLD_GRAVITY } from './projectile.ts';
 
@@ -108,5 +110,17 @@ describe('aiming projectiles', () => {
     expect(off[0]).toBeCloseTo(16, 9);
     expect(off[1]).toBeCloseTo(-16, 9);
     expect(off[2]).toBeCloseTo(80, 9);
+  });
+});
+
+describe('where a shot leaves', () => {
+  it('a bolt from the hand it is nocked in, an arrow from WEAPON', () => {
+    // AMMO flags: Non-Bolt 0x4, Non-Playable 0x2.
+    expect(shotLaunchNode(0x4)).toBe('WEAPON');
+    expect(shotLaunchNode(0)).toBe('NPC R MagicNode [RMag]');
+    expect(BOLT_NODE).toBe('NPC R MagicNode [RMag]');
+    // A non-playable bolt is not shown nocked; it still leaves from there.
+    expect(shotLaunchNode(0x2)).toBe('NPC R MagicNode [RMag]');
+    expect(shotLaunchNode(0x4 | 0x2)).toBe('WEAPON');
   });
 });

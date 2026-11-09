@@ -16,10 +16,10 @@ import { Fields } from '../formats/esm/fields.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ActorValue } from '../world/actor-values.ts';
-import { AmmoFlag, WeaponFlag2, WeaponType } from '../world/item-records.ts';
+import { WeaponFlag2, WeaponType } from '../world/item-records.ts';
 import { Assistance, fightingAggression } from './combat-ai.ts';
 import { parseCombatStyle, type CombatStyle } from './combat-style-records.ts';
-import type { EquipOption } from './combat-tactics.ts';
+import { bestAmmo, type CarriedAmmo, type EquipOption } from './combat-tactics.ts';
 
 /** The default combat style (DefaultCombatstyle: a form of the engine's, 0x3D). */
 export const DEFAULT_COMBAT_STYLE = 0x3d;
@@ -128,6 +128,26 @@ export class CombatProfiles {
   }
 }
 
+/** An AMMO item as its bow's choice weighs it (bestAmmo). */
+function ammoOf(
+  id: number,
+  count: number,
+  item: { readonly ammoFlags?: number; readonly ammoDamage?: number },
+): CarriedAmmo {
+  return { id, count, damage: item.ammoDamage ?? 0, flags: item.ammoFlags ?? 0 };
+}
+
+/** The ammunition an actor carries (count above 0), for its bow's choice (bestAmmo). */
+export async function carriedAmmo(runtime: ScriptRuntime, actor: number): Promise<CarriedAmmo[]> {
+  const carried: CarriedAmmo[] = [];
+  for (const [form, count] of await runtime.inventory(actor)) {
+    if (count <= 0) continue;
+    const item = await runtime.equipment.item(form);
+    if (item?.type === 'AMMO') carried.push(ammoOf(form, count, item));
+  }
+  return carried;
+}
+
 /**
  * The weapons an actor carries as equipment options (melee by its reach, a bow or crossbow with
  * ammunition for it by its range), and its fists (its unarmed damage). Staffs, spells and shouts
@@ -148,16 +168,14 @@ export async function weaponOptions(
   // farthest a shot counts: the engine caps a projectile's reach there).
   const combatDistance = await setting('fCombatDistance', 141);
   const shotRange = await setting('fCombatMaximumProjectileRange', 4096);
-  let arrows = false;
-  let bolts = false;
+  const ammo: CarriedAmmo[] = [];
   const ranged: { id: number; crossbow: boolean }[] = [];
   for (const [form, count] of await runtime.inventory(actor)) {
     if (count <= 0) continue;
     const item = await equipment.item(form);
     if (!item) continue;
     if (item.type === 'AMMO') {
-      if (((item.ammoFlags ?? 0) & AmmoFlag.nonBolt) !== 0) arrows = true;
-      else bolts = true;
+      ammo.push(ammoOf(form, count, item));
       continue;
     }
     const weapon = item.weapon;
@@ -181,11 +199,13 @@ export async function weaponOptions(
     });
   }
   for (const { id, crossbow } of ranged) {
-    if (!(crossbow ? bolts : arrows)) continue;
+    // Weighed with the best ammunition it carries for it (bestAmmo: what it takes up with it).
+    const shot = bestAmmo(ammo, crossbow);
+    if (!shot) continue;
     options.push({
       kind: 'ranged',
       id,
-      damage: await equipment.weaponDamage(actor, id),
+      damage: await equipment.weaponDamage(actor, id, shot.damage),
       range: held?.weapon === id && held.range > 0 ? held.range : shotRange,
       equipped: false,
     });
