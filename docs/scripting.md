@@ -830,30 +830,40 @@ fGameplayImpulseMultTrap are the pushed body's: what is on L_TRAP takes less of 
 
 Every source of ScriptEventSourceHolder (CommonLibSSE) has a hub kind; these have no Papyrus event
 and are told for the engine's own sinks (and a plugin's), each where it happens
-(`tests/conformance/scripting/event-sources.test.ts`). All but what CommonLibSSE gives (the
-payloads of TESInitScriptEvent, TESFormDeleteEvent, TESResolveNPCTemplatesEvent and
-TESUniqueIDChangeEvent) is inferred, TODO(M13):
+(`tests/conformance/scripting/event-sources.test.ts`). CommonLibSSE gives the sources, their
+payloads' fields and the VM's sinks (SkyrimVM hears TESInitScriptEvent, TESFormDeleteEvent,
+TESResolveNPCTemplatesEvent and TESUniqueIDChangeEvent). Only `initScript`'s reference and
+`formDelete`'s form are those fields as given; the rest is inferred, TODO(M13):
 
 - `eventProcessed` (BGSEventProcessedEvent): the story manager's turn for an event ends; its type
-  and the quests it started.
+  and the quests it started (the payload is not known).
 - `cellReadyToApplyDecals` (TESCellReadyToApplyDecalsEvent): as a cell attaches, after its
   references' OnLoad and before `cellFullyLoaded`; both now name the cell (the view says which).
-- `initScript` (TESInitScriptEvent): a reference's scripts ran OnInit (as its cell first attaches,
-  as a script makes it, the persistent ones at the game's start); none for one without scripts.
-- `formDelete` (TESFormDeleteEvent): a created reference deleted, once; a plugin's reference only
-  takes the deleted flag. The original deletes the form once nothing holds it and its VM lets go of
-  the form's script instances; ours tells it at the Delete and keeps them.
+- `initScript` (TESInitScriptEvent): a reference's scripts are initialised (as its cell first
+  attaches, as a script makes it, the persistent ones at the game's start). The VM is a sink of
+  this source and runs OnInit as it hears it, so it is told before OnInit starts; inferred: none
+  for a reference without scripts.
+- `formDelete` (TESFormDeleteEvent): a created reference that leaves the game, once, whatever
+  removes it (`ScriptRuntime.removeFromGame`: a script's Delete or DeleteWhenAble, a cell reset's
+  removal of what was dropped or placed there, a merchant's restock, RemoveItem with nowhere to
+  go, a summon's or a scripted spawn's end, a hazard's end, the oldest stuck arrow); a plugin's
+  reference only takes the deleted flag. The original deletes the form once nothing holds it and
+  its VM lets go of the form's script instances; ours tells it as the reference goes and keeps
+  them.
 - `questStageItemDone` (TESQuestStageItemDoneEvent): each log entry of a stage set whose conditions
   held, once its fragment has run (at once without one), after `questStage`.
 - `resolveNpcTemplates` (TESResolveNPCTemplatesEvent): the NPC_ placed for an actor takes a part
-  from a template; once per NPC_, the first time an actor of it is made.
+  from a template; once per NPC_, the first time an actor of it is made. The original's one form
+  id (templateID) is taken as that NPC_, the templates' user, not one of its templates.
 - `uniqueIdChange` (TESUniqueIDChangeEvent, `unique-ids.ts`): an item with a reference of its own
   gets an id in each inventory it goes into (the original's ExtraUniqueID, per inventory with its
-  holder): the holders and ids before and after. Ours counts on from the holder's highest.
+  holder; 16-bit): the holders (taken as the event's two base ids) and ids before and after. Ours
+  counts on from the highest id the holder's items hold, past 0xFFFF the lowest free one; an item
+  that left the game holds none.
 
-The stats' singleton sources BooksRead (the player's first read of a book, told from
-`bookRead`) and ChestsLooted (the container menu's first take of an opening) are hub kinds too,
-`booksRead` and `chestsLooted`, which the stats' relay counts.
+The stats' singleton sources BooksRead (the player's first read of a book, told by
+`src/shell/book-reading.ts` after `bookRead`) and ChestsLooted (the container menu's first take of
+an opening) are hub kinds too, `booksRead` and `chestsLooted`, which the stats' relay counts.
 
 ## Story manager
 

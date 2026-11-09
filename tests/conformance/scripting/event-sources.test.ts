@@ -222,6 +222,25 @@ describe('the event sources and the hub', () => {
       expect(processed).toEqual(
         sim.storyEvents().map((event) => ({ type: event.type, started: event.started })),
       );
+      // Its turn has ended: the quests it started were told started before it. (What the
+      // original's event carries is not known: its type and started quests are inferred.)
+      const records = sim.records();
+      for (const [at, record] of records.entries()) {
+        if (record.kind !== 'game' || record.type !== 'eventProcessed') continue;
+        for (const quest of record.event.started) {
+          expect(
+            records
+              .slice(0, at)
+              .some(
+                (other) =>
+                  other.kind === 'game' &&
+                  other.type === 'questStartStop' &&
+                  other.event.quest === quest &&
+                  other.event.started,
+              ),
+          ).toBe(true);
+        }
+      }
     });
 
     it(
@@ -255,6 +274,22 @@ describe('the event sources and the hub', () => {
         .map((event) => event.reference);
       expect(inInn.length).toBeGreaterThan(0);
       expect(inInn.filter((reference) => !told.has(reference))).toEqual([]);
+      // Told before its OnInit starts: the VM, a sink of the source, runs OnInit as it hears it.
+      const records = sim.records();
+      for (const reference of inInn) {
+        const event = records.findIndex(
+          (record) =>
+            record.kind === 'game' &&
+            record.type === 'initScript' &&
+            record.event.reference === reference,
+        );
+        const onInit = records.findIndex(
+          (record) =>
+            record.kind === 'script' && record.event === 'OnInit' && record.target === reference,
+        );
+        expect(event).toBeGreaterThanOrEqual(0);
+        expect(event).toBeLessThan(onInit);
+      }
       // A reference made without scripts is not told.
       const dagger = await sim.place(await sim.formId('WEAP', 'IronDagger'), PLAYER_REF);
       await sim.step(0.1);
@@ -411,6 +446,9 @@ describe('the event sources and the hub', () => {
     const SPEAR_TRAP = 0x50c22;
     let sim: Sim;
     let resets: number[] = [];
+    /** An iron dagger the player dropped in the mine, and the forms deleted as it reset. */
+    let dropped = 0;
+    let deletedByReset: number[] = [];
     let trapHits: GameEvents['trapHit'][] = [];
     let loads: GameEvents['loadGame'][] = [];
     let loadsBefore = 0;
@@ -419,16 +457,28 @@ describe('the event sources and the hub', () => {
       // Eleven days away from the mine: it resets as it attaches again.
       sim = await openSim({ interior: BILEGULCH_MINE, hour: 10 });
       await sim.step(1);
+      // The player drops an iron dagger there (the inventory menu's Drop): it lies in the mine.
+      const dagger = await sim.formId('WEAP', 'IronDagger');
+      await sim.runtime.addItem(PLAYER_REF, sim.runtime.formHandle(dagger), 1, true);
+      const createdBefore = new Set(sim.runtime.state.created.keys());
+      await sim.drop(dagger);
+      await sim.step(1);
+      dropped = [...sim.runtime.state.created.keys()].find((ref) => !createdBefore.has(ref)) ?? 0;
       await sim.openInterior(INN);
       await sim.step(1);
       sim.setDay(Math.floor(sim.runtime.state.gameDaysPassed) + 11);
       const resetSince = sim.events('reset').length;
+      const deleteSince = sim.events('formDelete').length;
       await sim.openInterior(BILEGULCH_MINE);
       await sim.step(2);
       resets = sim
         .events('reset')
         .slice(resetSince)
         .map((event) => event.reference);
+      deletedByReset = sim
+        .events('formDelete')
+        .slice(deleteSince)
+        .map((event) => event.form);
       // The spear trap in Mercer Frey's house, stood on.
       await sim.openInterior(MERCER_FREY_HOUSE);
       await sim.step(1);
@@ -450,6 +500,13 @@ describe('the event sources and the hub', () => {
 
     it('TESResetEvent: told as a reference resets with its cell (cell reset)  [CommonLibSSE]', () => {
       for (const vein of ORE_VEINS) expect(resets).toContain(vein);
+    });
+
+    it('TESFormDeleteEvent: what a cell reset removes (a dropped item) is told deleted  [CommonLibSSE]', () => {
+      // The dagger dropped in the mine lay in it as the mine reset: it left the game, its form
+      // with it, told once.
+      expect(dropped).toBeGreaterThan(0);
+      expect(deletedByReset.filter((form) => form === dropped)).toEqual([dropped]);
     });
 
     it('TESTrapHitEvent: told as a trap touches something  [CommonLibSSE]', () => {
