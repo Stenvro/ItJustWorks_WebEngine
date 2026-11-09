@@ -395,6 +395,51 @@ describe('what the world does to joints', () => {
     },
   );
 
+  it('leaves a chain’s link apart by what its damping leaves of the step’s speed error', () => {
+    // A weight hanging from a fixed body by one link of a chain (bhkBallSocketConstraintChain:
+    // tau 1, constraint force mixing float epsilon, maxErrorDistance 0.1), its pivot at its
+    // centre. Havok's four iterations of the chain's block leave q = (1 − damping)^4 of the
+    // pivots' speed error: under gravity each step they end q × (error + g × step²) apart, at
+    // rest q / (1 − q) × g × step² (Havok units).
+    const sag = (damping: number): number => {
+      const physics = new PhysicsWorld(new CollisionMatrix([]), GRAVITY);
+      const placed = physics.addObject(
+        {
+          bodies: [body('A', 0, false), body('B', 0, true)],
+          constraints: [
+            {
+              bodyA: 0,
+              bodyB: 1,
+              data: { type: 'ball-and-socket', pivotA: [0, 0, 0], pivotB: [0, 0, 0] },
+              maxError: 0.1,
+              chain: { index: 0, tau: 1, damping, constraintForceMixing: 1.1920929e-7 },
+            },
+          ],
+          skipped: [],
+        },
+        IDENTITY,
+        { reference: 1, kind: 'object' },
+      );
+      const moved = placed.bodies[1]?.body;
+      if (!moved) throw new Error('no body');
+      physics.settle(placed);
+      for (let i = 0; i < 120; i++) physics.step(1 / 60);
+      const t = moved.translation();
+      physics.free();
+      return Math.hypot(t.x, t.y, t.z);
+    };
+    const atRest = (damping: number): number => {
+      const q = (1 - damping) ** 4;
+      return (q / (1 - q)) * GRAVITY * (1 / 60) ** 2;
+    };
+    // A soft chain (damping 0.2): 0.0019 Havok units, 0.13 game units.
+    expect(sag(0.2) / atRest(0.2)).toBeCloseTo(1, 1);
+    // The vanilla chains' 0.6: 7.2e-5 Havok units.
+    expect(sag(0.6) / atRest(0.6)).toBeCloseTo(1, 1);
+    // A chain that took all of the speed error each iteration would hold them together.
+    expect(sag(1)).toBeLessThan(atRest(0.6) / 10);
+  });
+
   it('holds a ragdoll stiff in the pose it was taken in, and lets it go (the paralysed)', () => {
     const physics = new PhysicsWorld(new CollisionMatrix([]), GRAVITY);
     const placed = physics.addObject(

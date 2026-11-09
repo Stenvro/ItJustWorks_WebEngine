@@ -890,9 +890,20 @@ A chain's tau (1), damping (0.6 in every chain) and constraint force mixing (flo
 a malleable constraint's strength (Havok's virtual mass factor: each of its rows takes that share
 of its impulse in an iteration), are applied where the engine solves as Havok does: a breakable
 joint's group (below) and, for a malleable ragdoll or limited hinge, its friction, motor and
-cone rows. Rapier's own joints stay stiff: four iterations of damping 0.6 leave 2.6% of a
-step's speed error, unseen; TODO(M13): a malleable joint's pivot and limits (Rapier has no
-per-joint softness; no vanilla model has a malleable constraint). A joint is in the world only while one of its two bodies is simulated: between
+cone rows. A chain's links carry its damping in the world too (PhysicsWorld.#dampChains):
+Havok solves them as one block, each of the four iterations taking 0.6 of the way from their
+pivots' relative velocity to the one that closes tau of their error, so a step leaves
+q = 0.4⁴ = 2.6% of the speed error and the pivots end it q × (error + speed error × step)
+apart. Before each step that error is solved as Havok's solver leaves it (joint-impulses.ts,
+from the bodies' velocities with gravity's of the step and the error the link has now; clipped
+to the chain's maxErrorDistance) and each link's second anchor is moved by it, so that Rapier,
+whose joints close all of their error, holds the pivots that far apart. A vanilla link hanging
+still keeps q / (1 − q) × g × step² between its pivots (7e-5 Havok units, 0.005 game units),
+more as the chain swings or is pushed; the anchor is set again only when it moves by more than
+a tenth of that, so what hangs still sleeps. TODO(M13): inferred from Havok's documented
+solver; the chain is solved on its own, not with the other constraints of its island (the
+mace's pin). TODO(M13): a malleable joint's pivot and limits (Rapier has no per-joint softness;
+no vanilla model has a malleable constraint). A joint is in the world only while one of its two bodies is simulated: between
 two keyframed or held bodies (a living actor's ragdoll keyframed to its pose, an object placed
 to wait) it is left out and made again from its constraint as a body is let go (a death, a
 knock-down, a touch). Rapier solves a joint between two kinematic bodies in every substep all

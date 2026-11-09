@@ -119,6 +119,18 @@ awake all of the 4 s as the original does was tried too, and left out: its cost 
 were measured only together with two other tries (53 through against 44 over the same cells);
 TODO(M13): measure it alone.
 
+Round 10 (374, unchanged): the chains' damping is built (inferred): each link of a chain keeps
+the error Havok's four iterations of its damping leave it, by its second anchor moved before the
+step (PhysicsWorld.#dampChains; tests/conformance/physics/constraints.test.ts, a hanging weight
+sags q / (1 − q) × g × step² by its link, nothing with damping 1). Checked, already done: physics
+damage reaches destructibles from the world's listener (hard contacts at fPhysicsDamageSpeedMin
+or more, `contactDamage`, the destruction runtime's external damage; no vanilla impact is that
+fast), and the traps' material, initial flag and cloud traps (traps.test.ts). The census
+(`buildCollision` over all 22,761 meshes of the load order): no vanilla body lies on L_CLOUDTRAP,
+so a cloud trap is only a mod's; the vanilla gas traps are scripts on trigger volumes and
+explosions (TrapPoisonGas: OnTrigger places its levelled explosion on each living actor inside
+without the gas keyword's effect; TrapExplosiveGas: a fire hit sets it off).
+
 ## Meshes
 
 - [x] Block types (26 of 26): bhkCollisionObject 13689, bhkRigidBody 11334,
@@ -152,8 +164,10 @@ TODO(M13): measure it alone.
 - [x] bhkBallSocketConstraintChain maxErrorDistance (6, 0.1 in every chain): each link's error
       is clipped to it as the constraints' is to the world's (PhysicsWorld.#clipChains; round 3).
 - [x] bhkBallSocketConstraintChain constraintForceMixing (6): float epsilon in every chain, no
-      softness, as Rapier's joints have none (round 3). TODO(M13): the chains' damping (0.6 in
-      every chain) is not applied; Rapier's joints take out all of a link's speed error.
+      softness, as Rapier's joints have none (round 3). The chains' damping (0.6 in every
+      chain): each link's second anchor is moved by the error Havok's four damped iterations
+      leave it (PhysicsWorld.#dampChains; docs/physics.md, "Breakable"; round 10;
+      TODO(M13): inferred, the chain solved apart from the rest of its island).
 - [x] bhkRigidBody bodyFlags (1 body, value 1): meshes/clutter/ingredients/dwarvenoil.nif alone
       sets it; a bottle's body does nothing the others do not. TODO(M13): what the flag asks is
       not read (nif.xml leaves it unnamed).
@@ -281,4 +295,5 @@ TODO(M13): measure it alone.
       both worse: sleeping what still moves at 4 s (159 through), holding what is placed past a
       surface's middle where it was placed (130, what lay on or in those among them).
 - [x] Traps: the material of the trap's shape touched; the initial flag clear on the contact
-      listener's entries, as observed in the original; cloud traps (L_CLOUDTRAP) as traps (round 8).
+      listener's entries, as observed in the original; cloud traps (L_CLOUDTRAP) as traps (round 8;
+      no vanilla mesh has a body on it, round 10).
