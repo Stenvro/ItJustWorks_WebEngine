@@ -36,6 +36,13 @@ import {
   type VectorBindable,
 } from '../formats/hkx/behavior.ts';
 import { evaluateNode, parseExpression, type Expression } from './behavior-expression.ts';
+import {
+  CLIP_MODE,
+  clipStartTime,
+  stepClip,
+  timesPassed,
+  type ClipSweep,
+} from './clip-playback.ts';
 import { MirroredSkeleton } from './mirror.ts';
 import { addPose, blendPoses, PoseAccumulator } from './pose.ts';
 import { intoMatchFrame, matchPose, type PoseMatch } from './pose-matching.ts';
@@ -466,9 +473,14 @@ interface ClipState {
   wrapped: boolean;
   /** The update (BehaviorRuntime's count) that last moved it. */
   updated: number;
+  /** Ping-pong: on its way back (src/animation/clip-playback.ts). */
   backward: boolean;
   /** Set by a syncing blender: the phase (0..1) the clip is at this frame. */
   phase: number | undefined;
+  /** The cycles it has begun since it started (0: its first; acyclic triggers fire in it). */
+  cycle: number;
+  /** The last update moved it backward in its time (its root motion is taken backward). */
+  reverse: boolean;
 }
 
 /**
@@ -2001,7 +2013,9 @@ export class BehaviorRuntime {
       }
       return undefined;
     }
-    const backward = state.time < state.previous && !state.wrapped;
+    // Played backward (a negative speed, a ping-pong's way back; over its start into the end of
+    // the cycle before, the way from there taken backward), or a sync phase stepping back.
+    const backward = state.reverse || (state.time < state.previous && !state.wrapped);
     const from = (backward ? state.time : state.previous) + crop;
     const to = (backward ? state.previous : state.time) + crop;
     return asMotion(rootMotion(node.name, from, to), backward ? -1 : 1);
@@ -2050,15 +2064,19 @@ export class BehaviorRuntime {
       const scale =
         clip.enforcedDuration && clip.enforcedDuration > 0 ? duration / clip.enforcedDuration : 1;
       const speed = this.#read(clip.speed ?? { value: clip.playbackSpeed }, scope) * scale;
-      if (!(speed > 0)) continue;
-      const looping = clip.mode === 1;
+      if (!speed) continue;
+      // Which way it plays now (src/animation/clip-playback.ts).
+      const down = clip.mode === CLIP_MODE.pingPong ? state.backward !== speed < 0 : speed < 0;
       const consider = (time: number): void => {
-        let ahead = time - state.time;
+        let ahead = down ? state.time - time : time - state.time;
         if (ahead <= 0) {
-          if (!looping) return;
-          ahead += duration;
+          if (clip.mode === CLIP_MODE.looping) ahead += duration;
+          // A ping-pong clip passes it on its way back from the end it plays toward.
+          else if (clip.mode === CLIP_MODE.pingPong)
+            ahead = down ? state.time + time : 2 * duration - state.time - time;
+          else return;
         }
-        soonest = Math.min(soonest, ahead / speed);
+        soonest = Math.min(soonest, ahead / Math.abs(speed));
       };
       for (const trigger of clip.triggers ?? []) {
         consider(trigger.relativeToEndOfClip ? duration + trigger.localTime : trigger.localTime);
@@ -3106,6 +3124,8 @@ export class BehaviorRuntime {
           time,
           backward: false,
           phase: undefined,
+          cycle: 0,
+          reverse: false,
         });
       }
       return;
@@ -3474,6 +3494,8 @@ export class BehaviorRuntime {
           updated: -1,
           backward: false,
           phase: undefined,
+          cycle: 0,
+          reverse: false,
         };
         // At its own sync points' place for the cycle's (SyncLeft down as the blend passes it).
         state.phase = alignPhase(phase, layout, this.#clipSyncPoints(node));
@@ -3528,28 +3550,39 @@ export class BehaviorRuntime {
         updated: Math.max(0, this.#updates - 1),
         backward: resumed.backward,
         phase: undefined,
+        cycle: 0,
+        reverse: false,
       };
       this.#clips.set(node, state);
     } else if (!state) {
-      const start = this.#read(node.startTime ?? { value: 0 }, scope);
+      // Played at a negative speed it starts from its end (src/animation/clip-playback.ts).
+      const read = Math.max(0, this.#read(node.startTime ?? { value: 0 }, scope));
+      const start = animation
+        ? clipStartTime(
+            node.mode,
+            this.#clipDuration(node, animation),
+            read,
+            this.#read(node.speed ?? { value: node.playbackSpeed }, scope),
+          )
+        : read;
       state = {
-        time: Math.max(0, start),
-        previous: Math.max(0, start),
+        time: start,
+        previous: start,
         wrapped: false,
         updated: -1,
         backward: false,
         phase: undefined,
+        cycle: 0,
+        reverse: false,
       };
       this.#clips.set(node, state);
       this.stats.clipStarts++;
     }
     if (!animation) return;
-    const duration = Math.max(
-      1e-4,
-      animation.duration - (node.cropStart ?? 0) - (node.cropEnd ?? 0),
-    );
+    const duration = this.#clipDuration(node, animation);
     let previous = state.time;
-    let wrapped = false;
+    let wrapped: boolean;
+    let sweeps: readonly ClipSweep[];
     // Its first step since it became active: what lies at its start time is passed too.
     const first = state.updated < 0;
     if (state.phase !== undefined) {
@@ -3566,78 +3599,76 @@ export class BehaviorRuntime {
       if (stepBack && time > previous) previous = time;
       wrapped = time < previous && !stepBack;
       state.time = time;
+      if (wrapped) state.cycle++;
+      state.reverse = false;
+      // Forward through its cycle (over the seam into the next one).
+      sweeps = wrapped
+        ? [
+            { from: previous, to: duration, includeFrom: first, cycle: state.cycle - 1 },
+            { from: 0, to: time, includeFrom: true, cycle: state.cycle },
+          ]
+        : time !== previous || first
+          ? [{ from: previous, to: time, includeFrom: first, cycle: state.cycle }]
+          : [];
     } else {
-      const speed = this.#read(node.speed ?? { value: node.playbackSpeed }, scope);
-      // An enforced duration plays the clip in that time.
-      const scale =
-        node.enforcedDuration && node.enforcedDuration > 0 ? duration / node.enforcedDuration : 1;
-      const step = dt * speed * scale;
-      switch (node.mode) {
-        case 1: {
-          // Looping.
-          const time = state.time + step;
-          wrapped = time >= duration || time < 0;
-          state.time = ((time % duration) + duration) % duration;
-          break;
-        }
-        case 2:
-          // User controlled: a variable gives the time.
-          state.time =
-            Math.min(
-              1,
-              Math.max(0, this.#read(node.userControlledTimeFraction ?? { value: 0 }, scope)),
-            ) * duration;
-          break;
-        case 3: {
-          // Ping-pong.
-          let time = state.time + (state.backward ? -step : step);
-          if (time > duration) {
-            time = 2 * duration - time;
-            state.backward = true;
-          } else if (time < 0) {
-            time = -time;
-            state.backward = false;
-          }
-          state.time = time;
-          break;
-        }
-        default:
-          // Single play (and count): stops at the end.
-          state.time = Math.min(duration, Math.max(0, state.time + step));
-          break;
+      // The step in the clip's own time (src/animation/clip-playback.ts): its speed (negative
+      // plays it backward), an enforced duration playing it in that time; a user-controlled
+      // clip goes where its variable puts it.
+      let step: number;
+      if (node.mode === CLIP_MODE.userControlled) {
+        const fraction = this.#read(node.userControlledTimeFraction ?? { value: 0 }, scope);
+        step = Math.min(1, Math.max(0, fraction)) * duration - state.time;
+      } else {
+        const speed = this.#read(node.speed ?? { value: node.playbackSpeed }, scope);
+        const scale =
+          node.enforcedDuration && node.enforcedDuration > 0 ? duration / node.enforcedDuration : 1;
+        step = dt * speed * scale;
       }
+      const stepped = stepClip(node.mode, duration, state, step, first);
+      state.time = stepped.time;
+      state.backward = stepped.backward;
+      state.cycle = stepped.cycle;
+      state.reverse = stepped.reverse;
+      wrapped = stepped.wrapped;
+      sweeps = stepped.sweeps;
     }
     state.previous = previous;
     state.wrapped = wrapped;
     state.updated = this.#updates;
-    // Triggers (and the animation's annotations) passed in this step raise their events. The
-    // first step of a clip just activated takes in its start: a trigger at its local time 0
-    // fires as it starts (the tower wall's opening clip raises Begin there, which
-    // MQ101DragonAttack's stage 103 waits for; skipped, it never came).
-    const passed = (time: number): boolean =>
-      wrapped
-        ? time > previous || time <= state.time
-        : (first ? time >= previous : time > previous) && time <= state.time;
-    if (state.time === previous && !wrapped && !first) return;
+    // Triggers (and the animation's annotations) passed in this step raise their events, once
+    // for every time the step passed them, in the direction the clip plays. The first step of a
+    // clip just activated takes in its start: a trigger at its local time 0 fires as it starts
+    // (the tower wall's opening clip raises Begin there, which MQ101DragonAttack's stage 103
+    // waits for; skipped, it never came). An acyclic trigger fires in the first cycle only.
+    if (sweeps.length === 0) return;
     // A clip does not raise an event its graph flags silent (EVENT_FLAGS.silent: the horse's,
     // troll's, vampire lord's and werewolf's SyncLeft and SyncRight annotations).
     const flags = scope.graph.eventFlags ?? [];
     for (const trigger of node.triggers ?? []) {
       const time = trigger.relativeToEndOfClip ? duration + trigger.localTime : trigger.localTime;
       if (((flags[trigger.event.id] ?? 0) & EVENT_FLAGS.silent) !== 0) continue;
-      if (passed(time)) this.#raise(trigger.event, scope);
+      const times = timesPassed(sweeps, time, trigger.acyclic ? 0 : undefined);
+      for (let n = 0; n < times; n++) this.#raise(trigger.event, scope);
     }
     if (((node.flags ?? 0) & CLIP_FLAGS.dontConvertAnnotationsToTriggers) === 0) {
       for (const annotation of animation.annotations) {
-        if (!passed(annotation.time - (node.cropStart ?? 0))) continue;
+        const times = timesPassed(sweeps, annotation.time - (node.cropStart ?? 0));
+        if (times === 0) continue;
         if (silentEvents(scope.graph).has(annotation.text.toLowerCase())) continue;
-        // A graph declares an annotation's whole text as its event (SoundPlay.NPCCowMoo); the
-        // engine hears it as tag and payload (graphEvent: AnimObjLoad.DecapitationHeadGore).
-        this.#emit(annotation.text);
-        const id = this.#eventIndex.get(annotation.text.toLowerCase());
-        if (id !== undefined) this.#queue.push({ id });
+        for (let n = 0; n < times; n++) {
+          // A graph declares an annotation's whole text as its event (SoundPlay.NPCCowMoo); the
+          // engine hears it as tag and payload (graphEvent: AnimObjLoad.DecapitationHeadGore).
+          this.#emit(annotation.text);
+          const id = this.#eventIndex.get(annotation.text.toLowerCase());
+          if (id !== undefined) this.#queue.push({ id });
+        }
       }
     }
+  }
+
+  /** A clip's duration as it plays: its animation's, less what it crops. */
+  #clipDuration(node: Clip, animation: { readonly duration: number }): number {
+    return Math.max(1e-4, animation.duration - (node.cropStart ?? 0) - (node.cropEnd ?? 0));
   }
 
   // --- Modifiers -----------------------------------------------------------------------------
@@ -4151,7 +4182,9 @@ export class BehaviorRuntime {
         animation.duration - (node.cropStart ?? 0) - (node.cropEnd ?? 0),
       );
       const speed = Math.abs(node.playbackSpeed) || 1;
-      return Math.max(0, duration - state.time) / speed;
+      // Played backward, it ends at its start.
+      const left = node.playbackSpeed < 0 ? state.time : duration - state.time;
+      return Math.max(0, left) / speed;
     }
     let longest = 0;
     for (const child of this.#activeChildren(node)) {

@@ -1526,7 +1526,7 @@ them by name (a variable keeps the first file's initial value). Each frame:
    tower wall's opening clip raises Begin at its local time 0: MQ101DragonAttack's stage 103
    waits for it; of the vanilla behavior files' 881 triggers at a clip's start, none fired before:
    NPCKillMoveStart 232, 2_KillMoveStart 163, InitiateEnd 62, BeginWeaponDraw 32, BeginWeaponSheathe
-   26, levers', gates' and traps' sounds); a syncing blender (flag 0x1) keeps a cycle of its own and plays everything it blends
+   26, levers', gates' and traps' sounds; [Clip triggers](#clip-triggers)); a syncing blender (flag 0x1) keeps a cycle of its own and plays everything it blends
    at that phase, advanced by the time over its children's weighted cycle (a clip's at its
    playback speed, a blender's its children's weighted); a syncing blender within one plays
    at the outer one's phase ([Syncing blenders](#syncing-blenders)); modifiers run:
@@ -1581,6 +1581,35 @@ weapAdj picks how far `weaponAdjustment.hkx` pushes the sheathed weapons out; th
 it from the armour (ARMA DNAM weapon adjust, f32 at 8): only body pieces vary it in the data
 (0.1–0.65; helmets and the rest are 0 or 1), so it is the cuirass's (slot 32; TODO(M13): not
 documented).
+
+### Clip triggers
+
+How a clip generator's time moves and which of its triggers and annotations a step raises
+(src/animation/clip-playback.ts; tests/conformance/animation/clips.test.ts). The vanilla graphs
+play 4924 clips once, 4613 looping, 435 by a variable (user controlled), one ping-pong (the tail
+aux bones' walk) and 91 at a negative speed.
+
+- A trigger's time is in the clip's cropped time, or from its end (`relativeToEndOfClip`); an
+  annotation's is its time in the animation less the clip's start crop.
+- A step passes the times from where the clip was (not included) to where it is (included), in
+  the direction it plays; each trigger or annotation raises once for every time the step passed
+  it (in the graph's order: the triggers, then the annotations). A clip's first step after it
+  became active takes in its start time.
+- Looping: a step over the cycle's end passes the rest of that cycle and the next one's start
+  (its time 0 included); a step longer than a cycle passes each cycle it covers. Played backward
+  it wraps from its start to its end the same way.
+- Ping-pong: at an end it turns; the step passes the way to the end and the way back (a trigger
+  just before the end raises twice in one step). A negative speed plays it the other way first.
+- User controlled: the step is from where the clip was to where its variable puts it, either
+  way.
+- Inferred (TODO(M13): Havok's own rules, not documented): a clip at a negative speed starts at
+  its end (its start time counted from there), as the unequips that play the equip backward
+  (0_master's Stf_Unequip, the crossbow's), the riekling's strafes and the Dwemer domes', gates'
+  and Snow Elf doors' closing sequences need; its triggers keep their clip times (the staff
+  unequip's end trigger raises as it starts, its 0.2 s triggers 0.2 s before it ends). An
+  acyclic trigger (8 in vanilla: AOWoodPickUp's, AOBarTableIdle's) raises in a looping or
+  ping-pong clip's first cycle only. Before, a clip at a negative speed stood still at its
+  start and raised nothing but what lay there.
 
 ### Transitions
 
