@@ -36,6 +36,18 @@ export function graphEvent(text: string, payload?: string): GraphEvent {
 }
 
 /**
+ * A side's own event of a paired clip (src/animation/paired-clips.ts ownPairedEvent): `text` as
+ * the graph names it ("2_SoundPlay.NPCKillStruggle"), `own` without the side's prefix
+ * ("SoundPlay.NPCKillStruggle"), whose tag and payload the engine hears.
+ */
+export function pairedEvent(text: string, own: string, payload?: string): GraphEvent {
+  const event = graphEvent(own, payload);
+  return event.payload === undefined
+    ? { name: event.name, text }
+    : { name: event.name, payload: event.payload, text };
+}
+
+/**
  * SoundPlayAt.<descriptor>.<node> (an object graph's clip annotation: the sawmill's saw): the
  * sound to play and the node of the model it plays at; undefined for any other event.
  */

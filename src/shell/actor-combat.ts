@@ -321,6 +321,8 @@ interface Fighter {
   killer: number | undefined;
   /** In a paired animation, its graph has entered its synchronized clip. */
   synced: boolean;
+  /** The other actor of the paired animation it plays (#pair), while it plays it. */
+  pairedWith: number | undefined;
   /**
    * A paired clip's partner on its way to its mark (#followMark): whose, since when (the
    * clock), and where it started once the clip is known.
@@ -934,6 +936,12 @@ export class ActorCombat implements CombatBridge {
     return this.#fighters.get(actor)?.state.paired !== undefined;
   }
 
+  /** The other actor of the paired animation an actor plays, if it plays one. */
+  partnerOf(actor: number): number | undefined {
+    const fighter = this.#fighters.get(actor);
+    return fighter?.state.paired === undefined ? undefined : fighter.pairedWith;
+  }
+
   /** `modifier`: a loaded save's fight keeps the confidence modifier it drew. */
   startCombat(actor: number, target: number, modifier?: number): void {
     if (actor === target) return;
@@ -1016,6 +1024,17 @@ export class ActorCombat implements CombatBridge {
       state.killMove = paired.killMove;
       fighter.pairedFor = paired.seconds;
       fighter.killer = paired.killer;
+      // A killmove's victim knows its killer; the killer finds its victim as that one comes back.
+      fighter.pairedWith = paired.killer;
+      if (paired.killer !== undefined) {
+        const killer = this.#fighters.get(paired.killer);
+        if (killer?.state.paired === 'lead') killer.pairedWith = fighter.reference;
+      }
+      for (const other of this.#fighters.values()) {
+        if (paired.side === 'lead' && other.killer === fighter.reference) {
+          fighter.pairedWith = other.reference;
+        }
+      }
       const side = paired.side === 'lead' ? 'first' : paired.side ? 'second' : undefined;
       for (const graph of this.#graphs(fighter)) graph.pairedSide = side;
     }
@@ -2228,19 +2247,24 @@ export class ActorCombat implements CombatBridge {
     if (answer === 'attackstophandler' && attacking(fighter.state)) {
       fighter.attackStoppedAt = this.#clock;
     }
-    const leading = fighter.state.paired === 'lead';
+    const pairedWith = fighter.state.paired === undefined ? undefined : fighter.pairedWith;
     const effects = !strikes && released ? [] : graphEvent(fighter.state, event.name, handler);
     for (const effect of effects) {
       if (!strikes && (effect.kind === 'strike' || effect.kind === 'arrow-release')) continue;
       this.#effect(fighter, effect);
     }
-    const lower = answer === undefined ? event.name.toLowerCase() : undefined;
-    // A leader whose own clip says 2_PairEnd (the dragon's Paired_BiteGrapple: its graph stands in
-    // the clip's last frame until it hears PairEnd, which nothing else raises). TODO(M13): inferred
-    // from the clip's and the graph's data; how the engine turns the one into the other is unknown.
-    if (leading && lower === '2_pairend') {
-      for (const graph of this.#graphs(fighter)) graph.sendEvent('PairEnd');
+    // pairedStop (PairedStopHandler) ends the paired animation, for both of its actors: one side
+    // raises it (a killer's NPCpairedStop at its clip's end, a rider's, a feeding vampire lord's
+    // victim's 2_pairedStop), and the other side's clip mostly raises none (in the vanilla
+    // behaviors the killers' sides raise it, the victims' seldom). Inferred: the engine
+    // stops the one synchronized animation the two share. TODO(M13): its handler is not read.
+    if (answer === 'pairedstophandler' && pairedWith !== undefined) {
+      const partner = this.#fighters.get(pairedWith);
+      if (partner?.state.paired !== undefined && partner.pairedWith === fighter.reference) {
+        for (const effect of graphEvent(partner.state, 'PairEnd')) this.#effect(partner, effect);
+      }
     }
+    const lower = answer === undefined ? event.name.toLowerCase() : undefined;
     // The weapon is drawn at weaponDraw (graphEvent), also unasked (the werewolf's graph starts
     // in its combat stance once it has changed); the draw's clip plays on to WeapEquip_Out. A
     // creature's graph (the wolf's: combatStanceStart raises weaponDraw) has no equip clip that
@@ -3616,6 +3640,8 @@ export class ActorCombat implements CombatBridge {
     const runtime = this.#options.session.scriptsReady;
     leader.state.paired = 'lead';
     victim.state.paired = 'support';
+    leader.pairedWith = victim.reference;
+    victim.pairedWith = leader.reference;
     const killMove = event.toLowerCase().startsWith('pa_kill');
     if (killMove) {
       for (const fighter of [leader, victim]) {
@@ -3732,11 +3758,14 @@ export class ActorCombat implements CombatBridge {
     const runtime = this.#options.session.scriptsReady;
     if (!runtime) return;
     fighter.state.killMove = false;
+    // Its killer stays its killer until the kill is done: the clip's 2_KillActor, raised with
+    // its 2_KillMoveEnd (Paired_1HMKillMoveDecapSlash: 2_PairEnd, 2_KillMoveEnd, 2_KillActor at
+    // 1.69 s), kills it by its killer too (KillActorHandler: killerOf).
     const killer = fighter.killer;
-    fighter.killer = undefined;
     if (killer !== undefined && !(await runtime.actors.isDead(fighter.reference))) {
       await runtime.actors.kill(fighter.reference, killer);
     }
+    if (fighter.killer === killer) fighter.killer = undefined;
     await runtime.actors.endDeferredKill(fighter.reference);
   }
 
@@ -5436,6 +5465,7 @@ function newFighter(reference: number, player: boolean): Fighter {
     pairedFor: 0,
     killer: undefined,
     synced: false,
+    pairedWith: undefined,
     toMark: undefined,
     bleeding: false,
     unbled: 0,

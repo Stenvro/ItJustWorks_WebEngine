@@ -10,10 +10,11 @@
 // - The settings: the engine's defaults (iCombatDismemberPartChance 25, iCombatExplodePartChance 5,
 //   fDecapInitialSpeed 250, fDecapitateBloodTime 5).
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   decapitationLaunch,
   faceKeepsPartition,
+  HEAD_LIMB,
   LIMB_ROLL_DEFAULTS,
   limbGone,
   pieceShowsPartition,
@@ -21,6 +22,7 @@ import {
   WeaponHitBehavior,
 } from '../../../src/gameplay/combat/dismemberment.ts';
 import { BodyPartFlag } from '../../../src/world/body-part-data.ts';
+import { hasGamedata, openSim, PLAYER_REF, SIM_STEP, type Sim } from '../../helpers/sim.ts';
 
 describe('the head’s flight (original)', () => {
   it('from the neck through the head at fDecapInitialSpeed (250)', () => {
@@ -84,8 +86,67 @@ describe('the limb roll of a killing blow (original, settings)', () => {
   });
 });
 
+// A bandit placed in the Bannered Mare (its patrons dead, out of the way), its sword drawn against
+// the player, taken into the one-handed decapitation killmove as its victim (the player leading:
+// ActorCombat.pairIdle). Its graph plays its side, KillMove1HMDecap (Paired_1HMKillMoveDecapSlash:
+// 2_Decapitate at 0.76 s, 2_KillActor at 1.69 s).
+const BANNERED_MARE = 0x1605e;
+const VICTIM_SIDE = 'KillMove1HMDecap';
+
+describe.skipIf(!hasGamedata())('a killmove’s decapitation (headless simulation)', () => {
+  let sim: Sim;
+  let bandit = 0;
+  let took = false;
+  let cutAt: number | undefined;
+  let deadAt: number | undefined;
+  let clipAtCut: string | undefined;
+
+  beforeAll(async () => {
+    sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
+    await sim.step(1);
+    for (const actor of sim.actors()) {
+      if (actor.reference !== PLAYER_REF) await sim.kill(actor.reference);
+    }
+    const feet = (await sim.position(PLAYER_REF)) ?? [0, 0, 0];
+    await sim.moveTo([feet[0] + 80, feet[1], feet[2]]);
+    bandit = await sim.place(await sim.formId('NPC_', 'EncBandit01Melee1HNordM'), PLAYER_REF);
+    await sim.moveTo(feet);
+    const combat = sim.world.stage.combat;
+    combat.startCombat(bandit, PLAYER_REF);
+    // Its sword out, its graph in the drawn-weapon states that take a killmove's victim side.
+    took = await sim.until(
+      () => sim.actor(bandit)?.placed.behavior?.wouldHandle(VICTIM_SIDE) === true,
+      20,
+    );
+    combat.pairIdle(PLAYER_REF, bandit, 'pa_' + VICTIM_SIDE);
+    const state = sim.runtime.state;
+    for (let t = 0; t < 4; t += SIM_STEP) {
+      await sim.step(SIM_STEP);
+      if (cutAt === undefined && limbGone(state.actors.get(bandit)?.dismembered, HEAD_LIMB)) {
+        cutAt = t;
+        clipAtCut = sim.actor(bandit)?.placed.behavior?.synchronizedClip()?.animation;
+      }
+      if (deadAt === undefined && sim.actor(bandit)?.dead === true) deadAt = t;
+    }
+  }, 600_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it('a killmove victim’s 2_Decapitate cuts its head in the paired clip (sim)  [data]', () => {
+    expect(took).toBe(true);
+    // Its own 2_Decapitate (0.76 s into its side), while it still plays the paired clip.
+    expect(cutAt).toBeGreaterThan(0.6);
+    expect(cutAt).toBeLessThan(1);
+    expect(clipAtCut?.toLowerCase()).toContain('paired_1hmkillmovedecapslash');
+    // Then its 2_KillActor (1.69 s): it dies by its killer.
+    expect(deadAt).toBeGreaterThan(1.5);
+    expect(deadAt).toBeLessThan(2.2);
+    expect(sim.deaths().find((death) => death.actor === bandit)?.killer).toBe(PLAYER_REF);
+  });
+});
+
 describe('dismemberment (todo)', () => {
   it.todo('a reloaded corpse is re-dressed from its recorded worn objects  [original, M12]');
   it.todo('iDismemberBloodDecalCount (10): the blood decals of a cut  [settings]');
-  it.todo('a killmove victim’s 2_Decapitate cuts its head in the paired clip (sim)  [data]');
 });

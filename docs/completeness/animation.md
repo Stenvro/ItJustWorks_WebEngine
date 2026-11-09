@@ -187,7 +187,8 @@ what fills it was not found).
       actor-sounds.ts), SoundPlay, NPCSoundPlay, SoundStop, SoundRelease, the response files'
       events (weaponSwing, HitFrame, PreHitFrame, ...), the graphs' own events (SyncLeft,
       SyncRight, FlightLandingEffect, the dogs' and wolves' sounds by their graph events, ...),
-      paired partners' 2_ events.
+      paired clips' own events of each side ("2_" and "NPC", the prefix off: docs/animation.md
+      "Paired events").
 - [x] SyncLeft, SyncRight and the other sync points (EVENT_FLAGS.syncPoint): they sync the
       clips of syncing blenders (round 2; by hand below).
 - [x] FrontFoot (26), BackFoot (25), Spellfire (2), FrootBack (4), FootFornt (3), FottFront (1),
@@ -305,7 +306,8 @@ what fills it was not found).
 - [ ] Faces: the expression change rate.
 - [x] Lip sync (.lip, .fuz) with the dialogue.
 - [x] Paired animations: the support's mark, its side to the clip's end, death limp.
-- [ ] Paired animations: events not routed per side.
+- [x] Paired animations: events routed per side by their prefix ("2_", "NPC"); pairedStop ends
+      the pair for both (inferred; tests/conformance/animation/paired-animations.test.ts).
 - [x] Kill moves (docs/animation.md, "Killmoves").
 - [x] Dismemberment and decapitation (the head's flight, the stump, persistence).
 - [ ] The severed head's flight into MQ101's basket: it reaches the rim's height over the near

@@ -831,7 +831,8 @@ come before the response files are read wait for them.
 | MountDismountEnd (MountEnd, DismountEnd)                          | ends the mount or dismount under way for rider and horse                                                                                                                      | the ride's phase ends (as at its paired end)                                                                                                                                                                                                   |
 | EndSummonAnimation (summonStop)                                   | a summoned actor's arrival is over: it takes its commander's combat target                                                                                                    | as the engine                                                                                                                                                                                                                                  |
 | ActionActivateDone (ActivationDone)                               | the object the actor's process holds is activated, the procedure done                                                                                                         | an NPC's activation with an ActionActivate idle waits for it (3 s at most)                                                                                                                                                                     |
-| VampireFeedEnd                                                    | a vampire feeding procedure is done                                                                                                                                           | TODO(M11): our AI runs no feeding procedure                                                                                                                                                                                                    |
+| VampireFeedEnd                                                    | a vampire feeding procedure is done                                                                                                                                           | the feeding (StartVampireFeed: GetVampireFeed) of the actor whose graph raised it and of its partner in the pair ends (the feeder's clip's NPCVampireFeedEnd); its six seconds are the fallback. TODO(M11): an AI feeding procedure            |
+| PairedStop (pairedStop)                                           | the paired animation ends                                                                                                                                                     | for both of its actors (inferred: [Killmoves](#killmoves))                                                                                                                                                                                     |
 | NPCAttach / NPCDetach                                             | attach the actor to its furniture's node the payload names, or detach it                                                                                                      | recorded. TODO(M13): our furniture keeps markers, not animated nodes                                                                                                                                                                           |
 | CameraShake (payload: strength)                                   | shakes the camera from the actor's place (src/shell/camera-shake.ts)                                                                                                          | as the engine                                                                                                                                                                                                                                  |
 | AnimatedCameraStart / DeltaStart / End (player)                   | the camera goes over (iAnimatedTransitionMillis) to ride the node the payload names in the player's body, or the third-person camera adds its motion; the end returns         | as the engine in third person. TODO(M13): the node's view axis (+y inferred)                                                                                                                                                                   |
@@ -937,9 +938,27 @@ a teleported victim would otherwise fall and turn its graph out of the clip; the
 do not move them). The pair lasts as long as its clips: a graph that leaves its synchronized clip
 is in its pair no more, whether or not it raised PairEnd (a bear killmove's leader raises none).
 
+**Paired events** (`BehaviorRuntime` #ownEvent; inferred from the data, TODO(M13): the
+engine's routing is not read). Each actor's graph plays its own side of the clip, and its side's
+triggers name its own events with its prefix: the second actor's `2_` (the side whose
+synchronized clip names SyncAnimPrefix "2_": a killmove victim's 2_KillActor, 2_Decapitate,
+2_DeathEmote, 2_SoundPlay.*), the first actor's `NPC`, after its placement track (the side
+whose clip names none: the killer's NPCweaponSwing, NPCHitFrame, NPCSoundPlay.NPCKillChop,
+NPCpairedStop; a rider's NPCpairedStop and NPCHorseExitOut; a feeding vampire's
+NPCVampireFeedEnd). Of the triggers on the vanilla synchronized clips, 1,165 of 1,222 on the
+"2_" sides begin "2_" and 4,657 of 4,787 on the others "NPC". The response files name the
+events without the prefix (KillActor, HitFrame, VampireFeedEnd: no other trigger raises
+VampireFeedEnd), so an event of the side's own prefix reaches the engine without it (its tag
+and payload; its name as the graph has it, which scripts register for, stays whole), and the
+graph that raised it is sent it so: a rider's NPCpairedStop takes its graph to
+HorseRider_State by pairedStop, the dragon's 2_PairEnd ends its grapple's ST_Ground_KillMove
+by PairEnd. The other side's events in a clip (a few authoring slips) raise as they are.
+Test: tests/conformance/animation/paired-animations.test.ts.
+
 **The end.** The victim's side raises its events with the prefix: 2_KillActor (KillActorHandler:
 it dies by its killer), 2_KillMoveEnd (KillMoveEndHandler: an actor with a killer dies by it, its
-deferred death comes, it is in its killmove no more), 2_PairEnd; some clips raise all three on
+deferred death comes, it is in its killmove no more; its killer stays its killer for a 2_KillActor
+raised with it), 2_PairEnd; some clips raise all three on
 their last frame with 2_PairEnd first (Paired_1HMKillMoveD, Paired_2HMKillMoveSlash at 0.4 s: the
 slash is the kill). The leader's KillMoveEnd ends its own killmove. A graph keeps its side of the
 pair while it still plays the synchronized clip (a last frame's 2_PairEnd comes as the clip
@@ -949,12 +968,16 @@ blow while paired, also after a last frame's 2_PairEnd) plays no death of its ow
 limp from the clip's last pose as the clip ends (`ActorGraphEvents` died: paired), instead of
 standing up again in its graph's own states until the death's eight-second wait let it fall.
 
-The dragon's bite (Paired_BiteGrapple) names its sides the other way round: the dragon's clip
-raises the 2_ events (only 2_PairEnd, on its last frame), the victim's NPCKillMoveStart and
-NPCKillMoveEnd (a second before the end). No response file names those, and the clip holds no
-other end, so ours (inferred, TODO(M13)) takes a victim's NPCKillMoveEnd as its KillMoveEnd (it dies
-by its killer) and a leader's own 2_PairEnd as the PairEnd its graph waits for in
-ST_Ground_KillMove.
+The dragon's bite (Paired_BiteGrapple) names its sides the other way round: the dragon plays
+the "2_" side (only 2_PairEnd, on its last frame), the victim the first (NPCKillMoveStart,
+NPCAddRagdollToWorld, NPCKillMoveEnd a second before the end). By the paired events above the
+victim's NPCKillMoveEnd is its KillMoveEnd (it dies by its killer) and the dragon's 2_PairEnd the
+PairEnd its graph waits for in ST_Ground_KillMove.
+
+**pairedStop** (PairedStopHandler) ends the paired animation for both of its actors (inferred,
+TODO(M13): the handler is not read): mostly one side raises it (the killers' sides at their
+clips' end, NPCpairedStop; a feeding vampire lord's victim 2_pairedStop), the other's clip
+raising none. Ours: the pair ends for the side that raised it and its partner.
 
 `node tools/paired-audit.ts` lists the vanilla synchronized clips (516: 208 leader sides, 308
 partner sides; 8 apply their motion from the root, the mounts and the dragon's): their placement
@@ -965,8 +988,9 @@ every member has activated, from the lead's world placement and the two placemen
 partner's get-to-mark progress runs over fGetToMarkTime and the clip waits for none of them).
 The QA monitor `pair-misaligned` (docs/qa.md) measures a partner's drawn placement against the
 mark its leader's drawn placement and the clip give, through every paired clip of a run. A blow on an actor in a
-killmove does fCombatKillMoveDamageMult (10) times its damage; the killmove clips' own hit
-frames are NPCHitFrame, which no handler answers: the victim takes no blows from its clip.
+killmove does fCombatKillMoveDamageMult (10) times its damage; the killer's side of a killmove
+clip raises NPCHitFrame, its own HitFrame by the paired events above: the blow falls on its
+victim wherever the clip has it (`#killMoveStrike`), its death deferred to the killmove's end.
 
 **The kill camera** (the engine's VATS playback). A killmove the player leads always starts it,
 in either view (the player's melee action with a paired target event); the camera path is

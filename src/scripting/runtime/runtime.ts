@@ -2099,6 +2099,16 @@ export class ScriptRuntime implements VmHost {
     this.world.notification?.(`${name} ${typeof verb === 'string' ? verb : ''}`.trim());
   }
 
+  /**
+   * An actor's feeding is done (its graph's VampireFeedEnd: src/shell/actor-graph-events.ts):
+   * GetVampireFeed and GetCannibal hold for it no more (StartVampireFeed's own time is the
+   * fallback of a graph that raises none).
+   */
+  feedingDone(actor: number): void {
+    const state = this.state.actors.get(actor);
+    if (state) state.feeding = undefined;
+  }
+
   /** The game settings the scripts read (the console's setgs changes them). */
   gameSettingTable(): Promise<GameSettings> {
     this.#settings ??= GameSettings.read(this.forms.db);

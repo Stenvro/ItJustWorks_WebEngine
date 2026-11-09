@@ -398,16 +398,17 @@ export class ActorGraphEvents {
       this.#activations.delete(source.reference);
       waiting?.done();
     });
-    // A vampire's feeding ended: the feeding procedure is done.
+    // A vampire's feeding ended (the feeder's clip's NPCVampireFeedEnd: src/animation/
+    // behavior-runtime.ts #ownEvent): observed in the original, the feeding procedure is done.
+    // Its pair's both sides: the feeder's feeding (StartVampireFeed: GetVampireFeed) ends, and
+    // the one it fed on, whose side's clip raises none, is done with it too (inferred).
     d.handle('VampireFeedEndHandler', (source) => {
-      // TODO(M11): observed in the original, an actor running a vampire feeding package
-      // procedure is done with it here; our AI runs no feeding procedure yet (the player's
-      // feeding is the combat's paired idle, which its own end ends).
-      this.#options.terminal.log(
-        'actor',
-        `${source.reference.toString(16)}: VampireFeedEnd (no feeding procedure runs)`,
-        'info',
-      );
+      const runtime = this.#options.session.scriptsReady;
+      if (!runtime) return;
+      const partner = stage.combat.partnerOf(source.reference);
+      for (const actor of [source.reference, partner]) {
+        if (actor !== undefined) runtime.feedingDone(actor);
+      }
     });
     // The graph attaches the actor to a node of the furniture it uses, or lets it go.
     d.handle('NPCAttachHandler', (source, event) => {

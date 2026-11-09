@@ -353,7 +353,10 @@ documented: TODO(M13). The gait (`footstepGait`): sneaking, sprinting, running o
 player's by their movement, an NPC's by its controller's motion (the movers': sneaking, the
 gait its AI asks for while it moves) or, beyond the high process, the gait its AI asks for. The player in iron boots running across the Abandoned Shack's floor plays
 FSTWoodRunArmorHeavyLSD / RSD. Animations' **SoundPlay.`<descriptor>`** events play that sound
-descriptor (by editor id) at the actor; **NPCSoundPlay.`<descriptor>`** only for actors other
+descriptor (by editor id) at the actor. **NPCSoundPlay.`<descriptor>`** is raised only by the
+first side of a paired clip (a killer's NPCKillChop, a rider's NPCHorseMount), whose own events
+carry the prefix "NPC": it reaches the engine as SoundPlay (docs/animation.md, "Paired
+events"); one raised outside a paired clip (none in the vanilla data) plays only for actors other
 than the player. **SoundStop.`<descriptor>`** stops what that actor's animations started of it
 at once (the bow's draw loop, WPNBowPullLPM, as the arrow leaves: 17 annotations), and
 **SoundRelease.`<descriptor>`** lets it end, a loop playing out its release (8, the dogs'
