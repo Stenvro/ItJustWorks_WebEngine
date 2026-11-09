@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { Fields } from '../formats/esm/fields.ts';
+import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
+import { AmmoFlag, WeaponType } from '../world/item-records.ts';
 import { COMBAT_AI_DEFAULTS, readCombatAiSettings } from './combat-ai.ts';
+import { weaponOptions } from './combat-profile.ts';
 import {
   CombatStyleFlag,
   CombatStyleRecordFlag,
@@ -21,8 +24,11 @@ import {
   chooseAttack,
   chooseEquipment,
   chooseManeuver,
+  bestAmmo,
+  leftHandChoice,
   leftHandSpell,
   leftHandWeapon,
+  nextEquipWeighing,
   chooseSupport,
   choosesBlock,
   circleChance,
@@ -224,6 +230,60 @@ describe('combat tactics: what it fights with', () => {
     expect(chooseEquipment([sword, bow], 60, archer, settings)?.id).toBe(1);
   });
 
+  it('weighs a bow by its own damage, so an archer draws its sword within a sword’s reach', async () => {
+    // A hunting bow (7) with iron arrows (8) in hand and an iron sword (8, reach 1) carried.
+    const items = new Map<number, unknown>([
+      [0x10, { type: 'WEAP', weapon: { weaponType: WeaponType.bow, flags2: 0, reach: 1 } }],
+      [0x20, { type: 'AMMO', ammoFlags: AmmoFlag.nonBolt, ammoDamage: 8 }],
+      [
+        0x30,
+        { type: 'WEAP', weapon: { weaponType: WeaponType.oneHandSword, flags2: 0, reach: 1 } },
+      ],
+    ]);
+    const base = new Map([
+      [0x10, 7],
+      [0x30, 8],
+    ]);
+    const runtime = (carried: [number, number][]): ScriptRuntime =>
+      ({
+        inventory: () => Promise.resolve(new Map(carried)),
+        gameSetting: () => Promise.resolve(undefined),
+        actors: { value: () => Promise.resolve({ current: 4 }) },
+        equipment: {
+          item: (form: number) => Promise.resolve(items.get(form)),
+          // What a shot does adds its ammunition's damage (EquipmentEngine.weaponDamage).
+          weaponDamage: (_actor: number, form: number, ammo = 0) =>
+            Promise.resolve((base.get(form) ?? 0) + ammo),
+        },
+      }) as unknown as ScriptRuntime;
+    const held = { weapon: 0x10, range: 4096, reach: 141 };
+    const options = (
+      await weaponOptions(
+        runtime([
+          [0x10, 1],
+          [0x20, 24],
+          [0x30, 1],
+        ]),
+        7,
+        held,
+      )
+    ).map((option) => ({
+      ...option,
+      equipped: option.id === 0x10,
+    }));
+    const heldBow = options.find((option) => option.id === 0x10);
+    expect(heldBow?.kind).toBe('ranged');
+    expect(heldBow?.damage).toBe(7);
+    // csHumanMissile (ranged 3.2, melee 0.83): it shoots from 400 units, and within the sword's
+    // reach (141) it draws the sword.
+    expect(chooseEquipment(options, 400, archer, settings)?.id).toBe(0x10);
+    expect(chooseEquipment(options, 120, archer, settings)?.id).toBe(0x30);
+    // Without arrows the bow is no option at all.
+    expect(
+      (await weaponOptions(runtime([[0x10, 1]]), 7, held)).some((option) => option.id === 0x10),
+    ).toBe(false);
+  });
+
   it('leaves out what its style scores 0, and falls back to fists', () => {
     const noMelee = style([0.5, 0.5, 0.5, 0, 1, 0, 1, 1, 1, 0.2]);
     expect(chooseEquipment([sword, bow, fists], 100, noMelee, settings)?.kind).toBe('unarmed');
@@ -361,6 +421,90 @@ describe('combat tactics: how it moves', () => {
     ).toBeUndefined();
     expect(
       leftHandWeapon({ ...hands, weaponType: 5 }, human, options, 100, dual, settings),
+    ).toBeUndefined();
+  });
+
+  it('its left hand weighs a second weapon and a spell together, against what it holds', () => {
+    const sword: EquipOption = {
+      kind: 'melee',
+      id: 20,
+      damage: 8,
+      range: 141,
+      equipped: true,
+      weaponType: 1,
+      count: 1,
+    };
+    const dagger: EquipOption = { ...sword, id: 21, damage: 4, weaponType: 2, equipped: false };
+    const sparks: EquipOption = { kind: 'magic', id: 8, damage: 12, range: 2000, equipped: false };
+    const human = RaceAiFlag.canDualWield | RaceAiFlag.canPickupItems;
+    const dual = style([0.5, 0.5, 1, 1, 1, 1, 1, 1, 1, 0.2], undefined, undefined, 0x5);
+    const free = {
+      weapon: 20,
+      weaponType: 1,
+      shield: false,
+      leftWeapon: undefined,
+      leftSpell: undefined,
+    };
+    const options = [sword, dagger];
+    const choose = (
+      hands: Parameters<typeof leftHandChoice>[0],
+      distance: number,
+      chosenStyle: CombatStyle = dual,
+    ) => leftHandChoice(hands, human, options, [sparks], distance, chosenStyle, settings);
+    // A free hand close in: the dagger (4) over the spell, which reaches little so near.
+    expect(choose(free, 100)).toEqual({ kind: 'weapon', id: 21 });
+    // The dagger in the left hand: kept close in; its target off at 1000 the spell takes its place.
+    const dagged = { ...free, leftWeapon: 21 };
+    expect(choose(dagged, 100)).toBeUndefined();
+    expect(choose(dagged, 1000)).toEqual({ kind: 'spell', id: 8 });
+    // The spell in the left hand: kept at range; close in the dagger takes its place.
+    const casting = { ...free, leftSpell: 8 };
+    expect(choose(casting, 1000)).toBeUndefined();
+    expect(choose(casting, 100)).toEqual({ kind: 'weapon', id: 21 });
+    // A style that does not dual wield takes no second weapon up, but weighs the one it holds.
+    expect(choose(casting, 100, melee)).toBeUndefined();
+    expect(choose(dagged, 1000, melee)).toEqual({ kind: 'spell', id: 8 });
+    // What it holds is no option here (a weapon it cannot weigh): kept; a shield or a two-handed
+    // weapon leaves the hand be.
+    expect(choose({ ...free, leftWeapon: 99 }, 1000)).toBeUndefined();
+    expect(choose({ ...free, shield: true }, 1000)).toBeUndefined();
+    expect(choose({ ...free, weaponType: 5 }, 1000)).toBeUndefined();
+  });
+
+  it('weighs its equipment continuously, once what it took up has been kept its minimum time', () => {
+    // Kept: at once again; taken up: after its kind's fCombatInventoryMinEquipTime*.
+    expect(nextEquipWeighing(10, undefined, settings)).toBe(10);
+    expect(nextEquipWeighing(10, 'melee', settings)).toBe(15);
+    expect(nextEquipWeighing(10, 'ranged', settings)).toBe(15);
+    expect(nextEquipWeighing(10, 'magic', settings)).toBe(13);
+    expect(nextEquipWeighing(10, 'staff', settings)).toBe(15);
+    expect(nextEquipWeighing(10, 'unarmed', settings)).toBe(10);
+  });
+
+  it('a bow takes the best arrows it has left, a crossbow the best bolts', () => {
+    const nonBolt = 0x4;
+    const carried = [
+      { id: 1, count: 5, damage: 8, flags: nonBolt },
+      { id: 2, count: 0, damage: 14, flags: nonBolt },
+      { id: 3, count: 3, damage: 12, flags: nonBolt | 0x2 },
+      { id: 4, count: 10, damage: 10, flags: 0 },
+      { id: 5, count: 2, damage: 7, flags: 0 },
+    ];
+    // The steel arrows are spent: the elven (12) over the iron (8); the bolts apart.
+    expect(bestAmmo(carried, false)?.id).toBe(3);
+    expect(bestAmmo(carried, true)?.id).toBe(4);
+    // Those spent too, the next best.
+    expect(
+      bestAmmo(
+        carried.filter((ammo) => ammo.id !== 3),
+        false,
+      )?.id,
+    ).toBe(1);
+    expect(
+      bestAmmo(
+        carried.filter((ammo) => ammo.flags === 0),
+        false,
+      ),
     ).toBeUndefined();
   });
 

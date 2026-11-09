@@ -20,6 +20,7 @@ import { driveOf } from '../ai/movement-drive.ts';
 import { MovementCatalog } from '../ai/movement-types.ts';
 import type { MovementType } from '../world/movement.ts';
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
+import { OverriddenPitch } from '../animation/pitch-override.ts';
 import { multiply, type Vec3 } from '../render/math.ts';
 import type { RigData } from '../animation/skeleton.ts';
 import type { RenderPort } from '../render/render-port.ts';
@@ -76,6 +77,13 @@ export class PlayerAvatar {
   readonly #soundWorld: SoundingWorld;
   #made: Made;
   #firstPerson: FirstPersonBody | undefined;
+  /**
+   * The view's pitch as the body's Pitch channel and the first-person arms take it: held level
+   * under the graphs' PitchOverride (OverriddenPitch); the arms' as last stepped.
+   */
+  readonly #heldBodyPitch = new OverriddenPitch();
+  readonly #heldArmsPitch = new OverriddenPitch();
+  #armsPitch = 0;
   #female: boolean;
   /** One placement matrix the body's instances share, moved every frame. */
   readonly #motion: InstanceMotion;
@@ -578,7 +586,18 @@ export class PlayerAvatar {
     // enabled by IsPlayer: BowAttackSpineTwistModifier), so a drawn bow aims up and down with
     // the view in third person. Only the body's: the first-person arms are placed pitched with
     // the view already (FirstPersonBody.place), and their graph's own twist would turn them twice.
-    body.behavior?.setVariable('Pitch', (this.#player.pitch * 180) / Math.PI);
+    // Held level while the graphs' PitchOverride is on (an equip or unequip: the camera's flag
+    // in third person, a spell's equip the shown graph's own variable; OverriddenPitch).
+    // The camera's flag goes with the clip that raised it: an equip cut off before its end (a
+    // stagger, a knockdown) ends it (CameraPitchOverride).
+    player.followPitchOverride([body.behavior, this.#firstPerson?.skeleton.behavior]);
+    const third = player.pov === 'third';
+    const shownGraph = third ? body.behavior : this.#firstPerson?.skeleton.behavior;
+    const overridden =
+      (third && player.pitchOverride) || shownGraph?.variable('PitchOverride') === 1;
+    const pitch = this.#heldBodyPitch.step(player.pitch, third && overridden, dt);
+    this.#armsPitch = this.#heldArmsPitch.step(player.pitch, !third && overridden, dt);
+    body.behavior?.setVariable('Pitch', (pitch * 180) / Math.PI);
     animateSkeletons(skeletons, this.#clock);
     // Knocked down it lies (and gets up) where it is placed.
     if (this.knocked) return;
@@ -624,7 +643,7 @@ export class PlayerAvatar {
         [feet[0] ?? 0, feet[1] ?? 0, feet[2] ?? 0],
         this.#bodyYaw,
         player.height,
-        player.pitch,
+        this.#armsPitch,
       );
     }
   }

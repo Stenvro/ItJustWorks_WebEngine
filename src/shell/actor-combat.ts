@@ -139,7 +139,13 @@ import { flightKind } from '../gameplay/magic/projectile-flight.ts';
 import { deathForce, spellDeathForce } from '../gameplay/combat/death-force.ts';
 import type { INI_DEFAULTS } from '../world/ini-settings.ts';
 import { ARROW_TILT, tiltUp, WORLD_GRAVITY } from '../gameplay/combat/projectile.ts';
-import { anglesOf, directionOf, npcSpread } from '../gameplay/combat/aim.ts';
+import {
+  anglesOf,
+  BOLT_NODE,
+  directionOf,
+  npcSpread,
+  shotLaunchNode,
+} from '../gameplay/combat/aim.ts';
 import { ProjectileFlag } from '../world/projectile-data.ts';
 import type { AimTarget, ProjectileAim, ShotKind } from './projectile-aim.ts';
 import {
@@ -234,8 +240,6 @@ const NOTICE_REPEAT_MS = 5000;
  * far along its shot an NPC's aim is put.
  */
 const AIM_KINDS = [2, 3] as const;
-/** Where a crossbow's bolt is held (the engine's node for ammunition that is no arrow). */
-const BOLT_NODE = 'NPC R MagicNode [RMag]';
 /** The node a nocked shot of ammunition with these AMMO flags is held on (none: not shown). */
 const ammoNode = (flags: number): string | undefined =>
   (flags & AmmoFlag.nonPlayable) !== 0
@@ -476,6 +480,8 @@ interface Gear {
    * a non-playable one on none.
    */
   readonly ammoNode: string | undefined;
+  /** The node its bow's or crossbow's shot leaves from (shotLaunchNode: where it is nocked). */
+  readonly launchNode: string;
   readonly attacks: AttackSet;
   readonly race: RaceHits | undefined;
   /** Its race's DATA flags (RaceAiFlag: Can Dual Wield, No Combat In Water, ...). */
@@ -1857,6 +1863,9 @@ export class ActorCombat implements CombatBridge {
       projectile: projectileRecord?.type === 'PROJ' ? parseProjectile(projectileRecord) : undefined,
       ammoModel: right.ammo === undefined ? undefined : ammo?.model,
       ammoNode: ammoNode(ammo?.flags ?? AmmoFlag.nonBolt),
+      launchNode: shotLaunchNode(
+        ammo?.flags ?? (right.weaponType === WeaponType.crossbow ? 0 : AmmoFlag.nonBolt),
+      ),
       attacks,
       race: raceRecord?.type === 'RACE' ? parseRaceHits(raceRecord) : undefined,
       raceFlags: race?.flags ?? 0,
@@ -3346,8 +3355,9 @@ export class ActorCombat implements CombatBridge {
   // --- Bows ---------------------------------------------------------------------------------------
 
   /**
-   * Where its arrows leave from: its WEAPON node, the drawing hand (the player's first-person
-   * arms' in first person), else before its chest.
+   * Where its arrows and bolts leave from: the node the shot is nocked on (shotLaunchNode: an
+   * arrow's WEAPON, the drawing hand; a bolt's NPC R MagicNode [RMag]), the player's
+   * first-person arms' in first person, else before its chest.
    */
   #bowFrom(fighter: Fighter, feet: Vec3): Vec3 {
     let pose: { world(name: string): Float32Array | undefined } | undefined;
@@ -3366,7 +3376,7 @@ export class ActorCombat implements CombatBridge {
       pose = fighter.body?.pose;
       world = fighter.body?.instances[0]?.world;
     }
-    const node = pose?.world('WEAPON');
+    const node = pose?.world(fighter.gear?.launchNode ?? 'WEAPON') ?? pose?.world('WEAPON');
     if (node && world) return transformPoint(world, [node[12] ?? 0, node[13] ?? 0, node[14] ?? 0]);
     const scale = this.#scale(fighter);
     return [feet[0], feet[1], feet[2] + BODY_HEIGHT * scale * CHEST + 10 * scale];
@@ -4241,6 +4251,7 @@ export class ActorCombat implements CombatBridge {
         ...(attackLunge === undefined ? {} : { attackLunge }),
         speed: gear.rightRecord?.speed ?? 1,
         leftWeapon: gear.left.weapon !== undefined && gear.shield === undefined && !twoHanded,
+        ...(gear.left.weapon !== undefined && { leftWeaponForm: gear.left.weapon }),
         raceFlags: gear.raceFlags,
         rightSpell: gear.spellForms.right,
         leftSpell: gear.spellForms.left,

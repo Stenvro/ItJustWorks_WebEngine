@@ -3235,10 +3235,15 @@ engine's ([Combat movement](#combat-movement)).
   AllyKilled. As two or more of a group come to attack one target, the group's longest member
   that does not flee calls its strategy (GroupStrategy, once each time; inferred, TODO(M13):
   nothing in the original was found to say it, and vanilla's GroupStrategy topics hold no line).
-- **What it fights with** (`chooseEquipment`, weighed again once what it took up has been kept
-  its kind's fCombatInventoryMinEquipTime: a weapon 5 s, magic and a shout 3 s, a staff 5 s, and
-  no sooner than what it carries is read again, 3 s): the weapons
-  it carries (a bow or crossbow only with ammunition; a shot's range before its arrows are known
+- **What it fights with** (`chooseEquipment`, weighed continuously, every update, once what it
+  took up has been kept its kind's fCombatInventoryMinEquipTime: a weapon 5 s, magic and a shout
+  3 s, a staff 5 s, its fists 0 s (`nextEquipWeighing`); what it carries and its spells are read
+  again every 3 s and weighed as read in between): the weapons
+  it carries (a bow or crossbow only with ammunition for it, scored by its own damage, its arrows'
+  or bolts' left out: the mults and range curves below are tuned on that, and with the arrows
+  added an archer kept its bow down to 33 to 55 units, well inside a sword's reach; inferred,
+  TODO(M13): whether the engine's score counts the ammunition; a shot's range before its arrows
+  are known
   fCombatMaximumProjectileRange) and its fists, each scored by its damage ×
   its combat style's equipment score mult (CSGD melee, ranged, magic, staff, unarmed, shout) ×
   its fit to the distance (melee within its reach, less beyond it to
@@ -3247,10 +3252,21 @@ engine's ([Combat movement](#combat-movement)).
   falling to fCombatInventoryMinRangeScoreMult closer than fCombatAdvanceOuterRadiusMax) × 1.25
   for what is in hand (TODO(M13): phase 5, the engine's score; it adds
   fCombatInventoryEquippedScoreBonus on a scale of its own). Another weapon is taken up through
-  the equip system (sheathed first, then drawn again; arrows or bolts for a bow or crossbow).
+  the equip system (sheathed first, then drawn again; arrows or bolts for a bow or crossbow). Its
+  ammunition is the best it carries for its bow or crossbow (`bestAmmo`: the most damage, count
+  above 0), taken up with it and weighed again as what it carries is read, so as its arrows run
+  out it takes the next best. Beside a one-handed weapon (no shield), its left hand weighs a
+  second one-handed weapon (where it may dual wield) and its attack spell on the same score, what
+  the hand holds with the bonus for what is in hand (`leftHandChoice`): a spell takes a left
+  weapon's place as its target goes out of reach, the weapon the spell's close in, each kept its
+  kind's minimum time; with neither, a torch in the dark. Inferred, TODO(M13): the original
+  weighs a hand's weapons and spells together; the order between the two kinds and the score are
+  ours.
   Its combat style: its combat override package's (PACK CNAM), else its NPC\_ ZNAM (of the
   template that gives its AI data), else DefaultCombatstyle (0x3D). With csHumanMissile
-  (ranged 3.2) an archer shoots down to about 250 units and draws its sword closer; a melee
+  (ranged 3.2, melee 0.83) an archer shoots down to about 200 units and draws its sword closer
+  (a 7-damage bow in hand against an 8-damage sword: 199 units; equal damage: 176;
+  `combat-tactics.test.ts` holds the bow at 400 and the sword at 120); a melee
   style keeps its sword at 400. Its magic (`src/shell/combat-casting.ts`, `CombatCasting`)
   joins its options, weighed by the style's magic, staff and shout mults: the attack spell
   worth most against its target (`CastingEngine.spellWorth`: each hostile effect's magnitude

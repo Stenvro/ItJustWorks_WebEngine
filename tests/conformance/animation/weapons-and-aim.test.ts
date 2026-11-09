@@ -103,9 +103,11 @@ describe.skipIf(!hasGamedata())('an NPC’s aimed cast (headless simulation)', (
 describe('weapons and aim (todo)', () => {
   // TODO(M13): the graphs raise PitchOverrideStart / End around equips and scripted first-person
   // idles (1HM_Equip, CrossBow_Equip, TG05_KnockOut); what the camera or the aim does with the
-  // flag is not read. A crossbow's models carry no projectile node (CrossbowRoot, its string,
-  // cocking and trigger bones), and which node the original launches its bolt from is not read:
-  // ours shoots from the hand's WEAPON node as for a bow.
+  // flag is not read (ours, inferred: the player's pitch from the view held level while it or
+  // the graph's PitchOverride variable is on: src/animation/pitch-override.test.ts). A crossbow's
+  // models carry no projectile node (CrossbowRoot, its string, cocking and trigger bones), and
+  // which node the original launches its bolt from is not read (ours, inferred: the hand it is
+  // nocked in, NPC R MagicNode [RMag]: src/gameplay/combat/aim.test.ts shotLaunchNode).
   it.todo('the player’s casting pitch: the aim reads the camera’s PitchOverride flag  [original]');
   it.todo('a crossbow’s bolt leaves from its launch node (the weapon model’s node)  [original]');
 });

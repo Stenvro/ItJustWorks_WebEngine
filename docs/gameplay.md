@@ -975,8 +975,9 @@ same aim; what differs is where they leave from and, for an NPC, what it aims at
 
 - Where a shot leaves: a spell from the casting hand's magic node (NPC R / L MagicNode; in first
   person the first-person skeleton's, the hands the player sees), without one at 0.7 of the
-  caster's height; an arrow or bolt from the WEAPON node (the drawing hand; in first person the
-  first-person arms'). A concentration spell's sprays and a beam's bursts each leave the hand
+  caster's height; an arrow from the WEAPON node (the drawing hand), a bolt from NPC R MagicNode
+  [RMag], where it is nocked (in first person the first-person arms'; inferred for the bolt,
+  TODO(M13): src/gameplay/combat/aim.ts shotLaunchNode, docs/animation.md). A concentration spell's sprays and a beam's bursts each leave the hand
   where it is at that relaunch, so they follow the hand.
 - The player's direction: the view's (the camera's heading and pitch), tilted up by [Combat]
   f1PArrowTiltUpAngle (2°) in first person, f3PArrowTiltUpAngle (2.5°) in third, a bolt in first

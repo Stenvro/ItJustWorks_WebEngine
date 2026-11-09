@@ -2189,6 +2189,31 @@ export class BehaviorRuntime {
   }
 
   /**
+   * Whether a clip playing now raises one of `events` (any case) somewhere in it: one of its
+   * triggers, or its animation's annotations unless it keeps them from being triggers. What an
+   * engine flag raised by a clip's event goes with (src/animation/pitch-override.ts: an equip cut
+   * off before its end plays no longer).
+   */
+  playsClipRaising(events: readonly string[]): boolean {
+    const wanted = new Set(events.map((event) => event.toLowerCase()));
+    for (const node of this.#active) {
+      const clip = node as BehaviorGenerator;
+      if (clip.kind !== 'clip') continue;
+      const scope = this.#scopeOf(clip);
+      for (const trigger of clip.triggers ?? []) {
+        const name = this.#eventNames[this.#globalEvent(trigger.event.id, scope)];
+        if (name !== undefined && wanted.has(name.toLowerCase())) return true;
+      }
+      if (((clip.flags ?? 0) & CLIP_FLAGS.dontConvertAnnotationsToTriggers) !== 0) continue;
+      const animation = this.#host.clip(clip.animation)?.animation;
+      for (const annotation of animation?.annotations ?? []) {
+        if (wanted.has(annotation.text.toLowerCase())) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * The synchronized clip (BSSynchronizedClipGenerator) the graph plays now, if any: its clip's
    * animation (loaded: its binding) and local time, and how its partner gets to its mark (a
    * killmove's, a mount's).

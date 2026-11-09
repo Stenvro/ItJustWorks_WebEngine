@@ -1807,7 +1807,10 @@ export class ActorStage {
    * once, their casts and fight over, then their death shown (src/shell/player-death.ts).
    */
   #playerDied(): void {
-    if (!this.#options.player?.() || this.playerDeath.dead) return;
+    const view = this.#options.player?.();
+    if (!view || this.playerDeath.dead) return;
+    // The camera's PitchOverride: an equip the death cut off never ends it.
+    view.play.player.endPitchOverride();
     this.mounts.remove(PLAYER_REF);
     this.vehicles.release(PLAYER_REF);
     this.furniture.remove(PLAYER_REF);
@@ -2104,6 +2107,8 @@ export class ActorStage {
     const view = this.#options.player?.();
     const avatar = view?.avatar;
     if (!restoring || !view || !avatar) return;
+    // The camera's PitchOverride is not the save's: an equip it was set by before goes on no more.
+    view.play.player.endPitchOverride();
     const graphs = restoring.takePlayerGraphs();
     if (graphs) avatar.restoreGraphs(graphs);
     const player = restoring.takePlayer();

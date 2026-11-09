@@ -21,6 +21,7 @@ import {
   type CombatStyle,
 } from './combat-style-records.ts';
 import { RaceAiFlag } from './race-combat-records.ts';
+import { AmmoFlag } from '../world/item-records.ts';
 
 type Vec3 = readonly [number, number, number];
 
@@ -386,6 +387,49 @@ export function minEquipTime(kind: EquipKind | undefined, settings: CombatAiSett
 }
 
 /**
+ * When it weighs its equipment next: the engine weighs it continuously (fCombatInventoryUpdateTimer
+ * is never read), so it weighs again at once (`clock`) unless it just took something up
+ * (`takenUp`), which it keeps its kind's fCombatInventoryMinEquipTime* first (minEquipTime).
+ */
+export function nextEquipWeighing(
+  clock: number,
+  takenUp: EquipKind | undefined,
+  settings: CombatAiSettings,
+): number {
+  return takenUp === undefined ? clock : clock + minEquipTime(takenUp, settings);
+}
+
+/** One ammunition an actor carries, as its bow's or crossbow's choice weighs it. */
+export interface CarriedAmmo {
+  readonly id: number;
+  readonly count: number;
+  /** AMMO DATA damage. */
+  readonly damage: number;
+  /** AMMO DATA flags (AmmoFlag: Non-Bolt marks arrows). */
+  readonly flags: number;
+}
+
+/**
+ * The ammunition a bow (arrows: AMMO Non-Bolt) or a crossbow (bolts) shoots: the one of that kind
+ * it carries (count above 0) that does the most damage (the engine's equip choice takes the best
+ * arrows; docs/gameplay.md), the first of equals; undefined when it carries none. Read again
+ * as its equipment is weighed, so arrows run out and the next best are taken up. The bow's
+ * score leaves the arrows' damage out (combat-profile.ts weaponOptions).
+ */
+export function bestAmmo(
+  carried: readonly CarriedAmmo[],
+  crossbow: boolean,
+): CarriedAmmo | undefined {
+  let best: CarriedAmmo | undefined;
+  for (const ammo of carried) {
+    if (ammo.count <= 0) continue;
+    if (((ammo.flags & AmmoFlag.nonBolt) !== 0) === crossbow) continue;
+    if (!best || ammo.damage > best.damage) best = ammo;
+  }
+  return best;
+}
+
+/**
  * How well an option suits the distance to its target (0..1): a melee weapon or fists fully
  * within their reach, less the farther beyond it (to fCombatAbsoluteMaxRangeMult × the reach,
  * then fCombatInventoryMaxRangeScoreMult); a ranged one within its range (the one in hand
@@ -460,7 +504,8 @@ export function chooseEquipment(
  * a free left hand): with a one-handed weapon (WeaponType 1..4) in its right hand and its left
  * hand free (no shield, no weapon there), the best scored of its spells (equipmentScore);
  * undefined to leave the hand be. TODO(M13): whether the engine weighs the left hand's spell on
- * its own scale (ours: the same score as the right hand's options).
+ * its own scale (ours: the same score as the right hand's options). The combat AI weighs its left
+ * hand by leftHandChoice, a held left weapon included.
  */
 export function leftHandSpell(
   hands: {
@@ -503,8 +548,7 @@ export function styleAllowsDualWielding(style: CombatStyle): boolean {
  * (styleAllowsDualWielding), with a one-handed weapon (WeaponType 1..4) in its right hand and
  * the left free (no shield, no weapon, no spell there). The best scored of its other one-handed
  * weapons (equipmentScore), or a second of the right hand's own; undefined to leave the hand be.
- * TODO(M13): the engine's order between a left weapon and a left spell (ours: the weapon first,
- * as a style that allows dual wielding asks for it).
+ * The combat AI weighs its left hand by leftHandChoice, these rules and its spells together.
  */
 export function leftHandWeapon(
   hands: {
@@ -539,6 +583,78 @@ export function leftHandWeapon(
     if (score > 0 && (!best || score > best.score)) best = { id: option.id, score };
   }
   return best?.id;
+}
+
+/** What a left hand takes up beside the right hand's one-handed weapon (leftHandChoice). */
+export interface LeftHandPick {
+  readonly kind: 'weapon' | 'spell';
+  readonly id: number;
+}
+
+/**
+ * What its left hand holds beside a one-handed weapon (WeaponType 1..4) in its right, no shield
+ * there: a second one-handed weapon (where its race can dual wield and its style allows it, as
+ * leftHandWeapon has it) and its spells weighed on one score (equipmentScore), what the hand holds
+ * now with the bonus for what is in hand, so a spell that comes to score more (its target out of
+ * reach) takes the place of a left weapon and a weapon that of a spell. Returns the pick when the
+ * hand holds something else now; undefined leaves the hand as it is (it holds the best, or what
+ * it holds is no option here: kept). Inferred, TODO(M13): the original's combat inventory weighs
+ * a hand's weapons and spells together; ours puts them on the right hand's score (no order of
+ * its own between the two kinds).
+ */
+export function leftHandChoice(
+  hands: {
+    readonly weapon: number | undefined;
+    readonly weaponType: number;
+    readonly shield: boolean;
+    /** The weapon in its left hand (undefined: none). */
+    readonly leftWeapon: number | undefined;
+    /** The spell in its left hand (undefined: none). */
+    readonly leftSpell: number | undefined;
+  },
+  raceFlags: number,
+  options: readonly EquipOption[],
+  spells: readonly EquipOption[],
+  distance: number,
+  style: CombatStyle,
+  settings: CombatAiSettings,
+): LeftHandPick | undefined {
+  const oneHanded = (type: number | undefined): boolean =>
+    type !== undefined && type >= 1 && type <= 4;
+  if (!oneHanded(hands.weaponType) || hands.shield) return undefined;
+  const dualWields = (raceFlags & RaceAiFlag.canDualWield) !== 0 && styleAllowsDualWielding(style);
+  // The best scored, and the score of what the hand holds (undefined: none of its options).
+  const weighed: {
+    best: { readonly pick: LeftHandPick; readonly score: number } | undefined;
+    held: number | undefined;
+  } = { best: undefined, held: undefined };
+  const weigh = (pick: LeftHandPick, option: EquipOption, inHand: boolean): void => {
+    const score = equipmentScore({ ...option, equipped: inHand }, distance, style, settings);
+    if (inHand) weighed.held = score;
+    if (score > 0 && (!weighed.best || score > weighed.best.score)) weighed.best = { pick, score };
+  };
+  for (const option of options) {
+    if (option.kind !== 'melee' || option.id === undefined || !oneHanded(option.weaponType)) {
+      continue;
+    }
+    const inHand = option.id === hands.leftWeapon;
+    // A second weapon only where it may dual wield; the one it holds there counts anyway.
+    if (!dualWields && !inHand) continue;
+    // The right hand's own weapon only when it carries a second one.
+    if (option.id === hands.weapon && (option.count ?? 1) < 2) continue;
+    weigh({ kind: 'weapon', id: option.id }, option, inHand);
+  }
+  for (const option of spells) {
+    if (option.kind !== 'magic' || option.id === undefined) continue;
+    weigh({ kind: 'spell', id: option.id }, option, option.id === hands.leftSpell);
+  }
+  const holding = hands.leftWeapon !== undefined || hands.leftSpell !== undefined;
+  // What it holds is none of its options here (a weapon or spell it cannot weigh): kept.
+  if (holding && weighed.held === undefined) return undefined;
+  const pick = weighed.best?.pick;
+  if (!pick) return undefined;
+  const same = pick.kind === 'weapon' ? pick.id === hands.leftWeapon : pick.id === hands.leftSpell;
+  return same ? undefined : pick;
 }
 
 /**
