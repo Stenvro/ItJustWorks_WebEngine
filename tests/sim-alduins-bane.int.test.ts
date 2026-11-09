@@ -194,8 +194,9 @@ describe.skipIf(!hasGamedata())("MQ206 Alduin's Bane", () => {
   // player's Dragonrend, once it reaches him (MQ206AlduinScript's OnMagicEffectApply), is 180, and it
   // brings him down on his landing marker. The player shouts it at him as he comes near, their voice
   // ready again, aiming at him while the words are held: aimed once where he was before a two-second
-  // hold, and pressed while the voice still recovered, it reached him only by chance. The player's fist lands on him there; the rest of a fight
-  // a first level's fists do not win stands in as one blow of theirs for what is left of his health.
+  // hold, and pressed while the voice still recovered, it reached him only by chance. The player's
+  // fist lands on him there; the rest of a fight a first level's fists do not win stands in as one
+  // blow of theirs for what is left of his health.
   // Essential, he bleeds out (200); he says his last and is gone (230, and 220: MQ301 begins); his
   // way out over the mountains ends at 240.
   it('has the player bring Alduin down with Dragonrend, and he escapes (120-240)', async () => {

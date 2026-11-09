@@ -732,8 +732,9 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   locked at its limit. Traced at 1, 2 and 3 s (and swept at 1 to 4.5 s): within a second of the
   kill her feet are pressed flat onto that limit and her knees straightened to theirs, then her
   thighs spread to their plane limits and every joint of her legs lies at a limit, the hips at the
-  cone; she is still awake there 5 s on, so neither Rapier's own sleep (bodies created unable to
-  sleep stand the same) nor the solver deactivation (off, the same) holds her. That one limit
+  cone. Her bodies fall asleep about 2 s after the kill, but sleep is not what holds her: kept
+  from sleeping (bodies created unable to sleep, and the solver deactivation off) she still stands
+  5 s on. That one limit
   decides it: 8° more dorsiflexion and she slumps at 1 and 2 s (at 3 s her other knee stays
   locked). The placed ragdoll poses' ankles (the Creation Kit's settled Havok state) lie past it
   by more than 1° in 41 of 1,066 and by more than 5° in 6, so a Havok ankle gives a little under
