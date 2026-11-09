@@ -57,7 +57,40 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   bones, a knife stuck in a table), which the solver pushes out the far side. Holding such a body
   where it was placed (its contact's way out pointing down, 0.02 Havok units deep or more) was
   tried: with it, 130 went through instead of 92 of today's audit, what lay on or in the held
-  ones among them (gems in a chest, tomatoes in a basket). Today's: 92 of 69,455, 712 rolled off.
+  ones among them (gems in a chest, tomatoes in a basket). Then: 92 of 69,455, 712 rolled off.
+- **Welded faces while settling** (`PhysicsWorld.#weld`; inferred from the files' one-sided
+  welding, TODO(M13): not observed): most of those 92 were placed deeper than half into a floor,
+  a table's top or a cave's ground (berries, notes, bones, a ruined book that a rubble pile's hull
+  pressed 27 units down into the floor), and the two-sided triangle put them out at its back. A
+  settling body that the step pushes to the back of a welded triangle it may rest on (facing up,
+  at most 60° steep) is put out at that triangle's front instead, unless another welded triangle
+  it lies in pushes the other way (a dagger through a table's top into its underside); ragdolls
+  meet the one-sided copies as before. Nor is a body that stands on something under it: a
+  surface that does not move and that it may rest on (a welded triangle by its front), straight
+  under its centre of mass, no more than 2 units under its lowest point (a chaurus egg in Frostflow
+  Abyss on the cave's floor under the edge of a mound's slope [000A439C, 000A439B] was put out on
+  the slope and rolled 230 units off). The body is moved after the step, so ray and shape casts
+  see its new place after the next one (`queriesCurrent`). The triangles' fronts are read from
+  our own collision data, not from Rapier's shape (which copies a mesh's buffers out whole).
+  `tools/settle-audit.ts` (articulated objects posed by their XRGD, as the session does: 64,248
+  of the 69,455 settle, below) now also counts what ends more than 8 units higher than placed.
+  Without the weld 81 fall through and 363 rise; with it 45 fall and 403 rise: of the 52 that
+  rise only with it, 8 would have fallen through, and the rest were placed sunk into what they
+  lie on and stay sunk without it, but for some that the weld puts out on top of what they stand
+  under (the Blue Palace's bucket [000CC306], its top 2.5 units into what is over it, set 28
+  units up: no floor straight under its centre of mass). The support rule also lets one through
+  that the weld alone kept: a RuinsLinenPile [000B314E] now falls 3,218 units; not yet looked
+  into. The support rule (one ray, the 2-unit gap, the side of a hit read from
+  Rapier's featureId) is inferred (TODO(M13)). Exteriors (42 cells around Riverwood on
+  their landscape) settle alike with and without it. Fort Fellhammer's hand cart [00044727] rolls
+  down its ramp with its ore as it did without the weld (then it fell through the ramp; now it
+  rolls on): its wheels are placed 6 to 10 units into the planks, its frame touches nothing but
+  the ore placed inside its bed (up to 16 units deep), and its wheels turn freely on their
+  hinges; it rolls with the ore taken away too. Open: books pushed out of a cupboard's or
+  shelf's back panel (horizontal faces are left as they were), objects over a table's edge,
+  overlaps with simulated or keyframed bodies (the hand cart's ore, trapdoors, a chest's lid,
+  stacked plates thrown up off their table), and the baskets on nothing at 154 units in the inns
+  built of FarmIntInnEnd04 (Nightgate, Moorside, Braidwood).
 - **Friction and restitution** combine as Havok's square root of the product (each collider
   gets the square root, Rapier multiplies).
 - **What is placed:** the collision of every enabled object in the loaded cells, the
@@ -89,8 +122,8 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   of its references that are keyframed, and every moving body of a reference flagged "Don't
   Havok Settle", are held: made keyframed with no speed, then given back their motion type and
   any speed they had. Ours settles over the first fWarmStartMaxTime of play instead (above): our
-  deactivation leaves what settles be until then (Rapier still sleeps a body at rest by its speed)
-  and leaves what still moves at its end moving. TODO(M13): the settling at once, and the
+  deactivation leaves what settles be until then (Rapier's own sleeping still puts a settling
+  body to sleep once it has rested a second by the rule below, `#holdAwake`) and leaves what still moves at its end moving. TODO(M13): the settling at once, and the
   deactivation at its end: putting to sleep what still moves at the 4 s of `tools/settle-audit.ts` took
   the objects of the interiors that go through what they lie on from 92 to 159 (a sleeping body's
   contacts drop while what lies on it still moves, as under "Deactivation by island").
@@ -710,8 +743,8 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   limits' tau factor of the excess a step (pushed back only). Hulda, killed still where she
   leans at the Bannered Mare's counter (a Ragdoll death, no blow), stayed asleep on her feet,
   her hips and knees in the box but past the cone and held there by their friction; with the
-  cone she slumps to the floor (`ragdolls-death.test.ts`) when killed 1.5 or 2 s into her lean
-  idle. Killed at 1, 2.5 or 3 s her upper body tips onto the counter while her hips bend to
+  cone she slumps to the floor (`ragdolls-death.test.ts`) when killed 0.5 or 5 s into her lean
+  idle. Killed at 1 to 4.5 s her upper body tips onto the counter while her hips bend to
   their limit and her knees straighten to theirs, her feet flat at the ankles' limit: her legs
   stand as a locked strut and she stays draped over the counter (head at 96–99 units). It is
   the solver's give, not the limits' softness: Rapier at 4 or 5 substeps (the original's world
@@ -729,7 +762,40 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   at rest within 20 s); only two substeps buckle the strut. The foot capsules point 36° toe
   down at the skeleton's rest, and the ankle's limit (3.6°) leaves them 5° short of flat: a
   foot pressed flat holds its calf leaning back, the knee behind the line from hip to ankle,
-  locked at its limit. TODO(M13): Havok's give at four iterations with the settling of eight.
+  locked at its limit. Traced at 1, 2 and 3 s (and swept at 1 to 4.5 s): within a second of the
+  kill her feet are pressed flat onto that limit and her knees straightened to theirs, then her
+  thighs spread to their plane limits and every joint of her legs lies at a limit, the hips at the
+  cone. Her bodies fall asleep about 2 s after the kill, but sleep is not what holds her: kept
+  from sleeping (bodies created unable to sleep, and the solver deactivation off) she still stands
+  5 s on. That one limit
+  decides it: 8° more dorsiflexion and she slumps at 1 and 2 s (at 3 s her other knee stays
+  locked). The placed ragdoll poses (the Creation Kit's settled Havok state) lie past their
+  limits often (`node tools/ragdoll-info.ts --limits`, mirrored, of the 1,257 complete poses;
+  the tool prints each joint's limits as the file gives them, lower the minimum angle, upper
+  the maximum): of 1,992 ankles (NPC Foot to NPC Calf, -34° to 3.6°) 83 past the upper limit,
+  the dorsiflexion's, by more than 1° and 23 by more than 5° (240 and 161 past the lower); of
+  2,034 knees (NPC Calf to NPC Thigh, -110° bent to 0° straight, as skeleton.nif and
+  skeleton_female.nif both give it) 38 and 9 past the straight limit, the upper one (82 and 5
+  past the bent one); of 2,002 elbows (0° to 110°) 424 and 15 past the 0° limit; of 1,842
+  shoulders' planes (-75° to 5°) 384 and 141 past the 5° limit. So Havok's limits give under a
+  corpse's own weight, by a few degrees and in some poses far more, the knees' straight side
+  and the ankles' dorsiflexion among them. Tried and not kept: a give in proportion to the load
+  a limit carries (the load's torque impulse × the step over the iterations × the joint's own
+  inertia × tau, as a Gauss-Seidel solve of a light link under a heavy load in four iterations
+  falls short). The load was read twice, from the step's change of momentum of each side of the
+  joint less gravity and its contacts' normal impulses (the contacts' friction impulses were not
+  read), and the two readings never agreed: from her foot's side her ankle and her knee came out
+  at about 3 N·m pressed on their limits, from the other side (through the counter's contacts)
+  about 50 times more, and which of the two is nearer is not known (the floor's friction on her
+  feet is missing from the one, the counter's from the other). The give took the lesser of the
+  two readings, and none where they did not both press the limit, so at her ankle it was at most
+  what 3 N·m earns, a fraction of a degree, by construction, far from the 8° that let her slump.
+  The race skeletons settled a little worse with it (49, 48 and 48 of 52 at rest within 20 s,
+  still, pushed and lifted, against 51, 48 and 50). This rules out that reading of the load, not
+  a give of Havok's limits under her load. TODO(M13): the load her ankles and knees carry at
+  their limits is unmeasured (the two readings disputed, the contacts' friction not counted);
+  with it measured, whether her limits' give at four iterations buckles the strut, or something
+  other than the limits does.
 - **Made dynamic** (observed in the original: the behavior's ragdoll driver set to dynamic):
   every body of it that is then of a dynamic motion type and moves slower than 0.5 Havok units
   a second is activated and given 0.5 Havok units a second more upward speed, so that nothing
@@ -818,17 +884,40 @@ documented. It runs in two places (`ActorBodies`):
   follow the pose as the living's do. TODO(M13): whether the original then lets them go limp,
   and whether it draws the driven bones from their bodies (here the graph's pose is drawn).
 
-Malleable strength and a chain's damping (0.6 in every chain) are not applied; a chain's tau
-(1) and constraint force mixing (float epsilon) are Rapier's stiff joints'. A joint is in the world only while one of its two bodies is simulated: between
+A chain's tau (1), damping (0.6 in every chain) and constraint force mixing (float epsilon), and
+a malleable constraint's strength (Havok's virtual mass factor: each of its rows takes that share
+of its impulse in an iteration), are applied where the engine solves as Havok does: a breakable
+joint's group (below) and, for a malleable ragdoll or limited hinge, its friction, motor and
+cone rows. Rapier's own joints stay stiff: four iterations of damping 0.6 leave 2.6% of a
+step's speed error, unseen; TODO(M13): a malleable joint's pivot and limits (Rapier has no
+per-joint softness; no vanilla model has a malleable constraint). A joint is in the world only while one of its two bodies is simulated: between
 two keyframed or held bodies (a living actor's ragdoll keyframed to its pose, an object placed
 to wait) it is left out and made again from its constraint as a body is let go (a death, a
 knock-down, a touch). Rapier solves a joint between two kinematic bodies in every substep all
 the same: Helgen's opening spent 3.5 of its 4.8 ms a physics step on the 400 joints of 23
 living actors' ragdolls, at three steps a frame. **Breakable** constraints break when the impulse on them in a step exceeds
 their threshold: the beehive's 20 holds its 10 kg (1.6 per step at 60 Hz), the mace trap's pin
-(30) its 108 kg of chain and mace (17.6); the joint's impulse is not exposed, so it is the
-change of momentum of its simulated body that gravity does not explain (TODO(M13): contacts on
-the body count too).
+(30) its mace and the pull of the chain the mace hangs by (17 to 19 a step). Havok's measure
+(hkpBreakableConstraintData) is the solver results of the constraint it wraps: the impulses its
+rows took over the step's solver iterations, the root of the sum of their squares weighed
+against the threshold (a hinge's two angular rows count with its three linear ones). Rapier
+does not expose its joints' impulses, so a breakable ball and socket or hinge is solved before
+each step as Havok's solver would solve it (src/physics/joint-impulses.ts) with every point
+joint reached through simulated bodies: the world solver's iterations (four), tau (0.6) and
+damping (1); a chain's links as one block with the chain's own tau, damping and constraint
+force mixing; a hinge's angular rows; a malleable constraint's strength. The velocities solved
+are what moved the bodies since the last step (gravity's speed of the step, a script's push),
+and the error tau corrects is what the solve itself left over the steps (clipped to a chain's
+maxErrorDistance): Rapier's chains drift apart a little every step, and that is no load. A
+body's own change of momentum measured only the sum of what holds it: the chain's pull
+cancelled out of the mace's, and the pin never broke. The stiff springs (the beehives) still
+take their body's change of momentum. TODO(M13): inferred from Havok's documented solver;
+contacts on the bodies are not in the solve. The mace (TrapMace01, MaceTrap): simulated
+(SetMotionType 1) it hangs on its pin; fireTrap's first push (ApplyHavokImpulse 15: 3.2 on each
+link, on L_PROPS, 4.8 on the mace, on L_TRAP) pulls the chain taut and the pin takes 48 in
+that step (a rigid solve of the group gave 69; with damping 1 for the chain, 58): it breaks
+there, and the second (50) pushes the mace already let go down past its base. A push of 6 or
+more breaks it.
 
 Models whose bodies move their nodes one by one (`isArticulated`: constraints, or several
 simulated bodies) are drawn on a pose of their own nodes rather than moved as one: every
@@ -890,10 +979,13 @@ original:
   as a whole: one body released alone hung, simulated, on its held neighbours' joints and shook.
   8,670 objects carry a pose too (armour on the floor, open books, hanging game): an articulated
   object's is walked the same way over its model's nodes (`poseObjectRagdoll` in
-  play-session.ts; XRGB turns only an actor's biped), its bodies placed on its posed nodes, a
-  complete walk leaving it at rest until touched and a stopped one settling; 7,534 apply
+  src/world/ragdoll-data.ts; XRGB turns only an actor's biped), its bodies placed on its posed
+  nodes, a complete walk leaving it at rest until touched and a stopped one settling; 7,534 apply
   completely, 1,131 have no model with a pose order (`node tools/ragdoll-info.ts --pose`).
-  Single-body clutter's is never applied (its body sits on its fade root).
+  Single-body clutter's is never applied (its body sits on its fade root). `tools/settle-audit.ts`
+  poses them the same way: left in their models' rest pose and settled, open books on wall
+  shelves lay in the shelf and were put out into the wall above (the Blue Palace's
+  [000CC006, 000CC007], Jorgen and Lami's house's [00105449]).
 - **The corpse pose** (`src/animation/corpse-pose.ts`): the original keeps a corpse's Havok
   state with its reference; here, as a dead actor leaves the stage (its cell unloads) and as the
   game is saved, the nodes its ragdoll placed (those not where their parents and the skeleton
@@ -930,7 +1022,18 @@ checked every quarter second, within 0.02 units and 0.05 radians; TODO(M13): how
 runs its two checks and for how many frames a body must pass them are not read). Before that,
 Havok's solver slows a slow body down (solver deactivation, above). Rapier sleeps bodies by their
 speed alone, so a ragdoll whose limbs shook against a slope or a rock never slept (the Helgen
-skeleton flipped its vertical speed 12–31 times a second for half a minute). Also behind the
+skeleton flipped its vertical speed 12–31 times a second for half a minute), and a body sliding
+or turning slowly (under 0.1 units or about 0.1 radians a second) was put to sleep after half a
+second, still moving. Rapier's sleeping is held to the rule (`PhysicsWorld.#holdAwake`): each
+check starts Rapier's half-second timer over for every body not yet inactive for a second, and
+a body Rapier puts to sleep before the rule would (one woken between checks) is woken again
+with its speed, with what it touches (`tests/conformance/physics/deactivation.test.ts`).
+Settling Whiterun's 27 interiors (`node tools/settle-audit.ts whiterun`) leaves the same 2
+fallen and 17 dropped off; a settling cell steps longer with more bodies awake, as they now
+rest a second before they sleep, not half of one (mean step over the first 4 s, Jorrvaskr
+2.4 → 3.6 ms, Dragonsreach 4.8 → 6.1 ms, the Bannered Mare 2.5 → 3.7 ms; from 6 s on Jorrvaskr
+and the Bannered Mare as before, while Dragonsreach keeps 11 bodies awake past 10 s, all asleep
+by 20 s: 0.4 → 0.8 ms over 10–20 s). Also behind the
 shaking, and fixed: the landscape is solid from above only (`addMesh` with `ground`: Rapier's
 fixed internal edges, which drop contacts from below a triangle and smooth the edges between
 them), so a foot that went under the ground is no longer pushed further down while its joint

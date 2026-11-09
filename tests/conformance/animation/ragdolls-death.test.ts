@@ -218,8 +218,10 @@ describe.skipIf(!hasGamedata())('Hulda killed at the bar counter (headless simul
   // with four iterations) keeps her standing too (head at 91–93 units); only two buckle the
   // strut, and fewer substeps settle the race skeletons' ragdolls worse. Easing every limit
   // the joints lie past (by tau of the error a step, as Havok's soft limits correct) changes
-  // nothing: the strut's joints lie at their limits, not past them. TODO(M13): Havok's solver's
-  // give at four iterations with the settling of the eight.
+  // nothing: the strut's joints lie at their limits, not past them. A give in proportion to the
+  // load a limit carries was tried and not kept (docs/physics.md, the cone), but the load her
+  // ankles and knees carry is unmeasured: TODO(M13), measure it, then Havok's limits' give at
+  // four iterations under it, with the settling of the eight.
   for (const phase of STANDING_PHASES) {
     it.todo(`killed ${phase} s into her lean, her body slumps below the counter’s height`);
   }

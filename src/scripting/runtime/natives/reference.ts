@@ -10,6 +10,7 @@ import { ActorValue } from '../../../world/actor-values.ts';
 import type { NativeCall } from '../../papyrus-vm.ts';
 import { formatValue, ObjectHandle, type Value } from '../../values.ts';
 import { PLAYER_REF } from '../forms.ts';
+import type { Vec3 } from '../game-state.ts';
 import type { ScriptRuntime } from '../runtime.ts';
 import { questItems } from '../quest-items.ts';
 import { bool, formOf, int, num, object, str, type Register } from './args.ts';
@@ -357,15 +358,9 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     const item = formOf(call.args[0]);
     if (reference === undefined || item === undefined) return null;
     const count = Math.max(1, int(call.args[1], 1));
-    const health = await runtime.removeItem(
-      reference,
-      call.args[0] ?? null,
-      count,
-      true,
-      undefined,
-    );
+    const left = await runtime.removeItem(reference, call.args[0] ?? null, count, true, undefined);
     const dropped = await runtime.placeAt(item, reference, count);
-    runtime.dropped(dropped, health);
+    runtime.dropped(dropped, left);
     return runtime.referenceHandle(dropped);
   });
   // An item reference's health as a fraction (1: whole; a tempered one's 1.1 and up): its own
@@ -855,18 +850,27 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
   // trap's blow on this reference: the damage to an actor's health, blamed on the actor the
   // trap's doings are (SetActorCause), and the push back away from the trap: its character
   // controller pushed by the pushback (the trap's own push, as a hit's knockback: observed in
-  // the original; not knocked down). TODO(M13): the stagger (afStagger) and the hit's material
-  // impact (aeMaterial).
+  // the original; not knocked down). An actor staggers by afStagger as by a Stagger effect of
+  // that magnitude, weighed against its mass (the mace trap's 0.2; most traps pass 0), from the
+  // hit's position (afXPos, afYPos, afZPos: its staggerDirection as a blow's from there).
+  // TODO(M13): the stagger and its direction are inferred from the arguments' names; the hit's
+  // material impact (aeMaterial).
   n('objectreference.processtraphit', async (call) => {
     const reference = self(call);
     const trap = ref(call.args[0]);
     if (reference === undefined) return null;
     const cause = trap === undefined ? undefined : state.references.get(trap)?.actorCause;
-    if (await runtime.actors.isActor(reference)) {
+    const actor = await runtime.actors.isActor(reference);
+    if (actor) {
       await runtime.actors.damage(reference, ActorValue.health, num(call.args[1]), cause);
     }
     const pushback = num(call.args[2]);
     if (pushback > 0 && trap !== undefined) world.trapPush?.(reference, trap, pushback);
+    const stagger = num(call.args[10]);
+    if (actor && stagger > 0) {
+      const from: Vec3 = [num(call.args[6]), num(call.args[7]), num(call.args[8])];
+      world.stagger?.(reference, stagger, cause, from);
+    }
     return null;
   });
   // InterruptCast: what this reference (an actor, a trap's caster) casts stops (casting-engine.ts).

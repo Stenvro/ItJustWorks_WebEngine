@@ -36,8 +36,11 @@ export interface ParticleBody {
 const MAX_PARTICLES = 512;
 /** Points of the skin sampled to be born at. */
 const SAMPLES = 96;
-/** Floats per particle: position, velocity, normal, age, life, frame, angle, spin. */
-const STRIDE = 14;
+/**
+ * Floats per particle: position, velocity, normal, age, life, frame, angle, spin; with Particle
+ * Animated, its frames a second and the frame it loops back to.
+ */
+const STRIDE = 16;
 
 const DEGREES = Math.PI / 180;
 
@@ -143,6 +146,29 @@ export function particleSystem(shader: EffectShaderRecord): ParticleSystemData {
     objects: new Map(),
     billboards: new Map(),
   };
+}
+
+/**
+ * The atlas frame a Particle Animated particle shows `age` seconds into its life: from its start
+ * frame on at its frames a second (Frame Count), back to its loop start frame after the end
+ * frame, each within the atlas. TODO(M13): inferred from the EFSH fields' names (xEdit); that
+ * Frame Count is frames a second is read from the vanilla shaders (their counts run their atlases
+ * over about their particles' lives), not from a document.
+ */
+export function animatedFrame(
+  age: number,
+  start: number,
+  loopStart: number,
+  end: number,
+  fps: number,
+  frames: number,
+): number {
+  const last = Math.max(0, Math.min(frames - 1, Math.floor(end)));
+  const first = Math.max(0, Math.min(last, Math.floor(start)));
+  const frame = first + Math.floor(Math.max(0, age) * Math.max(0, fps));
+  if (frame <= last) return frame;
+  const loop = Math.max(0, Math.min(last, Math.floor(loopStart)));
+  return loop + ((frame - last - 1) % (last - loop + 1));
 }
 
 /** A point of the skin: its shape and vertex. */
@@ -317,7 +343,16 @@ export class SurfaceParticles implements ParticleSource {
     s[o + 8] = nz;
     s[o + 9] = 0;
     s[o + 10] = Math.max(0.05, p.lifetime + (random() * 2 - 1) * p.lifetimeVariation);
-    s[o + 11] = Math.floor(random() * this.data.subtextures.length);
+    if ((this.#shader.flags & EffectShaderFlag.particleAnimated) !== 0) {
+      const a = p.animation;
+      s[o + 11] = Math.floor(a.startFrame + random() * a.startFrameVariation);
+      s[o + 14] = Math.max(0, a.frameCount + (random() * 2 - 1) * a.frameCountVariation);
+      s[o + 15] = Math.floor(a.loopStartFrame + random() * a.loopStartVariation);
+    } else {
+      s[o + 11] = Math.floor(random() * this.data.subtextures.length);
+      s[o + 14] = 0;
+      s[o + 15] = 0;
+    }
     s[o + 12] = (p.rotation + (random() * 2 - 1) * p.rotationVariation) * DEGREES;
     s[o + 13] = (p.rotationSpeed + (random() * 2 - 1) * p.rotationSpeedVariation) * DEGREES;
     this.count++;
@@ -396,7 +431,18 @@ export class SurfaceParticles implements ParticleSource {
       const t = Math.min(1, age / life);
       const size = scaleAt(p.scaleKeys, p.scaleTimes, t) / 2;
       const [r, g, b, a] = colorAt(p.colors, t);
-      const frame = this.data.subtextures[s[o + 11] ?? 0] ?? [0, 0, 1, 1];
+      const index =
+        (this.#shader.flags & EffectShaderFlag.particleAnimated) !== 0
+          ? animatedFrame(
+              age,
+              s[o + 11] ?? 0,
+              s[o + 15] ?? 0,
+              p.animation.endFrame,
+              s[o + 14] ?? 0,
+              this.data.subtextures.length,
+            )
+          : (s[o + 11] ?? 0);
+      const frame = this.data.subtextures[index] ?? [0, 0, 1, 1];
       const base = offset + written * PARTICLE_FLOATS;
       out[base] = s[o] ?? 0;
       out[base + 1] = s[o + 1] ?? 0;

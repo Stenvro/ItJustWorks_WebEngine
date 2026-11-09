@@ -11,14 +11,25 @@
 import type { CombatCasting, CombatSupport } from './actor-combat-ai.ts';
 import { MAGIC_REACH, type ActorCasting } from './actor-casting.ts';
 import type { EquipOption } from '../ai/combat-tactics.ts';
+import { shoutAttacks } from '../gameplay/combat/spell-score.ts';
 import type { GameSession } from './game-session.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { Delivery, type MagicItemRecord } from '../world/magic-records.ts';
 import { CastType } from '../world/spell-records.ts';
 
-/** The NPCs' casting as the combat AI asks for it. */
+/** Whether a shout's word is an attack (shoutAttacks: some effect of its spell is hostile). */
+async function attacks(runtime: ScriptRuntime, wordSpell: MagicItemRecord): Promise<boolean> {
+  const effects = [];
+  for (const entry of wordSpell.effects) {
+    const effect = await runtime.magic.effect(entry.effect);
+    if (effect) effects.push(effect);
+  }
+  return shoutAttacks(effects);
+}
+
+/** The NPCs' casting as the combat AI asks for it (of a session: its script runtime). */
 export function combatCasting(
-  session: GameSession,
+  session: Pick<GameSession, 'scriptsReady'>,
   casting: () => ActorCasting | undefined,
 ): CombatCasting {
   return {
@@ -38,7 +49,7 @@ export function combatCasting(
       const words = shout ? runtime.casting.wordsKnown(actor, shout) : 0;
       const word = shout?.words[Math.max(0, Math.min(words, shout.words.length) - 1)];
       const wordSpell = word ? await runtime.magic.item(word.spell) : undefined;
-      if (shout && words > 0 && wordSpell) {
+      if (shout && words > 0 && wordSpell && (await attacks(runtime, wordSpell))) {
         options.push(await option(runtime, actor, 'shout', shout.formId, wordSpell, target));
       }
       return options.filter((one) => one.damage > 0);
@@ -58,7 +69,7 @@ export function combatCasting(
 
 /** One of the combat AI's support casts or potions (CombatSupport): whether it began. */
 async function support(
-  session: GameSession,
+  session: Pick<GameSession, 'scriptsReady'>,
   casting: () => ActorCasting | undefined,
   actor: number,
   purpose: CombatSupport,

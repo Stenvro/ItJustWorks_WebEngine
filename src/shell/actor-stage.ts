@@ -37,6 +37,7 @@ import { RecordFlag } from '../formats/esm/record.ts';
 import type { GaitMotion, SoundingWorld } from './actor-sounds.ts';
 import { ActorGraphEvents } from './actor-graph-events.ts';
 import {
+  actorGround,
   actorOnRay,
   groundActor,
   headPosition,
@@ -1277,18 +1278,20 @@ export class ActorStage {
         this.#invisibility = {
           playerMinimum: await read('playerMinimum'),
           minRefraction: await read('minRefraction'),
+          maxRefraction: await read('maxRefraction'),
         };
       })();
     }
     for (const staged of this.#actors.values()) {
       const fade = staged.placed.instances[0]?.fade;
       if (!fade) continue;
-      const invisible = invisibilityVeil(
-        runtime.magic.aiState(staged.reference).invisible,
-        staged.reference === PLAYER_REF,
-        this.#invisibility,
-      );
-      fade.veil = 1 - (1 - invisible) * this.#alpha(runtime, staged.reference, frame);
+      const invisible = runtime.magic.aiState(staged.reference).invisible;
+      const veil = invisibilityVeil(invisible, staged.reference === PLAYER_REF, this.#invisibility);
+      fade.veil = 1 - (1 - veil) * this.#alpha(runtime, staged.reference, frame);
+      // The shimmer through its shapes: the refraction its Invisibility set (magic-engine.ts).
+      fade.refraction = invisible
+        ? (runtime.state.actors.get(staged.reference)?.refraction ?? 0)
+        : 0;
     }
   }
 
@@ -2052,7 +2055,8 @@ export class ActorStage {
     // The camera as it was: first or third person, the fields of view.
     if (player.fov) view.play.player.setFov(player.fov[0], player.fov[1]);
     if (player.pov) view.play.player.setPov(player.pov);
-    if (player.sneaking === true) view.play.player.sneaking = true;
+    // Sneaking as saved (a save keeps it only while sneaking): never what the player came with.
+    view.play.player.sneaking = player.sneaking === true;
     if (player.weaponDrawn === true) {
       this.#restoredDraws.set(PLAYER_REF, { left: 5, resumed: graphs?.body !== undefined });
     }
@@ -2566,12 +2570,10 @@ export class ActorStage {
       }
     }
     const reach = this.#groundReach(staged.position);
-    groundActor(staged.placed, staged.position, staged.heading, (from, length) => {
-      // TODO(M13): this ray also meets another actor on the spot, and sets this one on or in it
-      // (one standing where the player comes through a door rises some 30 units for a moment).
-      const hit = physics.raycast(from, [0, 0, -1], Math.min(length, reach), Layer.charController);
-      return hit && { point: hit.point, normal: hit.normal };
-    });
+    // Another actor on the spot is no ground (actorGround).
+    groundActor(staged.placed, staged.position, staged.heading, (from, length) =>
+      actorGround(physics, from, Math.min(length, reach)),
+    );
     const world = staged.placed.instances[0]?.world;
     if (world) staged.position = [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0];
     staged.grounded = true;

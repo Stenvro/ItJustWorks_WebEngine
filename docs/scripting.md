@@ -104,7 +104,8 @@ As the Creation Kit wiki's "Threading Notes (Papyrus)" describe them (`papyrus-v
   waits. MQ101's dunCGDragonVoiceStormCall
   (magicProjectileStormScript: an OnUpdate with some ten such natives, then fRecast) sent a
   meteor every 0.12 s while every native returned at once, about two and a half times the
-  game's rate.
+  game's rate; with them a frame each it sends one every 0.1 s and some fifteen frames, as the
+  game does (tests/conformance/magic/casting.test.ts, in the sim at 60 frames a second).
 - A script error (a runaway thread, too deep a call stack) stops its thread and is reported,
   never thrown at the engine, as the game logs it.
 - **Faults the thread survives** (observed in the original, logged with its stack in the
@@ -369,6 +370,13 @@ quests (the College's MGR quests) may come out differently from one new game to 
   not run, do nothing and return false, and the game logs "attempting to start event scoped
   quest outside of story manager" as an error of the calling script (SetStage on one the story
   manager started and that runs works as on any other).
+  A start resets a quest that does not run once (Quest.Reset): its stages done, current stage,
+  objectives and journal entries are those of a quest never started, and its scripts start
+  over. From the data: CWGovernment (neither run once nor repeated stages) is started by the
+  story manager each time a capital changes hands, works in its start-up stage and stops
+  itself, and its shut-down stage calls back the CWResetGarrison quest that waits for it with
+  no time limit; with its last run's stages kept, the second start ran neither stage, and the
+  peace council's hold trade (MQ302 stage 260) waited out setOwner's 600 s bail-out.
   The start-up stage is set as it starts; its fragment runs on a thread of its own. Its scenes
   that begin on quest start start, and they end as it stops ([ai.md](ai.md#scenes)).
 - **SetStage** starts the quest if needed; without "allow repeated stages" a stage is set once;
@@ -417,7 +425,13 @@ worldspaces on screen:
 
 - **Cells**: as a cell's references load, those with scripts get OnInit the first time (a
   non-persistent reference's scripts start with its cell), then OnCellAttach, OnLoad and
-  OnCellLoad; leaving, OnUnload and OnCellDetach. An actor runs the scripts of the NPC_ it
+  OnCellLoad; leaving, OnUnload and OnCellDetach. The hub tells every reference of the cell
+  that it attached and detached (TESCellAttachDetachEvent, observed in the original: every
+  reference, scripted or not; ours: its objects, primitives, markers, lights, sound markers,
+  decals and acoustic spaces, `cellReferences`, and its actors); the scripts hear it where
+  there are scripts (an editor marker's too: before, a cell's markers never attached, so a
+  temporary marker's scripts never started). The full load (TESCellFullyLoadedEvent:
+  OnCellLoad) names the cell. An actor runs the scripts of the NPC_ it
   takes them from (its leveled list's pick, a template's with the script flag), which is only
   known once it is resolved: a persistent actor whose base has no scripts of its own but whose
   script base has (MQ104's dragon: DragonActorScript from MQ104Dragon's template) starts them
@@ -466,7 +480,14 @@ worldspaces on screen:
   order has 6,527 such pairs (5,691 children of 2,782 parents: 1,625 ambushes, 2,000-odd traps,
   default2StateActivator's doors and gates; `node tools/activate-children-audit.ts`); the
   runtime finds a parent's children in its own cell, its worldspace's persistent cell and the
-  exterior cells round its place (6,369 of the 6,527; the other 158 lie farther off).
+  exterior cells round its place (6,369 of the 6,527), and a persistent parent's wherever they
+  stand (the other 158, every one of whose parents is persistent: Fort Neugrad's commander's
+  door wakes the bandit boss in Tamriel's persistent cell, its barracks doors the ambush
+  outside); the load order's list of those is read in the background as a game starts or loads
+  (`warmActivateChildren`, every placed reference: about 1.3 s in Node), and the children round
+  a parent never wait for it. TODO(M13): inferred (the engine keeps a parent's children on it as they load; a
+  persistent parent is always there); whether a child whose cell is not in memory is left out
+  in the original is not read.
   Bleak Falls Barrow's frostbite spider drops from its ceiling hole so as the player walks into
   the trigger by Arvel the Swift. **Another activator's default** (an actor a script's
   Activate names, an activate parent) is only what activating does to the object itself (a
@@ -687,7 +708,10 @@ stats go to every object registered for them. What each kind becomes:
   whose parent cell changes between an attached cell and a detached one. Ours: a move to
   another cell (MoveTo, an actor walking away or back) between the attached area (the
   player's interior cell, or the uGridsToLoad cells round the player's outside, where the
-  player is going if a script just moved them) and the rest. The player is always attached.
+  player is going if a script just moved them, until the world tells it has them in that cell
+  or in another than the one they were sent from: `playerInCell`, every frame; else where the
+  world has them) and the rest:
+  a ledger MoveTo'd to another cell and back, an innkeeper out through her door and in again. The player is always attached.
   A cell attaching or detaching with its references is OnCellAttach / OnCellDetach instead.
 - **Translations** (`ScriptRuntime.translate`): failed at once for a reference without its 3D,
   almost complete as it passes fRefTranslationAlmostDonePercent (0.9) of its way, complete at
@@ -746,18 +770,28 @@ times are whole game hours, 0 for never):
   that left before the zone's last reset resets as it comes back. A reset zone is levelled anew.
 - What may reset: a reference not flagged No Respawn (REFR 0x40000000); a container only if its
   base Respawns (CONT DATA 0x02), an actor only if its base Respawns (ACBS 0x08); a leveled
-  actor unless No Respawn. What a reset does: the reference's lock, open state, destruction and
-  harvest go, a container's inventory is picked anew, an object that is not persistent goes
-  back to its editor place, an actor comes back as its records make it, and the reset is told
-  (TESResetEvent: OnReset, after OnCellAttach). The engine also sets the reference's enable
-  state again: ours sets the one the plugins give it (TODO(M13): whether the engine sets the
-  initial one is not read), and the animated state it kept (`GameState.graphs`) goes. It keeps
+  actor (its base comes down through a leveled list along its templates: LvlVampire, ACBS
+  flags 0) unless No Respawn. What a reset does: the reference's lock, open state, destruction
+  and harvest go (harvested flora grows again only so: a coin purse flagged No Respawn stays
+  taken), what a container or an actor held goes with its item references, improvements and
+  stolen marks and its records' items are drawn anew (`GameState.resets` counts the reference's
+  resets and seeds its leveled lists, a leveled actor's pick too, so each reset picks anew), an
+  object that is not persistent goes back to its editor place, an actor comes back as its
+  records make it (a dead one at its editor place, persistent or not: inferred, TODO(M13)), and
+  the reset is told (TESResetEvent: OnReset, after OnCellAttach). The engine also sets the
+  reference's enable state again: ours sets the one the plugins give it (TODO(M13): whether the
+  engine sets the initial one is not read), and the animated state it kept (`GameState.graphs`)
+  goes. It keeps
   a clock of its own on each actor that its respawn waits from: ours is the actor's death, so a
   dead actor respawns only once the wait has passed since it died, also where its zone reset
   sooner (what else sets the clock is not read, TODO(M13)).
 - What the game made in the cell goes with its reset: references created there (dropped items,
   PlaceAtMe) lying in the world, unless a quest's alias holds them (TODO(M13): which created
   references the engine keeps besides).
+- The cell the player is jailed in resets as it next comes in, whatever its clocks say (the
+  original forces its detach time; ours, `CellResets.force` and `GameState.cellResetsForced`,
+  forces the reset past a zone and for a cell met the first time too: inferred, TODO(M13)), so
+  its cell doors are locked again.
 - Corpses: as a cell that left comes back, an actor that does not respawn, did not start dead
   and died more than iHoursToClearCorpses (24) hours ago is removed (disabled); two further
   checks of the engine's are not identified (a corpse a quest's alias holds is kept here).
@@ -777,12 +811,23 @@ times are whole game hours, 0 for never):
 - Alias display names (`ScriptRuntime.aliasDisplayName`): while an alias with a display name
   (ALDN: a message whose title names it) holds a reference, the reference is so named: the
   crosshair, the menus and the scripts' text replacement show it, until the alias lets go.
-- Cell buffers (`src/world/cell-buffer.ts`, `GameSession.cellData`): the cells used most
-  recently keep their data as the plugins make it, interiors and exteriors in buffers of their
-  own ([General] uInterior Cell Buffer 3, uExterior Cell Buffer 36: UESP's defaults), so going
-  back into a cell just left does not read its records again; the least recently used leaves
-  as a buffer fills. A buffered cell is detached like any other (OnCellDetach as it left, its
-  reset clock running); the game's changes to it live in GameState either way.
+- Cell buffers (`src/world/cell-buffer.ts` CellStore, `GameSession.cellData`): the cells the
+  player left lately keep their data as the plugins make it (their references), interiors and
+  exteriors in buffers of their own ([General] uInterior Cell Buffer 3, uExterior Cell Buffer
+  36: UESP's defaults), so going back into a cell just left does not read its records again;
+  the least recently left goes as a buffer fills. The cells of the loaded area are held, not
+  buffered (they take no room there): a cell goes into its buffer as the viewer lets it go
+  (`cellLeft`), after the cell gone into is taken up, so the inn left three houses ago is
+  still there. An exterior cell is made again when a persistent reference of its worldspace
+  came into it meanwhile (its persistent ones are part of its data). A far cell only looked
+  into (its large references round the camera) uses held or buffered data as it is, else is
+  read for the look alone: it takes no room from the cells left. A buffered cell is
+  detached like any other (OnCellDetach as it left, its reset clock running); the game's
+  changes to it live in GameState either way. TODO(M13): the original's own handling of the
+  buffers is not read; the order they let cells go in is inferred.
+- The loaded grid (`src/world/loaded-grid.ts`): [General] uGridsToLoad cells a side round the
+  player's cell (5 built in), the INI's own where a player's sets it; the viewers and the
+  headless simulation alike, centred on the player, not a camera.
 - Moved objects (`src/shell/moved-objects.ts`): a cell leaving the loaded area notes where its
   moving objects are; a cell loading places its objects where the game left them, until its
   reset puts the non-persistent ones back. One pushed out of its exterior cell is of the cell it
@@ -820,9 +865,12 @@ in Inactive, so by the scripts the first step arms the plate and the next one fi
 the original: a volume tells one enter per reference, GetTriggerObjectCount is 0 for an empty one and
 OnCellLoad goes to every reference of a fully loaded cell, so nothing there makes the first step
 fire. TODO(M13): whether the original's first step on these plates fires is not known (UESP has a
-wrong plate launch a fireball, without saying on which step). TODO(M13): a hanging mace
-(TrapMace01, on its tripwire) does not swing: its chain's links are simulated, a pin is fixed, and
-what lets it go is not known. Observed in the original: no code reads fLockTrapGoOffBase or
+wrong plate launch a fireball, without saying on which step). A hanging mace (TrapMace01, on its
+tripwire) swings as MaceTrap.fireTrap's first push breaks the pin that holds it up (a breakable
+constraint: docs/physics.md, "Breakable"); PhysicsTrapHit hurts what it meets, pushes it back
+(trapPushBack 500) and staggers it (staggerAmount 0.2: ProcessTrapHit's afStagger, as a Stagger
+effect of that magnitude, from the hit's position the call carries; TODO(M13): inferred from the
+arguments' names). Observed in the original: no code reads fLockTrapGoOffBase or
 fLockTrapGoOffMult, so a failed pick sets no trap off. fProjectileKnockMultTrap and
 fGameplayImpulseMultTrap are the pushed body's: what is on L_TRAP takes less of a blow.
 
@@ -947,7 +995,11 @@ own scripts and the story manager; the engine's part is the events and the alias
 templates per part; its scripts too: an actor runs the scripts of the NPC_ it takes them from,
 its leveled list's pick and that one's template while it uses the template's scripts, Template
 Data "Use Script", with its reference's own VMAD over them: a placed or created leveled actor
-runs its pick's scripts, not none), its level (fixed, or the player's times its multiplier within its calc
+runs its pick's scripts, not none; a link on the way that uses its template's scripts but has
+scripts of its own runs those too, over the template's: Sovngarde's Alduin, MQ304Alduin, runs
+DragonActorScript from his template's template and his own FXAlduinScript, whose death MQ305
+waits for; 266 vanilla NPC_s are such links, ambush and ghost scripts among them; inferred,
+TODO(M13)), its level (fixed, or the player's times its multiplier within its calc
 min and max), its actor values (the record's base: skills and offsets from DNAM, health,
 magicka and stamina as the Creation Kit calculated them, AI values from AIDT, carry weight,
 mass and regeneration from its race; then scripts' permanent modifiers and damage), factions
