@@ -69,6 +69,28 @@ describe('the cell buffers', () => {
     expect(store.use(7, { exterior: true, key: 'b', hold: true }, () => ({}))).toBe(again);
   });
 
+  it('keeps the cells left, however many far cells are only looked into', () => {
+    const store = new CellStore<string>({ interior: 3, exterior: 2 });
+    let reads = 0;
+    const read = (cell: number) => (): string => `${String(cell)}#${String(++reads)}`;
+    const left = [1, 2].map((cell) => {
+      const data = store.use(cell, { exterior: true, key: '', hold: true }, read(cell));
+      store.left(cell);
+      return data;
+    });
+    // The large references of a hundred far cells round the camera: each read for the look.
+    for (let cell = 100; cell < 200; cell++) {
+      store.use(cell, { exterior: true, key: '', hold: false }, read(cell));
+    }
+    expect(reads).toBe(102);
+    // A look at a buffered cell takes its data, and leaves its place in the buffer as it was.
+    expect(store.use(1, { exterior: true, key: '', hold: false }, read(1))).toBe(left[0]);
+    // The two cells left are still buffered: going back to them reads nothing.
+    expect(store.use(2, { exterior: true, key: '', hold: true }, read(2))).toBe(left[1]);
+    expect(store.use(1, { exterior: true, key: '', hold: true }, read(1))).toBe(left[0]);
+    expect(reads).toBe(102);
+  });
+
   it('keeps no data that failed', () => {
     const store = new CellStore<string>({ interior: 3, exterior: 36 });
     const failed = store.use(1, { exterior: false, key: '', hold: true }, () => 'failed');

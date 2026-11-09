@@ -128,8 +128,9 @@ export class CellStore<T> {
 
   /**
    * A cell's data: held by the loaded area (`hold`: until `left`), or only looked into (a scene
-   * of a far cell's large references: the buffer keeps it as used). Held or buffered data made
-   * from `key` is used again; else `read` makes it.
+   * of a far cell's large references: held or buffered data serves, else it is read for the
+   * look and kept nowhere, and the buffers stay as they were). Held or buffered data made from
+   * `key` is used again; else `read` makes it.
    */
   use(
     cell: number,
@@ -142,18 +143,13 @@ export class CellStore<T> {
       return held.kept.value;
     }
     const buffer = options.exterior ? this.exterior : this.interior;
-    let kept: KeptCell<T> | undefined;
-    if (options.hold) {
-      kept = buffer.take(cell);
-      if (kept && kept.key !== options.key) kept = undefined;
-    } else {
-      kept = buffer.get(cell);
-    }
+    // Only looked into: what is held or buffered serves as it is (its place in the buffer
+    // unchanged), else it is read for the look alone. A cell the player never was in takes no
+    // room from the cells they left.
+    if (!options.hold) return buffer.peek(cell)?.value ?? read();
+    let kept = buffer.take(cell);
+    if (kept && kept.key !== options.key) kept = undefined;
     kept ??= { value: read(), key: options.key };
-    if (!options.hold) {
-      buffer.set(cell, kept);
-      return kept.value;
-    }
     if (held) {
       held.kept = kept;
       held.users++;

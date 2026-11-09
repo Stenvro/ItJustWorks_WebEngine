@@ -2510,7 +2510,7 @@ export class WorldViewer {
     if (!world || !session || !db) return;
     const cellId = await world.cell(large.x, large.y);
     if (cellId === undefined) return;
-    // Only looked into: the cell itself is not loaded (its buffer keeps its data as used).
+    // Only looked into: the cell itself is not loaded (it takes no room in the cell buffers).
     const data = await session.cellData(
       cellId,
       world.persistentReferences(large.x, large.y),
