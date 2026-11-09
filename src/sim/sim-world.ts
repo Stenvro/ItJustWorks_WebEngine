@@ -498,13 +498,16 @@ export class SimWorld {
 
   // --- Opening places ---------------------------------------------------------------------
 
-  /** Opens an interior cell, the player arriving as through its door (or at `arrival`). */
+  /**
+   * Opens an interior cell, the player arriving as through its door (or at `arrival`): from a
+   * place open now, as they left it (Player.keepStance: any change of place, as Play's).
+   */
   openInterior(formId: number, arrival?: Arrival): Promise<void> {
     return this.#drive(() => this.#openInterior(formId, arrival));
   }
 
-  /** `stance`: the player's as they come through a load door (Player.keepStance). */
-  async #openInterior(formId: number, arrival?: Arrival, stance?: PlayerStance): Promise<void> {
+  async #openInterior(formId: number, arrival?: Arrival): Promise<void> {
+    const stance = this.#play?.player.stance;
     this.#close();
     const db = await this.session.db;
     this.#place = { kind: 'interior', cell: formId };
@@ -531,7 +534,8 @@ export class SimWorld {
    * (in front of the nearest load door, else at the nearest map marker); the cells around them
    * load as they move, the sky takes the climate and the weather regions they walk into.
    * Outdoors the sky lights the actors as the page's sky does (its weather and the hour: the
-   * daylight detection sees by). TODO(sim): the player's regions.
+   * daylight detection sees by). From a place open now the player comes as they left it
+   * (Player.keepStance). TODO(sim): the player's regions.
    */
   openExterior(
     formId: number,
@@ -543,8 +547,8 @@ export class SimWorld {
   async #openExterior(
     formId: number,
     at: { readonly cell: readonly [number, number] } | { readonly arrival: Arrival },
-    stance?: PlayerStance,
   ): Promise<void> {
+    const stance = this.#play?.player.stance;
     this.#close();
     const world = await this.session.worldspace(formId);
     this.#place = { kind: 'exterior', world, radius: this.#gridRadius };
@@ -613,11 +617,9 @@ export class SimWorld {
       },
       false,
     );
-    // The player goes through as they are: sneaking on (Play's load doors: main.ts).
-    const stance = this.#play?.player.stance;
-    if (destination.world === undefined) {
-      await this.#openInterior(destination.cell, arrival, stance);
-    } else await this.#openExterior(destination.world, { arrival }, stance);
+    // The player goes through as they are (the place they leave hands on their stance).
+    if (destination.world === undefined) await this.#openInterior(destination.cell, arrival);
+    else await this.#openExterior(destination.world, { arrival });
   }
 
   // --- Stepping ---------------------------------------------------------------------------
@@ -1145,8 +1147,8 @@ export class SimWorld {
   // --- The player -------------------------------------------------------------------------
 
   /**
-   * The player in a new physics world, standing at `feet` once the ground there is in, in the
-   * stance they came through a load door in.
+   * The player in a new physics world, standing at `feet` once the ground there is in, as they
+   * left the place before (`stance`: Player.keepStance).
    */
   async #startPlay(
     feet: [number, number, number],
@@ -1965,7 +1967,7 @@ export class SimWorld {
     return true;
   }
 
-  /** The player is sent to another place: it opens with them there. */
+  /** The player is sent to another place: it opens with them there, as they left this one. */
   async #journey(at: Placement): Promise<void> {
     const arrival: Arrival = { position: at.position, heading: at.rotation[2] };
     if (at.world !== undefined) await this.#openExterior(at.world, { arrival });

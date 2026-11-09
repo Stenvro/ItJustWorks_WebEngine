@@ -905,7 +905,7 @@ export class ModelViewer {
     yaw: number,
     /** The player arrives through a door: on the floor at its feet. */
     onFloor: boolean,
-    /** The player's stance as they come through a load door (Player.keepStance). */
+    /** The player as they left the place before (Player.keepStance). */
     stance?: PlayerStance,
   ): Promise<void> {
     const session = this.#session;
@@ -1240,8 +1240,8 @@ export class ModelViewer {
 
   /**
    * Loads an interior cell with all its objects and lights. The player arrives at `arrival`
-   * (a load door's destination), else as through the cell's own door. `stance`: the player's as
-   * they come through a load door (Player.keepStance).
+   * (a load door's destination), else as through the cell's own door. `stance`: the player as
+   * they left the place before (Player.keepStance).
    */
   async showCell(formId: number, arrival?: Arrival, stance?: PlayerStance): Promise<void> {
     const info = this.#cells.find((cell) => cell.formId === formId);
