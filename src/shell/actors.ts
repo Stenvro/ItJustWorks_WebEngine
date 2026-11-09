@@ -200,13 +200,18 @@ export function groundActor(
  * the two controllers part by penetration recovery (CharacterBody); its ray, started inside the
  * other's capsule, met that capsule at once and set it some 30 units up, in or on the other.
  * A creature's bodies that hold controllers off (L_BIPED_NO_CC) still count, and corpses' are
- * on L_DEADBIP, which no controller meets. TODO(M13): inferred, the rule the original's ground
- * check uses for other actors is not known.
+ * on L_DEADBIP, which no controller meets. Every ray for an actor's ground goes by it: the
+ * set-down, the controller's position check, MoveTo's, a stuck actor's (ActorMovers #unstick),
+ * the fall watch's (#watchFall), a knocked-down actor's get-up (ActorKnockdowns) and a flier's
+ * (ActorFlight). `own`, an actor's reference, leaves out all of its own bodies (Havok keeps an
+ * actor's bodies in one system group that does not collide with itself). TODO(M13): inferred,
+ * the rule the original's ground check uses for other actors is not known.
  */
 export function actorGround(
   physics: PhysicsWorld,
   from: Vec3,
   length: number,
+  own?: number,
 ): GroundHit | undefined {
   const hit = physics.raycast(
     from,
@@ -214,7 +219,7 @@ export function actorGround(
     length,
     Layer.charController,
     undefined,
-    undefined,
+    own,
     (collider) => physics.isActorController(collider),
   );
   return hit && { point: hit.point, normal: hit.normal };
