@@ -2,6 +2,7 @@
 // before saving is there after loading.
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { DYING_TIMER } from '../../../src/world/dying.ts';
 import { hasGamedata, loadSim, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 const BANNERED_MARE = 0x1605e;
@@ -57,12 +58,15 @@ describe.skipIf(!hasGamedata())('a save made and loaded (simulation)', () => {
       }
     }
     expect(dead).toBeDefined();
-    // Its WIDeadBodyCleanupScript waits in OnDeath (Utility.WaitGameTime, in a loop).
+    // Its WIDeadBodyCleanupScript waits in OnDeath (Utility.WaitGameTime, in a loop). OnDeath
+    // comes as its dying ends: the graph's deathStop, or fDyingTimer after the kill
+    // (src/world/dying.ts).
     const cleanup = (s: Sim): string[] =>
       s.runtime.vm
         .pendingThreads()
         .map((thread) => thread.where)
         .filter((where) => where.includes('WIDeadBodyCleanupScript.OnDeath'));
+    await before.until(() => cleanup(before).length > 0, DYING_TIMER + 1);
     expect(cleanup(before)).toHaveLength(1);
     // The killing does not wait for it: the world steps until its OnDeath waits on the clock.
     const clockWait = (s: Sim): number | undefined => {

@@ -668,7 +668,7 @@ stats go to every object registered for them. What each kind becomes:
 | cellAttachDetach, cellFullyLoaded      | OnCellAttach / OnCellDetach; OnCellLoad to each reference whose 3D is in                                                                                        |
 | combat                                 | OnCombatStateChanged to the actor (its target if that is an actor, the state: 0 none, 1 combat, 2 searching)                                                    |
 | containerChanged                       | OnContainerChanged to the item's reference (new, old), OnItemRemoved to the old container, OnItemAdded to the new (item, count, reference, the other container) |
-| death                                  | OnDying (dying), OnDeath (dead) to the actor (killer)                                                                                                           |
+| death                                  | OnDying (dying), OnDeath (dead; once its dying ends: ScriptRuntime.dyingEnd) to the actor (killer)                                                              |
 | destructionStageChanged                | OnDestructionStageChanged (old stage, new stage)                                                                                                                |
 | enterBleedout                          | OnEnterBleedout to the actor                                                                                                                                    |
 | equip                                  | OnObjectEquipped / OnObjectUnequipped to the actor (base, reference), then OnEquipped / OnUnequipped to an item with scripts (the actor)                        |
@@ -1127,7 +1127,9 @@ mass and regeneration from its race; then scripts' permanent modifiers and damag
 (GetFactionRank: −2 not a member, −1 listed but not yet one; an alias's factions while it
 holds the actor), relationships (RELA, read in one pass, and those scripts set), spells and perks (its own, its race's, scripts'), being essential or protected
 (its base, scripts' ActorBase changes, or an alias), dead (killed, or placed dead) and dying
-(OnDying, then OnDeath). Auto-calculated stats follow the level (docs/gameplay.md). Bleedout
+(OnDying at the kill; OnDeath once its dying ends: where the world shows it, at its graph's
+deathStop or fDyingTimer after the kill, else at once; IsDead answers yes from the kill:
+docs/animation.md, "Dying, then dead"). Auto-calculated stats follow the level (docs/gameplay.md). Bleedout
 (essential and protected actors, its recovery), combat, detection and the AI's state are the
 stage's ([ai.md](ai.md#combat), [Combat AI](ai.md#combat-ai), [Detection](ai.md#detection);
 the natives and conditions read them through the WorldBridge: `combat`, `detects`, ...); the

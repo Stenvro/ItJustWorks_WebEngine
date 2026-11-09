@@ -404,6 +404,15 @@ export interface PoweredRagdollControl {
   readonly proportionalRecoveryVelocity: number;
   readonly constantRecoveryVelocity: number;
   readonly bones: readonly string[];
+  /**
+   * Where the character's world-from-model comes from while it is active
+   * (hkbWorldFromModelModeData.mode: WORLD_FROM_MODEL_MODE, src/animation/world-from-model.ts),
+   * and the animation bones of its three pose matching ragdoll bones. The vanilla graphs:
+   * FullyRagdoll's (force 0) from the ragdoll, the get-up's matching (200) computed from the
+   * pose matching bones.
+   */
+  readonly worldFromModelMode: number;
+  readonly poseMatchingBones: readonly string[];
 }
 
 /**
@@ -4060,8 +4069,9 @@ export class BehaviorRuntime {
         }
         return;
       case 'powered-ragdoll': {
-        // TODO(M13): its worldFromModelMode (the character placed by the ragdoll, mode 4, or by
-        // its pose matching bones, mode 2) and per-bone weights are read but not applied yet.
+        // Its worldFromModelMode places the character while it lies (src/shell/
+        // actor-knockdowns.ts knockedPlace). TODO(M13): its per-bone weights are read but not
+        // applied yet.
         const maxForce = this.#read(modifier.maxForce, scope);
         if (this.#powered === undefined || maxForce > this.#poweredForce) {
           this.#powered = {
@@ -4071,6 +4081,8 @@ export class BehaviorRuntime {
             proportionalRecoveryVelocity: this.#read(modifier.proportionalRecoveryVelocity, scope),
             constantRecoveryVelocity: this.#read(modifier.constantRecoveryVelocity, scope),
             bones: this.ragdollBoneNames(modifier.bones),
+            worldFromModelMode: modifier.worldFromModelMode.mode,
+            poseMatchingBones: this.ragdollBoneNames(modifier.worldFromModelMode.poseMatchingBones),
           };
         }
         this.#poweredForce = Math.max(this.#poweredForce, maxForce);

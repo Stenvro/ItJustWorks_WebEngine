@@ -219,7 +219,8 @@ down:
   left to choose their packages anew). `essWorld(db, ess)` reads their records' places ahead.
 - The actors' life state (their state bits' fifth byte, CommonLibSSE's ACTOR_LIFE_STATE): the
   executed prisoners and the opening's dead are dead after the import, the restrained
-  restrained (ACHR lifeState, 16 forms).
+  restrained (ACHR lifeState, 16 forms); one saved dying is dead and hears its OnDeath as the
+  load ends (RuntimeSave.engines.dying; its killer not taken, TODO(M13)).
 - Locks (REFR lockExtra, 252 forms): the level and whether it is locked.
 - The scenes playing (SCEN, 20 forms): each goes on in its phase, cast from its quest's
   aliases, its actions' states (running, done; a line's wait) as the save has them; a scene not
@@ -410,6 +411,7 @@ loadData (RuntimeSave.engines; src/scripting/runtime/engine-save.test.ts):
 | Graph transitions' blends, modifiers' states, behavior refs      | done   | SavedGraphFile transitions, modifiers, cyclic           |
 | Projectiles' graphs (in flight, sprays' streams, stuck lights)   | done   | SavedProjectile.graph                                   |
 | Bleedout and paired animations' engine side                      | done   | SavedActor.down, deferred kills (engines)               |
+| The dying (OnDeath still to come)                                | done   | engines.dying, OnDeath sent as the load ends (inferred) |
 | Physics bodies in motion (loose objects knocked about)           | done   | WorldSave.motions, given back as each body settles      |
 | The sky's transition between weathers                            | done   | GameSave.sky (SkyWeather save, restore)                 |
 | The music playing (audio state)                                  | done   | GameSave.music, musicTrack: the track and its position  |

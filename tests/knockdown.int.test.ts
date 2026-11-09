@@ -5,6 +5,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BehaviorRuntime } from '../src/animation/behavior-runtime.ts';
+import { WORLD_FROM_MODEL_MODE } from '../src/animation/world-from-model.ts';
 import {
   readAnimationContainer,
   readRagdollMapping,
@@ -124,6 +125,8 @@ describe.skipIf(!hasGamedata())('knock-downs on the local game data', () => {
     }
     // Limp while it lies: no motor powers the ragdoll.
     expect(runtime.poweredRagdoll()?.maxForce ?? 0).toBe(0);
+    // Lying, the character is placed by its ragdoll (its world-from-model mode: the ragdoll's).
+    expect(runtime.poweredRagdoll()?.worldFromModelMode).toBe(WORLD_FROM_MODEL_MODE.ragdoll);
     runtime.setRagdollPose(pose);
     runtime.sendEvent('GetUpBegin');
     // Matching, its motors pull the ragdoll toward the get-up's first pose (the graph's
@@ -132,6 +135,10 @@ describe.skipIf(!hasGamedata())('knock-downs on the local game data', () => {
     const powered = runtime.poweredRagdoll();
     expect(powered?.maxForce).toBe(200);
     expect(powered?.tau).toBeGreaterThan(0);
+    // Matching, its place is computed from the pose matching bones (the ragdoll's root first).
+    expect(powered?.worldFromModelMode).toBe(WORLD_FROM_MODEL_MODE.compute);
+    expect(powered?.poseMatchingBones).toHaveLength(3);
+    expect(powered?.poseMatchingBones[0]).toBe(runtime.ragdollBoneNames([0])[0]);
     await step(0.8);
     expect(raised).toContain('GetUpStart');
     expect(master()).toBe('GetUpFromRagdoll');

@@ -25,6 +25,7 @@ import { matrixQuaternion, type PhysicsWorld } from '../physics/physics-world.ts
 import type { ActorBodies, BodyHolder } from './actor-bodies.ts';
 import { actorGround, type PlacedActor } from './actors.ts';
 import type { Terminal } from './terminal.ts';
+import { knockedPlace, type UprightPlace } from '../animation/world-from-model.ts';
 
 /** Its ragdoll counts as at rest below this speed (units a second). TODO(M13). */
 const REST_SPEED = 30;
@@ -107,6 +108,8 @@ interface Knock {
   feet: number | undefined;
   rootStart: number | undefined;
   rootTop: number | undefined;
+  /** Where it is while it lies or its get-up is matched (its graph's world-from-model mode). */
+  place: UprightPlace | undefined;
 }
 
 export class ActorKnockdowns {
@@ -163,6 +166,7 @@ export class ActorKnockdowns {
         feet: (subject.holder.world ?? subject.placed.instances[0]?.world)?.[14],
         rootStart: undefined,
         rootTop: undefined,
+        place: undefined,
       };
       const root = this.#root(knock);
       knock.rootStart = root?.[2];
@@ -183,6 +187,7 @@ export class ActorKnockdowns {
       knock.phase = 'down';
       knock.down = 0;
       knock.resting = 0;
+      knock.place = undefined;
       if (this.#options.act?.(reference, 'ActionKnockDown') === undefined)
         knock.placed.behavior?.sendEvent('Ragdoll');
       if (!(await bodies.knockDown(knock.subject.holder))) return false;
@@ -222,6 +227,36 @@ export class ActorKnockdowns {
     if (knock) knock.held = point;
   }
 
+  /**
+   * Where one lying or having its get-up matched is (its scripts' GetPosition, its distance to
+   * others): by its graph's powered ragdoll controls' world-from-model mode (knockedPlace);
+   * undefined: not lying, or up already (it stands where it was put).
+   */
+  place(reference: number): UprightPlace | undefined {
+    const knock = this.#knocks.get(reference);
+    return knock && knock.phase !== 'rising' ? knock.place : undefined;
+  }
+
+  /** Every frame while it lies or is matched: where its graph's world-from-model puts it. */
+  #place(knock: Knock): void {
+    const world = knock.subject.holder.world ?? knock.placed.instances[0]?.world;
+    if (!world) return;
+    const own: UprightPlace = {
+      position: [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0],
+      heading: knock.subject.heading,
+    };
+    const behavior = knock.placed.behavior;
+    const match = knock.phase === 'matching' ? behavior?.poseMatch() : undefined;
+    const matched = match && knock.frame ? matchedPlace(knock.frame, match) : undefined;
+    knock.place = knockedPlace(
+      behavior?.poweredRagdoll()?.worldFromModelMode,
+      own,
+      knock.place,
+      this.#options.bodies.moved(knock.subject.reference),
+      matched,
+    );
+  }
+
   /** Whether an actor is paralysed now. */
   paralyzed(reference: number): boolean {
     return this.#paralyzed.has(reference);
@@ -242,6 +277,7 @@ export class ActorKnockdowns {
         continue;
       }
       subject.frame?.(seconds);
+      if (knock.phase !== 'rising') this.#place(knock);
       if (knock.phase === 'down') {
         knock.down += seconds;
         const bodies = this.#options.bodies;
@@ -385,17 +421,8 @@ export class ActorKnockdowns {
   ): void {
     const subject = knock.subject;
     if (frame) {
-      const [ox, oy] = match?.offset ?? [0, 0];
-      const scale = frame.scale;
-      const cos = Math.cos(frame.heading);
-      const sin = Math.sin(frame.heading);
-      // The model's x, y (scaled) in the world: rotated by −heading (referenceMatrix's turn).
-      const position: Vec3 = [
-        frame.position[0] + (ox * cos + oy * sin) * scale,
-        frame.position[1] + (-ox * sin + oy * cos) * scale,
-        frame.position[2],
-      ];
-      subject.moveTo(position, frame.heading - (match?.yaw ?? 0));
+      const at = matchedPlace(frame, match ?? { yaw: 0, offset: [0, 0] });
+      subject.moveTo([...at.position], at.heading);
     }
     // Rising, its ragdoll stays in the world, driven by the get-up's controls until it is up.
     this.#options.bodies.standUp(subject.reference, match !== undefined);
@@ -470,6 +497,29 @@ export function knockdownGround(
   reference: number,
 ): number | undefined {
   return actorGround(physics, [from[0], from[1], from[2] + 32], GROUND_REACH, reference)?.point[2];
+}
+
+/**
+ * Where a get-up's match puts the actor: its ground frame turned by the match's yaw and its
+ * model's x, y shifted by the match's offset (scaled, rotated by −heading: referenceMatrix's
+ * turn).
+ */
+function matchedPlace(
+  frame: GroundFrame,
+  match: { readonly yaw: number; readonly offset: readonly [number, number] },
+): UprightPlace {
+  const [ox, oy] = match.offset;
+  const scale = frame.scale;
+  const cos = Math.cos(frame.heading);
+  const sin = Math.sin(frame.heading);
+  return {
+    position: [
+      frame.position[0] + (ox * cos + oy * sin) * scale,
+      frame.position[1] + (-ox * sin + oy * cos) * scale,
+      frame.position[2],
+    ],
+    heading: frame.heading - match.yaw,
+  };
 }
 
 /** Where a knocked-down actor's get-up is matched from: on the ground under its root. */

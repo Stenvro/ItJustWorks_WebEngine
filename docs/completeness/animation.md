@@ -161,8 +161,11 @@ what fills it was not found).
       its skeleton's root bone (the mark composed with the bone's pose, the bone left at the
       origin). TODO(M13): not built (the drawn picture is the same; the actor's own place does
       not follow).
-- [ ] powered-ragdoll.worldFromModelMode (95): the powered ragdoll's root (world-from-model
-      mode, its pose-matching bones). TODO(M13) with the formats' list; not reached in round 8.
+- [x] powered-ragdoll.worldFromModelMode (95): the powered ragdoll's root (world-from-model
+      mode, its pose-matching bones): FullyRagdoll's (4) places one lying by its ragdoll's way,
+      the get-up's matching (2) by the match (docs/physics.md, "Motors";
+      src/animation/world-from-model.ts; tests/knockdown.int.test.ts). TODO(M13): the actor
+      kept upright, the point of the ragdoll it follows inferred.
 - [x] rigid-body-ragdoll.durationToBlend (56; 0.5 s in all): the rigid body controls blend in
       from the bodies' own motion over it as they drive a ragdoll in the world, their control
       data through Havok's hierarchy controller (src/physics/keyframe-hierarchy.ts,
@@ -328,7 +331,9 @@ what fills it was not found).
       wall and rolls off (docs/animation.md, "Dismemberment"). TODO(M13): where the original's
       flight starts.
 - [x] Ragdolls: death, powered ragdolls, get-up, keyframed ragdolls.
-- [ ] The powered ragdoll's root (world-from-model mode); the paralysed's stiff fall.
+- [x] The powered ragdoll's root (world-from-model mode); the paralysed's stiff fall
+      (PhysicsWorld.stiffen, physics round 8); the dying life state between death and dead
+      (src/world/dying.ts: deathStop or fDyingTimer, OnDeath at its end; inferred, TODO(M13)).
 - [x] Animation objects: the list, the female hands' scale while one is held (inferred: the
       skeleton's own node scale stays under the clips), the POV switch off while the player holds
       one, a model without "Prn" never shown, saves (tests/conformance/animation/animation-objects.test.ts).

@@ -32,6 +32,7 @@ import { ObjectHandle } from '../../../src/scripting/values.ts';
 import type { ActorInteraction } from '../../../src/scripting/runtime/runtime.ts';
 import { FurnitureMarkerType, parseFurniture } from '../../../src/world/furniture-records.ts';
 import { INI_DEFAULTS } from '../../../src/world/ini-settings.ts';
+import { DYING_TIMER, DyingClock } from '../../../src/world/dying.ts';
 import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 /** Skyrim.esm's death force settings (gmst-info), the engine's for the mass terms. */
@@ -272,11 +273,31 @@ describe('the engine’s ragdoll drive (settings, rules)', () => {
     );
   });
 
-  // Open: the setting's default (2) is the engine's, but what in the original reads the dying
-  // state it times (kept apart from dead) is not known: our scripts' OnDying and OnDeath come
-  // together at the kill (src/scripting/runtime/actor-engine.ts), combat, conditions and saves
-  // see only dead. A dying phase that nothing reads would test nothing.
-  it.todo('fDyingTimer (2): how long an actor dies before it is dead  [settings, original]');
+  // The dying life state (src/world/dying.ts): the scripts' OnDeath waits for its end
+  // (src/scripting/runtime/actor-engine.test.ts), the stage's lifeState answers dying (1) until
+  // then. That fDyingTimer bounds it from the kill is inferred, TODO(M13).
+  it('fDyingTimer (2): how long an actor dies before it is dead  [settings, inferred]', async () => {
+    expect(DYING_TIMER).toBe(2);
+    const clock = new DyingClock();
+    const ended: string[] = [];
+    void clock.begin(1).then(() => ended.push('timer'));
+    void clock.begin(2).then(() => ended.push('deathStop'));
+    void clock.begin(3, 5).then(() => ended.push('retimed'));
+    clock.frame(1);
+    clock.end(2);
+    await Promise.resolve();
+    expect(ended).toEqual(['deathStop']);
+    expect(clock.has(1)).toBe(true);
+    // fDyingTimer as set (setgs) counts from the kill: 0.5 s, already passed, ends it now.
+    clock.retime(3, 0.5);
+    clock.frame(0.99);
+    await Promise.resolve();
+    expect(ended).toEqual(['deathStop', 'retimed']);
+    clock.frame(0.02);
+    await Promise.resolve();
+    expect(ended).toEqual(['deathStop', 'retimed', 'timer']);
+    expect(clock.until(1)).toBeUndefined();
+  });
 
   it('[Animation] bAlwaysDriveRagdoll (0): a ragdoll driven while alive', () => {
     expect(INI_DEFAULTS.Animation.bAlwaysDriveRagdoll).toBe(0);

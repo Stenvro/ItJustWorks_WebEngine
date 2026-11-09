@@ -760,6 +760,11 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   let tints: readonly EssTintMask[] = [];
   /** The actors with the package each ran (and whom it fought), where the save has them. */
   const savedActors: SavedActor[] = [];
+  /**
+   * The actors saved dying (life state 1): their OnDeath was still to come, so the load sends it
+   * as it does for our own save's dying (RuntimeSave.engines.dying, ActorEngine.finishSavedDying).
+   */
+  const dying = new Set<number>();
   let savedPlayer: SavedPlayer | undefined;
   /** The actors' graphs (by actor) and the player's: they go on as they are placed. */
   const actorGraphs = new Map<number, ActorGraphState>();
@@ -1183,6 +1188,10 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       const actor = state.actor(formId);
       if (life === LifeState.dying || life === LifeState.dead) actor.dead = true;
       else if (life === LifeState.alive) actor.dead = false;
+      // Saved dying, it is dead as the load ends, and its scripts hear the OnDeath they were
+      // waiting for (src/world/dying.ts); its OnDying was heard before the save.
+      if (life === LifeState.dying) dying.add(formId);
+      else dying.delete(formId);
       actor.unconscious = life === LifeState.unconscious;
       actor.restrained = life === LifeState.restrained;
       applied |= ChangeRefr.lifeState;
@@ -2416,6 +2425,11 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     ...(threads.length > 0 && { threads }),
     ...((scenesSaved.length > 0 || scenesWaiting.length > 0) && {
       scenes: { playing: scenesSaved, waiting: scenesWaiting },
+    }),
+    // The dying, each with no killer: where the original's save keeps an actor's killer is not
+    // known, so their OnDeath names none (inferred, TODO(M13)).
+    ...(dying.size > 0 && {
+      engines: { dying: [...dying].map((actor) => [actor, 0] as const) },
     }),
   };
   const skipped = skips.lines();

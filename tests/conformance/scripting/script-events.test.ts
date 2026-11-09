@@ -332,6 +332,12 @@ describe.skipIf(!hasGamedata())('the world’s events to the scripts (headless s
     firebolt = await sim.formId('SPEL', 'Firebolt');
     await sim.cast(firebolt, wolf);
     await sim.step(1.5);
+    // Its scripts hear OnDeath as its dying ends (fDyingTimer after the kill: src/world/dying.ts),
+    // here before the player leaves (leaving would end the dying too).
+    await sim.until(
+      () => sim.scriptEvents({ event: 'OnDeath', target: wolf, since: struck }).length > 0,
+      5,
+    );
     left = sim.time;
     await sim.openInterior(SLEEPING_GIANT_INN);
     await sim.step(1);

@@ -650,6 +650,8 @@ export class ActorGraphEvents {
    * dying ends (it is dead: KillDying). Its body lies as its ragdoll from where it is.
    */
   #deathStop(reference: number): void {
+    // Its life state's dying ends too: dead, its scripts hear OnDeath (src/world/dying.ts).
+    this.#options.stage.dyingClock.end(reference);
     const dying = this.#dying.get(reference);
     if (dying) this.#limp(dying);
   }

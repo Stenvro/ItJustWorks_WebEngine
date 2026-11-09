@@ -153,6 +153,11 @@ export interface ScriptView {
    * out unless the kill was silent (KillSilent).
    */
   killed?(reference: number, killer: number | undefined, silent: boolean): void;
+  /**
+   * A killed actor's dying where the view shows it: resolves once it is dead (its graph's
+   * deathStop, fDyingTimer: src/world/dying.ts); undefined: not dying here.
+   */
+  dying?(reference: number): Promise<void> | undefined;
   /** An actor resurrected (Actor.Resurrect, a reanimation): the view makes it alive again. */
   resurrected?(reference: number): void;
   /** A magic effect begins or ends on an actor: what it shows (src/shell/actor-effects.ts). */
@@ -633,6 +638,14 @@ export class ScriptWorld implements WorldBridge {
    */
   killed(actor: number, killer?: number, silent = false): void {
     for (const view of this.#views) view.killed?.(actor, killer, silent);
+  }
+
+  dying(actor: number): Promise<void> | undefined {
+    for (const view of this.#views) {
+      const dying = view.dying?.(actor);
+      if (dying) return dying;
+    }
+    return undefined;
   }
 
   resurrected(actor: number): void {

@@ -1835,6 +1835,7 @@ export class SimWorld {
       if (reference === PLAYER_REF) this.#seat?.release();
       this.stage.killed(reference, killer, silent);
     },
+    dying: (reference) => this.stage.dyingClock.until(reference),
     currentPackage: (reference) => this.stage.currentPackage(reference),
     currentProcedure: (reference) => this.stage.ai.current(reference)?.procedure,
     randomSceneStarts: (scene, first, second) =>

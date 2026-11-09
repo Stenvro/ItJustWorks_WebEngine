@@ -4,6 +4,7 @@
 // counts the deaths) and Ralof goes on to fetch the key. Skipped without game data.
 
 import { describe, expect, it } from 'vitest';
+import { DYING_TIMER } from '../src/world/dying.ts';
 import { hasGamedata, loadSim, openSim, PLAYER_REF, type Sim } from './helpers/sim.ts';
 
 const MQ101 = 0x3372b;
@@ -124,6 +125,9 @@ describe.skipIf(!hasGamedata())('A save mid-quest', () => {
       );
       for (const imperial of imperials) await after.kill(imperial, PLAYER_REF);
       await after.step(1);
+      // MQ101EnemyScript's OnDeath comes as each one's dying ends (the graph's deathStop, or
+      // fDyingTimer after the kill: src/world/dying.ts).
+      await after.until(() => after.stageDone(MQ101, 280), DYING_TIMER);
       expect(after.stageDone(MQ101, 280)).toBe(true);
       // The scene goes on: Ralof fetches the key from the officer's body and opens the door.
       const getDoorKey = await after.formId('PACK', 'MQ101RalofGetDoorKey');
