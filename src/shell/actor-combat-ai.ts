@@ -91,6 +91,14 @@ import { CombatSearch, type SearchBody, type SearchSettings } from '../ai/combat
 import type { SavedFight } from '../save/world-save.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
 import {
+  allyAttackPlaces,
+  attackLocationKey,
+  attackLocationKeyHolds,
+  attackLocationPlaces,
+  firstClearPlace,
+  lateralAttackPlaces,
+  type AttackLocationAlly,
+  type AttackLocationKey,
   chooseCombatSupport,
   COMBAT_SUBTREE_DEFAULTS,
   coverSpots,
@@ -158,7 +166,7 @@ import {
   type Opponent,
   type Threat,
   aimGivenUp,
-  lineOfFireBlocker,
+  lineOfFire,
   type ShotObstacle,
 } from '../ai/combat-tactics.ts';
 import { InterruptFlag, PackageFlag } from '../ai/package-records.ts';
@@ -505,6 +513,12 @@ interface Mind {
       }
     | undefined;
   coverRetry: number;
+  /** Its line of fire to its target as last looked at (each DECIDE_SECONDS): what blocks it. */
+  lineOfFire: { readonly blocked: 'actor' | 'world' | undefined; readonly at: number } | undefined;
+  /** Find Attack Location: the place it runs to for a clear line (undefined: none). */
+  attackLocation: { readonly at: Vec3; way: 'going' | 'arrived' | 'failed' } | undefined;
+  /** Its last failed search (FindAttackLocationFailedTimeStamp) and where its target stood. */
+  attackLocationFailed: { readonly key: AttackLocationKey; readonly at: number } | undefined;
   /** Flee: where it flees to (a door, cover), and when it last fled through a door. */
   fleeGoal: Vec3 | undefined;
   fleeDoorAt: number;
@@ -634,6 +648,10 @@ const fightsByMelee = (gear: FighterGear | undefined): boolean =>
   gear === undefined || gear.weaponType < WeaponType.bow;
 /** Use Cover, Flee To Cover: at its cover within this (units). */
 const COVER_ARRIVE = 48;
+/** Find Attack Location: it arrives at the place it runs to within this (units). TODO(M13): ours. */
+const ATTACK_LOCATION_ARRIVE = 32;
+/** Find Ally Attack Location asks the lines of at most this many allies (each costs a ray). */
+const ALLY_LINES = 4;
 /** fCombatCoverSecondaryThreatLastSeenTime: its other enemies seen this lately count. */
 const COVER_SECONDARY_THREAT_SECONDS = 5;
 /** A hide and a fallback weigh again this often (observed in the original). */
@@ -1216,6 +1234,9 @@ export class ActorCombatAi {
         unreachable: undefined,
         cover: undefined,
         coverRetry: 0,
+        lineOfFire: undefined,
+        attackLocation: undefined,
+        attackLocationFailed: undefined,
         fleeGoal: undefined,
         fleeDoorAt: -Infinity,
         lastDoor: undefined,
@@ -2060,6 +2081,9 @@ export class ActorCombatAi {
     mind.tree = undefined;
     mind.lowTree = undefined;
     mind.cover = undefined;
+    mind.lineOfFire = undefined;
+    mind.attackLocation = undefined;
+    mind.attackLocationFailed = undefined;
     mind.fleeGoal = undefined;
     mind.fleeDoor = undefined;
     if (mind.hideSince !== undefined) {
@@ -2966,7 +2990,9 @@ export class ActorCombatAi {
       this.#clock >= f.mind.nextAttack &&
       this.#options.casting?.() !== undefined &&
       runtime !== undefined &&
-      !runtime.casting.casting(f.mind.reference, source)
+      !runtime.casting.casting(f.mind.reference, source) &&
+      // Not down a blocked line (a wall, an actor it must not hit): Find Attack Location first.
+      this.#lineOfFire(f) === undefined
     );
   }
 
@@ -3314,6 +3340,21 @@ export class ActorCombatAi {
           mayUseCover: (f) =>
             f.mind.cover !== undefined ||
             (this.#clock >= f.mind.coverRetry && this.#navmeshes() !== undefined),
+          // Find Attack Location: its line of fire blocked (a wall, an actor it must not hit),
+          // unless a search already failed from where its target stands now (inferred: TODO(M13)).
+          mayFindAttackLocation: (f) => {
+            if (f.mind.attackLocation !== undefined) return true;
+            if (this.#lineOfFire(f) === undefined) return false;
+            const failed = f.mind.attackLocationFailed;
+            return (
+              failed === undefined ||
+              !attackLocationKeyHolds(
+                failed.key,
+                attackLocationKey(f.feet, f.there),
+                this.#subtrees,
+              )
+            );
+          },
           // Low Combat.
           lowInReach: (f) => f.distance <= this.#subtrees.lowMaxAttackDistance,
           groupSearching: (f) => this.#groups.searching(f.mind.reference),
@@ -3533,6 +3574,59 @@ export class ActorCombatAi {
             if (!place) return this.#hold(f);
             void movers.travel(mind.reference, place, 'run', COVER_ARRIVE);
             return 'running';
+          },
+          // Find Attack Location (combat-subtrees.ts): beside it, then over the navmeshes round
+          // it, then beside an ally with a clear line; the first place with a clear line of fire
+          // it runs to. None: the failed search is noted (FindAttackLocationFailedTimeStamp).
+          findLateralAttackLocation: {
+            tick: (f) =>
+              this.#findAttackLocation(f, () =>
+                lateralAttackPlaces(
+                  f.feet,
+                  f.there,
+                  f.mind.side < 0 ? -1 : 1,
+                  this.#random,
+                  this.#navmeshes(),
+                  this.#subtrees,
+                ),
+              ),
+            halt: (f) => {
+              this.#leaveAttackLocation(f.mind);
+            },
+          },
+          findAttackLocation: {
+            tick: (f) =>
+              this.#findAttackLocation(f, () => {
+                const set = this.#navmeshes();
+                return set
+                  ? attackLocationPlaces(set, f.feet, f.there, f.range, this.#subtrees)
+                  : [];
+              }),
+            halt: (f) => {
+              this.#leaveAttackLocation(f.mind);
+            },
+          },
+          findAllyAttackLocation: {
+            tick: (f) =>
+              this.#findAttackLocation(f, (others) =>
+                allyAttackPlaces(
+                  f.feet,
+                  f.there,
+                  this.#alliesInLine(f, others),
+                  this.#navmeshes(),
+                  this.#subtrees,
+                ),
+              ),
+            halt: (f) => {
+              this.#leaveAttackLocation(f.mind);
+            },
+          },
+          attackLocationFailed: (f) => {
+            f.mind.attackLocationFailed = {
+              key: attackLocationKey(f.feet, f.there),
+              at: this.#clock,
+            };
+            return 'failure';
           },
           // Use Cover: Find Cover (the navmeshes' cover edges between it and its target, at
           // least fCombatCoverMinimumRange off it, within its range × fCombatCoverMaxRangeMult),
@@ -4310,11 +4404,18 @@ export class ActorCombatAi {
   }
 
   /**
-   * Whether an actor stands in its shot's way: not its target, nor one of its side's targets (it
-   * may hit those). Notes since when, for fCombatAimProjectileBlockedTime; let down, it starts
-   * over.
+   * Whether its shot's line is blocked (#lineOfFire). Notes since when, for
+   * fCombatAimProjectileBlockedTime; let down, it starts over.
    */
   #lineOfFireBlocked(f: CombatFrame): boolean {
+    const blocked = this.#lineOfFire(f) !== undefined;
+    if (!blocked) f.mind.aimBlockedAt = undefined;
+    else f.mind.aimBlockedAt ??= this.#clock;
+    return blocked;
+  }
+
+  /** The actors that may stand in its shot's way: not its target, nor one of its side's targets. */
+  #shotObstacles(f: CombatFrame): ShotObstacle[] {
     const others: ShotObstacle[] = [];
     for (const other of this.#options.host.fighters()) {
       const { reference, feet } = other;
@@ -4323,12 +4424,91 @@ export class ActorCombatAi {
       if (this.#groups.target(f.mind.reference, reference) !== undefined) continue;
       others.push({ reference, feet, radius: other.radius, height: other.height });
     }
-    const from: Vec3 = [f.feet[0], f.feet[1], f.feet[2] + f.view.height * AIM_HEIGHT_SHARE];
+    return others;
+  }
+
+  /**
+   * What blocks the line of fire from a place (its own feet, or one it might shoot from) to its
+   * target, both at AIM_HEIGHT_SHARE of their heights: an actor it must not hit (not its target,
+   * nor one of its side's targets: it may hit those), else the world (a ray on the line-of-sight
+   * layer: a wall, a pillar, the ground between). Undefined: clear.
+   */
+  #lineOfFireFrom(f: CombatFrame, feet: Vec3, others: readonly ShotObstacle[]) {
+    const from: Vec3 = [feet[0], feet[1], feet[2] + f.view.height * AIM_HEIGHT_SHARE];
     const to: Vec3 = [f.there[0], f.there[1], f.there[2] + f.target.height * AIM_HEIGHT_SHARE];
-    const blocked = lineOfFireBlocker(from, to, others) !== undefined;
-    if (!blocked) f.mind.aimBlockedAt = undefined;
-    else f.mind.aimBlockedAt ??= this.#clock;
+    const senses = this.#options.senses?.();
+    return lineOfFire(from, to, others, (a, b) =>
+      senses?.lineClear(f.mind.reference, a, b, f.target.reference),
+    );
+  }
+
+  /** Its own line of fire to its target, looked at again each DECIDE_SECONDS. */
+  #lineOfFire(f: CombatFrame): 'actor' | 'world' | undefined {
+    const kept = f.mind.lineOfFire;
+    if (kept && this.#clock - kept.at < DECIDE_SECONDS) return kept.blocked;
+    const blocked = this.#lineOfFireFrom(f, f.feet, this.#shotObstacles(f));
+    f.mind.lineOfFire = { blocked, at: this.#clock };
     return blocked;
+  }
+
+  /**
+   * One of Find Attack Location's leaves: the first of its places whose line of fire to the
+   * target is clear becomes the place it runs to (success once there); none: failure.
+   */
+  #findAttackLocation(f: CombatFrame, places: (others: ShotObstacle[]) => Vec3[]): Status {
+    const mind = f.mind;
+    const going = mind.attackLocation;
+    if (going) return this.#goToAttackLocation(f, going);
+    const others = this.#shotObstacles(f);
+    const at = firstClearPlace(
+      places(others),
+      (place) => this.#lineOfFireFrom(f, place, others) === undefined,
+    );
+    if (!at) return 'failure';
+    const location: NonNullable<Mind['attackLocation']> = { at, way: 'going' };
+    mind.attackLocation = location;
+    this.#stopRun(mind);
+    void this.#options.movers
+      .travel(mind.reference, at, 'run', ATTACK_LOCATION_ARRIVE)
+      .then((there) => {
+        if (mind.attackLocation === location) location.way = there ? 'arrived' : 'failed';
+      });
+    return 'running';
+  }
+
+  /** On its way to its attack location: there, it is done with it; no way there, a failure. */
+  #goToAttackLocation(f: CombatFrame, going: NonNullable<Mind['attackLocation']>): Status {
+    const there = going.way === 'arrived' || flat(f.feet, going.at) <= ATTACK_LOCATION_ARRIVE;
+    if (!there && going.way === 'going') return 'running';
+    f.mind.attackLocation = undefined;
+    f.mind.lineOfFire = undefined;
+    return there ? 'success' : 'failure';
+  }
+
+  /** Its search for an attack location stopped (a chase or its cover took over): it lets it go. */
+  #leaveAttackLocation(mind: Mind): void {
+    mind.attackLocation = undefined;
+  }
+
+  /**
+   * Find Ally Attack Location's allies: the living members of its combat group (nearest first, at
+   * most ALLY_LINES of them) whose own line of fire to its target is clear.
+   */
+  #alliesInLine(f: CombatFrame, others: readonly ShotObstacle[]): AttackLocationAlly[] {
+    const members = this.#groups.groupOf(f.mind.reference)?.members;
+    if (!members) return [];
+    const allies: (AttackLocationAlly & { readonly reference: number })[] = [];
+    for (const other of this.#options.host.fighters()) {
+      const { reference, feet } = other;
+      if (reference === f.mind.reference || !members.has(reference) || !feet) continue;
+      if (other.state.life === LifeState.dead) continue;
+      allies.push({ reference, feet, radius: other.radius });
+    }
+    allies.sort((a, b) => flat(a.feet, f.feet) - flat(b.feet, f.feet));
+    return allies.slice(0, ALLY_LINES).filter((ally) => {
+      const rest = others.filter((other) => other.reference !== ally.reference);
+      return this.#lineOfFireFrom(f, ally.feet, rest) === undefined;
+    });
   }
 
   /** Boost Confidence: whether its level can rise (the cowardly's cannot). */

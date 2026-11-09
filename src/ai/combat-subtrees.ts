@@ -84,6 +84,17 @@ export interface CombatSubtreeSettings {
   readonly summonRestrictTime: number;
   readonly reanimateDistance: number;
   readonly reanimateRestrictTime: number;
+  /** Find Attack Location: fCombatFindAttackLocation*, fCombatFind{Lateral,Ally}AttackLocation*. */
+  readonly findAttackLocationDistance: number;
+  readonly findAttackLocationAvoidTargetRadius: number;
+  readonly findAttackLocationKeyAngle: number;
+  readonly findAttackLocationKeyHeight: number;
+  readonly findLateralAttackLocationDistance: number;
+  readonly findLateralAttackLocationIntervalMin: number;
+  readonly findLateralAttackLocationIntervalMax: number;
+  readonly findAllyAttackLocationDistanceMin: number;
+  readonly findAllyAttackLocationDistanceMax: number;
+  readonly findAllyAttackLocationAllyRadius: number;
 }
 
 const SETTINGS: readonly (readonly [keyof CombatSubtreeSettings, string, number])[] = [
@@ -151,6 +162,16 @@ const SETTINGS: readonly (readonly [keyof CombatSubtreeSettings, string, number]
   ['summonRestrictTime', 'fCombatMagicSummonRestrictTime', 30],
   ['reanimateDistance', 'fCombatMagicReanimateDistance', 1024],
   ['reanimateRestrictTime', 'fCombatMagicReanimateRestrictTime', 30],
+  ['findAttackLocationDistance', 'fCombatFindAttackLocationDistance', 1024],
+  ['findAttackLocationAvoidTargetRadius', 'fCombatFindAttackLocationAvoidTargetRadius', 384],
+  ['findAttackLocationKeyAngle', 'fCombatFindAttackLocationKeyAngle', 5],
+  ['findAttackLocationKeyHeight', 'fCombatFindAttackLocationKeyHeight', 128],
+  ['findLateralAttackLocationDistance', 'fCombatFindLateralAttackLocationDistance', 512],
+  ['findLateralAttackLocationIntervalMin', 'fCombatFindLateralAttackLocationIntervalMin', 64],
+  ['findLateralAttackLocationIntervalMax', 'fCombatFindLateralAttackLocationIntervalMax', 128],
+  ['findAllyAttackLocationDistanceMin', 'fCombatFindAllyAttackLocationDistanceMin', 256],
+  ['findAllyAttackLocationDistanceMax', 'fCombatFindAllyAttackLocationDistanceMax', 4096],
+  ['findAllyAttackLocationAllyRadius', 'fCombatFindAllyAttackLocationAllyRadius', 64],
 ];
 
 /** The load order's settings (GMST) by name, else the engine's built-in defaults. */
@@ -849,6 +870,202 @@ export function dualCastHold(
 ): 'charging' | 'release' | 'interrupt' {
   if (heldFor >= settings.dualCastInterruptTime) return 'interrupt';
   return heldFor >= chargeTime ? 'release' : 'charging';
+}
+
+// --- Find Attack Location ---------------------------------------------------------------------------
+
+/**
+ * Find Attack Location (observed in the original: the Ranged Movement's In Range and Out of
+ * Range Movement Selectors try it after Use Cover and before strafing or Maintain Optimal Range;
+ * its Find Attack Location Selector tries Find Lateral Attack Location, Find Attack Location and
+ * Find Ally Attack Location in turn, else Set Failed Timestamp: the blackboard's
+ * FindAttackLocationFailedTimeStamp). A shooter whose line of fire to its target is blocked, by a
+ * wall or by an actor it must not hit, looks for a place with a clear line and runs there. The
+ * places each leaf offers are below; the caller tries them in order and takes the first whose line
+ * to the target is clear. TODO(M13): how each leaf ranks its places and when the shooter looks at
+ * all are inferred (ours: only while its line is blocked, nearest places first).
+ */
+
+/** How far a place given by the navmesh's point nearest it may lie off it (units). */
+const ATTACK_PLACE_SNAP = 64;
+/** At most this many places of the navmesh search are offered (each costs a ray). */
+const ATTACK_PLACES_MAX = 24;
+
+/** A place on the navmeshes (its height theirs), undefined off them; without navmeshes, as it is. */
+function onNavmesh(set: NavmeshSet | undefined, point: Vec3): Vec3 | undefined {
+  if (!set) return point;
+  const at = set.locate(point);
+  if (!at) return undefined;
+  return (
+    set.nearest?.(point, ATTACK_PLACE_SNAP) ?? [
+      point[0],
+      point[1],
+      middleOf(at.navmesh, at.triangle)[2],
+    ]
+  );
+}
+
+/** The triangles an actor reaches within `radius`, by key (navmesh:triangle). */
+function reachableKeys(set: NavmeshSet, from: Vec3, radius: number): Set<string> | undefined {
+  const visits = reachable(set, from, radius);
+  return visits && new Set(visits.map((v) => `${v.navmesh.formId}:${v.triangle}`));
+}
+
+/**
+ * Find Lateral Attack Location: places beside the shooter, square to its line to the target, each
+ * fCombatFindLateralAttackLocationIntervalMin .. Max (at random) past the last, out to
+ * fCombatFindLateralAttackLocationDistance on either side, the nearer first and `side` (1 its
+ * right, −1 its left) first at each step. With navmeshes, only places its way reaches over them.
+ * TODO(M13): the order and the random step are inferred from the settings' names.
+ */
+export function lateralAttackPlaces(
+  feet: Vec3,
+  target: Vec3,
+  side: 1 | -1,
+  random: () => number,
+  set?: NavmeshSet,
+  settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+): Vec3[] {
+  const dx = target[0] - feet[0];
+  const dy = target[1] - feet[1];
+  const length = Math.hypot(dx, dy);
+  if (length <= 1e-6) return [];
+  // Square to the line: (y, −x) is its right on the compass (x east, y north).
+  const right = [dy / length, -dx / length] as const;
+  const far = settings.findLateralAttackLocationDistance;
+  const keys = set && reachableKeys(set, feet, far + ATTACK_PLACE_SNAP);
+  const min = settings.findLateralAttackLocationIntervalMin;
+  const max = settings.findLateralAttackLocationIntervalMax;
+  const places: Vec3[] = [];
+  for (let out = min + random() * (max - min); out <= far; out += min + random() * (max - min)) {
+    for (const s of [side, -side]) {
+      const point: Vec3 = [feet[0] + right[0] * out * s, feet[1] + right[1] * out * s, feet[2]];
+      const at = onNavmesh(set, point);
+      if (!at) continue;
+      if (set && keys) {
+        const located = set.locate(at);
+        if (!located || !keys.has(`${located.navmesh.formId}:${located.triangle}`)) continue;
+      }
+      places.push(at);
+    }
+  }
+  return places;
+}
+
+/**
+ * Find Attack Location: the places of the navmeshes the shooter's way reaches within
+ * fCombatFindAttackLocationDistance, in the order the way search reaches them, none within
+ * fCombatFindAttackLocationAvoidTargetRadius of the target nor beyond `range` of it (it shoots
+ * from there), each at least fCombatFindLateralAttackLocationIntervalMin from those before.
+ * TODO(M13): the spacing and the cap on the places tried are ours.
+ */
+export function attackLocationPlaces(
+  set: NavmeshSet,
+  feet: Vec3,
+  target: Vec3,
+  range: number,
+  settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+): Vec3[] {
+  const places: Vec3[] = [];
+  const spacing = settings.findLateralAttackLocationIntervalMin;
+  for (const visit of reachable(set, feet, settings.findAttackLocationDistance) ?? []) {
+    const at = visit.middle;
+    const off = flat(at, target);
+    if (off < settings.findAttackLocationAvoidTargetRadius || off > range) continue;
+    if (flat(at, feet) < spacing) continue;
+    if (places.some((place) => flat(place, at) < spacing)) continue;
+    places.push(at);
+    if (places.length >= ATTACK_PLACES_MAX) break;
+  }
+  return places;
+}
+
+/** An ally with a clear line to the shooter's target (Find Ally Attack Location). */
+export interface AttackLocationAlly {
+  readonly feet: Vec3;
+  readonly radius: number;
+}
+
+/**
+ * Find Ally Attack Location: beside an ally that has a clear line to the target and stands
+ * fCombatFindAllyAttackLocationDistanceMin .. Max from it: a place square to the ally's line,
+ * fCombatFindAllyAttackLocationAllyRadius past its body, either side, the nearest to the shooter
+ * first. TODO(M13): inferred from the settings' names.
+ */
+export function allyAttackPlaces(
+  feet: Vec3,
+  target: Vec3,
+  allies: readonly AttackLocationAlly[],
+  set?: NavmeshSet,
+  settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+): Vec3[] {
+  const places: Vec3[] = [];
+  for (const ally of allies) {
+    const dx = target[0] - ally.feet[0];
+    const dy = target[1] - ally.feet[1];
+    const length = Math.hypot(dx, dy);
+    if (
+      length < settings.findAllyAttackLocationDistanceMin ||
+      length > settings.findAllyAttackLocationDistanceMax
+    ) {
+      continue;
+    }
+    const out = ally.radius + settings.findAllyAttackLocationAllyRadius;
+    for (const s of [1, -1]) {
+      const point: Vec3 = [
+        ally.feet[0] + (dy / length) * out * s,
+        ally.feet[1] - (dx / length) * out * s,
+        ally.feet[2],
+      ];
+      const at = onNavmesh(set, point);
+      if (at) places.push(at);
+    }
+  }
+  return places.sort((a, b) => flat(a, feet) - flat(b, feet));
+}
+
+/** The first place whose line to the target is clear, trying at most `limit` of them. */
+export function firstClearPlace(
+  places: readonly Vec3[],
+  clear: (place: Vec3) => boolean,
+  limit = ATTACK_PLACES_MAX,
+): Vec3 | undefined {
+  for (const place of places.slice(0, limit)) if (clear(place)) return place;
+  return undefined;
+}
+
+/** Where its target stood, seen from the shooter, when a search for a place failed. */
+export interface AttackLocationKey {
+  /** The target's bearing from the shooter (radians) and its height above the shooter. */
+  readonly bearing: number;
+  readonly height: number;
+}
+
+export function attackLocationKey(feet: Vec3, target: Vec3): AttackLocationKey {
+  return {
+    bearing: Math.atan2(target[0] - feet[0], target[1] - feet[1]),
+    height: target[2] - feet[2],
+  };
+}
+
+/**
+ * A failed search stands while its target, seen from the shooter, stays within
+ * fCombatFindAttackLocationKeyAngle of the bearing and fCombatFindAttackLocationKeyHeight of the
+ * height it had then: from there no place was found, so it is not looked for again until either
+ * moved (by the shooter's strafing or the target's way). TODO(M13): the key's use is inferred
+ * from the settings' names.
+ */
+export function attackLocationKeyHolds(
+  failed: AttackLocationKey,
+  now: AttackLocationKey,
+  settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+): boolean {
+  let turn = Math.abs(now.bearing - failed.bearing) % (2 * Math.PI);
+  if (turn > Math.PI) turn = 2 * Math.PI - turn;
+  return (
+    (turn * 180) / Math.PI <= settings.findAttackLocationKeyAngle &&
+    Math.abs(now.height - failed.height) <= settings.findAttackLocationKeyHeight
+  );
 }
 
 // --- Reachability --------------------------------------------------------------------------------

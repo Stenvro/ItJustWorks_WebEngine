@@ -1197,6 +1197,23 @@ export function lineOfFireBlocker(
 }
 
 /**
+ * What blocks a shot's line of fire: an actor in its way (lineOfFireBlocker), else the world
+ * (`worldClear`: whether nothing of the world stands between the two points, a wall, a pillar,
+ * the ground; undefined when it cannot be asked now, taken as clear). Undefined: the line is
+ * clear. A shooter neither looses nor casts down a blocked line; its Ranged Movement then looks
+ * for a place with a clear one (Find Attack Location: combat-subtrees.ts).
+ */
+export function lineOfFire(
+  from: Vec3,
+  to: Vec3,
+  others: readonly ShotObstacle[],
+  worldClear?: (from: Vec3, to: Vec3) => boolean | undefined,
+): 'actor' | 'world' | undefined {
+  if (lineOfFireBlocker(from, to, others) !== undefined) return 'actor';
+  return worldClear?.(from, to) === false ? 'world' : undefined;
+}
+
+/**
  * A blocked aim is given up once blocked longer than fCombatAimProjectileBlockedTime (observed in
  * the original). `blockedFor`: seconds since it was first blocked, undefined while it is clear.
  */

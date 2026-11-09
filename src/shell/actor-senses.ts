@@ -1005,6 +1005,15 @@ export class ActorSenses implements ScriptSenses {
   }
 
   /**
+   * Whether nothing stands between two points (a ray on the line-of-sight layer, through the
+   * actor's own bodies, to the target's): a shot's line of fire against the world. Undefined
+   * while the physics cannot be asked.
+   */
+  lineClear(actor: number, from: Vec3, to: Vec3, target: number): boolean | undefined {
+    return this.#ray(from, to, actor, target);
+  }
+
+  /**
    * Whether a viewer sees a reference: an actor within its view cone and reach with nothing
    * between (its eyes to the reference's head, chest or middle); the player what is on
    * screen with nothing between the camera and it.

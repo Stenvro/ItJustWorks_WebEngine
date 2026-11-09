@@ -252,6 +252,14 @@ and 290 built-in ones the readers ask for by name.
 - [x] Ranged combat: draw, hold, release, strafe, cover (ranged.test.ts).
 - [x] Line of fire: an actor in the way holds the shot, given up after
       fCombatAimProjectileBlockedTime (ranged.test.ts).
+- [x] Line of fire against the world: a wall or the ground between blocks a shot as an actor
+      does (a ray on the line-of-sight layer); a caster does not cast down a blocked line either
+      (combat-tactics.ts lineOfFire, ranged.test.ts). TODO(M13): the world check is ours.
+- [x] Find Attack Location: the Ranged Movement's subtree (Find Lateral Attack Location, Find
+      Attack Location, Find Ally Attack Location, Set Failed Timestamp, observed in the original),
+      run while the line of fire is blocked, by the fCombatFind*AttackLocation* settings
+      (combat-subtrees.ts, behaviour-tree.test.ts, ranged.test.ts). TODO(M13): the settings' use
+      is inferred from their names (docs/ai.md, "The combat behaviour tree").
 - [x] The cover: no score; the first edge that holds as the way search reaches it (round 5).
       TODO(M13): the reservation slots along an edge, an obstacle's move.
 - [x] Magic in combat: casters by purpose, dual casting, concentration, potions.
