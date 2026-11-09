@@ -57,7 +57,37 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   bones, a knife stuck in a table), which the solver pushes out the far side. Holding such a body
   where it was placed (its contact's way out pointing down, 0.02 Havok units deep or more) was
   tried: with it, 130 went through instead of 92 of today's audit, what lay on or in the held
-  ones among them (gems in a chest, tomatoes in a basket). Today's: 92 of 69,455, 712 rolled off.
+  ones among them (gems in a chest, tomatoes in a basket). Then: 92 of 69,455, 712 rolled off.
+- **Welded faces while settling** (`PhysicsWorld.#weld`; inferred from the files' one-sided
+  welding, TODO(M13): not observed): most of those 92 were placed deeper than half into a floor,
+  a table's top or a cave's ground (berries, notes, bones, a ruined book that a rubble pile's hull
+  pressed 27 units down into the floor), and the two-sided triangle put them out at its back. A
+  settling body that the step pushes to the back of a welded triangle it may rest on (facing up,
+  at most 60° steep) is put out at that triangle's front instead, unless another welded triangle
+  it lies in pushes the other way (a dagger through a table's top into its underside); ragdolls
+  meet the one-sided copies as before. Nor is a body that stands on something under it: a
+  surface that does not move and that it may rest on (a welded triangle by its front), straight
+  under its centre of mass, no more than 2 units under its lowest point (a chaurus egg in Frostflow
+  Abyss on the cave's floor under the edge of a mound's slope [000A439C, 000A439B] was put out on
+  the slope and rolled 230 units off). The body is moved after the step, so ray and shape casts
+  see its new place after the next one (`queriesCurrent`). The triangles' fronts are read from
+  our own collision data, not from Rapier's shape (which copies a mesh's buffers out whole).
+  `tools/settle-audit.ts` (articulated objects posed by their XRGD, as the session does: 64,248
+  of the 69,455 settle, below) now also counts what ends more than 8 units higher than placed.
+  Without the weld 81 fall through and 363 rise; with it 45 fall and 403 rise: of the 52 that
+  rise only with it, 8 would have fallen through, and the rest were placed sunk into what they
+  lie on and stay sunk without it, but for some that the weld puts out on top of what they stand
+  under (the Blue Palace's bucket [000CC306], its top 2.5 units into what is over it, set 28
+  units up: no floor straight under its centre of mass). Exteriors (42 cells around Riverwood on
+  their landscape) settle alike with and without it. Fort Fellhammer's hand cart [00044727] rolls
+  down its ramp with its ore as it did without the weld (then it fell through the ramp; now it
+  rolls on): its wheels are placed 6 to 10 units into the planks, its frame touches nothing but
+  the ore placed inside its bed (up to 16 units deep), and its wheels turn freely on their
+  hinges; it rolls with the ore taken away too. Open: books pushed out of a cupboard's or
+  shelf's back panel (horizontal faces are left as they were), objects over a table's edge,
+  overlaps with simulated or keyframed bodies (the hand cart's ore, trapdoors, a chest's lid,
+  stacked plates thrown up off their table), and the baskets on nothing at 154 units in the inns
+  built of FarmIntInnEnd04 (Nightgate, Moorside, Braidwood).
 - **Friction and restitution** combine as Havok's square root of the product (each collider
   gets the square root, Rapier multiplies).
 - **What is placed:** the collision of every enabled object in the loaded cells, the
@@ -875,10 +905,13 @@ original:
   as a whole: one body released alone hung, simulated, on its held neighbours' joints and shook.
   8,670 objects carry a pose too (armour on the floor, open books, hanging game): an articulated
   object's is walked the same way over its model's nodes (`poseObjectRagdoll` in
-  play-session.ts; XRGB turns only an actor's biped), its bodies placed on its posed nodes, a
-  complete walk leaving it at rest until touched and a stopped one settling; 7,534 apply
+  src/world/ragdoll-data.ts; XRGB turns only an actor's biped), its bodies placed on its posed
+  nodes, a complete walk leaving it at rest until touched and a stopped one settling; 7,534 apply
   completely, 1,131 have no model with a pose order (`node tools/ragdoll-info.ts --pose`).
-  Single-body clutter's is never applied (its body sits on its fade root).
+  Single-body clutter's is never applied (its body sits on its fade root). `tools/settle-audit.ts`
+  poses them the same way: left in their models' rest pose and settled, open books on wall
+  shelves lay in the shelf and were put out into the wall above (the Blue Palace's
+  [000CC006, 000CC007], Jorgen and Lami's house's [00105449]).
 - **The corpse pose** (`src/animation/corpse-pose.ts`): the original keeps a corpse's Havok
   state with its reference; here, as a dead actor leaves the stage (its cell unloads) and as the
   game is saved, the nodes its ragdoll placed (those not where their parents and the skeleton

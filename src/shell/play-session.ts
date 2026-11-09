@@ -69,9 +69,9 @@ import type { ActorTarget } from './actors.ts';
 import { turnSwing } from './open-close.ts';
 import {
   bodyOnPose,
+  poseObjectRagdoll,
   poseRagdoll,
   type RagdollData,
-  type RagdollPoseLocals,
 } from '../world/ragdoll-data.ts';
 import { placeCorpsePose, type CorpsePose } from '../animation/corpse-pose.ts';
 
@@ -652,25 +652,6 @@ export interface CellCollision {
    * comes back when a script enables it). All are enabled without.
    */
   readonly isEnabled?: (reference: number) => boolean;
-}
-
-/**
- * Poses an articulated object's nodes (its pose in its rest pose) and its bodies by its placed
- * ragdoll pose. What the walk applied (undefined: it has none, or nothing matched).
- */
-function poseObjectRagdoll(
-  physics: PhysicsWorld,
-  placed: PlacedCollision,
-  pose: ActorPose,
-  collision: CollisionData,
-  object: { readonly world: Mat4; readonly ragdoll?: RagdollData },
-): RagdollPoseLocals | undefined {
-  if (!object.ragdoll) return undefined;
-  const rest = pose.worlds.slice();
-  const posed = poseRagdoll(pose, collision, { bones: object.ragdoll.bones });
-  if (!posed || posed.locals.size === 0) return undefined;
-  physics.poseBodies(placed, object.world, ({ data }) => bodyOnPose(pose, rest, data));
-  return posed;
 }
 
 /** A dead actor's ragdoll: its skeleton's bodies (skeleton.nif) moving its pose's nodes. */

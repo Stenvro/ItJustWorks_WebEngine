@@ -20,6 +20,7 @@
 import { ActorPose } from '../animation/skeleton.ts';
 import type { ConstraintData } from '../formats/nif/types.ts';
 import type { CollisionBody, CollisionData, RagdollPoseNode } from '../physics/collision-data.ts';
+import type { PhysicsWorld, PlacedCollision } from '../physics/physics-world.ts';
 import { invert } from '../render/frustum.ts';
 import { multiply, transformPoint, type Mat4, type Vec3 } from '../render/math.ts';
 import { referenceMatrix } from './cell-loader.ts';
@@ -222,4 +223,25 @@ export function bodyOnPose(
     pose.worlds.subarray(node * 16, node * 16 + 16),
     multiply(restInverse, body.transform),
   );
+}
+
+/**
+ * Poses an articulated object's nodes (its pose in its rest pose) and its placed bodies by its
+ * placed ragdoll pose (XRGD: armour on the floor, an open book; XRGB turns only an actor's
+ * biped). What the walk applied (undefined: it has none, or nothing matched): complete, the
+ * object stays at rest until touched, else it falls from the pose so far.
+ */
+export function poseObjectRagdoll(
+  physics: Pick<PhysicsWorld, 'poseBodies'>,
+  placed: PlacedCollision,
+  pose: ActorPose,
+  collision: CollisionData,
+  object: { readonly world: Mat4; readonly ragdoll?: RagdollData },
+): RagdollPoseLocals | undefined {
+  if (!object.ragdoll) return undefined;
+  const rest = pose.worlds.slice();
+  const posed = poseRagdoll(pose, collision, { bones: object.ragdoll.bones });
+  if (!posed || posed.locals.size === 0) return undefined;
+  physics.poseBodies(placed, object.world, ({ data }) => bodyOnPose(pose, rest, data));
+  return posed;
 }
