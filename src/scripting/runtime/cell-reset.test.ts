@@ -51,6 +51,10 @@ async function comeBack(setup: (state: GameState) => void, hour: number): Promis
     gameSetting: () => Promise.resolve(undefined),
     locationClearing: { revived: () => Promise.resolve() },
     aliasesHolding: () => [],
+    removeFromGame: (reference: number) => {
+      state.reference(reference).deleted = true;
+      return true;
+    },
     setEnabled: () => Promise.resolve(),
   } as unknown as ScriptRuntime;
   const resets = new CellResets(runtime);

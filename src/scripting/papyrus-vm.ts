@@ -1113,12 +1113,16 @@ export class PapyrusVm {
   /**
    * Starts OnInit for every script attached to an object, as the game does when an object
    * comes into being: resolves once they run (their other events and calls wait for them),
-   * with `done` for when they have finished and how many scripts it has.
+   * with `done` for when they have finished. `starting`, if given, is called once its scripts
+   * are known and before their OnInit starts, if it has any (the engine's TESInitScriptEvent,
+   * which the VM handles by running OnInit: runtime.ts).
    */
   async startInitialize(
     target: ObjectHandle,
-  ): Promise<{ readonly done: Promise<void>; readonly scripts: number }> {
+    starting?: () => void,
+  ): Promise<{ readonly done: Promise<void> }> {
     const instances = await this.#attachedInstances(target);
+    if (instances.length > 0) starting?.();
     // Told as an event sent to the object, once for all its scripts (as sendEvent tells one).
     if (instances.length > 0) this.onEventSent?.(target, 'OnInit', []);
     const done = instances.map((instance) => {
@@ -1128,7 +1132,7 @@ export class PapyrusVm {
       });
       return instance.initializing;
     });
-    return { done: Promise.all(done).then(() => undefined), scripts: instances.length };
+    return { done: Promise.all(done).then(() => undefined) };
   }
 
   #dispatch(

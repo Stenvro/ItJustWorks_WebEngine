@@ -1416,18 +1416,15 @@ export class ScriptRuntime implements VmHost {
   }
 
   /**
-   * Starts a reference's scripts (OnInit), as it comes into existence; once they have run it is
-   * told (TESInitScriptEvent) if it has any. TODO(M13): inferred that the event follows the
-   * scripts' OnInit (the VM runs OnInit itself) and is told only for references with scripts.
+   * Starts a reference's scripts (OnInit), as it comes into existence. The engine tells it
+   * (TESInitScriptEvent) and the VM, a sink of that source (CommonLibSSE: SkyrimVM is a
+   * BSTEventSink<TESInitScriptEvent>), runs OnInit as it hears it: told first, before OnInit
+   * starts. TODO(M13): inferred that it is told only for a reference with scripts.
    */
   async #initializeReference(reference: number): Promise<void> {
-    const { done, scripts } = await this.vm.startInitialize(this.referenceHandle(reference));
-    if (scripts === 0) return;
-    this.detach(
-      done.then(() => {
-        this.events.emit('initScript', { reference });
-      }),
-    );
+    await this.vm.startInitialize(this.referenceHandle(reference), () => {
+      this.events.emit('initScript', { reference });
+    });
   }
 
   /**
@@ -1646,16 +1643,28 @@ export class ScriptRuntime implements VmHost {
 
   /** ObjectReference.Delete: the reference leaves the world. */
   deleteReference(reference: number): void {
-    const state = this.state.reference(reference);
-    const was = state.deleted === true;
-    state.deleted = true;
+    this.removeFromGame(reference);
     this.world.enableChanged?.(reference, false);
-    // A created reference's form goes with it (TESFormDeleteEvent); a plugin's reference only
-    // takes the deleted flag, its form stays. TODO(M13): inferred: the original deletes the
-    // form once nothing holds it any more (no script's variable or property), and its VM then
-    // lets go of the form's script instances; ours tells it at the Delete and keeps them.
-    if (!was && this.state.created.has(reference))
-      this.events.emit('formDelete', { form: reference });
+  }
+
+  /**
+   * A reference leaves the game for good, whatever removes it (a script's Delete, a cell's
+   * reset of what was dropped there, a restock or a RemoveItem with nowhere to go, a summon's
+   * end, a hazard's, the oldest stuck arrow): it takes the deleted flag and no longer holds an
+   * inventory's unique id (unique-ids.ts). A created reference's form goes with it
+   * (TESFormDeleteEvent); a plugin's reference only takes the flag, its form stays. Whether it
+   * was not deleted before (the caller then hides it from the view). TODO(M13): inferred: the
+   * original deletes the form once nothing holds it any more (no script's variable or
+   * property), and its VM then lets go of the form's script instances; ours tells it as the
+   * reference goes and keeps them.
+   */
+  removeFromGame(reference: number): boolean {
+    const state = this.state.reference(reference);
+    if (state.deleted === true) return false;
+    state.deleted = true;
+    delete state.uniqueId;
+    if (this.state.created.has(reference)) this.events.emit('formDelete', { form: reference });
+    return true;
   }
 
   /** Whether an alias holds a reference (the alias's scripts hear its events). */
@@ -3139,7 +3148,7 @@ export class ScriptRuntime implements VmHost {
       if (to === undefined) {
         // Removed from the game with the items (RemoveItem without a container to go to).
         delete state.container;
-        state.deleted = true;
+        this.removeFromGame(reference);
       } else state.container = { holder: to, base, count };
       left.push({ reference, count });
     }
@@ -3184,10 +3193,10 @@ export class ScriptRuntime implements VmHost {
       days: this.state.gameDaysPassed,
       count: (restocked?.count ?? 0) + 1,
     });
-    for (const state of this.state.references.values()) {
+    for (const [reference, state] of this.state.references) {
       if (state.container?.holder !== container) continue;
       delete state.container;
-      state.deleted = true;
+      this.removeFromGame(reference);
     }
     this.state.inventories.delete(container);
     this.crafting.clear(container);

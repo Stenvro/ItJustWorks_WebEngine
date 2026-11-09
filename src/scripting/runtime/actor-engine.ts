@@ -199,7 +199,8 @@ export class ActorEngine {
     if (!templates) return undefined;
     // An NPC_ that takes a part from a template has its templates resolved (the engine tells
     // it: TESResolveNPCTemplatesEvent). TODO(M13): inferred: told the first time an actor of
-    // it is made, with the NPC_ placed (a leveled list's pick).
+    // it is made, and that the event's one form id (CommonLibSSE: templateID) is the NPC_
+    // placed (a leveled list's pick) that uses the templates, not one of the templates.
     const placed = templates.placed;
     if (
       !this.#resolvedTemplates.has(placed) &&

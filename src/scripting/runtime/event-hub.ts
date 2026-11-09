@@ -119,7 +119,10 @@ export interface GameEvents {
    * (TESFurnitureEvent: enter, exit), the player too.
    */
   furniture: { readonly actor: number; readonly furniture: number; readonly entered: boolean };
-  /** A form was deleted (TESFormDeleteEvent): a created reference that left the game. */
+  /**
+   * A form was deleted (TESFormDeleteEvent): a created reference that left the game, whatever
+   * removed it (ScriptRuntime.removeFromGame).
+   */
   formDelete: { readonly form: number };
   /** The player's fast travel ended (TESFastTravelEndEvent): game hours it took. */
   fastTravelEnd: { readonly hours: number };
@@ -137,7 +140,10 @@ export interface GameEvents {
     readonly bashAttack: boolean;
     readonly blocked: boolean;
   };
-  /** A reference's scripts were initialised (TESInitScriptEvent): their OnInit has run. */
+  /**
+   * A reference's scripts are initialised (TESInitScriptEvent): told before their OnInit
+   * starts, which the VM runs as it hears this.
+   */
   initScript: { readonly reference: number };
   /** A saved game finished loading (TESLoadGameEvent). */
   loadGame: Record<string, never>;
@@ -214,6 +220,9 @@ export interface GameEvents {
   /**
    * An NPC's templates were resolved (TESResolveNPCTemplatesEvent): the NPC_ with a template
    * whose parts came from its templates, the first time an actor of it was made.
+   * TODO(M13): inferred: the original's payload is one form id (CommonLibSSE: templateID);
+   * that it names the NPC_ that uses the templates (a leveled list's pick), not one of its
+   * templates, is not read.
    */
   resolveNpcTemplates: { readonly npc: number };
   /** A scene's action or phase changed, or the scene started or ended (TESScene*Event). */

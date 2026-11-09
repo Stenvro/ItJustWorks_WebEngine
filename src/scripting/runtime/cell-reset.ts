@@ -271,7 +271,7 @@ export class CellResets {
       const entry = state.references.get(reference);
       if (!entry || entry.deleted === true || entry.container !== undefined) continue;
       if (entry.cell !== cell || runtime.aliasesHolding(reference).length > 0) continue;
-      entry.deleted = true;
+      runtime.removeFromGame(reference);
       state.graphs.delete(reference);
     }
   }
