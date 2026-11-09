@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { CombatSearch, SEARCH_RADIUS, type SearchBody } from './combat-search.ts';
+import {
+  CombatSearch,
+  SEARCH_RADIUS,
+  SearchArea,
+  type SearchBody,
+  type SearchPoint,
+} from './combat-search.ts';
 
 type Vec3 = readonly [number, number, number];
 
@@ -134,5 +140,109 @@ describe('combat search', () => {
     expect(third.trips).toEqual([{ to: walking.target, run: false }]);
     // Its time in all carries on: it gives up at fDetectionStateExpireTime counted from the start.
     expect(resumed.update(settings.stateExpireTime - walking.elapsed)).toBe('gave-up');
+  });
+
+  describe('the priority points and doors (Search, Investigating Door)', () => {
+    const areaSettings = { ignoreLocationRadius: 384, sightRadius: 1536, doorFailureMax: 3 };
+    const searchSettings = { ...settings, searchLookTime: 1 };
+
+    /** A searcher that records its walks and their arrive distances; `reach` says what it reaches. */
+    function walker(
+      reach: (to: Vec3) => boolean = () => true,
+      sees: (at: Vec3) => boolean = () => false,
+    ) {
+      const self = {
+        at: [0, 0, 0] as Vec3,
+        trips: [] as { to: Vec3; arrive: number }[],
+        faced: [] as number[],
+        position: (): Vec3 => self.at,
+        travel: (to: Vec3, arrive: number): Promise<boolean> => {
+          self.trips.push({ to, arrive });
+          if (!reach(to)) return Promise.resolve(false);
+          self.at = to;
+          return Promise.resolve(true);
+        },
+        face: (heading: number): void => {
+          self.faced.push(heading);
+        },
+        stop: (): void => undefined,
+        sees,
+      };
+      return self;
+    }
+
+    /** Runs a search until it has made `trips` walks (or 200 steps). */
+    async function until(
+      search: CombatSearch,
+      searcher: { trips: unknown[] },
+      trips: number,
+    ): Promise<void> {
+      for (let i = 0; i < 200 && searcher.trips.length < trips; i++) {
+        search.update(0.5);
+        await settle();
+      }
+    }
+
+    it('checks the last seen point, then its group’s likely points and doors, nearest first', async () => {
+      const center: Vec3 = [0, 0, 0];
+      const corner: SearchPoint = { at: [600, 0, 0] };
+      const door: SearchPoint = { at: [900, 0, 0], door: 0xd00 };
+      const far: SearchPoint = { at: [1200, 400, 0] };
+      const area = new SearchArea(center, [far, door, corner], areaSettings);
+      const searcher = walker();
+      searcher.at = [-800, 0, 0];
+      const share = { area, member: 1, doorDistance: 384 };
+      const search = new CombatSearch(center, searcher, searchSettings, () => 0.5, share);
+      await until(search, searcher, 4);
+      // The last seen point (run to), then the corner, the door from fCombatSearchDoorDistance,
+      // then the farthest; only then would it wander.
+      expect(searcher.trips.map((trip) => trip.to)).toEqual([center, corner.at, door.at, far.at]);
+      expect(searcher.trips[1]?.arrive).toBe(settings.searchInvestigateDistance);
+      expect(searcher.trips[2]?.arrive).toBe(384);
+      // The corner and the door are searched; the farthest is under way.
+      expect(area.left).toBe(1);
+      await until(search, searcher, 5);
+      const wander = searcher.trips[4]?.to ?? center;
+      expect([corner.at, door.at, far.at]).not.toContainEqual(wander);
+    });
+
+    it('shares the points among the group’s searchers; a seen one needs no walk', () => {
+      const a: SearchPoint = { at: [600, 0, 0] };
+      const b: SearchPoint = { at: [0, 700, 0] };
+      const c: SearchPoint = { at: [-900, 0, 0] };
+      const area = new SearchArea([0, 0, 0], [a, b, c], areaSettings);
+      // The first takes the nearest; the second, at the same moment, the next.
+      expect(area.take(1, [0, 0, 0])).toBe(a);
+      expect(area.take(2, [0, 0, 0])).toBe(b);
+      // One it sees from where it stands within fCombatSearchSightRadius counts as searched.
+      expect(area.take(3, [0, 0, 0], (at) => at[0] === -900)).toBeUndefined();
+      expect(area.left).toBe(2);
+      // A searcher that stops frees its point; passing near one searches it.
+      area.release(2);
+      area.pass([0, 650, 0]);
+      expect(area.left).toBe(1);
+      expect(area.take(3, [0, 0, 0])).toBeUndefined();
+    });
+
+    it('gives doors up after iCombatSearchDoorFailureMax it could not reach', async () => {
+      const doors = [1, 2, 3, 4].map((n): SearchPoint => ({
+        at: [500 * n, 1000, 0],
+        door: 0xd00 + n,
+      }));
+      const corner: SearchPoint = { at: [0, 3000, 0] };
+      const area = new SearchArea([0, 0, 0], [...doors, corner], areaSettings);
+      const searcher = walker((to) => to[1] !== 1000);
+      const share = { area, member: 1, doorDistance: 384 };
+      const search = new CombatSearch([0, 0, 0], searcher, searchSettings, () => 0.5, share);
+      await until(search, searcher, 5);
+      // Three doors tried and failed, the fourth never: on to the corner.
+      expect(searcher.trips.map((trip) => trip.to)).toEqual([
+        [0, 0, 0],
+        doors[0]?.at,
+        doors[1]?.at,
+        doors[2]?.at,
+        corner.at,
+      ]);
+    });
   });
 });

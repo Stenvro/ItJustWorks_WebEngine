@@ -624,6 +624,38 @@ export function doorSpots(set: NavmeshSet, from: Vec3, radius: number): DoorSpot
   return out;
 }
 
+/** A search area holds at most this many priority points (inferred, TODO(M13)). */
+export const SEARCH_POINTS_MAX = 12;
+
+/**
+ * A search area's priority points round the place a group last knew its target (Search,
+ * Investigating Door): the cover edges a crouched actor hides behind within the search radius
+ * (no ledge), one per fCombatSearchIgnoreLocationRadius, and the doors within the radius and
+ * fCombatSearchDoorSearchRadius past it; nearest the place first, at most SEARCH_POINTS_MAX.
+ * Inferred from the behaviours' and settings' names, TODO(M13): the original's choice of points.
+ */
+export function searchPoints(
+  set: NavmeshSet,
+  center: Vec3,
+  radius: number,
+  settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+  actor: CoverActor = COVER_ACTOR,
+): { readonly at: Vec3; readonly door?: number }[] {
+  const points: { at: Vec3; door?: number }[] = [];
+  for (const door of doorSpots(set, center, radius + settings.searchDoorSearchRadius)) {
+    points.push({ at: door.at, door: door.door });
+  }
+  const hiding: Vec3[] = [];
+  for (const spot of coverSpots(set, center, radius, actor, settings)) {
+    if (spot.ledge === true || spot.height < actor.crouched) continue;
+    if (hiding.some((at) => flat(at, spot.at) <= settings.searchIgnoreLocationRadius)) continue;
+    hiding.push(spot.at);
+  }
+  for (const at of hiding) points.push({ at });
+  points.sort((a, b) => flat(a.at, center) - flat(b.at, center));
+  return points.slice(0, SEARCH_POINTS_MAX);
+}
+
 /**
  * Flee Through Door (observed in the original): by fCombatFleeUseDoorChance, not within
  * fCombatFleeUseDoorRestrictTime of its last (TODO(M13): the original also asks that its enemy

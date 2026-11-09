@@ -2959,10 +2959,19 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
 - **Search** (Wait to Start Search; Search Repeat: the Search Selector's Search Location,
   Search, Search Unimportant Location, Search Wander, Search Center, Search Idle and Fail Search,
   then the Investigate Selector's Investigating Door, Investigating, Looking): ours stands
-  fCombatSearchStartWaitTime, goes to the place, investigates it, then wanders within the
-  search radius (fCombatSearchInterior / ExteriorRadiusMin .. Max) in steps of at most
-  fCombatSearchWanderDistance, looking fCombatSearchLookTime at each (TODO(M13): the priority
-  points and the doors).
+  fCombatSearchStartWaitTime, goes to the place, investigates it, then takes its group's priority
+  points round it (Search; `SearchArea`, `searchPoints`): the cover edges a crouched target hides
+  behind within the search radius, one per fCombatSearchIgnoreLocationRadius, and the doors within
+  that radius and fCombatSearchDoorSearchRadius past it, nearest the place first, at most 12. Each
+  searcher takes the first point no other holds; a hiding place counts as searched once a
+  searcher passed within fCombatSearchIgnoreLocationRadius of it or sees it from within
+  fCombatSearchSightRadius; at a door it stops fCombatSearchDoorDistance off and looks at it
+  fCombatSearchInvestigateTime (Investigating Door), at a hiding place fCombatSearchLookTime
+  (Looking); doors are left after iCombatSearchDoorFailureMax it could not reach. Then it
+  wanders within the search radius (fCombatSearchInterior / ExteriorRadiusMin .. Max) in steps of
+  at most fCombatSearchWanderDistance, looking fCombatSearchLookTime at each. The points, their
+  order and their number are inferred from the behaviours' and settings' names (TODO(M13): the
+  original's choice of points).
 - **Casters** (`chooseCombatSupport`: the Potion slot, then `chooseCaster`; `holdsRestore`,
   `holdsWard`; the stage's support every second, `src/shell/actor-combat-ai.ts`): a health
   potion below its restore share, a magicka potion below its magicka share, then a ward against
@@ -3243,7 +3252,9 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   ([Combat detection](#combat-detection)) it searches (CombatToLost; GetCombatState 2): it runs
   to where the group last knew its target to be (within
   fCombatSearchLocationInvestigateDistance), looks round three times
-  (fCombatSearchInvestigateTime), walks to points within 768 units round the place, saying its
+  (fCombatSearchInvestigateTime), walks to its group's priority points (the hiding places and
+  doors round the place, shared among its searchers: Search above), then to points within its
+  search radius round the place, saying its
   LostIdle lines (fCombatDetectionDialogueIdle\*); the group finding one again (LostToCombat) it
   fights on; the group giving its targets up, it ends its combat (LostToNormal; detection's
   alert ends).

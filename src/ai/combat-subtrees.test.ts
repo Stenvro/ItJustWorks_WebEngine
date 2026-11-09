@@ -15,6 +15,7 @@ import {
   pickCover,
   pickFleeDoor,
   pickWeapon,
+  searchPoints,
   searchRadius,
   type CasterState,
 } from './combat-subtrees.ts';
@@ -175,6 +176,19 @@ describe('the combat subtrees', () => {
     expect(dualCastHold(0.5, 1)).toBe('charging');
     expect(dualCastHold(1.2, 1)).toBe('release');
     expect(dualCastHold(S.dualCastInterruptTime, Infinity)).toBe('interrupt');
+  });
+
+  it('Search: the priority points are the hiding places and doors round the place', () => {
+    // The strip's door and its full cover (stood behind, back from the edge as far as the small
+    // triangle allows: its middle, as far off as the door's), from its first triangle.
+    const points = searchPoints(set, [20, 20, 0], 1000);
+    expect(points.map((point) => point.door)).toEqual([0xd00, undefined]);
+    expect(points[0]?.at[0]).toBeCloseTo(133.3, 1);
+    expect(points[1]?.at[0]).toBeCloseTo(133.3, 1);
+    // The door counts past the radius by fCombatSearchDoorSearchRadius; the cover does not.
+    expect(S.searchDoorSearchRadius).toBe(512);
+    const near = searchPoints(set, [20, 20, 0], 60);
+    expect(near.map((point) => point.door)).toEqual([0xd00]);
   });
 
   it('Search and Use Cover take their settings', () => {

@@ -87,7 +87,13 @@ import {
   type MovementRun,
   type MovementTarget,
 } from '../ai/combat-movement.ts';
-import { CombatSearch, type SearchBody, type SearchSettings } from '../ai/combat-search.ts';
+import {
+  CombatSearch,
+  SearchArea,
+  type SearchBody,
+  type SearchSettings,
+  type SearchShare,
+} from '../ai/combat-search.ts';
 import type { SavedFight } from '../save/world-save.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
 import {
@@ -107,6 +113,7 @@ import {
   pickFleeDoor,
   pickWeapon,
   readCombatSubtreeSettings,
+  searchPoints,
   searchRadius,
   type CombatSubtreeSettings,
   type LooseWeapon,
@@ -983,6 +990,7 @@ export class ActorCombatAi {
     for (const mind of this.#minds.values()) mind.search?.cancel();
     this.#minds.clear();
     this.#groups.clear();
+    this.#searchAreas.clear();
     this.#locations.clear();
     this.#reactions.clear();
     this.#health.clear();
@@ -1940,13 +1948,43 @@ export class ActorCombatAi {
       return;
     }
     mind.search?.cancel();
+    const settings = this.#searchSettings();
     mind.search = new CombatSearch(
       at,
       this.#searchBody(reference),
-      this.#searchSettings(),
+      settings,
       this.#random,
+      this.#searchShare(reference, at, settings.searchRadius),
     );
   }
+
+  /**
+   * Its share of its group's search area round a place (SearchArea: the priority points its
+   * searchers split): the group's own while it searches round the same place, else made anew.
+   */
+  #searchShare(reference: number, at: Vec3, radius: number | undefined): SearchShare | undefined {
+    const group = this.#groups.groupOf(reference);
+    const set = this.#navmeshes();
+    if (!group || !set) return undefined;
+    const live = new Set<number>();
+    for (const each of this.#groups.groups()) live.add(each.id);
+    for (const id of this.#searchAreas.keys()) if (!live.has(id)) this.#searchAreas.delete(id);
+    const s = this.#subtrees;
+    let area = this.#searchAreas.get(group.id);
+    if (!area || flat(area.center, at) > s.searchIgnoreLocationRadius) {
+      const points = searchPoints(set, at, radius ?? s.searchInteriorRadiusMin, s);
+      area = new SearchArea(at, points, {
+        ignoreLocationRadius: s.searchIgnoreLocationRadius,
+        sightRadius: s.searchSightRadius,
+        doorFailureMax: s.searchDoorFailureMax,
+      });
+      this.#searchAreas.set(group.id, area);
+    }
+    return { area, member: reference, doorDistance: s.searchDoorDistance };
+  }
+
+  /** Each searching group's search area, by its group. */
+  readonly #searchAreas = new Map<number, SearchArea>();
 
   /** What a search moves: the actor, by its movers. */
   #searchBody(reference: number): SearchBody {
@@ -1961,6 +1999,7 @@ export class ActorCombatAi {
         movers.stop(reference);
         movers.request(reference, undefined);
       },
+      sees: (at) => this.#options.senses?.()?.sees(reference, at) === true,
     };
   }
 
@@ -2015,11 +2054,15 @@ export class ActorCombatAi {
     mind.nextLine =
       this.#clock + this.#between(this.#settings.searchLineMin, this.#settings.searchLineMax);
     mind.search?.cancel();
+    // Its group's priority points are found again round the place (the points it searched
+    // before the save are searched again).
+    const radius = saved.search.radius ?? this.#searchSettings().searchRadius;
     mind.search = CombatSearch.restore(
       saved.search,
       this.#searchBody(reference),
       this.#searchSettings(),
       this.#random,
+      this.#searchShare(reference, saved.search.at, radius),
     );
   }
 
