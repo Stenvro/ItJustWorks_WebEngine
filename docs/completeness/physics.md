@@ -226,8 +226,9 @@ TODO(M13): measure it alone.
 - [x] Collision layers and the group filter (an object's bodies never collide).
 - [x] Triggers and phantoms.
 - [x] Projectiles in flight tell the triggers whose layers collide with theirs
-      (src/shell/projectile-triggers.ts, PhysicsWorld.triggersAlong; round 8). TODO(M13): the
-      cone projectiles' waves.
+      (src/shell/projectile-triggers.ts, PhysicsWorld.triggersAlong; round 8); a cone's wave
+      within its spread, off its middle line too (PhysicsWorld.triggersInCone). TODO(M13): the
+      sector the wave tests volumes with is inferred.
 - [x] The character controller: slopes, stairs, steps, pushing, platforms, falling, swimming.
 - [x] Leaving a moving platform keeps its velocity until it lands (CharacterBody; round 8).
 - [x] What is too steep to stand on is no ground: it slides off at fUnsupportedGravMult (`#onWalkable`;

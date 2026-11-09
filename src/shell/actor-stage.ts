@@ -585,6 +585,9 @@ export class ActorStage {
       () => options.session.scriptsReady,
       (from, to, layer) =>
         options.player?.()?.play.physics.triggersAlong([...from], [...to], layer) ?? new Set(),
+      (apex, direction, front, spread, layer) =>
+        options.player?.()?.play.physics.triggersInCone(apex, direction, front, spread, layer) ??
+        new Set(),
     );
     this.combat = new ActorCombat({
       leaveThroughDoor: (actor, door) => this.fleeThrough(actor, door),

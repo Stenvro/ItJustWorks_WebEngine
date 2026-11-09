@@ -541,8 +541,9 @@ worldspaces on screen:
   1,025 placed volumes ask for one, none of the vanilla traps. Who is in a volume goes by the
   layer matrix for everyone (a volume's own layer: XTRI): L_PROJECTILEZONE takes in no
   controller, L_DEADACTORZONE only corpses, L_ACTORZONE no corpses. Projectiles go by their
-  record's layer (`projectile-triggers.ts`), a cone along its middle line (TODO(M13): its
-  spread). What is gone (disabled, deleted, a corpse's ragdoll too) has left, told as it goes
+  record's layer (`projectile-triggers.ts`), a cone's wave by the sector its front has swept,
+  within its spread off its middle line too (`PhysicsWorld.triggersInCone`; TODO(M13): the
+  sector's shape inferred). What is gone (disabled, deleted, a corpse's ragdoll too) has left, told as it goes
   (`PhysicsWorld.takeGone`), and a trap's keyframed body is looked at as its animation moves it.
   Moving objects enter them too, but not the clutter a cell places
   inside one as it loads: the game's placed clutter lies inactive until disturbed (an object

@@ -952,11 +952,13 @@ same aim; what differs is where they leave from and, for an NPC, what it aims at
   fBowNPCSpreadAngle (5°) times what its Archery lacks of 100 (none at 100), in a random direction
   around the aim; Always Hit shots fly onto the target.
 - Lobbers (the runes; CommonLibSSE GrenadeProjectile): meeting a surface a lobber bounces off it
-  by fGrenadeRestitution (its speed into the surface) and fGrenadeFriction (along it), both 0: it
-  rests where it lands; one with an alternative trigger then waits at rest for an actor within
-  its proximity (the runes' 150) or its timer, then bursts; without one it bursts on the surface.
-  An actor it meets in flight sets it off. TODO(M13): sliding on a slope; fGrenadeAgeMax is
-  not read (the runes wait without a lifetime).
+  by fGrenadeRestitution (0.01 of its speed into the surface: too little to bounce, it lands) and
+  fGrenadeFriction (5, a coefficient per contact on its speed along it: projectile-flight.ts
+  bounceLobber); one with an alternative trigger then lies, or slides down a slope steeper than
+  the friction's angle (78.7°) until one holds it, and waits at rest for an actor within its
+  proximity (the runes' 150) or its timer, then bursts; without one it bursts on the surface.
+  An actor it meets in flight sets it off. TODO(M13): the slide's law is inferred from the
+  settings' names; fGrenadeAgeMax is not read (the runes wait without a lifetime).
 - Speeds and falls: missiles and arrows fly at the PROJ's speed (an arrow's times the draw) and
   fall by the PROJ's gravity × 9.8 m/s²; beams reach their range at once; flames are sprays,
   one every relaunch interval. fArrowSpeedMult and fArrowGravityBase are not read by the engine.
@@ -966,8 +968,10 @@ same aim; what differs is where they leave from and, for an NPC, what it aims at
   range (projectile-flight.ts ConeWave), meeting every actor and every object whose collision
   collides with L_CONEPROJECTILE within its spread as its front passes them, those its apex sees
   on L_SPELL, as an actor (a collision box hides nothing) and looked at again as the front moves on
-  (its push on bodies is at once: TODO(M13)) (trigger volumes too: the
-  Greybeards' and Blackreach's shout triggers, the Throat of the World's winds). A body is met at
+  (its push on moving bodies too, each once as the front reaches it: PhysicsWorld.pushCone)
+  (trigger volumes too, those its swept sector reaches within its spread, off its middle line as
+  well: PhysicsWorld.triggersInCone, the sector inferred: TODO(M13); the Greybeards' and
+  Blackreach's shout triggers, the Throat of the World's winds). A body is met at
   its point nearest the middle of the front, not at its own middle: a wide volume is reached where
   the cone first touches it. TODO(M13): the shape the original sweeps is inferred. An object a
   spell reaches takes it: OnHit with the
