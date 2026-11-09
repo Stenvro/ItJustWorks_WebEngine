@@ -3028,10 +3028,13 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   (FACT XNAM, scripts' SetAlly / SetEnemy) between the factions each is a member of, the closest
   bond winning (ally, friend, enemy, neutral), the other's view where the actor's names none; a
   crime faction set as the player's enemy is an enemy faction to the player. Vanilla factions
-  list themselves (BanditFaction is BanditFaction's ally): faction-mates are not allies by
-  themselves, in crime's reactions too (MQ101's keep fight needs it: Ralof and the two Imperials
-  share MQ101TemporaryFriendsFaction, which stage 270 sets neutral to itself, and their CW NPC
-  factions are enemies; `tests/sim-helgen-keep-fight.int.test.ts`). Two who are members of one
+  list themselves (BanditFaction is BanditFaction's ally). In crime's reactions a faction both
+  are in that names no reaction to itself makes them allies unless it is Special Combat (the
+  town, crime and guard factions: Whiterun's citizens and guards help each other), and one that
+  names a reaction to itself counts by that reaction alone (MQ101's keep fight needs it: Ralof
+  and the two Imperials share MQ101TemporaryFriendsFaction, which stage 270 sets neutral to
+  itself, and their CW NPC factions are enemies; `tests/sim-helgen-keep-fight.int.test.ts`;
+  TODO(M13): the precedence is inferred; docs/gameplay.md "Factions and reactions"). Two who are members of one
   Special Combat faction (a brawl, sparring, a duel: `CrimeEngine.specialCombat`, docs/
   gameplay.md "Factions and reactions") fight alone: no one's assistance, nor a guard's help
   for the innocent, takes up a fight between them (TODO(M13): inferred). Crime makes the player an enemy (`CrimeEngine.reaction`'s crime hostility): to

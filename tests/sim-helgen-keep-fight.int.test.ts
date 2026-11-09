@@ -9,8 +9,10 @@
 // × 0.5), the officer MQ101ReduceDamage too (Mod Incoming Damage × 0.5); the same fragment sets
 // MQ101TemporaryFriendsFaction neutral to itself (SetEnemy(itself, true, true)), which leaves
 // Ralof's CWSonsFactionNPC and the soldiers' CWImperialFactionNPC enemies: Ralof fights them
-// beside the player. Found 2026-11-09: a faction both were in (TemporaryFriends) made them
-// allies by itself, so Ralof stood by (not one blow) and the two soldiers wore the player down
+// beside the player: a shared faction that names a reaction to itself counts by that reaction,
+// not by its membership (docs/gameplay.md "Factions and reactions"; one that names none, as the
+// town and guard factions, makes its members allies). Found 2026-11-09: a faction both were in
+// (TemporaryFriends) made them allies by itself, so Ralof stood by (not one blow) and the two soldiers wore the player down
 // alone: by real input the player died with the officer at 21 health and the soldier untouched.
 
 import { describe, expect, it } from 'vitest';

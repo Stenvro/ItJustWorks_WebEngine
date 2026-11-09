@@ -17,14 +17,24 @@ const RIFTEN_CITIZEN = 0x201;
 const BANDIT = 0x202;
 const FOLLOWER = 0x203;
 const FRIEND = 0x204;
-/** Two guards of Whiterun's faction: allies. */
+/**
+ * Two guards of Whiterun's faction: allies by it (CrimeFactionWhiterun names no reaction to
+ * itself, as the town and guard factions do not).
+ */
 const GUARD = 0x205;
 const OTHER_GUARD = 0x206;
-/** The guards' side (CWImperialFaction), its own ally. */
-const GUARD_SIDE = 0x2bf9a;
 /** A brawler: in the brawl's faction (DGIntimidateFaction, Special Combat) with the player. */
 const BRAWLER = 0x207;
 const BRAWL = 0x4cfa6;
+/**
+ * MQ101's keep: a Stormcloak and an Imperial, both in MQ101TemporaryFriendsFaction (its own
+ * friend, neutral to itself from stage 270), their CW NPC factions enemies.
+ */
+const STORMCLOAK = 0x208;
+const IMPERIAL = 0x209;
+const TEMPORARY_FRIENDS = 0xb4054;
+const SONS_NPC = 0x1c9fd;
+const IMPERIAL_NPC = 0x1c9fc;
 /** A chest Whiterun owns. */
 const CHEST = 0x400;
 
@@ -58,9 +68,11 @@ function engine(): {
   state: GameState;
   events: StoryEventData[];
   brawling: { on: boolean };
+  temporaryFriends: { reaction: number };
 } {
   const state = new GameState();
   const brawling = { on: true };
+  const temporaryFriends = { reaction: 3 };
   state.actor(FOLLOWER).playerTeammate = true;
   const crimeFactions = new Map<number, number>([
     [VICTIM, WHITERUN],
@@ -95,23 +107,35 @@ function engine(): {
               ? { formId, flags: 0x2, reactions: [], ranks: [] }
               : undefined,
         ),
-      // The guards are allies by a faction that names itself its ally (as CWImperialFaction
-      // does): sharing Whiterun's crime faction, which names no reaction to itself, makes none.
       factionsOf: (actor: number) =>
         Promise.resolve(
           new Map<number, number>(
             actor === GUARD || actor === OTHER_GUARD
-              ? [
-                  [WHITERUN, 0],
-                  [GUARD_SIDE, 0],
-                ]
+              ? [[WHITERUN, 0]]
               : actor === BRAWLER || (actor === PLAYER_REF && brawling.on)
                 ? [[BRAWL, 0]]
-                : [],
+                : actor === STORMCLOAK
+                  ? [
+                      [TEMPORARY_FRIENDS, 0],
+                      [SONS_NPC, 0],
+                    ]
+                  : actor === IMPERIAL
+                    ? [
+                        [TEMPORARY_FRIENDS, 0],
+                        [IMPERIAL_NPC, 0],
+                      ]
+                    : [],
           ),
         ),
       factionReaction: (faction: number, other: number) =>
-        Promise.resolve(faction === GUARD_SIDE && other === GUARD_SIDE ? 2 : undefined),
+        Promise.resolve(
+          faction === TEMPORARY_FRIENDS && other === TEMPORARY_FRIENDS
+            ? temporaryFriends.reaction
+            : (faction === SONS_NPC && other === IMPERIAL_NPC) ||
+                (faction === IMPERIAL_NPC && other === SONS_NPC)
+              ? 1
+              : undefined,
+        ),
       value: () => Promise.resolve({ base: 0, max: 0, current: 0 }),
       info: () => Promise.resolve(undefined),
       factionRank: () => Promise.resolve(-2),
@@ -141,8 +165,32 @@ function engine(): {
       reference === undefined ? null : new ObjectHandle(reference, 'objectreference'),
     locationOf: () => Promise.resolve(undefined),
   } as unknown as ScriptRuntime;
-  return { crime: new CrimeEngine(runtime), state, events, brawling };
+  return { crime: new CrimeEngine(runtime), state, events, brawling, temporaryFriends };
 }
+
+describe('how actors regard each other', () => {
+  it('a shared faction that names no reaction to itself makes allies (the town and guards)', async () => {
+    const { crime } = engine();
+    expect(await crime.reaction(GUARD, OTHER_GUARD)).toBe('ally');
+    expect(await crime.reaction(GUARD, CITIZEN)).toBe('neutral');
+  });
+
+  it('a Special Combat faction makes no allies of its members (a brawl)', async () => {
+    const { crime } = engine();
+    expect(await crime.reaction(PLAYER_REF, BRAWLER)).toBe('neutral');
+  });
+
+  it("a shared faction that names a reaction to itself counts by it (MQ101's keep)", async () => {
+    const { crime, temporaryFriends } = engine();
+    // Its own friend through the opening: the Stormcloak and the Imperial do not fight.
+    expect(await crime.reaction(STORMCLOAK, IMPERIAL)).toBe('friend');
+    // Stage 270 sets it neutral to itself: their CW factions' enmity decides, its membership
+    // makes no allies.
+    temporaryFriends.reaction = 0;
+    expect(await crime.reaction(STORMCLOAK, IMPERIAL)).toBe('hostile');
+    expect(await crime.reaction(IMPERIAL, STORMCLOAK)).toBe('hostile');
+  });
+});
 
 describe('crimes and their witnesses', () => {
   it("add the bounty to the victim's crime faction when seen by those who report it", async () => {

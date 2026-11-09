@@ -32,14 +32,21 @@ export interface ReactionInputs {
   /**
    * The combat reactions between their factions (each of the actor's factions towards each of
    * the other's: scripts' SetAlly / SetEnemy first, else XNAM), CombatReaction values. A faction
-   * both are in counts by its reaction to itself, as any other pair: membership alone makes no
-   * allies. Vanilla's group factions name themselves (BanditFaction is BanditFaction's ally);
-   * some name themselves enemies to set their members on each other (DA02CultistsAreEnemies,
-   * WE19BanditFaction, none of them Special Combat), and MQ101TemporaryFriendsFaction, its own
-   * friend while the opening's Imperials and Stormcloaks must not fight, is set neutral to
-   * itself by MQ101 stage 270's SetEnemy(itself, true, true) so that the keep's two sides fight.
+   * both are in that names a reaction to itself is among them as any other pair, and its
+   * membership adds nothing (`sameFaction`): some name themselves enemies to set their members
+   * on each other (DA02CultistsAreEnemies, WE19BanditFaction), and MQ101TemporaryFriendsFaction,
+   * its own friend while the opening's Imperials and Stormcloaks must not fight, is set neutral
+   * to itself by MQ101 stage 270's SetEnemy(itself, true, true) so that the keep's two sides
+   * (CWImperialFactionNPC and CWSonsFactionNPC, enemies) fight.
    */
   readonly factionReactions: readonly number[];
+  /**
+   * They share a faction that names no reaction to itself and is not Special Combat (FACT DATA
+   * 0x2): its members are allies. The town, crime and guard factions name none
+   * (TownWhiterunFaction, CrimeFactionWhiterun, IsGuardFaction, CWImperialFactionNPC): Whiterun's
+   * citizens and guards help each other by them.
+   */
+  readonly sameFaction: boolean;
   /** GetRelationshipRank between them. */
   readonly relationshipRank: number;
   /** The actor is frenzied (Aggression 3: Frenzy) and attacks anyone. */
@@ -61,8 +68,11 @@ export interface ReactionInputs {
  * How an actor regards another (Creation Kit: Faction "Combat Reaction", Relationship ranks;
  * CommonLibSSE Actor::GetFactionReaction): itself a friend; frenzied, a crime against them, a
  * script's combat or a relationship of enemy or worse: hostile; else its closest tie: a friend
- * (friend reaction or a relationship of friend or better), an ally (ally reaction), hostile where a faction of its regards one of theirs as an enemy, else neutral.
- * TODO(M13): the engine's precedence between a faction's enmity and another's friendship.
+ * (friend reaction or a relationship of friend or better), an ally (ally reaction, a shared
+ * faction: `sameFaction`), hostile where a faction of its regards one of theirs as an enemy,
+ * else neutral. TODO(M13): inferred: the engine's precedence between a faction's enmity and
+ * another's friendship, and that a shared faction's reaction to itself goes before the
+ * alliance its membership makes.
  */
 export function reaction(inputs: ReactionInputs): Reaction {
   if (inputs.self) return 'friend';
@@ -74,7 +84,7 @@ export function reaction(inputs: ReactionInputs): Reaction {
   ) {
     return 'friend';
   }
-  if (inputs.factionReactions.includes(CombatReaction.ally)) return 'ally';
+  if (inputs.sameFaction || inputs.factionReactions.includes(CombatReaction.ally)) return 'ally';
   if (inputs.factionReactions.includes(CombatReaction.enemy)) return 'hostile';
   return 'neutral';
 }
