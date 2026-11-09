@@ -1536,8 +1536,9 @@ export class PhysicsWorld {
    * (Havok's units: kg·m/s, the beehive's 20 holding its 10 kg, a step taking 1.6). The joint's
    * impulse is not exposed: it is the change of momentum that gravity does not explain of the
    * simulated bodies it holds: its simulated body and every simulated body jointed to it, taken
-   * together (the mace trap's pin holds its mace and the chain hung from it: 108 kg, 17.6 a
-   * step; the impulses that set the trap off, on the mace and on each link, pull on it as one).
+   * together (the mace trap's pin holds its mace and the chain hung from it: 104 kg, the mace's
+   * 60 and eleven links of 4, 17.0 a step; the impulses that set the trap off, on the mace and on
+   * each link, pull on it as one).
    * Inferred, TODO(M13): what the system's other anchors take (a chain's fixed end) counts
    * towards it too; contacts on the bodies count as well.
    */

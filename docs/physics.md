@@ -792,7 +792,8 @@ knock-down, a touch). Rapier solves a joint between two kinematic bodies in ever
 the same: Helgen's opening spent 3.5 of its 4.8 ms a physics step on the 400 joints of 23
 living actors' ragdolls, at three steps a frame. **Breakable** constraints break when the impulse on them in a step exceeds
 their threshold: the beehive's 20 holds its 10 kg (1.6 per step at 60 Hz), the mace trap's pin
-(30) its 108 kg of chain and mace (17.6); the joint's impulse is not exposed, so it is the
+(30) its 104 kg, the mace's 60 and eleven links of 4 (17.0); the joint's impulse is not
+exposed, so it is the
 change of momentum that gravity does not explain of the simulated bodies it holds: its simulated
 body and those jointed to it, taken together (inferred, TODO(M13): what the system's other
 anchors take counts towards it, and contacts on the bodies count too). The mace trap's
