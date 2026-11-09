@@ -371,12 +371,22 @@ async function auditLimits(): Promise<void> {
     lower: [number, number];
     upper: [number, number];
     most: number;
+    /** How often each pair of limits (in whole degrees, "min..max") comes up. */
+    limits: Map<string, number>;
   }
   const past = new Map<string, Past>();
   const tallyPast = (key: string, angle: number, min: number, max: number): void => {
-    const entry = past.get(key) ?? { all: 0, lower: [0, 0], upper: [0, 0], most: 0 };
+    const entry = past.get(key) ?? {
+      all: 0,
+      lower: [0, 0],
+      upper: [0, 0],
+      most: 0,
+      limits: new Map<string, number>(),
+    };
     past.set(key, entry);
     const degrees = 180 / Math.PI;
+    const range = `${(min * degrees).toFixed(0)}..${(max * degrees).toFixed(0)}`;
+    entry.limits.set(range, (entry.limits.get(range) ?? 0) + 1);
     const lower = (min + angle) * degrees;
     const upper = (-angle - max) * degrees;
     entry.all++;
@@ -443,13 +453,19 @@ async function auditLimits(): Promise<void> {
       `  ${key}: ${String(all)} angles, within the limits as Rapier measures ${(within / all).toFixed(3)}, mirrored ${(mirrored / all).toFixed(3)}`,
     );
   }
-  console.log('past their limits (mirrored), the joints of the most poses (by > 1°, > 5°):');
+  // With each joint its limits as the file gives them (the most common pair, in degrees), so
+  // that which side is which can be read off: a knee's upper limit (0°) is its straight side,
+  // an ankle's upper limit its dorsiflexion.
+  console.log(
+    'past their limits (mirrored), the joints of the most poses (by > 1°, > 5°), their limits:',
+  );
   const rows = [...past].sort((x, y) => y[1].all - x[1].all).slice(0, 30);
   const pair = ([one, five]: [number, number]): string =>
     `${String(one).padStart(4)} ${String(five).padStart(4)}`;
-  for (const [key, { all, lower, upper, most }] of rows) {
+  for (const [key, { all, lower, upper, most, limits }] of rows) {
+    const common = [...limits].sort((x, y) => y[1] - x[1])[0]?.[0] ?? '?';
     console.log(
-      `  ${key.padEnd(40)} ${String(all).padStart(5)}  lower ${pair(lower)}  upper ${pair(upper)}  most ${most.toFixed(1)}°`,
+      `  ${key.padEnd(40)} ${String(all).padStart(5)}  lower ${pair(lower)}  upper ${pair(upper)}  most ${most.toFixed(1)}°  limits ${common}°`,
     );
   }
 }

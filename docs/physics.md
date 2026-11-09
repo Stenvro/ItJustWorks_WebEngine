@@ -737,24 +737,32 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   5 s on. That one limit
   decides it: 8° more dorsiflexion and she slumps at 1 and 2 s (at 3 s her other knee stays
   locked). The placed ragdoll poses (the Creation Kit's settled Havok state) lie past their
-  limits often (`node tools/ragdoll-info.ts --limits`, mirrored, of the 1,257 complete poses):
-  of 1,992 ankles (NPC Foot to NPC Calf) 83 past the dorsiflexion limit by more than 1° and 23
-  by more than 5° (240 and 161 past the other), of 2,034 knees 82 and 5 past their straight
-  limit, of 2,002 elbows 424 and 15, of 1,842 shoulders' planes 384 and 141. So Havok's limits
-  give under a corpse's own weight, by a few degrees and in some poses far more. Tried and not
-  kept: a give in proportion to the load a limit carries (the load's torque impulse × the step
-  over the iterations × the joint's own inertia × tau, as a Gauss-Seidel solve of a light link
-  under a heavy load in four iterations falls short; the load read from the step's change of
-  momentum of one side of the joint less gravity and its contacts' normal impulses). Read from
-  her foot's side (the side whose contacts' friction does least), her ankle holds only about
-  3 N·m pressed on its limit and her knee about as little: her legs stand as a column whose
-  load passes near the joints, and the give that load earns is a fraction of a degree, far
-  from the 8° that let her slump; read from the other side (the counter's contacts, whose
-  friction is not known) the loads came out 50 times larger and the two readings never agreed.
+  limits often (`node tools/ragdoll-info.ts --limits`, mirrored, of the 1,257 complete poses;
+  the tool prints each joint's limits as the file gives them, lower the minimum angle, upper
+  the maximum): of 1,992 ankles (NPC Foot to NPC Calf, -34° to 3.6°) 83 past the upper limit,
+  the dorsiflexion's, by more than 1° and 23 by more than 5° (240 and 161 past the lower); of
+  2,034 knees (NPC Calf to NPC Thigh, -110° bent to 0° straight, as skeleton.nif and
+  skeleton_female.nif both give it) 38 and 9 past the straight limit, the upper one (82 and 5
+  past the bent one); of 2,002 elbows (0° to 110°) 424 and 15 past the 0° limit; of 1,842
+  shoulders' planes (-75° to 5°) 384 and 141 past the 5° limit. So Havok's limits give under a
+  corpse's own weight, by a few degrees and in some poses far more, the knees' straight side
+  and the ankles' dorsiflexion among them. Tried and not kept: a give in proportion to the load
+  a limit carries (the load's torque impulse × the step over the iterations × the joint's own
+  inertia × tau, as a Gauss-Seidel solve of a light link under a heavy load in four iterations
+  falls short). The load was read twice, from the step's change of momentum of each side of the
+  joint less gravity and its contacts' normal impulses (the contacts' friction impulses were not
+  read), and the two readings never agreed: from her foot's side her ankle and her knee came out
+  at about 3 N·m pressed on their limits, from the other side (through the counter's contacts)
+  about 50 times more, and which of the two is nearer is not known (the floor's friction on her
+  feet is missing from the one, the counter's from the other). The give took the lesser of the
+  two readings, and none where they did not both press the limit, so at her ankle it was at most
+  what 3 N·m earns, a fraction of a degree, by construction, far from the 8° that let her slump.
   The race skeletons settled a little worse with it (49, 48 and 48 of 52 at rest within 20 s,
-  still, pushed and lifted, against 51, 48 and 50). TODO(M13): what of Havok's solver lets a
-  strut that carries little torque at its limits buckle (its limits' give at four iterations,
-  or something other than the limits).
+  still, pushed and lifted, against 51, 48 and 50). This rules out that reading of the load, not
+  a give of Havok's limits under her load. TODO(M13): the load her ankles and knees carry at
+  their limits is unmeasured (the two readings disputed, the contacts' friction not counted);
+  with it measured, whether her limits' give at four iterations buckles the strut, or something
+  other than the limits does.
 - **Made dynamic** (observed in the original: the behavior's ragdoll driver set to dynamic):
   every body of it that is then of a dynamic motion type and moves slower than 0.5 Havok units
   a second is activated and given 0.5 Havok units a second more upward speed, so that nothing
