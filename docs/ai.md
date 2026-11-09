@@ -2932,7 +2932,14 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   fCombatFleeDoorDistanceMax with no enemy within fCombatFleeDoorTargetCheckDistance of it, not
   the one it came by within fCombatFleeLastDoorRestrictTime, none whose other side lies out of its
   encounter zone; it runs there and goes through (it leaves the stage and comes out on the other
-  side: `ActorStage.fleeThrough`). To cover hidden from its enemy (Find Hide Cover: cover at least
+  side: `ActorStage.fleeThrough`). Its flight goes on there (`src/ai/fled-through-doors.ts`):
+  placed again while its enemy is there too (the player followed it through, or that side is
+  loaded) within fCombatDetectionFleeingLostRemoveTime (30 s) of its passage, its fight starts
+  again and it flees on from that enemy, its confidence boosts and modifier kept, leaving the door
+  it came out of alone as the one it came by (fCombatFleeLastDoorRestrictTime,
+  fCombatFleeUseDoorRestrictTime from its passage); later its fight is over, as a group all
+  fleeing gives up a lost target (inferred, TODO(M13): the original's handling of a fight whose
+  actor left the loaded area). To cover hidden from its enemy (Find Hide Cover: cover at least
   its crouched height, no ledge) at least fCombatFleeCoverMinDistance from it within
   fCombatFleeCoverSearchRadius, where it hides (Hide Parallel: Track Target, Turn Around, the Hide
   Selector with Boost Confidence last): down, its back to the enemy, weighing each half second:

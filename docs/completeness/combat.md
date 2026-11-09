@@ -134,7 +134,12 @@ Round 5 (2026-11-04) read the mechanics left from the original (docs/ai.md "Use 
   own check (chooseCaster).
 - Flee Through Door goes through a load door (actor-stage.ts fleeThrough), not the one it came by,
   none with an enemy at it, none out of its encounter zone; the hide after Flee To Cover
-  (#hide, hideFails) ends in Boost Confidence.
+  (#hide, hideFails) ends in Boost Confidence. Round 6 (2026-11-09): the flight goes on in the
+  other cell (fled-through-doors.ts: its fight taken up once it and its enemy are there again,
+  within fCombatDetectionFleeingLostRemoveTime); the hide is found as its enemy looks its way
+  (hideSpottedDistance, fCombatHideCheckViewCone\*); the search takes its group's priority points
+  and doors (combat-search.ts SearchArea, combat-subtrees.ts searchPoints); combat music weighs
+  each group near the player apart. All four inferred rules, TODO(M13).
 - The magic kill camera (actor-combat.ts spellLoosed).
 - The encounter zone bounds a fight (zonesAllow); the odds stand at 100 for a frenzied actor and
   after 120 s unengaged (oddsWeighed); combat music and daresHelp weigh damage per second;

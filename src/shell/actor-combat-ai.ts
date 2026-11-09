@@ -95,6 +95,7 @@ import {
   type SearchShare,
 } from '../ai/combat-search.ts';
 import type { SavedFight } from '../save/world-save.ts';
+import type { FledFight, FledFightDue } from '../ai/fled-through-doors.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
 import {
   chooseCombatSupport,
@@ -2031,6 +2032,44 @@ export class ActorCombatAi {
       ...(search && { search }),
       ...(fixed !== undefined && { fixed }),
     };
+  }
+
+  /**
+   * What an actor's flight carries through a load door (src/ai/fled-through-doors.ts): the
+   * enemy it flees, its confidence modifier and boosts. None unless it flees.
+   */
+  fledFight(reference: number): Omit<FledFight, 'door'> | undefined {
+    const mind = this.#minds.get(reference);
+    if (mind?.mode !== 'flee' || mind.target === undefined) return undefined;
+    return {
+      enemy: mind.target,
+      modifier: mind.modifier,
+      boost: mind.confidenceBoost,
+      keep: this.#groups.settings.fleeingLostRemoveTime,
+    };
+  }
+
+  /**
+   * A fled fight taken up on the door's other side (its target set by StartCombat already): it
+   * flees on from its enemy as afraid as it was, and leaves the door it came out of alone as one
+   * it has just come by (fCombatFleeLastDoorRestrictTime, fCombatFleeUseDoorRestrictTime from its
+   * passage). False: its fight is not that one (yet).
+   */
+  resumeFlight(reference: number, fight: FledFightDue): boolean {
+    const mind = this.#minds.get(reference);
+    if (!mind || mind.mode === 'idle' || mind.target !== fight.enemy) return false;
+    const passed = this.#clock - fight.ago;
+    mind.confidenceBoost = fight.boost;
+    mind.lastDoor = { door: fight.door, at: passed };
+    mind.fleeDoorAt = passed;
+    if (mind.mode !== 'flee') {
+      mind.mode = 'flee';
+      mind.leash = undefined;
+      mind.fleeWay = undefined;
+      mind.fleeFailed = false;
+      this.#releaseBlock(mind, this.#options.host.fighter(reference));
+    }
+    return true;
   }
 
   /**

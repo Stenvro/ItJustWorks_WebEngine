@@ -198,6 +198,7 @@ import type { CellLight } from '../world/cell-loader.ts';
 import { parseLight, type LightRecord } from '../world/cell-records.ts';
 import { EffectSound, effectSound } from '../world/magic-effects.ts';
 import type { SavedAttachedArrow, SavedDecal, SavedDown, SavedFight } from '../save/world-save.ts';
+import type { FledFight, FledFightDue } from '../ai/fled-through-doors.ts';
 
 /** A human's shape for hits (its controller's radius and height at scale 1; game units). */
 /** The music type of a boss fight (MUSC; see #setMusic). */
@@ -976,6 +977,16 @@ export class ActorCombat implements CombatBridge {
   /** A loaded save's fight goes on (its target set again already). */
   resumeFight(actor: number, saved: SavedFight): void {
     this.#brain.resumeFight(actor, saved);
+  }
+
+  /** What an actor's flight carries through a load door (none unless it flees). */
+  fledFight(actor: number): Omit<FledFight, 'door'> | undefined {
+    return this.#brain.fledFight(actor);
+  }
+
+  /** A fled fight taken up on the door's other side (its target set again already). */
+  resumeFlight(actor: number, fight: FledFightDue): boolean {
+    return this.#brain.resumeFlight(actor, fight);
   }
 
   /**
