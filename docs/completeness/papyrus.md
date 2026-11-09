@@ -122,8 +122,9 @@ book read from an inventory when its base carries scripts (it reached only book 
       (its location L1 was left out) and for an improvement too (the tutorials'
       TutorialBlacksmithingDaggerSharpen and ArmorTemper start on it at the improving benches:
       the improved item as the created one); an improved item dropped keeps its improvement on
-      its reference and again once taken. Open: Trespass's victim (R1) for a place a faction
-      owns is none (the owner's reference only for an actor's place: TODO(M13)). Round 6 added
+      its reference and again once taken. Trespass's victim (R1) for a place a faction owns is
+      the first witness of that faction (none if none of them belongs; inferred, TODO(M13):
+      which actor the original takes; crime-engine.test.ts). Round 6 added
       38, in two simulations in the Bannered Mare,
       each raised by the engine path that raises it.
       tests/conformance/scripting/script-events-actions.test.ts: OnInit (a scripted urn

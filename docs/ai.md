@@ -724,14 +724,29 @@ had ended falls out again). One at a time (TODO(M13): which may replace which).
 - **Movement Blocked**: made only while bUseMovementBlockedPackage:General is on (its built-in
   value is 0, so never in vanilla): an actor kept from going on fMaxTimeBlockedByActors stands
   that long, then searches its way again.
-- **Get Up From Chair Or Bed** (`getUpFromChairBed`: it leaves its furniture): an engine package
-  put on an actor in furniture gets it up first unless it may run there (`upFirst`: React To
-  Destroyed Object looks from the seat), as the engine puts a created package with a flag
-  allowing it from furniture (Actor::PutCreatedPackage). Its own packages get it up as their
-  procedures start, combat as it starts to fight ([Combat](#combat)); one knocked down or
-  bleeding out is out of its furniture already. TODO(M13): no maker of the Get Up package
-  itself was found among the engine's package factory's callers (observed in the original), nor which
-  created packages it allows from furniture.
+- **Get Up From Chair Or Bed** (`getUpFromChairBed`: it leaves its furniture): its maker is the
+  putting of an engine package on a seated actor (`ActorPackages.push`, `getsUpFirst`): unless
+  the package may run in furniture (React To Destroyed Object looks from the seat), Get Up is
+  put in front of it first, an engine package of its own (`engine()` names it) until the actor
+  stands, and the package asked for runs after it, as the engine puts a created package with a
+  flag allowing it from furniture (Actor::PutCreatedPackage). One on its way into furniture
+  leaves it as the package starts, without a Get Up package. Its own packages get it up as
+  their procedures start, combat as it starts to fight ([Combat](#combat)); one knocked down or
+  bleeding out is out of its furniture already. Inferred, TODO(M13): no other maker of the Get
+  Up package was found among the engine's package factory's callers (observed in the original),
+  so it is taken to be made there; which created packages the engine allows from furniture was
+  not read.
+- **Vampire Feed** and **Cannibal** (CommonLibSSE kVampireFeed, kCannibal; `feedOn`): created
+  packages that Actor.StartVampireFeed and StartCannibal make and put in front of the feeder's
+  own (`putCreatedPackage`: the stage's `ActorAi.pushEngine`, the AI-driven player's too). The
+  feeder gets up first, turns to its target and feeds: GetVampireFeed (GetCannibal) holds and
+  the feeding idle plays on the target (IdleVampireFeed, IdleCannibalFeed); the package runs as
+  long as the feeding lasts and ends with it (the feeder's NPCVampireFeedEnd, observed in the
+  original to end the feeding procedure; else six seconds), its own package then chosen again.
+  Every vanilla caller feeds the player (the feeding perks, DA11VerulusScript), who runs no
+  packages while not AI-driven: they feed without one. Inferred, TODO(M13): the procedures' own
+  steps (no walk to the target: the perks offer the feed within activation reach) and the
+  player's created packages outside AI drive.
 - **Surface** (`surfaceTo`: a swimmer under water rises to the surface; its start observed in the
   original): an NPC with its head under water (at least 0.875 of it submerged) that does
   not breathe water (WaterBreathing) uses up its breath, fActorSwimBreathBase (10) +
