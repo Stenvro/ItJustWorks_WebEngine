@@ -13,6 +13,7 @@ import { COMBAT_AI_DEFAULTS } from '../../../src/ai/combat-ai.ts';
 import {
   aimGivenUp,
   bowHoldTime,
+  castWaitsForLineOfFire,
   lineOfFire,
   lineOfFireBlocker,
   rangedAttackChance,
@@ -233,6 +234,11 @@ describe('the line of fire and Find Attack Location', () => {
     // The world not to be asked now: the line counts as clear.
     expect(lineOfFire(from, to, [], () => undefined)).toBeUndefined();
     expect(lineOfFire(from, to, [])).toBeUndefined();
+  });
+
+  it('a spell from a hand waits for a clear line; a shout does not (inferred)', () => {
+    expect(castWaitsForLineOfFire(false)).toBe(true);
+    expect(castWaitsForLineOfFire(true)).toBe(false);
   });
 
   it('Find Lateral Attack Location: beside it, square to its line, out to 512 units', () => {

@@ -1005,12 +1005,32 @@ export class ActorSenses implements ScriptSenses {
   }
 
   /**
-   * Whether nothing stands between two points (a ray on the line-of-sight layer, through the
-   * actor's own bodies, to the target's): a shot's line of fire against the world. Undefined
-   * while the physics cannot be asked.
+   * Whether nothing of the world stands between two points: a ray on the line-of-sight layer that
+   * passes every actor's bodies (a shot's line of fire against the world: a wall, a pillar, the
+   * ground). Actors are not the world's to weigh: whom a shot may pass or hit is the combat AI's
+   * rule (lineOfFireBlocker, src/ai/combat-tactics.ts), and a line asked from an ally's place
+   * starts inside that ally. Undefined while the physics cannot be asked.
    */
-  lineClear(actor: number, from: Vec3, to: Vec3, target: number): boolean | undefined {
-    return this.#ray(from, to, actor, target);
+  lineClear(from: Vec3, to: Vec3): boolean | undefined {
+    const physics = this.#world?.physics;
+    if (!physics?.queriesCurrent) return undefined;
+    const length = distance(from, to);
+    if (length < 1) return true;
+    const direction: Vec3 = [
+      (to[0] - from[0]) / length,
+      (to[1] - from[1]) / length,
+      (to[2] - from[2]) / length,
+    ];
+    const hit = physics.raycast(
+      from,
+      direction,
+      length,
+      Layer.lineOfSight,
+      undefined,
+      undefined,
+      (collider) => physics.isActor(collider),
+    );
+    return !hit || hit.distance >= length - RAY_SLACK;
   }
 
   /**

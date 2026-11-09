@@ -1214,6 +1214,16 @@ export function lineOfFire(
 }
 
 /**
+ * Whether a cast waits for a clear line of fire (lineOfFire): a spell from a hand does, as a bow
+ * does; a shout does not (`voice`), so the Shout node is not held by a blocked line. Inferred
+ * (TODO(M13)): followers of the original are widely reported to shout Unrelenting Force through
+ * the player, which a held shout would never do.
+ */
+export function castWaitsForLineOfFire(voice: boolean): boolean {
+  return !voice;
+}
+
+/**
  * A blocked aim is given up once blocked longer than fCombatAimProjectileBlockedTime (observed in
  * the original). `blockedFor`: seconds since it was first blocked, undefined while it is clear.
  */

@@ -166,6 +166,7 @@ import {
   type Opponent,
   type Threat,
   aimGivenUp,
+  castWaitsForLineOfFire,
   lineOfFire,
   type ShotObstacle,
 } from '../ai/combat-tactics.ts';
@@ -2991,8 +2992,9 @@ export class ActorCombatAi {
       this.#options.casting?.() !== undefined &&
       runtime !== undefined &&
       !runtime.casting.casting(f.mind.reference, source) &&
-      // Not down a blocked line (a wall, an actor it must not hit): Find Attack Location first.
-      this.#lineOfFire(f) === undefined
+      // Not from a hand down a blocked line (a wall, an actor it must not hit): Find Attack
+      // Location first. A shout is not held by it (castWaitsForLineOfFire).
+      (!castWaitsForLineOfFire(source === CastingSource.voice) || this.#lineOfFire(f) === undefined)
     );
   }
 
@@ -4431,15 +4433,15 @@ export class ActorCombatAi {
    * What blocks the line of fire from a place (its own feet, or one it might shoot from) to its
    * target, both at AIM_HEIGHT_SHARE of their heights: an actor it must not hit (not its target,
    * nor one of its side's targets: it may hit those), else the world (a ray on the line-of-sight
-   * layer: a wall, a pillar, the ground between). Undefined: clear.
+   * layer that passes every actor's bodies: a wall, a pillar, the ground between; actors are
+   * weighed by the first rule alone, so it still shoots past its target's foes, and a line from
+   * an ally's place is not blocked by that ally). Undefined: clear.
    */
   #lineOfFireFrom(f: CombatFrame, feet: Vec3, others: readonly ShotObstacle[]) {
     const from: Vec3 = [feet[0], feet[1], feet[2] + f.view.height * AIM_HEIGHT_SHARE];
     const to: Vec3 = [f.there[0], f.there[1], f.there[2] + f.target.height * AIM_HEIGHT_SHARE];
     const senses = this.#options.senses?.();
-    return lineOfFire(from, to, others, (a, b) =>
-      senses?.lineClear(f.mind.reference, a, b, f.target.reference),
-    );
+    return lineOfFire(from, to, others, (a, b) => senses?.lineClear(a, b));
   }
 
   /** Its own line of fire to its target, looked at again each DECIDE_SECONDS. */

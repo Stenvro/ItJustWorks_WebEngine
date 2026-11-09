@@ -2447,10 +2447,14 @@ meanwhile.
   later; held past fCombatRangedAttackMaximumHoldTime (10 s) it lets the bow down unloosed
   (ActionRightInterrupt: CancelBowAttack). Its facing gates only a new draw: a drawn bow waiting
   on its archer's turn was never loosed. Nor is it loosed down a blocked line of fire (an actor
-  it must not hit: observed in the original; a wall or the ground between: ours, a ray on the
-  line-of-sight layer), let down once blocked past fCombatAimProjectileBlockedTime (1.5 s); a
-  caster does not cast down a blocked line either, and its Ranged Movement looks for a place
-  with a clear one (Find Attack Location, "The combat behaviour tree"). It changes weapons only between attacks (a sword taken
+  it must not hit, i.e. not its target nor one of its side's targets, which it may hit: observed
+  in the original; a wall or the ground between: ours, a ray on the line-of-sight layer that
+  passes every actor's bodies, so actors are weighed by the first rule alone and it still shoots
+  past its target's foes), let down once blocked past fCombatAimProjectileBlockedTime (1.5 s); a
+  spell from a hand is not cast down a blocked line either, and its Ranged Movement looks for a
+  place with a clear one (Find Attack Location, "The combat behaviour tree"). A shout is not held
+  by a blocked line (inferred, TODO(M13): followers of the original are widely reported to shout
+  Unrelenting Force through the player; combat-tactics.ts castWaitsForLineOfFire). It changes weapons only between attacks (a sword taken
   up under a drawn bow left its graph in the bow's drawn state, whose release and cancel ask for
   a bow). A UseWeapon practice asks for each draw again every 0.25 s while the graph refuses it
   (just out of its draw, a release or a turn): MQ101's archers drew once each at Lokir, were
@@ -2937,7 +2941,9 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   close movement's Out of Position Movement Selector is Reposition, Surround, the Close Movement
   Idle). Ours (src/ai/combat-subtrees.ts, src/shell/actor-combat-ai.ts): it runs while the
   shooter's line of fire is blocked (each 0.25 s, both ends at three quarters of the actors'
-  heights: an actor it must not hit, or the world, a ray on the line-of-sight layer); Lateral
+  heights: an actor it must not hit, else the world: a ray on the line-of-sight layer that
+  passes every actor's bodies, so neither its target's foes nor an ally whose place it asks from
+  block it); Lateral
   offers places square to its line to the target, each fCombatFindLateralAttackLocationIntervalMin
   .. Max (64 .. 128, at random) past the last, out to fCombatFindLateralAttackLocationDistance
   (512) either side, nearest first, only where its way reaches over the navmeshes; Find Attack

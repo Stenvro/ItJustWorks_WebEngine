@@ -253,8 +253,11 @@ and 290 built-in ones the readers ask for by name.
 - [x] Line of fire: an actor in the way holds the shot, given up after
       fCombatAimProjectileBlockedTime (ranged.test.ts).
 - [x] Line of fire against the world: a wall or the ground between blocks a shot as an actor
-      does (a ray on the line-of-sight layer); a caster does not cast down a blocked line either
-      (combat-tactics.ts lineOfFire, ranged.test.ts). TODO(M13): the world check is ours.
+      does (a ray on the line-of-sight layer that passes every actor's bodies: whom a shot may
+      pass stays the actor rule, so it still shoots past its target's foes); a spell from a hand
+      is not cast down a blocked line either, a shout is (combat-tactics.ts lineOfFire,
+      castWaitsForLineOfFire; ranged.test.ts, line-of-fire-world.test.ts). TODO(M13): the world
+      check is ours; that a shout ignores the line is inferred.
 - [x] Find Attack Location: the Ranged Movement's subtree (Find Lateral Attack Location, Find
       Attack Location, Find Ally Attack Location, Set Failed Timestamp, observed in the original),
       run while the line of fire is blocked, by the fCombatFind*AttackLocation* settings
