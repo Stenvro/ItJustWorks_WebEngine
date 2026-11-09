@@ -526,6 +526,28 @@ export interface CellData {
   readonly entrance: readonly [number, number, number];
 }
 
+/**
+ * Every reference a cell places that is not an actor (actors come with the actor stage): its
+ * objects, collision primitives, markers, lights, sound emitters, decals and acoustic spaces,
+ * each once. These attach and detach with the cell (OnCellAttach, OnCellDetach: the engine
+ * tells every reference of the cell, an editor marker's scripts as well as a chest's).
+ */
+export function cellReferences(data: CellData): number[] {
+  const references = new Set<number>();
+  for (const list of [
+    data.objects,
+    data.primitives,
+    data.markers,
+    data.lights,
+    data.emitters,
+    data.decals,
+    data.acousticAreas,
+  ]) {
+    for (const entry of list) references.add(entry.reference);
+  }
+  return [...references];
+}
+
 /** The looping sound a base object makes where it is placed (SNDR), if any. */
 export function loopingSoundOf(base: GameRecord): number | undefined {
   const field =

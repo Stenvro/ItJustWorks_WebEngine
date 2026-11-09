@@ -1408,6 +1408,9 @@ export class CrimeEngine {
     const marker = realJail ? await this.jailMarker(faction) : undefined;
     const cell = marker === undefined ? undefined : runtime.forms.db.cellOfReference(marker);
     runtime.state.crime.jail = { faction, violent, nonviolent, days, cell, inventoryTaken: taken };
+    // The jail's cell resets as the player is taken there: its doors locked again, its things
+    // where the plugins put them (cell-reset.ts force).
+    if (cell !== undefined) runtime.cellResets.force(cell);
     const entry = runtime.state.faction(faction);
     entry.crimeGold = 0;
     entry.crimeGoldViolent = 0;
@@ -1568,6 +1571,19 @@ export class CrimeEngine {
         if (otherRank < 0) continue;
         const value = await actors.factionReaction(faction, otherFaction);
         if (value !== undefined) factionReactions.push(value);
+      }
+    }
+    // Where the actor's factions name none of the other's, the other's towards the actor's
+    // count (src/ai/combat-reactions.ts, inferred: TODO(M13)). MQAncientHeroFaction names only
+    // itself; MQ304AlduinFaction names it an enemy, and Sovngarde's heroes fight Alduin.
+    if (factionReactions.length === 0) {
+      for (const [otherFaction, otherRank] of theirs) {
+        if (otherRank < 0) continue;
+        for (const [faction, rank] of mine) {
+          if (rank < 0) continue;
+          const value = await actors.factionReaction(otherFaction, faction);
+          if (value !== undefined) factionReactions.push(value);
+        }
       }
     }
     const aggression = (await actors.value(actor, ActorValue.aggression)).current;

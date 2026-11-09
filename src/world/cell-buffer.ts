@@ -66,6 +66,18 @@ export class CellBuffer<T> {
     }
   }
 
+  /** A buffered cell's entry, as it is (not made the most recent). */
+  peek(cell: number): T | undefined {
+    return this.#entries.get(cell);
+  }
+
+  /** A buffered cell comes back into the loaded area: it leaves the buffer, kept (not let go). */
+  take(cell: number): T | undefined {
+    const value = this.#entries.get(cell);
+    if (value !== undefined) this.#entries.delete(cell);
+    return value;
+  }
+
   /** A cell leaves the buffer (only while it still holds `value`, when given). */
   delete(cell: number, value?: T): void {
     const entry = this.#entries.get(cell);
@@ -78,5 +90,92 @@ export class CellBuffer<T> {
   clear(): void {
     for (const value of this.#entries.values()) this.#release(value);
     this.#entries.clear();
+  }
+}
+
+/** A cell's data kept, with what it was made from (`key`: an exterior's persistent ones). */
+interface KeptCell<T> {
+  readonly value: T;
+  readonly key: string;
+}
+
+/**
+ * The cells' data the game keeps: those of the loaded area, held for as long as a viewer shows
+ * them, and the cells left lately in their buffers (CellBuffer: interiors and exteriors apart).
+ * A cell in the loaded area is not in its buffer and takes no room there: as it is left it goes
+ * into the buffer as the most recent, so the buffers hold the cells the player left lately,
+ * uInterior Cell Buffer and uExterior Cell Buffer of them (UESP: the cells kept beside the
+ * loaded ones). TODO(M13): the original's own handling is not read; the least recently left
+ * going first is inferred.
+ * A cell's data names what it was made from (`key`): one asked for from something else (a
+ * persistent reference of the worldspace walked or was moved into it meanwhile) is made again,
+ * as the original's cell takes in a reference that comes into it.
+ */
+export class CellStore<T> {
+  readonly interior: CellBuffer<KeptCell<T>>;
+  readonly exterior: CellBuffer<KeptCell<T>>;
+  readonly #held = new Map<number, { kept: KeptCell<T>; users: number; exterior: boolean }>();
+
+  constructor(sizes: { readonly interior: number; readonly exterior: number }) {
+    this.interior = new CellBuffer(sizes.interior);
+    this.exterior = new CellBuffer(sizes.exterior);
+  }
+
+  /** How many cells are held now (the loaded area's). */
+  get held(): number {
+    return this.#held.size;
+  }
+
+  /**
+   * A cell's data: held by the loaded area (`hold`: until `left`), or only looked into (a scene
+   * of a far cell's large references: held or buffered data serves, else it is read for the
+   * look and kept nowhere, and the buffers stay as they were). Held or buffered data made from
+   * `key` is used again; else `read` makes it.
+   */
+  use(
+    cell: number,
+    options: { readonly exterior: boolean; readonly key: string; readonly hold: boolean },
+    read: () => T,
+  ): T {
+    const held = this.#held.get(cell);
+    if (held && (!options.hold || held.kept.key === options.key)) {
+      if (options.hold) held.users++;
+      return held.kept.value;
+    }
+    const buffer = options.exterior ? this.exterior : this.interior;
+    // Only looked into: what is held or buffered serves as it is (its place in the buffer
+    // unchanged), else it is read for the look alone. A cell the player never was in takes no
+    // room from the cells they left.
+    if (!options.hold) return buffer.peek(cell)?.value ?? read();
+    let kept = buffer.take(cell);
+    if (kept && kept.key !== options.key) kept = undefined;
+    kept ??= { value: read(), key: options.key };
+    if (held) {
+      held.kept = kept;
+      held.users++;
+    } else {
+      this.#held.set(cell, { kept, users: 1, exterior: options.exterior });
+    }
+    return kept.value;
+  }
+
+  /** The loaded area let go of a cell once (a viewer freed it): unheld, it is buffered. */
+  left(cell: number): void {
+    const held = this.#held.get(cell);
+    if (!held) return;
+    held.users--;
+    if (held.users > 0) return;
+    this.#held.delete(cell);
+    (held.exterior ? this.exterior : this.interior).set(cell, held.kept);
+  }
+
+  /** A cell's data that turned out unusable (a failed read) is kept nowhere. */
+  forget(cell: number, value: T): void {
+    const held = this.#held.get(cell);
+    if (held?.kept.value === value) this.#held.delete(cell);
+    for (const buffer of [this.interior, this.exterior]) {
+      const kept = buffer.peek(cell);
+      if (kept?.value === value) buffer.delete(cell, kept);
+    }
   }
 }

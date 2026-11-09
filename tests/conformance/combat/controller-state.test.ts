@@ -153,9 +153,14 @@ describe('the controller (todo)', () => {
 
 // A wolf placed in the Bannered Mare fights the five patrons: the fight runs in game time, the
 // step never waits on itself (the bard's songs, each ended at once by combat, restarted from their
-// end fragments within one step until the heap ran out), and the heap stays bounded.
+// end fragments within one step until the heap ran out), and the heap stays bounded. It is placed
+// among them, at Saadia: placed at the player, by the inn's door, it fights the player, a fight
+// the patrons stay out of (it went for a patron there only while its ray for the ground met the
+// player's controller and set it on the player's head).
 
 const BANNERED_MARE = 0x1605e;
+/** Saadia [000D7505], one of the patrons. */
+const SAADIA = 0xd7505;
 
 describe.skipIf(!hasGamedata())('a fight in the Bannered Mare (headless simulation)', () => {
   let sim: Sim;
@@ -166,7 +171,7 @@ describe.skipIf(!hasGamedata())('a fight in the Bannered Mare (headless simulati
   beforeAll(async () => {
     sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
     await sim.step(1);
-    wolf = await sim.place(await sim.formId('NPC_', 'EncWolf'), PLAYER_REF);
+    wolf = await sim.place(await sim.formId('NPC_', 'EncWolf'), SAADIA);
     await sim.step(5);
     const heap = process.memoryUsage().heapUsed;
     const started = Date.now();

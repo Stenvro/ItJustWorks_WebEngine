@@ -106,6 +106,8 @@ export interface IdleMarkerPlace extends IdleCollection {
   readonly reference: number;
   readonly position: Vec3;
   readonly heading: number;
+  /** The cell or worldspace it is in (undefined: the actor's own). */
+  readonly space?: Space | undefined;
 }
 
 /**
@@ -176,9 +178,16 @@ export interface PackageMind {
   linked(reference: number, keyword: number): Promise<number | undefined>;
   /**
    * The free furniture and idle markers within a radius of a point that the actor may use
-   * (those not ignored by sandboxing; a child's only where children may).
+   * (those not ignored by sandboxing; a child's only where children may). With `space`, only
+   * those in that cell or worldspace (interiors' coordinates overlap: furniture near the same
+   * point in another cell is not there).
    */
-  around(center: Vec3, radius: number, actor: number): Promise<readonly SandboxSpot[]>;
+  around(
+    center: Vec3,
+    radius: number,
+    actor: number,
+    space?: Space,
+  ): Promise<readonly SandboxSpot[]>;
   /** An idle marker's idles and place (undefined: no idle marker). */
   idleMarker(reference: number): Promise<IdleMarkerPlace | undefined>;
   /**
@@ -300,7 +309,8 @@ export interface PackageBody {
   /**
    * Uses a furniture (sits, sleeps, leans): goes to it, enters by its idle; resolves whether it
    * is in it. `types`: only its markers of these animation types (bits: 1 sit, 2 sleep,
-   * 4 lean).
+   * 4 lean). Furniture in another cell or worldspace is not walked to from here (false): the
+   * procedure's own travel takes the actor there through the load doors.
    */
   useFurniture(furniture: number, types?: number): Promise<boolean>;
   /** Gets up from the furniture it uses (none: at once). */

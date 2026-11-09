@@ -72,6 +72,17 @@ async function flyAway(sim: Sim): Promise<{ dragon: number; last: Vec3; feet: Ve
   return { dragon, last, feet: [feet[0], feet[1], feet[2]] };
 }
 
+/**
+ * A place in the air over the ground the player stood on before going away (off the stage by
+ * then): where a flier moved while away is sure to have the ground under it. Two cells on from
+ * where it left at the height it flew, its way off depending on where it was made, lay under
+ * the mountains south of Helgen once it was made on the ground beside the player rather than on
+ * the player's head.
+ */
+function overStart(feet: Vec3): Vec3 {
+  return [feet[0], feet[1], feet[2] + 500];
+}
+
 /** The player comes back near where an actor is in the game state; it is on the stage again. */
 async function comeBack(sim: Sim, actor: number, feet: Vec3): Promise<void> {
   const away = sim.runtime.state.references.get(actor)?.position ?? [0, 0, 0];
@@ -268,7 +279,7 @@ describe.skipIf(!hasGamedata())('an actor leaving the stage with its cell', () =
       expect(indoors.flight.state(dragon)).toBe(FlyingState.cruising);
       const at = sim.runtime.state.references.get(dragon)?.position ?? [0, 0, 0];
       const space = { kind: 'world', world: TAMRIEL } as const;
-      const place: Vec3 = [at[0], at[1] - 2 * CELL_SIZE, at[2]];
+      const place = overStart(feet);
       indoors.away.depart(
         dragon,
         { space, position: [at[0], at[1], at[2]] },
@@ -308,11 +319,11 @@ describe.skipIf(!hasGamedata())('an actor leaving the stage with its cell', () =
       const { dragon, feet } = await flyAway(sim);
       const flight = sim.world.stage.flight;
       expect(flight.state(dragon)).toBe(FlyingState.cruising);
-      const at = sim.runtime.state.references.get(dragon)?.position ?? [0, 0, 0];
+      const place = overStart(feet);
       await sim.native(new ObjectHandle(dragon, 'Actor'), 'ObjectReference', 'SetPosition', [
-        at[0],
-        at[1] - 2 * CELL_SIZE,
-        at[2],
+        place[0],
+        place[1],
+        place[2],
       ]);
       expect(flight.state(dragon)).toBe(FlyingState.none);
       expect(flight.isFlying(dragon)).toBe(false);
@@ -376,5 +387,115 @@ describe.skipIf(!hasGamedata())('an actor leaving the stage with its cell', () =
     } finally {
       await sim.close();
     }
+  }, 600_000);
+
+  /**
+   * An actor made beside the player (Hulda) is moved while off the stage to a place a thousand
+   * units under the landscape at the first of some points beside the player's place that `fits`
+   * (the landscape's height there, the water's), and the player comes back: it must come to
+   * stand on the ground near that place, the landscape not over it, and stay there.
+   */
+  async function setUnderTheLandscape(
+    fits: (land: number, water: number | undefined) => boolean,
+  ): Promise<void> {
+    const sim = await openSim({
+      exterior: { world: TAMRIEL, cell: [4, -11] },
+      hour: 10,
+      gridRadius: 1,
+    });
+    try {
+      await sim.step(1);
+      const npc = await sim.place(await sim.formId('NPC_', 'Hulda'), PLAYER_REF);
+      await sim.step(1);
+      expect(sim.actor(npc)).toBeDefined();
+      const feet = (await sim.position(PLAYER_REF)) ?? [0, 0, 0];
+      const landscapeAt = (x: number, y: number): number | undefined => {
+        const physics = sim.world.stage.movers.physics;
+        return physics?.raycast(
+          [x, y, feet[2] + 16384],
+          [0, 0, -1],
+          32768,
+          Layer.charController,
+          undefined,
+          undefined,
+          (collider) => physics.ownerOf(collider)?.kind !== 'landscape',
+        )?.point[2];
+      };
+      // The place, chosen while the cells around the player are loaded.
+      const world = await sim.world.session.worldspace(TAMRIEL);
+      let place: Vec3 | undefined;
+      for (const [dx, dy] of [
+        [1500, 0],
+        [-1500, 0],
+        [0, 1500],
+        [0, -1500],
+        [3000, 0],
+        [-3000, 0],
+        [0, 3000],
+        [0, -3000],
+        // A cell east of Helgen's river with no water (Tamriel's default, −14000).
+        [4000, 0],
+        [-4000, 0],
+      ] as const) {
+        const [x, y] = [feet[0] + dx, feet[1] + dy];
+        const land = landscapeAt(x, y);
+        const water = await world.waterHeight(Math.floor(x / CELL_SIZE), Math.floor(y / CELL_SIZE));
+        if (land !== undefined && fits(land, water)) {
+          place = [x, y, land - 1000];
+          break;
+        }
+      }
+      expect(place).toBeDefined();
+      if (!place) return;
+      const [x, y] = place;
+      // The player goes far: its cell unloads, it is off the stage. There it is moved.
+      await sim.moveTo([feet[0] + AWAY_CELLS * CELL_SIZE, feet[1], feet[2]]);
+      expect(await stepUntil(sim, () => sim.actor(npc) === undefined, 5)).toBe(true);
+      const cell = await sim.runtime.forms.db.exteriorCell(
+        TAMRIEL,
+        Math.floor(x / CELL_SIZE),
+        Math.floor(y / CELL_SIZE),
+      );
+      sim.runtime.move(npc, place, [0, 0, 0], cell, TAMRIEL);
+      await sim.moveTo([feet[0], feet[1], feet[2]]);
+      expect(await stepUntil(sim, () => sim.actor(npc) !== undefined, 10)).toBe(true);
+      // Ground under it, the landscape not over it.
+      const onGround = (): boolean => {
+        const at = sim.actor(npc)?.position;
+        if (!at) return false;
+        const land = landscapeAt(at[0], at[1]);
+        return land !== undefined && at[2] > land - 16 && overGround(sim, npc) < 100;
+      };
+      const near = (): boolean => {
+        const at = sim.actor(npc)?.position ?? [Infinity, Infinity];
+        return Math.hypot(at[0] - x, at[1] - y) < 1000;
+      };
+      expect(await stepUntil(sim, onGround, 10)).toBe(true);
+      expect(near()).toBe(true);
+      // And it stays on it.
+      await sim.step(2);
+      expect(onGround()).toBe(true);
+    } finally {
+      await sim.close();
+    }
+  }
+
+  // An actor whose place in the game state lies under the landscape (a script or the low process
+  // put it inside a hill) comes onto the stage there with nothing under it and falls: the fall
+  // watch puts it on the landscape over it. Set back at a place under the landscape again (it
+  // never stood since its controller was made, its navmesh is too far over it to be found from
+  // there), it fell for ever. TODO(M13): inferred, the engine's own rule for an actor below the
+  // world was not found.
+  it('sets an actor whose place lies under the landscape on the landscape over it', async () => {
+    // A place with no water under the landscape down to well below it: the actor falls.
+    await setUnderTheLandscape((land, water) => water === undefined || water < land - 1500);
+  }, 600_000);
+
+  // Where a cell's water runs on under the landscape, one put under it swims up to the water's
+  // top and stays there, under the ground: as much out of the world as one that falls.
+  it('sets an actor swimming under the landscape on the ground', async () => {
+    await setUnderTheLandscape(
+      (land, water) => water !== undefined && water < land && water > land - 800,
+    );
   }, 600_000);
 });

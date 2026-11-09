@@ -866,7 +866,7 @@ death waits for a body to touch something) see the actor's bodies while they are
 keyframed: Havok reports a keyframed body's contacts with fixed ones, Rapier only when asked
 (`PhysicsWorld.findFixedContacts`, set on an actor's bodies as its graph first asks: computed for every living actor they cost). Where the ragdoll goes from
 there (the dead bodies' layer, the placed ragdoll pose, the limbs through the ground, the death
-push, how it comes to rest): [physics.md](physics.md), "The dead". A body let go standing on its joints' limits (Hulda killed at the Bannered Mare's counter 1, 2.5 or 3 s into her lean idle) stays draped over what holds it up: [physics.md](physics.md), "The cone".
+push, how it comes to rest): [physics.md](physics.md), "The dead". A body let go standing on its joints' limits (Hulda killed at the Bannered Mare's counter 1 to 4.5 s into her lean idle) stays draped over what holds it up: [physics.md](physics.md), "The cone".
 
 **The camera's shake** (`src/shell/camera-shake.ts`, also `Game.ShakeCamera`: its strength
 kept within 0 and 1, from its source's place or the player's): within fCameraShakeDistFadeStart ×

@@ -13,6 +13,7 @@ import {
   type PackageBody,
   type PackageMind,
   type PackagePlace,
+  type SandboxSpot,
   type SavedPackage,
 } from '../ai/package-runtime.ts';
 import {
@@ -657,6 +658,11 @@ export class ActorAi {
       },
       face,
       useFurniture: async (target, types) => {
+        // Furniture in another cell or worldspace: not from here. Its markers' coordinates are
+        // that cell's; walked to on this navmesh, the actor stood at the point of it nearest
+        // them (MQ201's Rulindil in Elenwen's solar, his chair in the dungeon below).
+        const there = await this.#session.scriptsReady?.placement(target);
+        if (there && !(await this.#inSpace(reference, spaceOf(there)))) return false;
         // A flier's furniture is its perch: it flies there and lands on it (MQ101AlduinPerch1,
         // a Sit on the Helgen tower's DragonPerchTower).
         const flight = this.#flight?.();
@@ -1313,9 +1319,23 @@ export class ActorAi {
       },
       placement: placementOf,
       linked: async (reference, keyword) => runtime()?.linkedReference(reference, keyword),
-      around: (center, radius, actor) => {
+      around: async (center, radius, actor, space) => {
         const flags = staged(actor)?.placed.look.raceFlags ?? 0;
-        return this.#furniture.spots(center, radius, (flags & RaceFlag.child) !== 0, actor);
+        const spots = await this.#furniture.spots(
+          center,
+          radius,
+          (flags & RaceFlag.child) !== 0,
+          actor,
+        );
+        if (!space) return spots;
+        // Only those of the place's own cell or worldspace: the loaded area's furniture near
+        // the same coordinates in another interior is no spot of the place.
+        const kept: SandboxSpot[] = [];
+        for (const spot of spots) {
+          const at = await placementOf(spot.reference);
+          if (!at || sameSpace(at.space, space)) kept.push(spot);
+        }
+        return kept;
       },
       idleMarker: async (reference) => {
         const scripts = runtime();

@@ -27,6 +27,20 @@ describe('reactions', () => {
     expect(reaction({ ...none, sameFaction: true })).toBe('ally');
   });
 
+  it('weigh a shared faction less than a named enmity (Sovngarde: the heroes and Alduin)', () => {
+    // Both are in FavorExcludedFaction; MQ304AlduinFaction names MQAncientHeroFaction an enemy.
+    expect(reaction({ ...none, sameFaction: true, factionReactions: [CombatReaction.enemy] })).toBe(
+      'hostile',
+    );
+    expect(
+      reaction({
+        ...none,
+        sameFaction: true,
+        factionReactions: [CombatReaction.enemy, CombatReaction.ally],
+      }),
+    ).toBe('ally');
+  });
+
   it('follow the relationship: friends and better are friends, enemies hostile', () => {
     expect(reaction({ ...none, relationshipRank: RelationshipRank.friend })).toBe('friend');
     expect(reaction({ ...none, relationshipRank: RelationshipRank.rival })).toBe('neutral');
