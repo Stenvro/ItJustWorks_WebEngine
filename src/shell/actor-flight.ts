@@ -420,14 +420,23 @@ export class ActorFlight {
   }
 
   /**
-   * GetFlyingState (FlyingState): 0 on the ground. A flier that left the stage in the air is
-   * still in it (cruising) while it is away and not moved since (kept by the session, so every
-   * view answers alike): its flying state is its actor's, not its 3D's.
-   * TODO(M13): inferred, the original's flying state for an unloaded flier was not checked.
+   * GetFlyingState (FlyingState): 0 on the ground. A flier placed in the air (a loaded save
+   * had it flying, or it comes back from off the stage aloft) is in the air from the moment it
+   * is placed: cruising, the state its first frame takes it on in (the save keeps only that it
+   * flew). Until then it read as on the ground, so MQ204's Paarthurnax, saved coming in to land,
+   * had landed by GetFlyingState before he had flown a frame. A flier that left the stage in the
+   * air is still in it (cruising) while it is away and not moved since (kept by the session, so
+   * every view answers alike): its flying state is its actor's, not its 3D's.
+   * TODO(M13): inferred; the original keeps the exact state (hovering, landing) in the actor's
+   * saved process, and its flying state for an unloaded flier was not checked.
    */
   state(reference: number): FlyingStateValue {
     const flier = this.#fliers.get(reference);
-    if (flier) return flier.state;
+    if (flier && flier.state !== FlyingState.none) return flier.state;
+    if (this.#placedAloft.has(reference) && flier?.checkedAir !== true) {
+      return FlyingState.cruising;
+    }
+    if (flier) return FlyingState.none;
     const { session } = this.#options;
     const runtime = session.scriptsReady;
     if (!runtime || this.#options.get(reference) !== undefined) return FlyingState.none;

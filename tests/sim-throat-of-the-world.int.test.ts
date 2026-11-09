@@ -31,6 +31,12 @@ const WORD_3 = 0xb39c6;
 const GATE_WIND = 0x9dd0f;
 const GATE_COLLISION = 0x34e03;
 const FIRST_FOG = 0x94ccf;
+/**
+ * Where the player shouts at the wind from: the east end of the stretch its knock-backs swing
+ * them along, against the front of the gate's collision box and, like all of that stretch, inside
+ * the wind's volume (some 145 units off its middle line, of 221.6).
+ */
+const BY_THE_GATE: [number, number] = [57822, -38911];
 /** The two blizzards on the way up (MQTotWHazardTrig), the trigger at the top (MQ204SetStage95),
  * MQ204PaarthurnaxScene and the Paarthurnax alias. */
 const BLIZZARDS = [0x105965, 0x10f764];
@@ -263,6 +269,24 @@ describe.skipIf(!hasGamedata())('MQ204 The Throat of the World', () => {
   // left the player level whatever they looked at, and a cone reached a body only at its middle,
   // so the wind, its middle 300 units above their eyes, never heard of the shout. The fog behind
   // is MQ204ShoutTrigger: the first bank the shout reaches is 90.
+  //
+  // Where the held walk ends is no fixed spot: MQ204HrothgarPushbackSCRIPT knocks the player back
+  // on each OnTriggerEnter (KnockAreaEffect; it never sets isWithin), so they swing some 200 units
+  // along the front of MQ204Collision1, from about (57665,-39085) to (57863,-38898), all of it
+  // inside the wind's volume (MQ204HrothgarPushbackTRIG: half extents 760.1, 221.6, 513.9), and
+  // stop wherever the walk's time runs out. From the stretch's west part the first fog bank
+  // (MQ204ClearSkyFog 0x94ccf: a trigger sphere of radius 285 on L_TRIGGER, which
+  // L_CONEPROJECTILE collides with) lies some 10 degrees off the line to the wind's middle, 1,220
+  // units on, within the cone's range (VoiceClearSkiesProjectile01: 2000, spread 10). The box
+  // between does not stop the cone: MQ204Collision1's layer is L_TRANSPARENT (XTRI 3), and
+  // neither its COLL record nor L_CONEPROJECTILE's lists the other. Whether the cone reaches the
+  // fog from there is then its sweep's shape, which the engine infers
+  // (src/shell/magic-projectiles.ts #sweepWave; TODO(M13): the original's shape is not known):
+  // ours does, and then the fog's MQShoutTrigger OnHit sets 90 (setFogState(false)) at the first
+  // shout. So the case's first shout, which must not set 90, comes from a fixed spot: the
+  // stretch's east end (BY_THE_GATE), where the fog lies some 40 degrees off the wind's middle.
+  // The assertion that the first shout leaves 90 alone holds for that spot, not for every spot
+  // the knock-backs may leave the player at.
   it('has the player open the path with Clear Skies (90)', async () => {
     if (!afterWords) return;
     const sim = await loadSim(afterWords);
@@ -280,10 +304,18 @@ describe.skipIf(!hasGamedata())('MQ204 The Throat of the World', () => {
       expect(await sim.distance(PLAYER_REF, GATE_WIND)).toBeLessThan(600);
       expect(await sim.until(seen('#20 said'), 60)).toBe(true);
       expect(sim.stageDone(MQ204, 90)).toBe(false);
+      expect(await sim.walkPath([...BY_THE_GATE, held[2]], 15, 24)).toBe(true);
+      expect(await sim.enabled(GATE_COLLISION)).toBe(true);
+      const feet = sim.world.player.feet;
       const wind = await sim.position(GATE_WIND);
       expect(wind).toBeDefined();
       if (!wind) return;
-      sim.look([wind[0], wind[1], held[2] + 110]);
+      // The fog well off the cone from here (the spot the first shout's assertion depends on).
+      const bearing = (to: readonly number[]): number =>
+        Math.atan2((to[1] ?? 0) - feet[1], (to[0] ?? 0) - feet[0]);
+      const apart = Math.abs(bearing(beyond) - bearing(wind)) * (180 / Math.PI);
+      expect(apart).toBeGreaterThan(30);
+      sim.look([wind[0], wind[1], feet[2] + 110]);
       await sim.step(1);
       await shout(sim);
       await sim.step(4);
