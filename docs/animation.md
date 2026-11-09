@@ -299,16 +299,27 @@ event sink). Behaviour, in our words:
   the entries of the arm states that end a carry), clears every prop of that actor at once.
 - The actor's 3D going (unloaded, made again) drops all of its entries.
 - A save keeps each entry (actor, object, shown or drawn); loading one asks for the load again,
-  and the draw if it was shown. TODO(M12): our saves keep them.
+  and the draw if it was shown. Ours do the same (WorldSave.animObjects, put back as each actor
+  is placed; an imported .ess's too).
 
 **Ours** (src/animation/anim-objects.ts, the list; src/shell/actor-anim-objects.ts, the models):
 the same list and rules. A prop is a model instance of its own placed every frame at its node's
 matrix (the body's placement times the node's pose), after the poses; its NIF controllers and
 particles play as a placed object's do. The player's go on the skeleton shown when the model
 comes in (`bodyShown`: the body, else the first-person arms) and stay there; while they hold
-one, `Game.DisablePlayerControls`' camera switch is off. Our poses take the hands' scale from
-the clips (1), so the female hand rule changes nothing here. TODO(M13): if the hands get the
-skeleton's 0.85, apply the rule.
+one, the camera switch is off (in the page and the headless simulation alike), apart from
+`Game.DisablePlayerControls`' own. A model without "Prn", or whose node the holder's skeleton
+lacks (inferred, TODO(M13)), is left unattached and never shows, drawn or not. The female hand
+rule: an animated node keeps the skeleton model's own scale, the pose's applied on top
+(`ActorPose.scales`; inferred, TODO(M13): the rule above needs the hands at 0.852 under every
+clip, and the vanilla clips' few scale tracks are 0 on hidden nodes, a killmove's Weapon or an
+idle's AnimObjectR, which a reset to the clip's scale would not tell apart); only the female
+skeletons' hands have a scale of their own (0.852, the first-person skeleton's 1). An object
+hung on a female actor's hand or under it (NPC R/L Hand, their magic nodes, AnimObjectR/L) sets
+both hands' scale to 1 while she holds it; the last such object going sets them back to the
+skeleton's own. tests/conformance/animation/animation-objects.test.ts holds the rules in the
+Bannered Mare (Hulda given a tankard, the player given one, a book read without its "Prn", a
+save made and loaded).
 
 The graph event dispatch ([Graph events](#graph-events)) calls
 `ActorAnimObjects.animObject(reference, 'load' | 'draw', editorId)` for the two events with
@@ -1374,7 +1385,12 @@ the morphs to the FaceGen head's shapes (rendering.md, Skinning).
   yaw turn the head bone over the graph's pose (BehaviorRuntime.headTurn; TODO(M13): the
   signs of FaceFX's head curves); creature lines
   (8 curves) set the creature's behavior graph's lip variables, which move its mouth
-  (ai.md, Talking).
+  (ai.md, Talking). The eight curves are the phonemes BigAah, DST, Eee, FV, K, L, R, Th in that
+  order (by name, as the people's 16 phonemes and 14 modifiers are ordered; the data bears it
+  out: Paarthurnax's "Hurt him while he is grounded!" has its one L curve at "while", none for
+  Th, its R first at "hurt"), each matched to the graph's variable naming its phoneme: the
+  dragons' and hagravens' LipBigAah ... LipTh, the rieklings' LipAA, LipDST, LipEE, LipFF, LipK,
+  LipL, LipR, LipTH (not the Damped copies, LipAcc or LipGain), whatever their order in the graph.
 - **Sandbox (debug only), Talk:** in the sandbox, the crosshair finds an actor along the
   activation pick (its controller, BIPED bodies or ragdoll the pick meets; one without
   collision within fActivatePickRadius of the line from its feet to its head) and "Talk" makes it say a random line of its voice type (NPC VTCK,
@@ -1382,10 +1398,15 @@ the morphs to the FaceGen head's shapes (rendering.md, Skinning).
 - Not applied: the TRI's SkinnyMorph (FaceGen heads are baked with the actor's weight:
   formats/esm.md, Actors) and the Races / CharGen morphs (baked by the Creation Kit).
 - **Eyes:** they look where the graph's look-at turned the eye bone (Head tracking, below),
-  by the look morphs (LookLeft/Right at 29°, LookUp/Down at 16°: measured on eyesmale.tri and
-  eyesfemale.tri; the engine's BSFaceGenAnimationData eyesHeading and eyesPitch), wandering by
-  a random offset in the range of the face's emotion (fEyeHeading/PitchMin/MaxOffsetEmotion*;
-  a new one every 1–3 s, TODO(M13)); a line's own looks join them. They turn to where they look
+  by the look morphs (the engine's BSFaceGenAnimationData eyesHeading and eyesPitch) within
+  their tracking range: fTrackEyeXY to either side and fTrackEyeZ up and down (the engine's 28°
+  and 20°; the load order sets neither), a look morph at full weight at the range's end and
+  held there beyond it (inferred, TODO(M13); the eyes' TRI agrees for the sides: LookLeft and
+  LookRight turn the eyeballs about 29° in eyesmale.tri and eyesfemale.tri, LookUp and LookDown
+  about 16°). They wander by a random offset in the range of the face's emotion
+  (fEyeHeading/PitchMin/MaxOffsetEmotion*: Skyrim.esm's, the engine's -0.05 for the three it
+  does not set, the pitch min of anger and happiness and the pitch max of sadness; a new one
+  every 1–3 s, TODO(M13)); a line's own looks join them. They turn to where they look
   at most fTrackSpeed radians a second on each axis (observed in the original: the face's eye
   tracking; Skyrim.esm 5, the engine 2). fTrackDeadZoneXY and fTrackDeadZoneZ are registered by
   the original and never read (inert).
