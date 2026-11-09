@@ -284,7 +284,22 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
     const stage = sim.world.stage;
     const idles = stage.ambientIdles;
     const flags = idles.flags;
-    // One of the people's graph (0_master), standing still in no furniture, an ambient idle on.
+    // One of the people's graph (0_master), standing still in no furniture, an ambient idle on:
+    // its idle that plays is an ambient idle it picked, not a specific idle (a sandbox's idle
+    // marker routine, as the bard Mikael's at this hour, sends specific idles one after the other
+    // and raises no PickNewIdle between them; the script's idle over one of those is not this
+    // case). What last set each one's idle on is told from here.
+    const source = new Map<number, 'ambient' | 'specific'>();
+    const specific = idles.specificIdle.bind(idles);
+    idles.specificIdle = (reference) => {
+      source.set(reference, 'specific');
+      specific(reference);
+    };
+    const push = idles.played.push.bind(idles.played);
+    idles.played.push = (...items) => {
+      for (const one of items) source.set(one.actor, 'ambient');
+      return push(...items);
+    };
     const idler = (): number | undefined =>
       sim
         .actors()
@@ -293,17 +308,23 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
             !staged.dead &&
             (graphs.get(staged.reference) ?? '').endsWith('0_master.hkx') &&
             flags.playing(staged.reference) &&
+            source.get(staged.reference) === 'ambient' &&
             stage.furniture.interaction(staged.reference) === undefined &&
             stage.movers.motion(staged.reference)?.moving !== true &&
             stage.movers.motion(staged.reference)?.pathing !== true,
         )?.reference;
     let actor: number | undefined;
-    expect(
-      await sim.until(() => {
-        actor = idler();
-        return actor !== undefined;
-      }, 60),
-    ).toBe(true);
+    try {
+      expect(
+        await sim.until(() => {
+          actor = idler();
+          return actor !== undefined;
+        }, 60),
+      ).toBe(true);
+    } finally {
+      idles.specificIdle = specific;
+      Reflect.deleteProperty(idles.played, 'push');
+    }
     if (actor === undefined) return;
     const who = actor;
     // IdleHDFailAll: IdleHDRight, no conditions of its own (`node tools/idle-info.ts --tree
