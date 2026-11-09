@@ -766,14 +766,23 @@ export class PlayerAvatar {
   }
 
   /**
-   * Where the animated Camera1st node looks in the world's axes: its +y (at rest the body's
-   * forward), turned with the body. TODO(M13): the axis is inferred, as for the animated
+   * Where the animated Camera1st node looks in the world's axes as the arms are drawn: its +y (at
+   * rest the body's forward) by the first-person skeleton's placement, which faces the body's
+   * heading and is pitched about the node by the player's pitch (FirstPersonBody.place), so the
+   * view on it and the arms drawn agree. TODO(M13): the axis is inferred, as for the animated
    * third-person camera's node.
    */
   #cameraForward(): Vec3 | undefined {
-    const node = this.#firstPerson?.pose.world(CAMERA_NODE);
-    if (!node) return undefined;
-    return this.#toWorld([node[4] ?? 0, node[5] ?? 0, node[6] ?? 0]);
+    const first = this.#firstPerson;
+    const node = first?.pose.world(CAMERA_NODE);
+    if (!first || !node) return undefined;
+    const m = first.world;
+    const [x, y, z] = [node[4] ?? 0, node[5] ?? 0, node[6] ?? 0];
+    return [
+      (m[0] ?? 0) * x + (m[4] ?? 0) * y + (m[8] ?? 0) * z,
+      (m[1] ?? 0) * x + (m[5] ?? 0) * y + (m[9] ?? 0) * z,
+      (m[2] ?? 0) * x + (m[6] ?? 0) * y + (m[10] ?? 0) * z,
+    ];
   }
 
   destroy(): void {

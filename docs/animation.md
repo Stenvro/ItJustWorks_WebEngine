@@ -1342,9 +1342,14 @@ identity at rest (its +y the body's forward) and nearly so walking; the scripts'
 clips turn it: on Helgen's block (`AOExecutioneeIdleOnBlockPlayer`) its +y is (-0.88, -0.07,
 0.46) in the body's frame, to the body's left and 27 degrees up, at the headsman and the tower
 behind him. While looking is switched off (DisablePlayerControls' abLooking: MQ101 stage 95) the
-view goes there and follows it (`Player.#followCameraNode`, at π radians a second: inferred from
-the engine's fFirstPersonDisablePOVLerpDPS, whose value is not read, TODO(M13)); otherwise the
-view is the player's heading and pitch and the node only places the eye. The player's movement
+player's own pitch goes back to level and the view goes to where the node looks as drawn (the
+arms are pitched about it by the player's pitch, so view and arms agree) and follows it
+(`Player.#followCameraNode`, both at π radians a second: inferred from the engine's
+fFirstPersonDisablePOVLerpDPS, whose value is not read, TODO(M13)). Looking back on, the player
+looks on from that view; leaving first person while it is still off, they keep their own heading
+and level pitch (the third-person camera does not take the node's 27 degrees up, which looking
+off would not let them correct). Otherwise the view is the player's heading and pitch and the
+node only places the eye. The player's movement
 drives both, as the engine drives every actor's graph ([Driving the graphs](#driving-the-graphs)):
 Speed (the controls' wish, the controller's horizontal velocity, game units per second),
 Direction, TurnDelta, IsSprinting, IsSneaking; the movement actions (moveStart / moveStop at

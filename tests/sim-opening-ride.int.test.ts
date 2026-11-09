@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import { KnockState } from '../src/gameplay/combat/combat-state.ts';
 import { transformPoint } from '../src/render/math.ts';
+import { CAMERA_NODE } from '../src/shell/first-person-body.ts';
 import { rideModes, rideState } from '../src/shell/hud-elements.ts';
 import { hasGamedata, loadSim, openSim, PLAYER_REF, type Sim } from './helpers/sim.ts';
 
@@ -327,6 +328,8 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
       // HeadChopBlockHookupSCRIPT): both their graphs in the executionee's chop, the first-person
       // camera lowered with the head.
       expect(await sim.until(() => sim.stageDone(MQ101, 95), 120)).toBe(true);
+      // Looking down at the block as looking goes off: their own pitch levels again (below).
+      sim.world.player.pitch = -0.4;
       const avatar = sim.world.playerView?.avatar;
       const onTheBlock = (): boolean =>
         [avatar?.body.behavior, avatar?.firstPerson?.behavior].every(
@@ -351,8 +354,36 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
           .some(({ animation }) => /AOExecutioneeIdleOnBlockPlayer/i.test(animation)) === true;
       expect(await sim.until(onBlock, 30)).toBe(true);
       await sim.step(1);
-      const [, , up] = sim.world.player.forward;
-      expect(Math.asin(up), 'the view turned up by the camera node').toBeGreaterThan(0.3);
+      const view = sim.world.player.forward;
+      expect(Math.asin(view[2]), 'the view turned up by the camera node').toBeGreaterThan(0.3);
+      // The view is the camera node's as the arms are drawn (pitched about it by the player's
+      // pitch, which went back to level). Found in review 2026-11-09: the arms kept the pitch
+      // the player had as looking went off, while the view took the node's unpitched direction.
+      expect(Math.abs(sim.world.player.pitch), "the player's own pitch levelled").toBeLessThan(
+        0.02,
+      );
+      const arms = avatar?.firstPersonBody?.world;
+      const node = avatar?.firstPerson?.pose.world(CAMERA_NODE);
+      expect(arms && node).toBeDefined();
+      if (arms && node) {
+        const drawn = [0, 1, 2].map(
+          (i) =>
+            (arms[i] ?? 0) * (node[4] ?? 0) +
+            (arms[4 + i] ?? 0) * (node[5] ?? 0) +
+            (arms[8 + i] ?? 0) * (node[6] ?? 0),
+        );
+        const length = Math.hypot(...drawn) || 1;
+        const cos = drawn.reduce((sum, v, i) => sum + v * (view[i] ?? 0), 0) / length;
+        expect(Math.acos(Math.min(1, cos)), 'the view along the node as drawn').toBeLessThan(0.03);
+      }
+      // To third person with looking still off (stage 95 leaves the camera switch on): the
+      // player keeps their own level pitch; the node's 27 degrees up, which they could not turn
+      // from, are not handed to the third-person camera.
+      sim.world.player.pov = 'third';
+      await sim.step(0.5);
+      expect(Math.abs(sim.world.player.pitch), 'third person, level').toBeLessThan(0.05);
+      sim.world.player.pov = 'first';
+      await sim.step(0.5);
       expect(await sim.until(() => sim.stageDone(MQ101, 160), 300)).toBe(true);
       // The first prisoner beheaded, the player to the block (95), Alduin's arrival (100).
       for (const stage of [85, 90, 95, 100, 120, 130, 150])
