@@ -9,9 +9,9 @@
 // - The 17 expressions of the FaceGen head (BSFaceGenAnimationData; CommonLibSSE
 //   BSFaceGenKeyframeMultiple), the emotions of INFO TRDT (CommonLibSSE EmotionType: neutral,
 //   anger, disgust, fear, sad, happy, surprise, puzzled).
-// - The eyes' settings: the engine's fTrackEyeXY 28 and fTrackEyeZ 20 (the load order sets
-//   neither), Skyrim.esm's fTrackSpeed 5 and fEye*OffsetEmotion* (`node tools/gmst-info.ts
-//   --prefix fEye`).
+// - The eyes' settings: Skyrim.esm's fTrackSpeed 5 and fEye*OffsetEmotion* (`node tools/gmst-info.ts
+//   --prefix fEye`); the load order has none of an earlier game's eye range settings (fTrackEyeXY,
+//   fTrackEyeZ). The eyes' look morphs: the eye TRIs (`node tools/tri-info.ts <tri>`).
 // - Creature lip sync: the dragons', hagravens' and rieklings' graphs' Lip variables
 //   (dragonproject.hkx, hagravenproject.hkx, rieklingproject.hkx) and their lines' eight curves
 //   (`node tools/lip-info.ts <line>`).
@@ -24,7 +24,8 @@ import {
   EMOTION_EXPRESSIONS,
   EXPRESSION_DEFAULTS,
   EYE_EMOTIONS,
-  EYE_TRACK_DEFAULTS,
+  EYE_MORPH_HEADING,
+  EYE_MORPH_PITCH,
   eyeOffsetSetting,
   FACE_EXPRESSIONS,
   FACE_MORPHS,
@@ -34,6 +35,7 @@ import {
 } from '../../../src/animation/face.ts';
 import { parseLip } from '../../../src/formats/audio/lip.ts';
 import { loadBehaviorFiles, loadCharacterInfo } from '../../../src/formats/hkx/behavior.ts';
+import { parseTri } from '../../../src/formats/nif/tri.ts';
 import { Vfs } from '../../../src/vfs/vfs.ts';
 import { GameSettings } from '../../../src/world/game-settings.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
@@ -82,73 +84,87 @@ describe('faces (todo)', () => {
   it.todo(
     'a line’s expression strength from its emotion value (TRDT) by the engine’s scale  [original]',
   );
+  // Open: the engine's scale from an eye turn to a look morph's weight is not documented, no
+  // game setting gives it (the eyes read fTrackSpeed alone; the load order has no fTrackEye*
+  // range), and the eye TRIs' look morphs are no rigid turn that would give it. The mechanics
+  // below run on an inferred estimate (EYE_MORPH_HEADING, EYE_MORPH_PITCH; TODO(M13)).
+  it.todo('the eyes’ look by head tracking within the eye morphs’ range  [original]');
 });
 
 // The eyes (BSFaceGenAnimationData eyesHeading, eyesPitch): head tracking's look-at turns them
-// (BehaviorRuntime.eyes), and they show it by the look morphs within their tracking range,
-// fTrackEyeXY to either side and fTrackEyeZ up and down (the engine's 28° and 20°: the load
-// order sets neither), a morph at full weight at the range's end (inferred, TODO(M13)). They
-// wander a little within their emotion's offsets (fEye*OffsetEmotion*: Skyrim.esm's, the
-// engine's -0.05 where it sets none).
+// (BehaviorRuntime.eyes), and they show it by the eye TRI's look morphs, a morph at full weight
+// at its estimated turn and held there beyond it (inferred, TODO(M13)). They wander a little
+// within their emotion's offsets (fEye*OffsetEmotion*: Skyrim.esm's; 0 where it sets none,
+// TODO(M13)).
 
 const STILL = { headingMin: 0, headingMax: 0, pitchMin: 0, pitchMax: 0 };
 const NO_WANDER = { Neutral: STILL, Angry: STILL, Fear: STILL, Happy: STILL, Sad: STILL };
-const degrees = (value: number): number => (value * Math.PI) / 180;
 const morph = (name: string): number => FACE_MORPHS.indexOf(name);
 
-describe('the eyes’ look (original settings)', () => {
-  /** A face whose eyes go straight where the look turns them. */
+describe('the eyes’ look by the look morphs (inferred scale)', () => {
+  /** A face whose eyes go straight where the look turns them (radians). */
   const looking = (heading: number, pitch: number): Float32Array => {
     const face = new FaceAnimation(() => 0.5, { ...VANILLA_BLINK, fTrackSpeed: 100 }, NO_WANDER);
-    face.lookWith({ heading: degrees(heading), pitch: degrees(pitch) });
+    face.lookWith({ heading, pitch });
     face.update(0.5);
     return face.weights;
   };
 
-  it('the tracking range is the engine’s 28° to the sides, 20° up and down', () => {
-    expect(EYE_TRACK_DEFAULTS).toEqual({ fTrackEyeXY: 28, fTrackEyeZ: 20 });
-  });
-
-  it('a look half way to the range’s end is half the look morph', () => {
-    const right = looking(14, 0);
+  it('a look half way to a morph’s turn is half that morph, the other side’s none', () => {
+    const right = looking(EYE_MORPH_HEADING / 2, 0);
     expect(right[morph('LookRight')]).toBeCloseTo(0.5, 3);
     expect(right[morph('LookLeft')]).toBe(0);
-    const down = looking(0, -10);
+    const down = looking(0, -EYE_MORPH_PITCH / 2);
     expect(down[morph('LookDown')]).toBeCloseTo(0.5, 3);
     expect(down[morph('LookUp')]).toBe(0);
   });
 
-  it('beyond the range the morph holds at full weight', () => {
-    const far = looking(-40, 35);
+  it('beyond a morph’s turn the morph holds at full weight', () => {
+    const far = looking(-2 * EYE_MORPH_HEADING, 2 * EYE_MORPH_PITCH);
     expect(far[morph('LookLeft')]).toBe(1);
     expect(far[morph('LookUp')]).toBe(1);
-  });
-
-  it('the emotions’ wander: the engine’s -0.05 where Skyrim.esm sets none', () => {
-    expect(VANILLA_EYES.Angry.pitchMin).toBe(-0.05);
-    expect(VANILLA_EYES.Happy.pitchMin).toBe(-0.05);
-    expect(VANILLA_EYES.Sad.pitchMax).toBe(-0.05);
   });
 });
 
 describe.skipIf(!hasGamedata())('the eye settings of the load order (data)', () => {
   let settings: GameSettings;
+  /** The look morphs of each eye TRI. */
+  const looks = new Map<string, string[]>();
 
   beforeAll(async () => {
     const vfs = await Vfs.mount(openGameFolder());
     const db = await RecordDatabase.open(vfs);
     try {
       settings = await GameSettings.read(db);
+      for (const eyes of ['eyesmale', 'eyesfemale', 'eyeskhajiit', 'eyesargonian', 'eyeschild']) {
+        const tri = parseTri(
+          await vfs.read(`meshes\\actors\\character\\character assets\\${eyes}.tri`),
+        );
+        looks.set(
+          eyes,
+          tri.morphs.map((m) => m.name).filter((name) => name.startsWith('Look')),
+        );
+      }
     } finally {
       await db.close();
       await vfs.close();
     }
   }, 600_000);
 
-  it('sets no tracking range (the engine’s holds), fTrackSpeed 5', () => {
+  it('has no eye range setting of an earlier game (fTrackEyeXY, fTrackEyeZ), fTrackSpeed 5', () => {
     expect(settings.number('fTrackEyeXY')).toBeUndefined();
     expect(settings.number('fTrackEyeZ')).toBeUndefined();
     expect(settings.number('fTrackSpeed')).toBe(5);
+  });
+
+  it('the people’s and the Khajiit’s eyes carry the four look morphs; Argonian and child eyes none', () => {
+    const four = ['LookDown', 'LookLeft', 'LookRight', 'LookUp'];
+    for (const eyes of ['eyesmale', 'eyesfemale', 'eyeskhajiit'])
+      expect([...(looks.get(eyes) ?? [])].sort()).toEqual(four);
+    // The face drives them by these names.
+    for (const name of four) expect(morph(name)).toBeGreaterThanOrEqual(0);
+    expect(looks.get('eyesargonian')).toEqual([]);
+    expect(looks.get('eyeschild')).toEqual([]);
   });
 
   it('sets the emotions’ eye offsets but three', () => {

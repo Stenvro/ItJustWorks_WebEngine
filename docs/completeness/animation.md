@@ -41,8 +41,8 @@ annotations, records) use it.
 | Idle conditions (functions) |   111 |  111 |    0 |
 | Actions (AACT)              |    71 |   68 |    3 |
 | Game settings (GMST)        |    20 |   20 |    0 |
-| Mechanics (by hand)         |    26 |   18 |    8 |
-| Total                       |  1148 | 1119 |   29 |
+| Mechanics (by hand)         |    27 |   18 |    9 |
+| Total                       |  1149 | 1119 |   30 |
 
 Round 1 wrote the sweep and this list. Built: the animations' SoundStop.<descriptor> and
 SoundRelease.<descriptor> (17 and 8 annotations: the bow's draw loop, WPNBowPullLPM, stops as
@@ -304,9 +304,10 @@ what fills it was not found).
 - [x] Faces: expressions, phonemes, blinks, the head's morphs (src/animation/face.ts).
 - [ ] Faces: the expression change rate.
 - [x] Lip sync (.lip, .fuz) with the dialogue.
-- [x] Faces: the eyes' look within their tracking range (fTrackEyeXY, fTrackEyeZ; the look morph full
-      at its end: inferred), the emotions' eye offsets from the settings; a creature line's curves
-      matched to its graph's Lip variables by phoneme (tests/conformance/animation/faces.test.ts).
+- [x] Faces: the emotions' eye offsets from the settings; a creature line's curves matched to its
+      graph's Lip variables by phoneme (tests/conformance/animation/faces.test.ts).
+- [ ] Faces: the engine's scale from an eye turn to a look morph's weight (ours an inferred
+      estimate from the eyes' TRI, 29° and 16°).
 - [x] Paired animations: the support's mark, its side to the clip's end, death limp.
 - [ ] Paired animations: events not routed per side.
 - [x] Kill moves (docs/animation.md, "Killmoves").

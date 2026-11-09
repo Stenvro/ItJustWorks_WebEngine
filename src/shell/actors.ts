@@ -12,7 +12,6 @@ import {
   lipLeadIn,
   EXPRESSION_DEFAULTS,
   EYE_EMOTIONS,
-  EYE_TRACK_DEFAULTS,
   VANILLA_BLINK,
   VANILLA_EYES,
   type BlinkSettings,
@@ -763,8 +762,6 @@ export class ActorPlacer {
         settings.number('fLookDownDisableBlinkingAmt') ??
         EXPRESSION_DEFAULTS.fLookDownDisableBlinkingAmt,
       fTrackSpeed: settings.number('fTrackSpeed') ?? EXPRESSION_DEFAULTS.fTrackSpeed,
-      fTrackEyeXY: settings.number('fTrackEyeXY') ?? EYE_TRACK_DEFAULTS.fTrackEyeXY,
-      fTrackEyeZ: settings.number('fTrackEyeZ') ?? EYE_TRACK_DEFAULTS.fTrackEyeZ,
     }));
     return this.#blink;
   }

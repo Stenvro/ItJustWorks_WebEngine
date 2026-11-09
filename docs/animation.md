@@ -1398,15 +1398,19 @@ the morphs to the FaceGen head's shapes (rendering.md, Skinning).
 - Not applied: the TRI's SkinnyMorph (FaceGen heads are baked with the actor's weight:
   formats/esm.md, Actors) and the Races / CharGen morphs (baked by the Creation Kit).
 - **Eyes:** they look where the graph's look-at turned the eye bone (Head tracking, below),
-  by the look morphs (the engine's BSFaceGenAnimationData eyesHeading and eyesPitch) within
-  their tracking range: fTrackEyeXY to either side and fTrackEyeZ up and down (the engine's 28°
-  and 20°; the load order sets neither), a look morph at full weight at the range's end and
-  held there beyond it (inferred, TODO(M13); the eyes' TRI agrees for the sides: LookLeft and
-  LookRight turn the eyeballs about 29° in eyesmale.tri and eyesfemale.tri, LookUp and LookDown
-  about 16°). They wander by a random offset in the range of the face's emotion
-  (fEyeHeading/PitchMin/MaxOffsetEmotion*: Skyrim.esm's, the engine's -0.05 for the three it
-  does not set, the pitch min of anger and happiness and the pitch max of sadness; a new one
-  every 1–3 s, TODO(M13)); a line's own looks join them. They turn to where they look
+  by the eye TRI's look morphs (the engine's BSFaceGenAnimationData eyesHeading and eyesPitch;
+  eyesmale, eyesfemale and the Khajiit's eyes carry LookLeft, LookRight, LookUp and LookDown,
+  the Argonian's and the child's none), a morph at full weight at 29° to the sides and 16° up
+  and down and held there beyond it. Inferred, TODO(M13): the engine's scale is not documented
+  and no setting gives it (the eyes read fTrackSpeed alone; the load order has no fTrackEye*
+  range, an earlier game's setting); the values are a rough estimate from the eyes' TRI, whose
+  look morphs are no rigid turn of the eyeball (measured as the centroid of an eye's vertices
+  about the centre of the sphere fitted to them they turn it some 11–25° to the sides and 9–18°
+  up and down, unevenly between the eyes). They wander by a random offset in the range of the
+  face's emotion (fEyeHeading/PitchMin/MaxOffsetEmotion*: Skyrim.esm's, read from the settings;
+  the three it does not set, the pitch min of anger and happiness and the pitch max of sadness,
+  are the engine's own, not documented: taken as 0, TODO(M13); a new offset every 1–3 s,
+  TODO(M13)); a line's own looks join them. They turn to where they look
   at most fTrackSpeed radians a second on each axis (observed in the original: the face's eye
   tracking; Skyrim.esm 5, the engine 2). fTrackDeadZoneXY and fTrackDeadZoneZ are registered by
   the original and never read (inert).
@@ -1623,6 +1627,10 @@ aux bones' walk) and 91 at a negative speed.
   just before the end raises twice in one step). A negative speed plays it the other way first.
 - User controlled: the step is from where the clip was to where its variable puts it, either
   way.
+- In a syncing blender: forward from where the clip was to its phase (over the seam into the
+  next cycle). A phase stepping back a little as the blend's sync points shift passes nothing:
+  what lies behind it was passed already and is passed again as the phase moves on (a walk and
+  run blend's FootLeft and FootRight raise once a stride).
 - Inferred (TODO(M13): Havok's own rules, not documented): a clip at a negative speed starts at
   its end (its start time counted from there), as the unequips that play the equip backward
   (0_master's Stf_Unequip, the crossbow's), the riekling's strafes and the Dwemer domes', gates'

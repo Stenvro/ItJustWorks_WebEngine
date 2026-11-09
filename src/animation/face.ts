@@ -55,19 +55,18 @@ const LOOK_UP = MODIFIER_BASE + LIP_MODIFIERS.indexOf('LookUp');
 const LOOK_DOWN = MODIFIER_BASE + LIP_MODIFIERS.indexOf('LookDown');
 
 /**
- * The eyes' tracking range (degrees): how far they turn to either side (fTrackEyeXY) and up or
- * down (fTrackEyeZ), the engine's built-in values (the load order sets neither). The engine
- * turns the eyes by the look morphs (BSFaceGenAnimationData eyesHeading, eyesPitch); a morph's
- * full weight is taken as the range's end (inferred, TODO(M13): the eyes' TRI agrees for the
- * heading, LookLeft and LookRight turning the eyeballs about 29° about their centres in
- * eyesmale.tri and eyesfemale.tri, LookUp and LookDown about 16°), so the eyes turn within the
- * range and a look beyond it holds the morph at full weight.
+ * How far the eyes turn at a look morph's full weight (radians). The engine turns the eyes by
+ * the look morphs (BSFaceGenAnimationData eyesHeading, eyesPitch); a look beyond this holds the
+ * morph at full weight. Inferred, TODO(M13): the engine's own scale is not documented and no
+ * game setting gives it (the face's eye tracking reads fTrackSpeed alone; the fTrackEye* range
+ * settings are an earlier game's, absent from this one's load order). The values are a rough
+ * estimate from the eyes' TRI (eyesmale.tri, eyesfemale.tri), whose look morphs are no rigid
+ * turn of the eyeball: how far one turns the eye depends on how it is measured (the centroid
+ * of an eye's vertices about the centre of the sphere fitted to them turns some 11–25° to the
+ * sides and 9–18° up and down, unevenly between the two eyes).
  */
-export const EYE_TRACK_DEFAULTS = { fTrackEyeXY: 28, fTrackEyeZ: 20 } as const;
-
-/** How far the eyes turn at a look morph's full weight by default (radians). */
-export const EYE_MORPH_HEADING = (EYE_TRACK_DEFAULTS.fTrackEyeXY * Math.PI) / 180;
-export const EYE_MORPH_PITCH = (EYE_TRACK_DEFAULTS.fTrackEyeZ * Math.PI) / 180;
+export const EYE_MORPH_HEADING = (29 * Math.PI) / 180;
+export const EYE_MORPH_PITCH = (16 * Math.PI) / 180;
 
 /** The emotions the eyes' random offsets are given for (fEye*OffsetEmotion<name>). */
 export const EYE_EMOTIONS = ['Neutral', 'Angry', 'Fear', 'Happy', 'Sad'] as const;
@@ -83,15 +82,15 @@ export interface EyeOffsets {
 
 /**
  * Skyrim.esm's values; those it does not set (the pitch min of anger and happiness, the pitch
- * max of sadness) are the engine's built-in ones (-0.05 each; sadness's range is then upside
- * down, its random pick lying between the two all the same).
+ * max of sadness) are the engine's built-in ones, not documented: TODO(M13), taken as 0
+ * (inferred: it keeps each range in order, sadness's -0.015 below it).
  */
 export const VANILLA_EYES: Readonly<Record<EyeEmotion, EyeOffsets>> = {
   Neutral: { headingMin: -0.05, headingMax: 0.1, pitchMin: -0.025, pitchMax: 0.1 },
-  Angry: { headingMin: -0.05, headingMax: 0.05, pitchMin: -0.05, pitchMax: 0.1 },
+  Angry: { headingMin: -0.05, headingMax: 0.05, pitchMin: 0, pitchMax: 0.1 },
   Fear: { headingMin: -0.05, headingMax: 0.1, pitchMin: 0.01, pitchMax: 0.01 },
-  Happy: { headingMin: -0.05, headingMax: 0.1, pitchMin: -0.05, pitchMax: 0.1 },
-  Sad: { headingMin: -0.05, headingMax: 0.1, pitchMin: -0.015, pitchMax: -0.05 },
+  Happy: { headingMin: -0.05, headingMax: 0.1, pitchMin: 0, pitchMax: 0.1 },
+  Sad: { headingMin: -0.05, headingMax: 0.1, pitchMin: -0.015, pitchMax: 0 },
 };
 
 /** The game setting of an emotion's eye offset bound: fEye<Heading|Pitch><Min|Max>OffsetEmotion<…>. */
@@ -139,9 +138,6 @@ export interface BlinkSettings {
    * pitch each (observed in the original: the face's eye tracking; Skyrim.esm 5, the engine 2).
    */
   readonly fTrackSpeed?: number;
-  /** The eyes' tracking range to the sides and up and down (degrees; EYE_TRACK_DEFAULTS). */
-  readonly fTrackEyeXY?: number;
-  readonly fTrackEyeZ?: number;
 }
 
 /** The engine's built-in expression settings (Skyrim.esm sets none). */
@@ -453,18 +449,16 @@ export class FaceAnimation implements FaceWeights {
     weights[BLINK_RIGHT] = Math.max(weights[BLINK_RIGHT] ?? 0, blink);
 
     // The eyes: where the look turns them, by the look morphs (a line's own looks join them),
-    // within their tracking range (fTrackEyeXY, fTrackEyeZ: a morph's full weight at its end).
+    // a morph at full weight at its turn (EYE_MORPH_HEADING, EYE_MORPH_PITCH) and held there
+    // beyond it.
     const eyes = this.#eyes(dt);
     const look = (index: number, amount: number): void => {
       weights[index] = Math.max(weights[index] ?? 0, Math.min(1, Math.max(0, amount)));
     };
-    const toRadians = Math.PI / 180;
-    const heading = (this.#blink.fTrackEyeXY ?? EYE_TRACK_DEFAULTS.fTrackEyeXY) * toRadians;
-    const pitch = (this.#blink.fTrackEyeZ ?? EYE_TRACK_DEFAULTS.fTrackEyeZ) * toRadians;
-    look(LOOK_RIGHT, eyes.heading / heading);
-    look(LOOK_LEFT, -eyes.heading / heading);
-    look(LOOK_UP, eyes.pitch / pitch);
-    look(LOOK_DOWN, -eyes.pitch / pitch);
+    look(LOOK_RIGHT, eyes.heading / EYE_MORPH_HEADING);
+    look(LOOK_LEFT, -eyes.heading / EYE_MORPH_HEADING);
+    look(LOOK_UP, eyes.pitch / EYE_MORPH_PITCH);
+    look(LOOK_DOWN, -eyes.pitch / EYE_MORPH_PITCH);
 
     for (let i = 0; i < weights.length; i++) {
       if (Math.abs((weights[i] ?? 0) - (before[i] ?? 0)) > 1 / 1024) {
