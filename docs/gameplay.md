@@ -499,6 +499,11 @@ the player in a runtime on the game data, `--audit` reads every record).
 
 ### What effects do
 
+- Night Eye and Darkness (no vanilla effect uses either; observed in the original): Night
+  Eye starts at magnitude 1 whatever its effect item's, so its actor value only says the actor
+  sees in the dark; what the player sees is its effect's image space (fMagicNightEyeAmbient,
+  0.75, is registered by the engine and never read). Darkness, as it starts and as it stops,
+  draws its actor at 1 - its actor value / 100 of its alpha (0 to 1): `darknessAlpha`.
 - Value effects (Value Modifier, Peak Value Modifier, Dual Value Modifier, Absorb, Accumulate
   Magnitude, Value and Parts, Enhance Weapon, Invisibility, Night Eye, Darkness, Paralysis,
   Grab Actor): Recover effects (and Peak Value Modifiers, whose class undoes them as they are

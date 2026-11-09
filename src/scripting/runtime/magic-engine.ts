@@ -22,6 +22,7 @@ import {
   accumulateRate,
   accumulateStep,
   castStrength,
+  darknessAlpha,
   DUAL_CASTING_POWER,
   EFFECT_DEFAULTS,
   EFFECT_SETTING_NAMES,
@@ -848,6 +849,9 @@ export class MagicEngine {
         magnitude *= left;
       }
     }
+    // Night Eye's magnitude is 1 as it starts, whatever the effect item's (observed in the
+    // original): its actor value says only whether the actor sees in the dark.
+    if (effect.archetype === EffectArchetype.nightEye) magnitude = 1;
 
     // What it counters and, with Dispel with Keywords, what shares a keyword with it.
     for (const [key, other] of this.effectsOn(target)) {
@@ -1093,6 +1097,7 @@ export class MagicEngine {
     entry.inactive = false;
     const target = entry.target;
     if (isValueEffect(effect)) await this.#valueStart(entry, effect);
+    if (effect.archetype === EffectArchetype.darkness) await this.#darken(entry, effect);
     await this.#archetypeStart(key, entry, effect);
     // The image space while it lasts on the player (Night Eye's, a poison's tint).
     if (target === PLAYER_REF && effect.imageSpaceModifier !== undefined)
@@ -1121,12 +1126,30 @@ export class MagicEngine {
     }
   }
 
+  /**
+   * Darkness, as it starts and as it stops (observed in the original): after its actor value
+   * changed, the actor is drawn at 1 - that value / 100 of its alpha (0 to 1): a darkness of
+   * 100 hides it whole, and with its value back at 0 it is whole again.
+   */
+  async #darken(entry: ActiveEffectState, effect: MagicEffectRecord): Promise<void> {
+    const runtime = this.#runtime;
+    if (!(await runtime.actors.isActor(entry.target))) return;
+    const value =
+      effect.actorValue < 0
+        ? 0
+        : (await runtime.actors.value(entry.target, effect.actorValue)).current;
+    const alpha = darknessAlpha(value);
+    runtime.state.actor(entry.target).alpha = alpha;
+    runtime.world.setAlpha?.(entry.target, alpha, false);
+  }
+
   /** It stops acting (it ends, or its conditions fail): all it did is taken back. */
   async #deactivate(key: string, entry: ActiveEffectState, ending: boolean): Promise<void> {
     const runtime = this.#runtime;
     const effect = await this.effect(entry.effect);
     entry.inactive = true;
     this.#takeBack(entry);
+    if (effect?.archetype === EffectArchetype.darkness) await this.#darken(entry, effect);
     if (effect?.archetype === EffectArchetype.peakValueModifier)
       this.#settlePeak(entry.target, entry.effect);
     if (effect) await this.#archetypeEnd(entry, effect, ending);

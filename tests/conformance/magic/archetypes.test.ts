@@ -430,6 +430,59 @@ describe.skipIf(!hasGamedata())('Dispel and Light on actors (sim)', () => {
     expect(lit(second.reference)).toBeGreaterThan(0);
     expect(lit(first.reference)).toBe(0);
   }, 120_000);
+
+  it('Night Eye starts at magnitude 1; Darkness draws its actor at 1 - its value / 100', async () => {
+    // Observed in the original; vanilla uses neither archetype (mods do).
+    const { magic, actors } = sim.runtime;
+    const oak = await magicItem('SPEL', 'Oakflesh');
+    const firstEffect = oak.effects[0];
+    const base = firstEffect && (await magic.effect(firstEffect.effect));
+    expect(base).toBeTruthy();
+    if (!firstEffect || !base) return;
+    const reader = magic.effect.bind(magic);
+    const NIGHT_EYE = invented + 0x40;
+    const DARKNESS = invented + 0x41;
+    magic.effect = (formId) =>
+      formId === NIGHT_EYE || formId === DARKNESS
+        ? Promise.resolve({
+            ...base,
+            formId,
+            archetype: formId === NIGHT_EYE ? EffectArchetype.nightEye : EffectArchetype.darkness,
+            // Recover: the value goes back as it ends.
+            flags: 0x2,
+            counterEffects: [],
+            // NightEye; Darkness on Invisibility, as a mod might.
+            actorValue: formId === NIGHT_EYE ? MagicValue.nightEye : MagicValue.invisibility,
+          })
+        : reader(formId);
+    const of = (effect: number, magnitude: number): MagicItemRecord => ({
+      ...oak,
+      formId: effect + 0x100,
+      effects: [{ ...firstEffect, effect, magnitude, duration: 60 }],
+    });
+    const victim = sim.actors().at(-1)?.reference ?? 0;
+    const value = async (av: number): Promise<number> => (await actors.value(victim, av)).current;
+    const keyOf = (item: number): string | undefined =>
+      magic.effectsOn(victim).find(([, entry]) => entry.item === item)?.[0];
+    try {
+      const sight = of(NIGHT_EYE, 50);
+      const before = await value(MagicValue.nightEye);
+      await magic.apply(sight, victim, { caster: PLAYER_REF });
+      expect(await value(MagicValue.nightEye)).toBe(before + 1);
+      const sightKey = keyOf(sight.formId);
+      if (sightKey) await magic.end(sightKey);
+      expect(await value(MagicValue.nightEye)).toBe(before);
+
+      const dark = of(DARKNESS, 40);
+      await magic.apply(dark, victim, { caster: PLAYER_REF });
+      expect(sim.runtime.state.actors.get(victim)?.alpha).toBeCloseTo(0.6, 6);
+      const darkKey = keyOf(dark.formId);
+      if (darkKey) await magic.end(darkKey);
+      expect(sim.runtime.state.actors.get(victim)?.alpha).toBe(1);
+    } finally {
+      magic.effect = reader;
+    }
+  }, 120_000);
 });
 
 describe('a Magelight on a moving body (inferred: carried as a stuck arrow is)', () => {
@@ -569,6 +622,5 @@ describe('a Magelight on a moving body (inferred: carried as a stuck arrow is)',
 describe('what the original’s archetypes do that ours do not yet', () => {
   it.todo('Invisibility: the refraction shimmer through the actor (ours dithers it away)');
   // Summon Creature's search when its way is blocked: src/ai/pathfinding.test.ts (summonPlace).
-  it.todo('Darkness, Night Eye: the image space and fMagicNightEyeAmbient (0.75)');
   it.todo('Disguise, Concussion: unused by vanilla, as the engine does them (no document says)');
 });
