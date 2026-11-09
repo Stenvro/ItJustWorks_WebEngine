@@ -218,3 +218,33 @@ describe('the records of actors that left the stage', () => {
     expect(now[0]?.reference).toBe(4);
   });
 });
+
+describe('the fliers in the air off the stage', () => {
+  it('stay in the air while the game state has them where they were kept', () => {
+    const kept = new OffStageActors();
+    kept.keepAloft(1, [1, 2, 3]);
+    // The same place (another array of it): still in the air.
+    expect(kept.aloft(1, [1, 2, 3])).toBe(true);
+    expect(kept.aloft(2, [1, 2, 3])).toBe(false);
+  });
+
+  it('are on the ground once moved elsewhere, and stay there', () => {
+    const kept = new OffStageActors();
+    kept.keepAloft(1, [1, 2, 3]);
+    kept.keepAloft(2, [1, 2, 3]);
+    expect(kept.aloft(1, [1, 2, 4])).toBe(false);
+    expect(kept.aloft(1, [1, 2, 3])).toBe(false);
+    expect(kept.aloft(2, undefined)).toBe(false);
+    expect(kept.aloft(2, [1, 2, 3])).toBe(false);
+  });
+
+  it('go as they land and as another game starts', () => {
+    const kept = new OffStageActors();
+    kept.keepAloft(1, [1, 2, 3]);
+    kept.keepAloft(2, [1, 2, 3]);
+    kept.landed(1);
+    expect(kept.aloft(1, [1, 2, 3])).toBe(false);
+    kept.clear();
+    expect(kept.aloft(2, [1, 2, 3])).toBe(false);
+  });
+});

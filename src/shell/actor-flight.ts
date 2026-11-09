@@ -101,6 +101,13 @@ export interface ActorFlightOptions {
   readonly interior: boolean;
   /** A flier without a controller flew into (or out of) a trigger volume. */
   readonly onTrigger?: (trigger: number, actor: number, entered: boolean) => void;
+  /**
+   * A flier placed in the air (it was aloft off the stage) may not fly there after all, or has
+   * nothing under it at all: it is set on the ground under it, as an actor placed there is.
+   */
+  readonly setDown?: (reference: number) => void;
+  /** Whether the collision under a staged actor is all in place (the stage's own test). */
+  readonly groundReady?: (reference: number) => boolean;
 }
 
 /** A target of a flier's fight, as combat sees it. */
@@ -271,6 +278,11 @@ interface Flier {
 const ASK_AGAIN = 3;
 /** Placed with no ground within this under it, a flier starts in the air (units). */
 const AIR_START = 512;
+/**
+ * How far a flier placed in the air from off the stage looks for the ground under it, and over
+ * it for the ground it may be in (units: as far as #groundUnder looks).
+ */
+const LIFT_LOOK = 16384;
 /** It begins its hover this far from the hover point (the hover-enter clips' 3584 forward). */
 const HOVER_ENTER = 3584;
 /** It begins its landing within this of the approach point (units). */
@@ -356,8 +368,11 @@ export class ActorFlight {
   #actors: readonly StagedActor[] = [];
   /** State changes and fight phases, a line each (the flight trace: engineDev.flightTrace). */
   readonly #trace: string[] = [];
-  /** Fliers a loaded save had in the air: they cruise on where they are placed. */
-  readonly #savedAloft = new Set<number>();
+  /**
+   * Fliers placed in the air from off the stage (a loaded save's, one kept in the air off it:
+   * world-save.ts OffStageActors.aloft): they cruise on from there as they first fly.
+   */
+  readonly #placedAloft = new Set<number>();
   #clock = 0;
 
   constructor(options: ActorFlightOptions) {
@@ -404,9 +419,21 @@ export class ActorFlight {
     return !this.#options.interior;
   }
 
-  /** GetFlyingState (FlyingState): 0 on the ground. */
+  /**
+   * GetFlyingState (FlyingState): 0 on the ground. A flier that left the stage in the air is
+   * still in it (cruising) while it is away and not moved since (kept by the session, so every
+   * view answers alike): its flying state is its actor's, not its 3D's.
+   * TODO(M13): inferred, the original's flying state for an unloaded flier was not checked.
+   */
   state(reference: number): FlyingStateValue {
-    return this.#fliers.get(reference)?.state ?? FlyingState.none;
+    const flier = this.#fliers.get(reference);
+    if (flier) return flier.state;
+    const { session } = this.#options;
+    const runtime = session.scriptsReady;
+    if (!runtime || this.#options.get(reference) !== undefined) return FlyingState.none;
+    if (runtime.state.actors.get(reference)?.dead === true) return FlyingState.none;
+    const place = runtime.state.references.get(reference)?.position;
+    return session.offStage.aloft(reference, place) ? FlyingState.cruising : FlyingState.none;
   }
 
   /** IsFlying: in the air (taking off, cruising, hovering, landing, an action). */
@@ -447,9 +474,21 @@ export class ActorFlight {
     return flier && airborne(flier.state) ? flier.moved?.velocity : undefined;
   }
 
-  /** A loaded save had this flier in the air: placed, it cruises on from there. */
+  /**
+   * This flier is placed in the air (a loaded save had it there, it was in the air off the
+   * stage): it cruises on from there, clear of the ground under it.
+   */
   restoreAloft(reference: number): void {
-    this.#savedAloft.add(reference);
+    this.#placedAloft.add(reference);
+  }
+
+  /**
+   * Whether it stays in the air as it leaves the stage now: in it and alive (one killed in the
+   * air comes down).
+   */
+  staysAloft(reference: number): boolean {
+    const flier = this.#fliers.get(reference);
+    return flier !== undefined && airborne(flier.state) && !flier.staged.dead && flier.health > 0;
   }
 
   /** Whether it sits on a perch now. */
@@ -1731,18 +1770,32 @@ export class ActorFlight {
       deferred.downSince ??= this.#clock;
       if (this.#clock - deferred.downSince >= DEFERRED_KILL) this.#endDeferredKill(flier);
     }
-    // Placed in the air: it starts cruising there.
-    if (!flier.checkedAir && staged.grounded) {
+    // Placed in the air: it starts cruising there. One placed in the air from off the stage
+    // waits for the collision under it to be in place and asked (#liftClear).
+    const aloft = this.#placedAloft.has(reference);
+    if (
+      !flier.checkedAir &&
+      staged.grounded &&
+      (!aloft ||
+        (this.#options.movers.physics?.queriesCurrent !== false &&
+          this.#options.groundReady?.(reference) !== false))
+    ) {
       flier.checkedAir = true;
+      this.#placedAloft.delete(reference);
       const start = staged.placed.start;
+      const able = this.mayFly(reference);
+      const inAir = aloft && able && flier.state === FlyingState.none && this.#liftClear(flier);
       if (
         flier.state === FlyingState.none &&
-        this.mayFly(reference) &&
-        ((start?.kind === 'at' && start.sky === true) ||
-          this.#savedAloft.delete(reference) ||
-          this.#highAboveGround(staged))
+        able &&
+        ((start?.kind === 'at' && start.sky === true) || inAir || this.#highAboveGround(staged))
       ) {
         this.startCruising(reference);
+      } else if (aloft && flier.state === FlyingState.none) {
+        // Placed in the air, it may not fly now (SetAllowFlying false, restrained, hurt since
+        // it was placed), or there is nothing under it at all (under the world, not in the
+        // air): set on the ground under it, not left hanging where it was.
+        this.#options.setDown?.(reference);
       }
     }
     this.#grabFrame(flier, behavior);
@@ -2412,6 +2465,35 @@ export class ActorFlight {
     return ground !== undefined && at[2] - ground > AIR_START;
   }
 
+  /**
+   * Whether a flier placed in the air from off the stage is in the air: with ground under it, it
+   * flies on from where it is (its flight keeps it clear of the ground: #steer). With none, it
+   * may be in a hill (the low process flies it in along the straight line between two places,
+   * which may run through one between them): it is raised to its flight radius over the hill's
+   * top. False when there is nothing under it at all, even from high over it (under the world,
+   * not in the air). TODO(M13): inferred, the original's rule for where an unloaded flier shows
+   * again was not checked.
+   */
+  #liftClear(flier: Flier): boolean {
+    const physics = this.#options.movers.physics;
+    if (!physics?.queriesCurrent) return true;
+    const staged = flier.staged;
+    const [x, y, z] = staged.position;
+    const own = this.#options.movers.colliderOf(staged.reference);
+    const down: Vec3 = [0, 0, -1];
+    if (physics.raycast([x, y, z + 16], down, LIFT_LOOK, Layer.charController, own)) return true;
+    const top = physics.raycast(
+      [x, y, z + LIFT_LOOK],
+      down,
+      2 * LIFT_LOOK,
+      Layer.charController,
+      own,
+    );
+    if (!top) return false;
+    staged.position = [x, y, Math.max(z, top.point[2] + this.#flightRadius(flier))];
+    return true;
+  }
+
   /** Whether an actor stands high over the ground (placed in the air; its own controller left out). */
   #highAboveGround(staged: StagedActor): boolean {
     const physics = this.#options.movers.physics;
@@ -2592,7 +2674,7 @@ export class ActorFlight {
   // --- Leaving ----------------------------------------------------------------------------------
 
   remove(reference: number): void {
-    this.#savedAloft.delete(reference);
+    this.#placedAloft.delete(reference);
     const flier = this.#fliers.get(reference);
     if (!flier) return;
     flier.grab?.done(false);
@@ -2613,7 +2695,7 @@ export class ActorFlight {
   clear(): void {
     for (const reference of [...this.#fliers.keys()]) this.remove(reference);
     this.#shouts.clear();
-    this.#savedAloft.clear();
+    this.#placedAloft.clear();
   }
 
   #warn(message: string): void {
