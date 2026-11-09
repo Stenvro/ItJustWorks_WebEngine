@@ -201,6 +201,34 @@ describe('the story manager', () => {
     expect(started).toEqual([0x100, 0x200]);
   });
 
+  it('queues a quest start asked while an event is processed behind the events raised before it', async () => {
+    const { runtime, started } = stubRuntime([
+      questNode(0x10, 0, 0, [
+        [0x100, 0],
+        [0x200, 0],
+      ]),
+    ]);
+    const quests = (
+      runtime as unknown as { quests: { start: (quest: number) => Promise<boolean> } }
+    ).quests;
+    const start = quests.start;
+    const manager = new StoryManager(runtime);
+    let asked: Promise<boolean> | undefined;
+    // The first event's quest has a start-up fragment that starts another quest (Quest.Start),
+    // on a thread of its own: the event's turn does not wait for it.
+    quests.start = async (quest) => {
+      const ran = await start(quest);
+      if (quest === 0x100) asked = manager.questStart(0x500);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return ran;
+    };
+    const both = await Promise.all([manager.event(event()), manager.event(event())]);
+    expect(both).toEqual([true, true]);
+    expect(await asked).toBe(true);
+    // The start waited for its turn: after the second event, raised before it was asked.
+    expect(started).toEqual([0x100, 0x200, 0x500]);
+  });
+
   it('saves the events not yet processed and tells them again after a load', async () => {
     const { runtime, started } = stubRuntime([questNode(0x10, 0, 0, [[0x100, 0]])]);
     const quests = (

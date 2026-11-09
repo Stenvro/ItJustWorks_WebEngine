@@ -216,20 +216,15 @@ export class StoryManager {
   quests(event: StoryEventData): Promise<readonly number[]> {
     this.#waiting.push(event);
     const processed = this.#queue.then(async () => {
-      this.#processing++;
       const at = this.#waiting.indexOf(event);
       if (at >= 0) this.#waiting.splice(at, 1);
-      try {
-        const started = await this.#run(event);
-        this.onProcessed?.(event, started);
-        // The engine tells it (BGSEventProcessedEvent), as its turn in the queue ends.
-        // TODO(M13): what the event carries is not known; inferred as the event's type and the
-        // quests it started.
-        this.#runtime.events.emit('eventProcessed', { type: event.type, started: [...started] });
-        return started;
-      } finally {
-        this.#processing--;
-      }
+      const started = await this.#run(event);
+      this.onProcessed?.(event, started);
+      // The engine tells it (BGSEventProcessedEvent), as its turn in the queue ends.
+      // TODO(M13): what the event carries is not known; inferred as the event's type and the
+      // quests it started.
+      this.#runtime.events.emit('eventProcessed', { type: event.type, started: [...started] });
+      return started;
     });
     this.#queue = processed.catch(() => []);
     return processed;
@@ -239,27 +234,17 @@ export class StoryManager {
    * Quest Start (QSTR, Q1 the quest): a script's Quest.Start, or SetStage on a quest that does
    * not run. Observed in the original: the start is queued as this event behind those raised
    * before it, and the story teller starts the quest at its turn (no node runs for it); the
-   * script waits for that. Resolves whether it started.
-   * TODO(M13): ours waits for a quest's start-up fragments as it starts it, so a start asked
-   * while an event is processed (a started quest's fragment starting another) starts at once
-   * rather than after the queue (it would wait for itself).
+   * script waits for that. Resolves whether it started. A start asked while an event or another
+   * start is being processed (a started quest's start-up fragment or OnInit starting another
+   * quest) queues behind it too, as every event does: the turn in progress does not wait for
+   * the started quest's scripts (its start-up fragments and OnInit run on threads of their
+   * own: quests.ts), so the queued start waits for nothing that waits for it.
    */
   questStart(quest: number): Promise<boolean> {
-    if (this.#processing > 0) return this.#runtime.quests.start(quest);
-    const started = this.#queue.then(async () => {
-      this.#processing++;
-      try {
-        return await this.#runtime.quests.start(quest);
-      } finally {
-        this.#processing--;
-      }
-    });
+    const started = this.#queue.then(() => this.#runtime.quests.start(quest));
     this.#queue = started.catch(() => false);
     return started;
   }
-
-  /** Events and quest starts being processed now (a start asked meanwhile does not queue). */
-  #processing = 0;
 
   /** Told of every event once processed, with the quests it started (the simulation records it). */
   onProcessed: ((event: StoryEventData, started: readonly number[]) => void) | undefined;
