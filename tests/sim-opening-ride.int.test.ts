@@ -415,6 +415,31 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
     }
   }, 600_000);
 
+  // Found 2026-11-09: at 10 frames a second the block's IdleExecutionerChop_Player came while the
+  // player's graph, put back in Executionee_State by the block's instant enter, was still in
+  // AOExecutioneeEnter, which does not take it: it was dropped, and the player stood at the block
+  // as Alduin came, looking off and the view level.
+  it('lays the player on the block at 10 frames a second (stage 80 to 100)', async () => {
+    expect(ridersOff).toBeDefined();
+    if (!ridersOff) return;
+    const sim = await loadSim(ridersOff);
+    try {
+      let chopped = false;
+      for (let t = 0; t < 300 && !sim.stageDone(MQ101, 100); t += 0.1) {
+        await sim.step(0.1, 0.1);
+        const avatar = sim.world.playerView?.avatar;
+        chopped ||= [avatar?.body.behavior, avatar?.firstPerson?.behavior].every(
+          (graph) =>
+            graph?.states().some(({ state }) => state === 'AOExecutioneeChop_1stPerson') === true,
+        );
+      }
+      expect(sim.stageDone(MQ101, 100)).toBe(true);
+      expect(chopped, "the player's head on the block before Alduin comes").toBe(true);
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
   it('follows Ralof into the tower and up it, and jumps through the inn’s roof (dragon attack 20 to 120)', async () => {
     expect(upAtTheBlock).toBeDefined();
     if (!upAtTheBlock) return;

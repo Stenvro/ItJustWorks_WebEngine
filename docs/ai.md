@@ -819,8 +819,12 @@ Actors use furniture as the engine's furniture handling does, as far as the data
   the package's end fragment played IdleWalkingCameraEnd, which left them standing in the
   block: its IdleExecutionerAlduinReactionDeath (Behavior37, within Executionee_State) never
   played, PlayImod and IdleFurnitureExit never came, and MQ101 never reached stages 145 and
-  160, which give the controls back. TODO(M13): how the engine keeps a graph in its furniture
-  (an enter it holds until the graph takes it).
+  160, which give the controls back. A script's idle in furniture that the graph would not take
+  yet waits for it (at most 4 s), whether its graph stands (put back first) or is still on its
+  way into the state's idle: at 10 frames a second the block's IdleExecutionerChop_Player came
+  during AOExecutioneeEnter, 0.4 s after the instant enter put the player's graph back, and was
+  dropped; the player stood at the block as Alduin came. TODO(M13): how the engine keeps a graph
+  in its furniture (an enter it holds until the graph takes it).
 - **Getting up: the graph says when** (observed in the original). The engine does not end
   a use by a timer: it answers the events a graph raises with the handlers
   `meshes\responses\actorresponse.txt` names (`playercharacterresponse.txt` for the player,

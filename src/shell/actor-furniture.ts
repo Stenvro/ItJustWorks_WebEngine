@@ -997,14 +997,20 @@ export class ActorFurniture {
    * (BACK_IN_SECONDS at most). MQ101's block: the camera-bob end (the walk's package's end
    * fragment) stood the player up, and the block's IdleExecutionerChop_Player, heard only in
    * Executionee_State, came half a second later, before the state was put back: the player
-   * stood through the execution instead of laying their head on the block.
+   * stood through the execution instead of laying their head on the block. A graph already put
+   * back (animation-driven) that would not take the idle yet, still on its way into the state's
+   * idle, is waited for too: at 10 frames a second the chop came 0.4 s after the block's instant
+   * enter put the player's graph back, during AOExecutioneeEnter, which does not take it; sent
+   * then it was dropped and the player stood as Alduin came (measured in the simulation; at 60
+   * frames a second it came before the state was put back, and waited). TODO(M13): inferred, as
+   * the rest of this.
    */
   async #backIn(user: FurnitureUser, event: string): Promise<void> {
     const use = this.#uses.get(user.reference);
     const graph = user.placed.behavior;
     if (!use || !inside(use) || !graph) return;
-    if (graph.variable('bAnimationDriven') !== 0 || graph.wouldHandle(event)) return;
-    await this.#restore(user);
+    if (graph.wouldHandle(event)) return;
+    if (graph.variable('bAnimationDriven') === 0) await this.#restore(user);
     for (let waited = 0; waited < BACK_IN_SECONDS; waited += 0.1) {
       if (this.#uses.get(user.reference) !== use || user.placed.behavior.wouldHandle(event)) return;
       await sleep(0.1);
