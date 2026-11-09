@@ -364,11 +364,15 @@ describe.skipIf(!hasGamedata())('an actor leaving the stage with its cell', () =
       sim.world.session.offStage.keepAloft(dragon, inside);
       // Off the stage it is in the air already; on it, it cruises.
       expect(flight.isFlying(dragon)).toBe(true);
-      const cruising = (): boolean => sim.actor(dragon) !== undefined && flight.isFlying(dragon);
-      expect(await stepUntil(sim, cruising, 10)).toBe(true);
-      const now = sim.actor(dragon)?.position ?? [0, 0, 0];
-      // Over the hill's top, by its flight radius (less what it may have sunk since).
-      expect(now[2]).toBeGreaterThan(hill + 200);
+      // Placed, it reads as cruising at once (before its first frame lifts it), so the wait is
+      // for it to cruise over the hill's top, by its flight radius (less what it may have sunk
+      // since): left in the hill, it never gets there.
+      const overTheHill = (): boolean =>
+        sim.actor(dragon) !== undefined &&
+        flight.isFlying(dragon) &&
+        (sim.actor(dragon)?.position[2] ?? -Infinity) > hill + 200;
+      expect(await stepUntil(sim, overTheHill, 10)).toBe(true);
+      expect(flight.state(dragon)).toBe(FlyingState.cruising);
     } finally {
       await sim.close();
     }
