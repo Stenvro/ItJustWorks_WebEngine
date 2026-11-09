@@ -282,6 +282,7 @@ describe.skipIf(!hasGamedata())('a clip of the people’s graph played backward 
     const rig = readAnimationContainer(
       Packfile.parse(await vfs.read('meshes\\actors\\character\\character assets\\skeleton.hkx')),
     ).skeletons[0];
+    await vfs.close();
     const binding = container.bindings[0];
     if (!binding || !rig) throw new Error('No clip or rig');
     duration = binding.animation.duration;
@@ -351,6 +352,7 @@ describe.skipIf(!hasGamedata())('every vanilla graph (a data sweep)', () => {
       const binding = readAnimationContainer(Packfile.parse(await vfs.read(path))).bindings[0];
       if (binding?.additive !== true) mirrored.delete(path);
     }
+    await vfs.close();
   }, 600_000);
 
   it('runs: no node of any of them falls to the parser’s catch-all', () => {
