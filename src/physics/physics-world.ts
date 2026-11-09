@@ -33,6 +33,7 @@ import {
   type SolverJoint,
   type SolverSettings,
 } from './constraint-solver.ts';
+import { jointImpulses, type ImpulseBody, type PointJoint } from './joint-impulses.ts';
 
 export type Rapier = typeof RAPIER;
 
@@ -122,6 +123,11 @@ export function sweptBody(
  * about the same cost, as fewer bodies stay awake.
  */
 const SOLVER_ITERATIONS = 8;
+/**
+ * The most point joints solved with a breakable one (#solveBreakable): the mace trap's pin and
+ * chain are 13; a ragdoll's are under 30.
+ */
+const BREAKABLE_GROUP_JOINTS = 64;
 /**
  * Placed bodies start with what overlaps their placement leaves (books whose corners reach
  * into a shelf's back panel, a cover into the board under it): for this long after they are
@@ -818,6 +824,14 @@ export class PhysicsWorld {
   readonly #velocities = new Map<number, RAPIER.Vector>();
   /** Joints that break under too much force, while they hold. */
   readonly #breakable = new Set<PlacedJoint>();
+  /** The impulse each breakable point joint takes in the step under way (#solveBreakable). */
+  readonly #breakableLoads = new Map<PlacedJoint, number>();
+  /**
+   * The velocities the bodies of those joints' groups had after the last step (linear, then
+   * angular): what moved them since (a push, gravity) is what their joints take.
+   */
+  #groupVelocities = new Map<number, readonly [RAPIER.Vector, RAPIER.Vector]>();
+  readonly #groupBodies = new Map<number, RAPIER.RigidBody>();
   /**
    * The placed joints that have not broken, by the handles of their two bodies, and the scale
    * each one's frames are made at (Havok units per game unit of its placement).
@@ -1532,13 +1546,125 @@ export class PhysicsWorld {
   }
 
   /**
+   * Before the step: the impulse each breakable point joint (a ball and socket, a hinge's pivot)
+   * takes in it, solved with every point joint that holds the bodies it reaches through simulated
+   * bodies (src/physics/joint-impulses.ts): the mace trap's pin holds its mace against the
+   * mace's weight and the pull of the chain it hangs by. Rapier does not expose its joints'
+   * impulses.
+   */
+  #solveBreakable(): void {
+    this.#breakableLoads.clear();
+    this.#groupBodies.clear();
+    const sub = (a: RAPIER.Vector, b: RAPIER.Vector): RAPIER.Vector => ({
+      x: a.x - b.x,
+      y: a.y - b.y,
+      z: a.z - b.z,
+    });
+    const gravity = this.world.gravity;
+    for (const placed of this.#breakable) {
+      if (!placed.joint?.isValid() || !this.#linksClipped.has(placed)) continue;
+      const { a, b } = placed;
+      if (
+        !(a.body.isDynamic() && !a.body.isSleeping()) &&
+        !(b.body.isDynamic() && !b.body.isSleeping())
+      )
+        continue;
+      // The group: the point joints reached through simulated bodies.
+      const group: PlacedJoint[] = [];
+      const seen = new Set<PlacedJoint>();
+      const visited = new Set<number>();
+      const queue: PlacedBody[] = [];
+      const add = (joint: PlacedJoint): void => {
+        if (seen.has(joint) || group.length >= BREAKABLE_GROUP_JOINTS) return;
+        seen.add(joint);
+        const link = this.#linksClipped.get(joint);
+        if (!joint.joint?.isValid() || link?.rest !== 0) return;
+        group.push(joint);
+        queue.push(joint.a, joint.b);
+      };
+      add(placed);
+      while (queue.length > 0) {
+        const next = queue.shift();
+        if (!next || visited.has(next.body.handle) || !next.body.isDynamic()) continue;
+        visited.add(next.body.handle);
+        for (const joint of this.#jointsOf.get(next.body.handle) ?? []) add(joint);
+      }
+      // A body made a moment ago has no mass yet (Rapier computes it as it steps).
+      const unweighed = ({ body }: PlacedBody): boolean =>
+        body.isDynamic() && !(body.invMass() > 0);
+      if (group.some((joint) => unweighed(joint.a) || unweighed(joint.b))) continue;
+      const index = new Map<number, number>();
+      const bodies: ImpulseBody[] = [];
+      const indexOf = ({ body, data }: PlacedBody): number => {
+        const known = index.get(body.handle);
+        if (known !== undefined) return known;
+        this.#groupBodies.set(body.handle, body);
+        // What moved it since the last step: Rapier's joints leave a chain's links drifting apart
+        // a little every step (a stiff chain does not), and that drift is no load.
+        const was = this.#groupVelocities.get(body.handle);
+        const now = [body.linvel(), body.angvel()] as const;
+        const lin = was ? sub(now[0], was[0]) : now[0];
+        const ang = was ? sub(now[1], was[1]) : now[1];
+        let entry: ImpulseBody;
+        if (body.isDynamic()) {
+          const m = body.effectiveWorldInvInertia();
+          const g = data.gravityFactor * this.#size;
+          entry = {
+            invMass: body.invMass(),
+            invInertia: [m.m11, m.m12, m.m13, m.m22, m.m23, m.m33],
+            linear: [lin.x + gravity.x * g, lin.y + gravity.y * g, lin.z + gravity.z * g],
+            angular: [ang.x, ang.y, ang.z],
+          };
+        } else {
+          entry = {
+            invMass: 0,
+            invInertia: [0, 0, 0, 0, 0, 0],
+            linear: [lin.x, lin.y, lin.z],
+            angular: [ang.x, ang.y, ang.z],
+          };
+        }
+        bodies.push(entry);
+        index.set(body.handle, bodies.length - 1);
+        return bodies.length - 1;
+      };
+      const fromCom = (body: RAPIER.RigidBody, pivot: Vec3): Vec3 => {
+        const t = body.translation();
+        const p = rotateVector(body.rotation(), { x: pivot[0], y: pivot[1], z: pivot[2] });
+        const c = body.worldCom();
+        return [t.x + p.x - c.x, t.y + p.y - c.y, t.z + p.z - c.z];
+      };
+      const joints: PointJoint[] = [];
+      for (const joint of group) {
+        const link = this.#linksClipped.get(joint);
+        if (!link) continue;
+        joints.push({
+          a: indexOf(joint.a),
+          b: indexOf(joint.b),
+          ra: fromCom(joint.a.body, link.pivotA),
+          rb: fromCom(joint.b.body, link.pivotB),
+        });
+      }
+      const [own] = jointImpulses(bodies, joints);
+      if (own) this.#breakableLoads.set(placed, Math.hypot(own[0], own[1], own[2]));
+    }
+  }
+
+  /**
    * Breakable constraints break when the impulse on them in a step exceeds their threshold
-   * (Havok's units: kg·m/s, the beehive's 20 holding its 10 kg, a step taking 1.6). The joint's
-   * impulse is not exposed: it is the change of momentum of its simulated body that gravity
-   * does not explain (TODO(M13): contacts on the body count as well).
+   * (Havok's units: kg·m/s, the beehive's 20 holding its 10 kg, a step taking 1.6). A point joint
+   * takes what the step's solve of its group gave it (#solveBreakable); besides, as for the
+   * others, the change of momentum of its simulated body that gravity does not explain counts
+   * (it tells a blow on the body within the step; TODO(M13): contacts on the body count as
+   * well).
    */
   #breakJoints(): void {
     const gravity = this.world.gravity;
+    // Where the step left the groups' bodies (#solveBreakable's next step starts from them).
+    const after = new Map<number, readonly [RAPIER.Vector, RAPIER.Vector]>();
+    for (const [handle, body] of this.#groupBodies) {
+      if (body.isValid()) after.set(handle, [body.linvel(), body.angvel()]);
+    }
+    this.#groupVelocities = after;
     for (const placed of this.#breakable) {
       const joint = placed.joint;
       const threshold = placed.constraint.breakable?.threshold ?? Infinity;
@@ -1564,6 +1690,7 @@ export class PhysicsWorld {
             ),
         );
       }
+      impulse = Math.max(impulse, this.#breakableLoads.get(placed) ?? 0);
       if (impulse > threshold) {
         this.world.removeImpulseJoint(joint, true);
         placed.joint = undefined;
@@ -1879,6 +2006,7 @@ export class PhysicsWorld {
       this.#recordVelocities();
       if (this.#solverJoints.size > 0) this.#solveJoints();
       if (this.#linksClipped.size > 0) this.#clipLinks();
+      if (this.#breakable.size > 0) this.#solveBreakable();
       this.world.step(this.#events, this.#hooks);
       this.#changed = false;
       if (this.#limits.size > 0) this.#limitVelocities();
