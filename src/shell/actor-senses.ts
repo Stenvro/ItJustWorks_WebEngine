@@ -1462,7 +1462,8 @@ export class ActorSenses implements ScriptSenses {
 
   /**
    * Every fCheckDeadBodyTimer an actor looks for the dead: one that died within
-   * iHoursToClearCorpses, in its sight and line of sight, that it has not looked at yet.
+   * iHoursToClearCorpses, in its sight and line of sight, within fDeadReactionDistance of it,
+   * that it has not looked at yet.
    */
   #lookForTheDead(observer: Body, now: number): void {
     if (this.#corpses.size === 0) return;
@@ -1487,12 +1488,15 @@ export class ActorSenses implements ScriptSenses {
         exterior,
       );
       if (distance(observer.eye, at) >= reach) continue;
+      // Seen farther than fDeadReactionDistance, a body is left as it is: not looked at yet, it
+      // is reacted to once the actor comes that near.
+      const lying: Vec3 = [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0];
+      if (distance(observer.feet, lying) > settings.deadReactionDistance) continue;
       if (this.#ray(observer.eye, at, observer.reference, corpse) !== true) continue;
       seen.add(corpse);
       this.detections.corpseSeen(observer.reference, corpse);
       // The story manager's Dead Body, as the engine raises it with the reaction to a body
-      // (not by one in combat). TODO(M13): the engine reacts within fDeadReactionDistance
-      // (400 units) of the body; ours from where it is seen.
+      // (not by one in combat).
       const runtime = this.#options.session.scriptsReady;
       if (runtime && runtime.world.combat?.(observer.reference)?.inCombat !== true)
         runtime.detach(runtime.storyEvents.deadBody(observer.reference, corpse));
