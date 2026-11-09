@@ -152,6 +152,14 @@ const RIGHT_ATTACK = 'Right Attack/Block';
 const READY_WEAPON = 'Ready Weapon';
 /** Seconds a pulled chain or lever is given to open what it works (a portcullis rising). */
 const PULL_WAIT = 3;
+/** How near a flier has to come before the player shouts at it (units). */
+const SHOUT_REACH = 2500;
+/** Seconds the voice key is held for all of a shout's three words. */
+const SHOUT_HOLD = 2;
+/** Seconds the player keeps their aim on the flier after the words are let out. */
+const SHOUT_FOLLOW = 1;
+/** The step the player's aim follows a flier by while shouting (seconds). */
+const SHOUT_STEP = 0.1;
 
 /** The global GameHour (Skyrim.esm): the clock, as scripts set it. */
 const GAME_HOUR = 0x38;
@@ -924,6 +932,47 @@ export class Sim {
       this.events('hit').filter((hit) => hit.aggressor === PLAYER_REF && hit.target === actor)
         .length > before;
     return { began, landed };
+  }
+
+  /**
+   * The player shouts at a flier as a player does: once their voice is ready again (a shout's
+   * three words take their recovery, Dragonrend's 15 s, before the voice key does anything) and
+   * they are on their feet, when it comes within SHOUT_REACH, following it with their aim all the
+   * while the words are held (`hold`) and let out (the shout leaves along the aim as it is let
+   * out: VoiceDragonRendProjectile is a 9° cone at 4000 units a second). A shout aimed once, where
+   * the flier was before the hold, reaches it only by chance. False, without a shout, if `done`
+   * comes first or the flier does not come near in `seconds`.
+   */
+  async shoutAt(
+    flier: number,
+    seconds: number,
+    done: () => boolean | Promise<boolean>,
+    hold = SHOUT_HOLD,
+  ): Promise<boolean> {
+    const follow = async (): Promise<number> => {
+      const [at, me] = await Promise.all([this.position(flier), this.position(PLAYER_REF)]);
+      if (!at || !me) return Infinity;
+      this.look(at);
+      return Math.hypot(at[0] - me[0], at[1] - me[1], at[2] - me[2]);
+    };
+    const ready = (): boolean =>
+      (this.runtime.state.actors.get(PLAYER_REF)?.voiceRecoveryTime ?? 0) <= 0 &&
+      this.world.play?.held === false;
+    for (let waited = 0; !(ready() && (await follow()) < SHOUT_REACH); waited += SHOUT_STEP) {
+      if (waited >= seconds || (await done())) return false;
+      await this.step(SHOUT_STEP);
+    }
+    this.press('Shout', true);
+    for (let held = 0; held < hold; held += SHOUT_STEP) {
+      await follow();
+      await this.step(SHOUT_STEP);
+    }
+    this.press('Shout', false);
+    for (let after = 0; after < SHOUT_FOLLOW; after += SHOUT_STEP) {
+      await follow();
+      await this.step(SHOUT_STEP);
+    }
+    return true;
   }
 
   /** The player turns to look at a point (from their eyes). */

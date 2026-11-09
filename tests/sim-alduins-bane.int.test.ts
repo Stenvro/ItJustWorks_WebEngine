@@ -53,13 +53,6 @@ function objective(sim: Sim, id: number): { displayed: boolean; completed: boole
   return { displayed: state?.displayed ?? false, completed: state?.completed ?? false };
 }
 
-/** The player holds the voice key long enough for all a shout's words, and lets it out. */
-async function shoutAll(sim: Sim): Promise<void> {
-  sim.press('Shout', true);
-  await sim.step(2);
-  sim.press('Shout', false);
-}
-
 describe.skipIf(!hasGamedata())("MQ206 Alduin's Bane", () => {
   // MQ206's own start for a game that skips ahead: its stage 0 sets 1, which plays MQ205 to 100
   // (played in sim-elder-knowledge) and whose 100 is MQ206's 10, with the scroll in the pack. The
@@ -199,7 +192,9 @@ describe.skipIf(!hasGamedata())("MQ206 Alduin's Bane", () => {
 
   // MQ206PresentDayScene: Alduin and Paarthurnax trade words (120, 140) and take to the air. The
   // player's Dragonrend, once it reaches him (MQ206AlduinScript's OnMagicEffectApply), is 180, and it
-  // brings him down on his landing marker. The player's fist lands on him there; the rest of a fight
+  // brings him down on his landing marker. The player shouts it at him as he comes near, their voice
+  // ready again, aiming at him while the words are held: aimed once where he was before a two-second
+  // hold, and pressed while the voice still recovered, it reached him only by chance. The player's fist lands on him there; the rest of a fight
   // a first level's fists do not win stands in as one blow of theirs for what is left of his health.
   // Essential, he bleeds out (200); he says his last and is gone (230, and 220: MQ301 begins); his
   // way out over the mountains ends at 240.
@@ -218,15 +213,10 @@ describe.skipIf(!hasGamedata())("MQ206 Alduin's Bane", () => {
       expect(await sim.until(() => sim.stageDone(MQ206, 140), 60)).toBe(true);
       expect(said(14)).toBe(true);
       expect(sim.stageDone(MQ206, 180)).toBe(false);
-      let shouts = 0;
-      for (; shouts < 30 && !sim.stageDone(MQ206, 180); shouts++) {
-        const at = await sim.position(alduin);
-        expect(at).toBeDefined();
-        if (!at) return;
-        sim.look(at);
-        await sim.step(0.2);
-        await shoutAll(sim);
-        await sim.step(3);
+      expect(await sim.position(alduin)).toBeDefined();
+      const down = (): boolean => sim.stageDone(MQ206, 180);
+      for (let shouts = 0; shouts < 10 && !down(); shouts++) {
+        if (!(await sim.shoutAt(alduin, 60, down))) break;
       }
       expect(sim.stageDone(MQ206, 180)).toBe(true);
       expect(await sim.until(() => sim.world.stage.flight.state(alduin) === 0, 60)).toBe(true);
