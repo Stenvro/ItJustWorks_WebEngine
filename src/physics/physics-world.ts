@@ -3725,8 +3725,9 @@ export class PhysicsWorld {
    * the 69,455 loose objects of the interiors). Of the welded triangles a body is pushed to the
    * back of, the deepest one puts it out, each step. Not a body that stands on something under
    * it (#supported): the triangle passes over it, it is not sunk into it (a chaurus egg on a
-   * cave's floor under the edge of a mound's slope, put out on the slope, rolled 230 units off;
-   * a bucket on a floor, reaching up into what is over it, was set 28 units up on top of that).
+   * cave's floor under the edge of a mound's slope, put out on the slope, rolled 230 units off).
+   * Still open: a body whose floor is not straight under its centre of mass is not seen to stand
+   * (the Blue Palace's bucket 000CC306 is set 28 units up onto what is over it).
    * Ragdolls meet the one-sided copies instead.
    * TODO(M13): inferred from the files' welding type (one-sided: objects are put out on the
    * triangles' front); that Havok does so for a body placed deeper than half into a triangle
@@ -3808,6 +3809,9 @@ export class PhysicsWorld {
    * Whether a settling body stands on something (#weld): straight under its centre of mass, a
    * surface that does not move and that it may rest on (facing up, at most 60° steep; a welded
    * triangle by its front), no farther below than its own lowest point and WELD_SUPPORT_GAP.
+   * TODO(M13): inferred, all of it: the one ray straight down from the centre of mass, the gap
+   * of 2 units (chosen by the settle audit), and reading a trimesh hit's side from Rapier's
+   * featureId (0 the triangle's front, 1 its back: probed, not documented).
    */
   #supported(body: RAPIER.RigidBody): boolean {
     const down = { x: 0, y: 0, z: -1 };

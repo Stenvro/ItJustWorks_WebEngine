@@ -78,7 +78,10 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   rise only with it, 8 would have fallen through, and the rest were placed sunk into what they
   lie on and stay sunk without it, but for some that the weld puts out on top of what they stand
   under (the Blue Palace's bucket [000CC306], its top 2.5 units into what is over it, set 28
-  units up: no floor straight under its centre of mass). Exteriors (42 cells around Riverwood on
+  units up: no floor straight under its centre of mass). The support rule also lets one through
+  that the weld alone kept: a RuinsLinenPile [000B314E] now falls 3,218 units; not yet looked
+  into. The support rule (one ray, the 2-unit gap, the side of a hit read from
+  Rapier's featureId) is inferred (TODO(M13)). Exteriors (42 cells around Riverwood on
   their landscape) settle alike with and without it. Fort Fellhammer's hand cart [00044727] rolls
   down its ramp with its ore as it did without the weld (then it fell through the ramp; now it
   rolls on): its wheels are placed 6 to 10 units into the planks, its frame touches nothing but
