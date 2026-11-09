@@ -575,6 +575,17 @@ export class CharacterBody {
    * archer's own, inside its capsule, pushed it out every step: it slid about at up to 600
    * units a second while it stood.)
    */
+  /**
+   * Whether its actor owns a collider a controller meets besides this controller (#ownBody's
+   * test can leave something out that Rapier's groups take: QueryGroups.controllerSolid).
+   */
+  #ownSolid(): boolean {
+    return (
+      this.owner.kind === 'actor' &&
+      this.physics.controllerSolidOf(this.owner.reference, this.#collider) > 0
+    );
+  }
+
   #ownBody(collider: RAPIER.Collider): boolean {
     const owner = this.physics.ownerOf(collider);
     return (
@@ -987,7 +998,7 @@ export class CharacterBody {
    */
   #stepUp(
     desired: RAPIER.Vector,
-    predicate: (collider: RAPIER.Collider) => boolean,
+    predicate: ((collider: RAPIER.Collider) => boolean) | undefined,
   ): RAPIER.Vector | undefined {
     const world = this.physics.world;
     const shape = queryShape(this.#collider.shape);
@@ -1002,7 +1013,7 @@ export class CharacterBody {
         // What the shape touches already (the step it stands on) is no hit moving away from it.
         false,
         RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-        undefined,
+        QueryGroups.controllerSolid,
         this.#collider,
         undefined,
         predicate,
@@ -1056,7 +1067,10 @@ export class CharacterBody {
    * steep to stand on. TODO(M13): Havok's proxy's support check (bUseUnsupportedCast,
    * fUnsupportCastLength) was not read.
    */
-  #onWalkable(moved: RAPIER.Vector, predicate: (collider: RAPIER.Collider) => boolean): boolean {
+  #onWalkable(
+    moved: RAPIER.Vector,
+    predicate: ((collider: RAPIER.Collider) => boolean) | undefined,
+  ): boolean {
     const at = this.#body.translation();
     const from = { x: at.x + moved.x, y: at.y + moved.y, z: at.z + moved.z };
     const world = this.physics.world;
@@ -1070,7 +1084,7 @@ export class CharacterBody {
       SUPPORT_FROM + SUPPORT_REACH,
       false,
       RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-      undefined,
+      QueryGroups.controllerSolid,
       this.#collider,
       undefined,
       predicate,
@@ -1085,7 +1099,7 @@ export class CharacterBody {
         reach,
         true,
         RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-        undefined,
+        QueryGroups.controllerSolid,
         this.#collider,
         undefined,
         predicate,
@@ -1178,7 +1192,7 @@ export class CharacterBody {
    */
   #fromAbove(
     desired: RAPIER.Vector,
-    predicate: (collider: RAPIER.Collider) => boolean,
+    predicate: ((collider: RAPIER.Collider) => boolean) | undefined,
   ): RAPIER.Vector | undefined {
     const at = this.#body.translation();
     const world = this.physics.world;
@@ -1191,7 +1205,7 @@ export class CharacterBody {
       EDGE_LIFT,
       false,
       RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-      undefined,
+      QueryGroups.controllerSolid,
       this.#collider,
       undefined,
       predicate,
@@ -1203,7 +1217,7 @@ export class CharacterBody {
       this.#collider,
       { x: desired.x, y: desired.y, z: desired.z - EDGE_LIFT },
       RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-      undefined,
+      QueryGroups.controllerSolid,
       predicate,
     );
     const moved = this.#controller.computedMovement();
@@ -1216,7 +1230,7 @@ export class CharacterBody {
   /** The first turn of a blocked way that gets on (SEEK_TURNS), its movement and grounding. */
   #seekAround(
     desired: RAPIER.Vector,
-    predicate: (collider: RAPIER.Collider) => boolean,
+    predicate: ((collider: RAPIER.Collider) => boolean) | undefined,
   ): { moved: RAPIER.Vector; grounded: boolean } | undefined {
     const at = this.#body.translation();
     const failed = this.#seekFailed;
@@ -1246,7 +1260,7 @@ export class CharacterBody {
         this.#collider,
         way,
         RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-        undefined,
+        QueryGroups.controllerSolid,
         predicate,
       );
       const moved = this.#controller.computedMovement();
@@ -1379,6 +1393,12 @@ export class CharacterBody {
         ? touching
         : (collider: RAPIER.Collider): boolean =>
             touching(collider) && !inside.has(collider.handle);
+    // The sweeps keep to what a controller meets by Rapier's groups (QueryGroups.controllerSolid:
+    // the layers' test of `filter`, its own shape left out by Rapier); they call back only for
+    // what the groups cannot tell: what it moves through (ignored), the controllers it is inside,
+    // a body of its own a controller meets. A call back into JavaScript for every collider near
+    // every actor, at every step, was a third of the controllers' time in Helgen.
+    const rest = ignored.size > 0 || inside.size > 0 || this.#ownSolid() ? predicate : undefined;
     // Off another actor it stood on: away from it at least as fast as it falls (as off a slope).
     const off = this.#offActor;
     const slide = off ? Math.max(OFF_ACTOR_SPEED, -this.verticalSpeed) : 0;
@@ -1417,8 +1437,8 @@ export class CharacterBody {
       own,
       desired,
       RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-      undefined,
-      predicate,
+      QueryGroups.controllerSolid,
+      rest,
     );
     let moved: RAPIER.Vector = this.#controller.computedMovement();
     // Held inside the gap the controller keeps to a surface (a hair nearer than SKIN), its sweep
@@ -1435,8 +1455,8 @@ export class CharacterBody {
         own,
         desired,
         RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-        undefined,
-        predicate,
+        QueryGroups.controllerSolid,
+        rest,
       );
       moved = this.#controller.computedMovement();
     }
@@ -1444,7 +1464,7 @@ export class CharacterBody {
     this.#grounded = !this.swimming && !rising && this.#controller.computedGrounded();
     // Rapier's controller calls anything less steep than a wall ground: on what is too steep to
     // walk the character has no support, and falls and slides off it.
-    if (this.#grounded && !this.#onWalkable(moved, predicate)) this.#grounded = false;
+    if (this.#grounded && !this.#onWalkable(moved, rest)) this.#grounded = false;
     // How far it got the way it was to go (sliding along a riser is no way up the stairs).
     const wanted = desired.x * desired.x + desired.y * desired.y;
     const made = moved.x * desired.x + moved.y * desired.y;
@@ -1458,7 +1478,7 @@ export class CharacterBody {
       !this.swimming &&
       made < wanted * STEP_BLOCKED
     ) {
-      const step = this.#stepUp(desired, predicate);
+      const step = this.#stepUp(desired, rest);
       const at = this.#body.translation();
       if (
         step &&
@@ -1485,7 +1505,7 @@ export class CharacterBody {
       moved.x * desired.x + moved.y * desired.y < wanted * EDGE_STUCK &&
       this.#onlyGround()
     ) {
-      const lifted = this.#fromAbove(desired, predicate);
+      const lifted = this.#fromAbove(desired, rest);
       if (lifted) moved = lifted;
     }
     // Touching something below that is not walkable ground: sliding off it.
@@ -1519,7 +1539,7 @@ export class CharacterBody {
       wanted > 0 &&
       moved.x * desired.x + moved.y * desired.y < wanted * STEP_BLOCKED
     ) {
-      const round = this.#seekAround(desired, predicate);
+      const round = this.#seekAround(desired, rest);
       if (round) {
         moved = round.moved;
         this.#grounded = round.grounded;

@@ -1740,6 +1740,81 @@ What is left (TODO(M13)):
   (most of it the maps `evaluate` builds); sampling only the tracks whose targets are drawn needs
   which nodes a model's draws, particles and lag bones read.
 
+### The opening's frame
+
+Measured with `tools/qa-perf.ts` (docs/qa.md): a New Game in headless Chrome on the shared
+machine (AMD RDNA 4), 1280×720, driven as the `opening` QA scenario drives it; every 30 s six
+seconds of plain frames, then six profiled. Helgen loads some 80 actors, 3,000 bodies and 6,000
+colliders. The frame was bound by the main thread from the cart ride on: the GPU takes 3–5 ms a
+frame (6–9 ms at 2560×1440). And the physics multiplies it: Havok's rule is up to
+uMaxNumPhysicsStepsPerUpdate (3) fixed steps a frame, so a 45 ms frame steps the world, every
+actor's character controller with it, three times, which makes the next frame as long. Where a
+profiled frame went (ms a frame; the same scenes before and after):
+
+| scene                    | run    | frame | physics | Rapier step | its walk | controllers | actors | graphs | scene animate |
+| ------------------------ | ------ | ----: | ------: | ----------: | -------: | ----------: | -----: | -----: | ------------: |
+| Helgen's gate (stage 35) | before |  38.4 |    17.0 |         6.5 |      2.3 |         5.8 |    8.4 |    1.9 |           4.9 |
+|                          | after  |  22.8 |     6.5 |         2.8 |        0 |         2.8 |    5.4 |    1.5 |           4.2 |
+| roll call (stage 80)     | before |  33.0 |    10.6 |         1.1 |      2.2 |         5.5 |    8.5 |    3.6 |           5.2 |
+|                          | after  |  15.7 |     2.3 |         0.4 |        0 |         1.5 |    4.8 |    2.4 |           3.3 |
+| Alduin's attack (160)    | before |  45.6 |    19.7 |         3.6 |      2.5 |        11.3 |   14.0 |    3.4 |           4.5 |
+|                          | after  |  35.0 |     9.4 |         2.9 |        0 |         4.6 |    9.7 |    4.1 |           5.6 |
+
+What it was, and what changed:
+
+- **World.step's walk** (`stepWorld`, physics-world.ts): Rapier 0.21's `World.step` wraps after
+  every step what the engine made or removed on its own (the pieces soft bodies tear off): a walk
+  over every rigid body and collider with a call back into JavaScript for each. The engine has
+  no soft bodies; it steps the pipeline itself and leaves the walk out while there are none.
+- **The contact filter's ignored pairs** were looked up by a string made for every pair of every
+  step (`pairKey`: 1 ms of a frame); now by number (`HandlePairs`).
+- **The controllers' sweeps** called back into JavaScript for every collider near every actor at
+  every step (`touching`: the layers' test, its own bodies, what it moves through). Colliders a
+  controller meets now carry a group bit of their own (`QueryGroups.controllerSolid`: a layer that
+  collides with L_CHARCONTROLLER, not a ragdoll's one-sided copy), so Rapier makes the layers'
+  test; the sweep calls back only while the actor moves through something, is inside another
+  controller or owns a body a controller meets (`controllerSolidOf`). The same colliders are met.
+- **Meshes made again per query** (`queryShape`): a mesh's triangles were copied and its tree of
+  bounds built for every contact asked against it. A controller held in the gap at Helgen's tower
+  wall asked one every step (`#outOfSkin`): 60 ms of a frame for as long as it stood there.
+  Meshes, heightfields and compounds are lent as the hulls were.
+- **Path searches over frames** (`PathSearch`, docs/ai.md, "Paths"): a search for a goal off the
+  actor's island takes the whole island, 12,000 triangles round Helgen, 10–25 ms in one frame
+  (the soldiers going for Alduin on the tower, five to ten such searches a minute). A travel's
+  search now takes at most 2,000 nodes of a frame; the search itself is cheaper too (its nodes
+  by number, a triangle's corners read once for its edges, a cut triangle's corners only when it
+  is first cut, `sqrt` for `hypot`).
+- **Smaller ones:** a behavior reference's file worked out once a name (`ClipHost.behavior`: it
+  normalized the path for every reference node a graph passed, every update); an actor's
+  commander, which walks every active effect of the world, worked out only when asked
+  (`MagicEngine.aiState`: the invisibility veil asks every loaded actor each frame); a cone's
+  wave (Alduin's breath) leaves fixed bodies out of its push before Rapier tests its ball against
+  them, and land and actors out of the objects it meets.
+
+Before (integration tip f7b192a0) and after, plain frames, by scene (the before run's longest
+frames include the profiler's own start, ~600 ms, which the runner now leaves out; the physics
+steps a frame were not counted before):
+
+| scene                                                | run    |  fps | slowest window | p95 (ms) | > 33 ms | steps a frame |
+| ---------------------------------------------------- | ------ | ---: | -------------: | -------: | ------: | ------------: |
+| cart ride (stage 12–15)                              | before | 43.6 |             28 |     33.3 |     5 % |               |
+|                                                      | after  | 67.6 |             47 |     21.4 |     0 % |          0.95 |
+| arrival in Helgen (20–54)                            | before | 29.9 |             22 |     44.5 |    27 % |               |
+|                                                      | after  | 57.7 |             49 |     24.1 |     0 % |          1.05 |
+| roll call, execution (70–97)                         | before | 27.4 |             22 |     50.7 |    28 % |               |
+|                                                      | after  | 66.2 |             54 |     19.6 |     0 % |          0.85 |
+| Alduin's attack (150–180)                            | before | 22.5 |             17 |     59.8 |    54 % |               |
+|                                                      | after  | 38.4 |             30 |     36.7 |     7 % |          1.63 |
+| the keep (stage 250, a run before the search shares) | after  |  178 |            177 |      5.7 |     0 % |               |
+
+What is left (TODO(M13)): Alduin's attack is still 30–40 fps. Its actors (behavior graphs 4 ms,
+the movers' travels 4–6 ms with the searches' 2 ms share, combat 1.6 ms) and the physics at 1.5–2
+steps a frame are the largest parts; Rapier's own step (2–3 ms, ~450 active bodies: the actors'
+keyframed biped bodies and controllers) has no symbols to break it down. The actors searching
+again and again for a goal they cannot reach (Alduin on the tower: the same island taken whole
+each time) are the AI's to settle; `SceneRenderer.animate` (3–6 ms: fades, palettes, particles)
+is spread over many small parts.
+
 ## The lighting technique's flags and the fades (observed in the original)
 
 The original picks a lighting shape's technique from its shader flags alone, the later ones

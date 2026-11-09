@@ -218,6 +218,11 @@ const QUERY_OTHER = 0x1;
 const QUERY_TRIGGER = 0x2;
 const QUERY_TRAP = 0x4;
 const QUERY_CONTROLLER = 0x8;
+/**
+ * What a character controller meets: a collider whose layer collides with L_CHARCONTROLLER and
+ * that is no ragdoll's one-sided copy of a mesh (filterFor's test, made inside Rapier).
+ */
+const QUERY_CONTROLLER_SOLID = 0x10;
 const ALL_GROUPS = 0xffff;
 
 /** Rapier's interaction groups: memberships in the upper 16 bits, the filter in the lower. */
@@ -229,6 +234,11 @@ export const QueryGroups = {
   triggers: groups(ALL_GROUPS, QUERY_TRIGGER),
   traps: groups(ALL_GROUPS, QUERY_TRAP),
   controllers: groups(ALL_GROUPS, QUERY_CONTROLLER),
+  /**
+   * What filterFor(L_CHARCONTROLLER) takes: a character controller's sweeps and queries pass
+   * the rest over inside Rapier, and need no call back for the layers (character.ts).
+   */
+  controllerSolid: groups(ALL_GROUPS, QUERY_CONTROLLER_SOLID),
 } as const;
 
 /** What a collider belongs to: a placed reference, the landscape, an actor. */
@@ -472,8 +482,84 @@ function dynamicBody(data: CollisionBody): boolean {
 }
 
 /** A key for an unordered pair of colliders. */
-function pairKey(a: number, b: number): string {
-  return a < b ? `${String(a)}:${String(b)}` : `${String(b)}:${String(a)}`;
+/**
+ * One step of Rapier's pipeline, as World.step takes it. World.step then wraps what the engine
+ * made or removed on its own during the step (the pieces soft bodies tear off): a walk over
+ * every rigid body and collider of the world with a call back into JavaScript for each, every
+ * step (over the opening's Helgen, about 2 ms a frame at three steps). Without soft bodies (the
+ * engine has none) a step makes and removes nothing, and the walk is left out.
+ */
+export function stepWorld(
+  world: RAPIER.World,
+  events: RAPIER.EventQueue | undefined,
+  hooks: RAPIER.PhysicsHooks | undefined,
+): void {
+  if (world.softBodies.len() > 0) {
+    world.step(events, hooks);
+    return;
+  }
+  world.physicsPipeline.step(
+    world.gravity,
+    world.integrationParameters,
+    world.islands,
+    world.broadPhase,
+    world.narrowPhase,
+    world.bodies,
+    world.colliders,
+    world.softBodies,
+    world.impulseJoints,
+    world.multibodyJoints,
+    world.ccdSolver,
+    events,
+    hooks,
+  );
+}
+
+/**
+ * Pairs of collider handles, in either order. Asked by the contact filter for every pair of
+ * every step: looked up by number (a string key made per pair was 1 ms of a Helgen frame).
+ */
+export class HandlePairs {
+  readonly #pairs = new Map<number, Set<number>>();
+  #size = 0;
+
+  get size(): number {
+    return this.#size;
+  }
+
+  has(a: number, b: number): boolean {
+    return this.#pairs.get(a)?.has(b) === true;
+  }
+
+  add(a: number, b: number): void {
+    if (this.has(a, b)) return;
+    this.#link(a, b);
+    this.#link(b, a);
+    this.#size++;
+  }
+
+  delete(a: number, b: number): void {
+    if (!this.has(a, b)) return;
+    this.#unlink(a, b);
+    this.#unlink(b, a);
+    this.#size--;
+  }
+
+  #link(a: number, b: number): void {
+    let set = this.#pairs.get(a);
+    if (!set) {
+      set = new Set();
+      this.#pairs.set(a, set);
+    }
+    set.add(b);
+  }
+
+  #unlink(a: number, b: number): void {
+    const set = this.#pairs.get(a);
+    if (!set) return;
+    set.delete(b);
+    if (set.size === 0) this.#pairs.delete(a);
+  }
 }
 
 /** Whether a placed object hangs: simulated bodies on a fixed one (hanging game, chains). */
@@ -867,7 +953,7 @@ export class PhysicsWorld {
     readonly poses: readonly (readonly [RAPIER.Vector, RAPIER.Rotation])[];
   }[] = [];
   /** Collider pairs that never collide: a hung body and what it was placed into. */
-  readonly #ignoredPairs = new Set<string>();
+  readonly #ignoredPairs = new HandlePairs();
   /** Colliders that collide with nothing for now (setPassThrough). */
   readonly #passing = new Set<number>();
   /**
@@ -978,7 +1064,7 @@ export class PhysicsWorld {
     const collides = (a: number, b: number): boolean => {
       const system = systems.get(a);
       if (system !== undefined && system === systems.get(b)) return false;
-      if (ignored.size > 0 && ignored.has(pairKey(a, b))) return false;
+      if (ignored.size > 0 && ignored.has(a, b)) return false;
       if (passing.size > 0 && (passing.has(a) || passing.has(b))) return false;
       if (twoSided.size > 0) {
         if (ragdollFaces.has(a) || ragdollFaces.has(b)) {
@@ -1047,13 +1133,60 @@ export class PhysicsWorld {
   #pairFaces(twoSided: RAPIER.Collider, faces: RAPIER.Collider): void {
     this.#twoSided.add(twoSided.handle);
     this.#ragdollFaces.add(faces.handle);
+    // No surface of its own: out of the controllers' group.
+    this.#setLayer(faces, this.layerOf(faces));
   }
 
   /** Gives a collider its layer, owner and material (colliders made outside this class). */
   register(collider: RAPIER.Collider, layer: number, owner: PhysicsOwner, material = 0): void {
     this.#setLayer(collider, layer);
     this.#owners.set(collider.handle, owner);
+    this.#countSolid(collider.handle);
     if (material !== 0) this.#materials.set(collider.handle, material);
+  }
+
+  /**
+   * How many colliders an actor owns that a character controller meets (QueryGroups
+   * .controllerSolid), but `except` (its controller): whether its controller's sweeps must leave
+   * out bodies of its own by a call back (character.ts), or the groups say all.
+   */
+  controllerSolidOf(reference: number, except?: RAPIER.Collider): number {
+    const count = this.#solidCount.get(reference) ?? 0;
+    return except && this.#solidOwner.get(except.handle) === reference ? count - 1 : count;
+  }
+
+  /** The actor each collider counted in #solidCount counts for. */
+  readonly #solidOwner = new Map<number, number>();
+  readonly #solidCount = new Map<number, number>();
+
+  /** A collider's owner or layer changed: the actors' counts of what controllers meet. */
+  #countSolid(handle: number, gone = false): void {
+    const owner = this.#owners.get(handle);
+    const layer = this.#layers.get(handle);
+    const now =
+      !gone &&
+      owner?.kind === 'actor' &&
+      layer !== undefined &&
+      this.#controllerSolid(handle, layer)
+        ? owner.reference
+        : undefined;
+    const was = this.#solidOwner.get(handle);
+    if (was === now) return;
+    if (was !== undefined) {
+      const left = (this.#solidCount.get(was) ?? 1) - 1;
+      if (left > 0) this.#solidCount.set(was, left);
+      else this.#solidCount.delete(was);
+      this.#solidOwner.delete(handle);
+    }
+    if (now !== undefined) {
+      this.#solidCount.set(now, (this.#solidCount.get(now) ?? 0) + 1);
+      this.#solidOwner.set(handle, now);
+    }
+  }
+
+  /** filterFor(L_CHARCONTROLLER)'s test of a collider on `layer`. */
+  #controllerSolid(handle: number, layer: number): boolean {
+    return !this.#ragdollFaces.has(handle) && this.matrix.collides(Layer.charController, layer);
   }
 
   /** A collider's layer, and the kinds of query that find it (QueryGroups). */
@@ -1063,12 +1196,15 @@ export class PhysicsWorld {
     if ((this.matrix.flags(layer) & LayerFlag.triggerVolume) !== 0) kinds |= QUERY_TRIGGER;
     if (layer === Layer.trap || layer === Layer.cloudTrap) kinds |= QUERY_TRAP;
     if (layer === Layer.charController) kinds |= QUERY_CONTROLLER;
+    if (this.#controllerSolid(collider.handle, layer)) kinds |= QUERY_CONTROLLER_SOLID;
     collider.setCollisionGroups(groups(kinds, ALL_GROUPS));
+    this.#countSolid(collider.handle);
     if (layer === Layer.trap) this.#trapColliders.set(collider.handle, collider);
     else this.#trapColliders.delete(collider.handle);
   }
 
   unregister(collider: RAPIER.Collider): void {
+    this.#countSolid(collider.handle, true);
     this.#trapColliders.delete(collider.handle);
     const body = collider.parent();
     if (body) this.#trapPoses.delete(body.handle);
@@ -1879,7 +2015,7 @@ export class PhysicsWorld {
       this.#recordVelocities();
       if (this.#solverJoints.size > 0) this.#solveJoints();
       if (this.#linksClipped.size > 0) this.#clipLinks();
-      this.world.step(this.#events, this.#hooks);
+      stepWorld(this.world, this.#events, this.#hooks);
       this.#changed = false;
       if (this.#limits.size > 0) this.#limitVelocities();
       this.#time += size;
@@ -2250,9 +2386,8 @@ export class PhysicsWorld {
   ): void {
     for (const first of a) {
       for (const second of b) {
-        const key = pairKey(first.handle, second.handle);
-        if (ignored) this.#ignoredPairs.add(key);
-        else this.#ignoredPairs.delete(key);
+        if (ignored) this.#ignoredPairs.add(first.handle, second.handle);
+        else this.#ignoredPairs.delete(first.handle, second.handle);
       }
     }
   }
@@ -2557,6 +2692,9 @@ export class PhysicsWorld {
         bodies.set(body.handle, { body, collider: other });
         return true;
       },
+      // Fixed bodies are never pushed: left out before Rapier tests the ball against their
+      // shapes (the town's meshes and land round a dragon's breath, every frame of its wave).
+      RAPIER.QueryFilterFlags.EXCLUDE_FIXED,
     );
     let pushed = 0;
     for (const { body, collider } of bodies.values()) {
@@ -2816,14 +2954,21 @@ export class PhysicsWorld {
   objectsNear(center: Vec3, radius: number, layer: number, toward: Vec3): Map<number, Vec3> {
     const found = new Map<number, { point: Vec3; distance: number }>();
     const to = { x: toHavok(toward[0]), y: toHavok(toward[1]), z: toHavok(toward[2]) };
+    // A placed object's body that collides with the layer: asked before Rapier tests the ball
+    // against the shape (the land's and the actors' are never wanted, and the ball reaches as
+    // far as a dragon's breath).
+    const wanted = (other: RAPIER.Collider): boolean => {
+      if (!other.isEnabled() || !this.matrix.collides(this.layerOf(other), layer)) return false;
+      const owner = this.ownerOf(other);
+      return owner?.kind === 'object' && owner.reference !== 0;
+    };
     this.world.intersectionsWithShape(
       { x: toHavok(center[0]), y: toHavok(center[1]), z: toHavok(center[2]) },
       { x: 0, y: 0, z: 0, w: 1 },
       new RAPIER.Ball(toHavok(radius)),
       (other) => {
-        if (!other.isEnabled() || !this.matrix.collides(this.layerOf(other), layer)) return true;
         const owner = this.ownerOf(other);
-        if (owner?.kind !== 'object' || owner.reference === 0) return true;
+        if (!owner || !wanted(other)) return true;
         const t = other.projectPoint(to, true)?.point ?? other.translation();
         const point: Vec3 = [t.x * HAVOK_SCALE, t.y * HAVOK_SCALE, t.z * HAVOK_SCALE];
         const distance = Math.hypot(
@@ -2835,6 +2980,11 @@ export class PhysicsWorld {
         if (!known || distance < known.distance) found.set(owner.reference, { point, distance });
         return true;
       },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      wanted,
     );
     return new Map([...found].map(([reference, { point }]) => [reference, point]));
   }
@@ -3076,7 +3226,7 @@ export class PhysicsWorld {
             narrow.contactPair(handle, other, this.world.bodies, (manifold) => {
               for (let k = 0; k < manifold.numContacts(); k++) {
                 if (manifold.contactDist(k) < -HUNG_OVERLAP) {
-                  this.#ignoredPairs.add(pairKey(handle, other));
+                  this.#ignoredPairs.add(handle, other);
                   return;
                 }
               }

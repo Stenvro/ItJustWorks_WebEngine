@@ -522,12 +522,13 @@ export class ObstacleIndex {
 
   /**
    * What the obstacles leave of a triangle of a navmesh (`owner`: anything that stands for the
-   * navmesh, `corners`: its triangle's): freeParts, kept for this set of obstacles.
+   * navmesh, `corners`: its triangle's, or how to read them, asked only the first time):
+   * freeParts, kept for this set of obstacles.
    */
   partsOf(
     owner: object,
     triangle: number,
-    corners: readonly [Vec3, Vec3, Vec3],
+    corners: readonly [Vec3, Vec3, Vec3] | (() => readonly [Vec3, Vec3, Vec3]),
   ): readonly (readonly Vec3[])[] | undefined {
     let known = this.#parts.get(owner);
     if (!known) {
@@ -536,7 +537,8 @@ export class ObstacleIndex {
     }
     const kept = known.get(triangle);
     if (kept !== undefined) return kept ?? undefined;
-    const [a, b, c] = corners;
+    const points = typeof corners === 'function' ? corners() : corners;
+    const [a, b, c] = points;
     const low = Math.min(a[2], b[2], c[2]);
     const high = Math.max(a[2], b[2], c[2]);
     const x0 = Math.min(a[0], b[0], c[0]);
@@ -556,7 +558,7 @@ export class ObstacleIndex {
         touching.push(obstacle);
       }
     }
-    const parts = touching.length > 0 ? freeParts(corners, touching) : undefined;
+    const parts = touching.length > 0 ? freeParts(points, touching) : undefined;
     known.set(triangle, parts ?? null);
     return parts;
   }

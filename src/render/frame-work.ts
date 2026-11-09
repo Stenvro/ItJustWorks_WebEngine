@@ -84,6 +84,15 @@ export function setFrameWorkRush(on: boolean): void {
   if (on && waiting.length > 0) post();
 }
 
+/**
+ * Whether frames are being drawn that work should keep smooth: a render loop running, not behind
+ * a loading screen, not hidden for STALE_MS. Without (the headless simulation, a tool) work spread
+ * over frames runs at once.
+ */
+export function framePaced(): boolean {
+  return !rush && frameEnd !== undefined && performance.now() - frameEnd <= STALE_MS;
+}
+
 /** Steps waiting for a turn (the streaming's backlog, for the debug overlay and tests). */
 export function frameWorkWaiting(): number {
   return waiting.length;

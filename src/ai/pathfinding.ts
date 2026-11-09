@@ -220,15 +220,13 @@ class OpenHeap {
   }
 }
 
-const distance = (a: Vec3, b: Vec3): number => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-
-/** An edge's two corners (0: 0–1, 1: 1–2, 2: 2–0). */
-function edgeCorners(navmesh: Navmesh, triangle: number, edge: number): [Vec3, Vec3] {
-  const corners = navmeshTriangle(navmesh, triangle);
-  const a = corners[edge] ?? corners[0];
-  const b = corners[(edge + 1) % 3] ?? corners[0];
-  return [a, b];
-}
+/** Not Math.hypot: a search measures twice for every node it enters, and hypot is slow. */
+const distance = (a: Vec3, b: Vec3): number => {
+  const dx = a[0] - b[0];
+  const dy = a[1] - b[1];
+  const dz = a[2] - b[2];
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+};
 
 const middle = (a: Vec3, b: Vec3): Vec3 => [
   (a[0] + b[0]) / 2,
@@ -300,17 +298,76 @@ export function findPath(
   to: Vec3,
   options: PathOptions,
 ): NavPath | undefined {
-  return searchPath(set, from, to, options, true);
+  const steps = searchSteps(set, from, to, options, true);
+  for (;;) {
+    const step = steps.next();
+    if (step.done === true) return step.value;
+  }
 }
 
-/** findPath; `closeAvoided`: whether the triangles under the avoid nodes are closed. */
-function searchPath(
+/** A search gives way after this many nodes (PathSearch: the rest in a later share). */
+const SHARE_NODES = 128;
+
+/**
+ * findPath taken a share at a time (`run`): a long search (a goal off the actor's island explores
+ * all of it, 12,000 triangles round Helgen) spread over frames instead of holding one. The same
+ * search, the same path.
+ */
+export class PathSearch {
+  readonly #steps: Generator<number, NavPath | undefined, undefined>;
+  #done = false;
+  #result: NavPath | undefined;
+
+  constructor(set: NavmeshSet, from: Vec3, to: Vec3, options: PathOptions) {
+    this.#steps = searchSteps(set, from, to, options, true);
+  }
+
+  /** Whether it has ended (`result` is its path, if any). */
+  get done(): boolean {
+    return this.#done;
+  }
+
+  get result(): NavPath | undefined {
+    return this.#result;
+  }
+
+  /** Searches on until it ends or has taken about `nodes` more nodes; the nodes it took. */
+  run(nodes: number): number {
+    let taken = 0;
+    while (!this.#done && taken < nodes) {
+      const step = this.#steps.next();
+      if (step.done === true) {
+        this.#done = true;
+        this.#result = step.value;
+      } else taken += step.value;
+    }
+    return taken;
+  }
+}
+
+/**
+ * How many searches ran, how many nodes they took and how many reached their goal (read by the
+ * frame profile, tools/qa-perf.ts; nothing else reads or resets them).
+ */
+export const pathSearchStats: {
+  searches: number;
+  nodes: number;
+  reached: number;
+  /** Set to an array, every search is kept in it (from, to, nodes taken, whether it reached). */
+  trace: { from: Vec3; to: Vec3; nodes: number; reached: boolean }[] | undefined;
+} = { searches: 0, nodes: 0, reached: 0, trace: undefined };
+
+/**
+ * findPath; `closeAvoided`: whether the triangles under the avoid nodes are closed. Gives way
+ * every SHARE_NODES nodes (the nodes taken since).
+ */
+function* searchSteps(
   set: NavmeshSet,
   from: Vec3,
   to: Vec3,
   options: PathOptions,
   closeAvoided: boolean,
-): NavPath | undefined {
+): Generator<number, NavPath | undefined, undefined> {
   let avoidedClosed = false;
   const start = set.locate(from);
   const goal = set.locate(to);
@@ -318,14 +375,16 @@ function searchPath(
   const goalKey = goal ? keyOf(goal.navmesh.formId, goal.triangle) : undefined;
   const obstacles = obstacleIndex(options.obstacles);
   const partsOf = (navmesh: Navmesh, triangle: number): readonly (readonly Vec3[])[] | undefined =>
-    obstacles?.partsOf(navmesh, triangle, navmeshTriangle(navmesh, triangle));
+    // The corners are read only for a triangle the index has not cut yet (most are asked again
+    // and again, as every search crosses them).
+    obstacles?.partsOf(navmesh, triangle, () => navmeshTriangle(navmesh, triangle));
   // The goal under an obstacle: any free part of its triangle ends the way (as it can come).
   const goalParts = goal && partsOf(goal.navmesh, goal.triangle);
   const goalPart = goalParts ? partAt(goalParts, to) : -1;
   // One that stands under an obstacle walks out of it: its node is the whole triangle.
   const startParts = partsOf(start.navmesh, start.triangle);
   const startPart = startParts ? partAt(startParts, from) : -1;
-  const nodes = new Map<number | string, Node>();
+  const nodes = new SearchNodes();
   const open = new OpenHeap();
   const first: Node = {
     navmesh: start.navmesh,
@@ -340,7 +399,7 @@ function searchPath(
     closed: false,
     heap: -1,
   };
-  nodes.set(nodeKey(start.navmesh, start.triangle, startPart), first);
+  nodes.set(keyOf(start.navmesh.formId, start.triangle), startPart, first);
   open.push(first);
   let best = first;
   let bestH = first.f;
@@ -358,8 +417,8 @@ function searchPath(
     gate: readonly [Vec3, Vec3],
     extra: number,
   ): void => {
-    const key = nodeKey(navmesh, triangle, part);
-    const existing = nodes.get(key);
+    const key = keyOf(navmesh.formId, triangle);
+    const existing = nodes.get(key, part);
     if (existing?.closed) return;
     const at = middle(gate[0], gate[1]);
     // A step through an avoid node costs its length inside it, many times over.
@@ -390,7 +449,7 @@ function searchPath(
       closed: false,
       heap: -1,
     };
-    nodes.set(key, added);
+    nodes.set(key, part, added);
     open.push(added);
   };
   while (open.size > 0 && searched < limit) {
@@ -398,6 +457,7 @@ function searchPath(
     if (!node) break;
     node.closed = true;
     searched++;
+    if (searched % SHARE_NODES === 0) yield SHARE_NODES;
     const key = keyOf(node.navmesh.formId, node.triangle);
     if (key === goalKey && (goalPart < 0 || node.part === goalPart)) {
       reached = node;
@@ -418,6 +478,8 @@ function searchPath(
         if (gate) enter(node, node.navmesh, node.triangle, flags, index, part, gate, 0);
       });
     }
+    // Its corners, read once for its three edges (edge 0: corners 0–1, 1: 1–2, 2: 2–0).
+    const corners = navmeshTriangle(node.navmesh, node.triangle);
     for (let edge = 0; edge < 3; edge++) {
       const across = triangleNeighbour(node.navmesh, node.triangle, edge);
       if (across === undefined) continue;
@@ -461,7 +523,8 @@ function searchPath(
         avoidedClosed = true;
         continue;
       }
-      const [a, b] = edgeCorners(node.navmesh, node.triangle, edge);
+      const a = corners[edge] ?? corners[0];
+      const b = corners[(edge + 1) % 3] ?? corners[0];
       // The stretch of the edge this free part (or all of the triangle) lies along.
       const span = node.outline ? partSpan(node.outline, a, b, ON_EDGE) : ([0, 1] as const);
       if (!span) continue;
@@ -488,7 +551,11 @@ function searchPath(
   // An avoid node only costs (observed in the original); closing what lies under it is ours, to
   // keep a way out of it where there is another. One standing in the only way (a corridor, a
   // doorway) does not end the way short: it is searched again at the nodes' cost alone.
-  if (!reached && avoidedClosed) return searchPath(set, from, to, options, false);
+  pathSearchStats.searches++;
+  pathSearchStats.nodes += searched;
+  if (reached) pathSearchStats.reached++;
+  pathSearchStats.trace?.push({ from, to, nodes: searched, reached: reached !== undefined });
+  if (!reached && avoidedClosed) return yield* searchSteps(set, from, to, options, false);
   const end = reached ?? best;
   const chain: Node[] = [];
   for (let node: Node | undefined = end; node; node = node.parent) chain.push(node);
@@ -511,9 +578,31 @@ function searchPath(
 /** A stretch of an edge shorter than this (units) is no way through. */
 const LEAST_GATE = 0.5;
 
-/** A search node's key: its triangle's, with its free part's where it is one. */
-const nodeKey = (navmesh: Navmesh, triangle: number, part: number): number | string =>
-  part < 0 ? keyOf(navmesh.formId, triangle) : `${keyOf(navmesh.formId, triangle)}:${part}`;
+/**
+ * A search's nodes by their triangle's key (keyOf) and free part (−1: the whole triangle). By
+ * number: a string key made for every free part entered was a tenth of a search's time.
+ */
+class SearchNodes {
+  readonly #whole = new Map<number, Node>();
+  readonly #parts = new Map<number, (Node | undefined)[]>();
+
+  get(key: number, part: number): Node | undefined {
+    return part < 0 ? this.#whole.get(key) : this.#parts.get(key)?.[part];
+  }
+
+  set(key: number, part: number, node: Node): void {
+    if (part < 0) {
+      this.#whole.set(key, node);
+      return;
+    }
+    let parts = this.#parts.get(key);
+    if (!parts) {
+      parts = [];
+      this.#parts.set(key, parts);
+    }
+    parts[part] = node;
+  }
+}
 
 /** Which free part a point lies in (−1: under the obstacles). */
 function partAt(parts: readonly (readonly Vec3[])[], point: Vec3): number {

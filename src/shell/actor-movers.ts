@@ -43,6 +43,7 @@ import {
 } from '../ai/process-levels.ts';
 import {
   findPath,
+  PathSearch,
   straightReach,
   type AvoidNode,
   type NavmeshSet,
@@ -72,6 +73,7 @@ import { HAVOK_SCALE } from '../physics/collision-data.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import { TRAP_REACH } from '../scripting/runtime/trap-hits.ts';
+import { framePaced } from '../render/frame-work.ts';
 import type { Vec3 } from '../render/math.ts';
 import {
   CHECK_FALL_DISTANCE,
@@ -388,7 +390,28 @@ interface Travel {
   readonly heading: number | undefined;
   /** The navmesh obstacles' version its path was searched at. */
   obstacles: number;
+  /** Its path being searched over frames (#travelFrame), from where it stood then. */
+  search: PendingSearch | undefined;
 }
+
+/** A travel's path search under way (#travelFrame). */
+interface PendingSearch {
+  readonly search: PathSearch;
+  /** Whether it stood on the navmeshes, where, and the arrival radius at the path's end. */
+  readonly on: boolean;
+  readonly position: Vec3;
+  readonly arrive: number;
+}
+
+/**
+ * The path searches' nodes a frame of the actors' travels takes at most (about 1 µs a node in
+ * Chrome). Searches that end within it (most take a few dozen) give their path in the frame they
+ * began, as before; a longer one (a goal off the actor's island explores all of it, 12,000 nodes
+ * round Helgen: 10–25 ms) goes on in the next frames, its actor going on as it went meanwhile.
+ * Inferred from the original searching its paths on a pathing thread of their own, the actor
+ * waiting for the path. TODO(M13): the engine's own budget and what an actor does while it waits.
+ */
+const SEARCH_NODES_PER_FRAME = 2000;
 
 /** A travel ended by skipped hours sets the actor on the navmesh within this of its place. */
 const SKIP_REACH = 256;
@@ -647,6 +670,7 @@ export class ActorMovers {
         pathStarted: false,
         heading: options.heading,
         obstacles: this.#options.obstacles?.version ?? 0,
+        search: undefined,
         done: (arrived) => {
           if (this.#travels.get(reference) !== travel) return;
           this.#travels.delete(reference);
@@ -711,6 +735,22 @@ export class ActorMovers {
     return travel.follower ? travel.follower.ahead : [travel.destination];
   }
 
+  /** What is left of this frame's path search nodes (SEARCH_NODES_PER_FRAME). */
+  #searchBudget = SEARCH_NODES_PER_FRAME;
+
+  /**
+   * A share of a path search: whether it has ended. Without frames to keep smooth (the headless
+   * simulation, a loading screen) it runs to its end at once.
+   */
+  #searchShare(search: PathSearch): boolean {
+    if (!framePaced()) {
+      search.run(Infinity);
+      return true;
+    }
+    if (this.#searchBudget > 0) this.#searchBudget -= search.run(this.#searchBudget);
+    return search.done;
+  }
+
   /** One frame of an actor's travel: its path searched (again), followed, ended. */
   #travelFrame(mover: Mover, travel: Travel, seconds: number): void {
     const reference = mover.staged.reference;
@@ -727,37 +767,54 @@ export class ActorMovers {
     if (!travel.follower) {
       const set = this.#options.navmeshes?.();
       if (!set) return;
-      travel.searches++;
-      // Off the navmeshes (a straight way left it: MQ101's second cart before the hay bales in
-      // Helgen's square), the path begins at their nearest point.
-      const position = mover.staged.position;
-      const on = set.locate(position) !== undefined;
-      const start = on ? position : set.nearest?.(position, NAVMESH_REACH);
-      const end = navGoal(set, travel.destination, travel.arrive);
-      const found =
-        start &&
-        findPath(set, start, end.goal, {
-          // Stuck on its way (a corner its path grazed): wider of the edges each time it searches
-          // again. TODO(M13): the engine's own way out (not documented).
-          radius: mover.character.shape.radius * travel.searches,
-          large: (mover.race?.size ?? RaceSize.medium) >= RaceSize.large,
-          // A swimmer crosses water as readily as land (the navmesh's water triangles).
-          swims:
-            (mover.staged.placed.look.raceFlags & RaceFlag.swims) !== 0 &&
-            this.#options.swimAllowed?.(reference) !== false,
-          closedDoors: this.#closedFor(reference, travel),
-          ...this.#raceRules(reference, mover.staged),
-          blocked: this.#blockedFor(reference, travel),
-          ...avoidsOf(travel),
-          obstacles: this.#options.obstacles?.index,
-        });
+      let pending = travel.search;
+      if (!pending) {
+        travel.searches++;
+        // Off the navmeshes (a straight way left it: MQ101's second cart before the hay bales in
+        // Helgen's square), the path begins at their nearest point.
+        const position = mover.staged.position;
+        const on = set.locate(position) !== undefined;
+        const start = on ? position : set.nearest?.(position, NAVMESH_REACH);
+        const end = navGoal(set, travel.destination, travel.arrive);
+        if (!start) {
+          this.#giveUp(reference, travel);
+          return;
+        }
+        pending = {
+          search: new PathSearch(set, start, end.goal, {
+            // Stuck on its way (a corner its path grazed): wider of the edges each time it searches
+            // again. TODO(M13): the engine's own way out (not documented).
+            radius: mover.character.shape.radius * travel.searches,
+            large: (mover.race?.size ?? RaceSize.medium) >= RaceSize.large,
+            // A swimmer crosses water as readily as land (the navmesh's water triangles).
+            swims:
+              (mover.staged.placed.look.raceFlags & RaceFlag.swims) !== 0 &&
+              this.#options.swimAllowed?.(reference) !== false,
+            closedDoors: this.#closedFor(reference, travel),
+            ...this.#raceRules(reference, mover.staged),
+            blocked: this.#blockedFor(reference, travel),
+            ...avoidsOf(travel),
+            obstacles: this.#options.obstacles?.index,
+          }),
+          on,
+          position: [...position],
+          arrive: end.arrive,
+        };
+        travel.search = pending;
+      }
+      // Searched within this frame's share; else on in the next (the actor goes on as it went).
+      if (!this.#searchShare(pending.search)) return;
+      travel.search = undefined;
+      const found = pending.search.result;
       const path =
-        found && !on ? { ...found, points: [[...position] as Vec3, ...found.points] } : found;
+        found && !pending.on
+          ? { ...found, points: [[...pending.position] as Vec3, ...found.points] }
+          : found;
       if (!path || path.points.length < 2) {
         this.#giveUp(reference, travel);
         return;
       }
-      travel.follower = new PathFollower(path, { gait: travel.gait, arrive: end.arrive });
+      travel.follower = new PathFollower(path, { gait: travel.gait, arrive: pending.arrive });
       this.#newPath(mover.staged);
     }
     // A door in its way (the navmesh marks only load doors): it opens it and waits, or the door
@@ -1652,6 +1709,7 @@ export class ActorMovers {
     const world = this.#world;
     if (!world) return;
     this.#frames++;
+    this.#searchBudget = SEARCH_NODES_PER_FRAME;
     // A travel that arrived in the last frame and was followed by none: the actor stands.
     for (const [reference, request] of this.#arrived) {
       if (this.#requests.get(reference) === request) this.#requests.delete(reference);
@@ -1779,7 +1837,10 @@ export class ActorMovers {
     this.#placeOnFloor(mover);
     // Its way from where it is now.
     const travel = this.#travels.get(staged.reference);
-    if (travel) travel.follower = undefined;
+    if (travel) {
+      travel.follower = undefined;
+      travel.search = undefined;
+    }
     this.#options.terminal.log(
       'actor',
       `${staged.placed.actor.editorId || staged.reference.toString(16)} fell out of the world at ` +
@@ -1932,7 +1993,10 @@ export class ActorMovers {
     this.#reactions.delete(reference);
     // Its package's way, from where it stands now.
     const travel = this.#travels.get(reference);
-    if (travel) travel.follower = undefined;
+    if (travel) {
+      travel.follower = undefined;
+      travel.search = undefined;
+    }
   }
 
   /**

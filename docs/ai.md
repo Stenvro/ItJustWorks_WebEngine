@@ -164,6 +164,15 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   (`ActorDoors`). A goal that cannot be
   reached (another island, past 20,000 triangles) gives the path to where the search came
   nearest to it.
+- **Searches over frames** (`PathSearch`, `ActorMovers`): a travel's search takes at most
+  2,000 nodes of a frame (about 2 ms), shared by the actors in turn; most end within a few dozen
+  and give their path in the frame they began. One whose goal is off the actor's island takes
+  the whole island first (12,000 triangles round Helgen, 10–25 ms: the soldiers going for Alduin
+  on the tower as he attacks) and goes on in the next frames, its actor going on as it went
+  meanwhile; it held one frame each time before. Without frames to keep smooth (the headless
+  simulation, a loading screen) a search ends at once, as before. Inferred from the original's
+  paths being searched on a pathing thread of their own while the actor waits; TODO(M13): its
+  budget and what an actor does while waiting.
 - **Off the navmesh** (`ActorMovers`): a travel from a point off the navmeshes begins at their
   nearest point within 512 units. One to a point off them (the player by a door stands a few
   units past the navmesh's edge) ends at their nearest point if that is within the travel's

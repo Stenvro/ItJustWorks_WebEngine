@@ -17,6 +17,7 @@ import { PathFollower } from './path-follower.ts';
 import {
   findPath,
   inwardOnNavmesh,
+  PathSearch,
   onNavmeshColumn,
   randomReachablePoint,
   straightReach,
@@ -691,5 +692,31 @@ describe('inwardOnNavmesh', () => {
     expect(inwardOnNavmesh(set, [-50, 50, 0], [0, 50, 0], 14)).toEqual([14, 50, 0]);
     // Where the navmesh does not reach that far in, the border point stays.
     expect(inwardOnNavmesh(set, [-50, 50, 0], [0, 50, 0], 400)).toEqual([0, 50, 0]);
+  });
+});
+
+describe('PathSearch', () => {
+  it('finds the path findPath finds, a share at a time', () => {
+    // A 30 by 30 field (1,800 triangles) and a goal off it: the search takes all of it.
+    const squares: [number, number][] = [];
+    for (let x = 0; x < 30; x++) for (let y = 0; y < 30; y++) squares.push([x, y]);
+    const set = setOf([gridMesh(1, squares)]);
+    const from: Point = [50, 50, 0];
+    const to: Point = [5000, 1500, 0];
+    const whole = findPath(set, from, to, { radius: 10 });
+    expect(whole?.complete).toBe(false);
+    const search = new PathSearch(set, from, to, { radius: 10 });
+    let shares = 0;
+    while (!search.done) {
+      search.run(200);
+      shares++;
+    }
+    expect(shares).toBeGreaterThan(5);
+    expect(search.result).toEqual(whole);
+    // One reached at once ends in its first share.
+    const near = new PathSearch(set, from, [250, 250, 0], { radius: 10 });
+    near.run(200);
+    expect(near.done).toBe(true);
+    expect(near.result).toEqual(findPath(set, from, [250, 250, 0], { radius: 10 }));
   });
 });
