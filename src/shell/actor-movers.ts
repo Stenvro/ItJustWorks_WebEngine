@@ -499,6 +499,55 @@ const FALL_CHECK_MS = 500;
 const UNSTICK_REACH = 64;
 /** ... on a floor within this over or under that point (units). */
 const UNSTICK_FLOOR = 48;
+/** The landscape over an actor under it is looked for from this high over it (units). */
+const LANDSCAPE_LOOK = 65536;
+
+/**
+ * The floor a stuck actor (`own`) is set on at a point of its path (#unstick): within
+ * UNSTICK_FLOOR over or under it, no living actor's controller (actorGround): one standing on
+ * the point is no floor, the two part by penetration recovery.
+ */
+export function unstickFloor(physics: PhysicsWorld, point: Vec3, own?: number): number | undefined {
+  const [x, y, z] = point;
+  return actorGround(physics, [x, y, z + UNSTICK_FLOOR], UNSTICK_FLOOR * 2, own)?.point[2];
+}
+
+/**
+ * Whether a falling actor (`own`, its feet, its controller's height) has something under it to
+ * land on (#watchFall): from its middle down to GROUND_BELOW under its feet. Another actor's
+ * controller is none (actorGround): one falling with another under it (the two through the
+ * landscape together) is out of the world as much as alone.
+ */
+export function fallsOntoGround(
+  physics: PhysicsWorld,
+  feet: Vec3,
+  height: number,
+  own?: number,
+): boolean {
+  const [x, y, z] = feet;
+  return actorGround(physics, [x, y, z + height / 2], height / 2 + GROUND_BELOW, own) !== undefined;
+}
+
+/**
+ * The landscape's height over a point under it (undefined: none over it, or the point is not
+ * under it): where an actor below the landscape (its stored place under a hill, or fallen
+ * through it) is put back, as the engine puts one out of the world back on the ground there.
+ * Only the landscape: a roof or a bridge over a point on the ground is not the ground above it.
+ * TODO(M13): inferred, the engine's own rule for an actor below the world was not found.
+ */
+export function landscapeOver(physics: PhysicsWorld, point: Vec3): number | undefined {
+  const [x, y, z] = point;
+  const hit = physics.raycast(
+    [x, y, z + LANDSCAPE_LOOK],
+    [0, 0, -1],
+    LANDSCAPE_LOOK,
+    Layer.charController,
+    undefined,
+    undefined,
+    (collider) => physics.ownerOf(collider)?.kind !== 'landscape',
+  );
+  return hit && hit.point[2] > z ? hit.point[2] : undefined;
+}
 
 /**
  * An actor of the loaded area beyond the high process (the middle-high process): its AI runs,
@@ -1138,26 +1187,17 @@ export class ActorMovers {
   #unstick(mover: Mover, target: Vec3): void {
     const physics = this.#world?.physics;
     if (!physics?.queriesCurrent) return;
-    const own = mover.character.collider;
-    const [x, y, z] = target;
-    const floor = physics.raycast(
-      [x, y, z + UNSTICK_FLOOR],
-      [0, 0, -1],
-      UNSTICK_FLOOR * 2,
-      Layer.charController,
-      own,
-    );
-    if (!floor) return;
     const staged = mover.staged;
+    const [x, y] = target;
+    // Another actor standing on the point is no floor (actorGround).
+    const floor = unstickFloor(physics, target, staged.reference);
+    if (floor === undefined) return;
     const before = mover.character.feet;
-    mover.character.teleport([x, y, floor.point[2]]);
+    mover.character.teleport([x, y, floor]);
     mover.character.recover();
     const feet = mover.character.feet;
     // No good place to set it down (still deep in something, fGoodPosCheckDepth) stays no place.
-    if (
-      Math.abs(feet[2] - floor.point[2]) > UNSTICK_FLOOR / 2 ||
-      !mover.character.goodPosition(feet)
-    ) {
+    if (Math.abs(feet[2] - floor) > UNSTICK_FLOOR / 2 || !mover.character.goodPosition(feet)) {
       mover.character.teleport(before);
       return;
     }
@@ -1737,29 +1777,30 @@ export class ActorMovers {
    * through a floor or the landscape, or off the loaded area), it would fall for ever. Every
    * FALL_CHECK_MS of its fall it is looked under; with nothing there it is set back on the
    * navmesh nearest where it last stood (else there), as an actor that cannot find its way is
-   * warped. TODO(M13): the engine's own rule for an actor below the world was not found (no
-   * setting, debug text or handler names it); an actor beyond the high process has no controller
-   * and never falls (its walk keeps it on the navmesh).
+   * warped; with no floor at any of those (all under a hill), on the landscape over it. One
+   * swimming with the landscape over its head (a cell's water runs on under its hills) is as
+   * much out of the world. TODO(M13): the engine's own rule for an actor below the world was not
+   * found (no setting, debug text or handler names it); an actor beyond the high process has no
+   * controller and never falls (its walk keeps it on the navmesh).
    */
   #watchFall(mover: Mover, physics: PhysicsWorld): void {
     const character = mover.character;
-    if (character.grounded || character.swimming) {
-      if (character.grounded) mover.stood = [...character.feet];
+    if (character.grounded) {
+      mover.stood = [...character.feet];
       return;
     }
     const now = performance.now();
     if (now - mover.fallCheckedAt < FALL_CHECK_MS || !physics.queriesCurrent) return;
     mover.fallCheckedAt = now;
     const [x, y, z] = character.feet;
-    const under = physics.raycast(
-      [x, y, z + character.shape.height / 2],
-      [0, 0, -1],
-      character.shape.height / 2 + GROUND_BELOW,
-      Layer.charController,
-      character.collider,
-    );
-    if (under) return;
     const staged = mover.staged;
+    const height = character.shape.height;
+    if (character.swimming) {
+      // In water with the landscape over its head: a cell's water runs on under its hills, and
+      // one set under a hill swam up to that water's top there, under the ground for ever.
+      if (landscapeOver(physics, [x, y, z + height]) === undefined) return;
+      // Another actor's controller under it is nothing to land on (actorGround).
+    } else if (fallsOntoGround(physics, character.feet, height, staged.reference)) return;
     // Where it last stood; else (it never stood since its controller was made: made over a gap
     // in the collision, a Markarth inn's floor) the navmesh nearest where it fell, or nearest its
     // editor place: the first of them with a floor its position check finds.
@@ -1771,10 +1812,15 @@ export class ActorMovers {
       navmeshes?.nearest?.(editor, NAVMESH_REACH),
       editor,
     ];
+    // None of them with a floor (its stored place under a hill, the navmesh too far over it to
+    // be found from there): the landscape over where it fell, else over one of them. Set back
+    // on a place under the landscape, it fell again and again, never on the ground.
     const to =
       candidates.find(
         (point) => point !== undefined && this.#floorUnder(point, character) !== undefined,
-      ) ?? editor;
+      ) ??
+      this.#landscapeOver([[x, y, z], ...candidates], physics) ??
+      editor;
     staged.position = [to[0], to[1], to[2]];
     this.teleport(staged);
     this.#placeOnFloor(mover);
@@ -1788,6 +1834,16 @@ export class ActorMovers {
         staged.position.map((value) => Math.round(value)).join(', '),
       'info',
     );
+  }
+
+  /** The first of some points with the landscape over it: the point on the landscape there. */
+  #landscapeOver(points: readonly (Vec3 | undefined)[], physics: PhysicsWorld): Vec3 | undefined {
+    for (const point of points) {
+      if (!point) continue;
+      const height = landscapeOver(physics, point);
+      if (height !== undefined) return [point[0], point[1], height];
+    }
+    return undefined;
   }
 
   /** The floor's height the position check finds under a point for a controller (#add's). */
