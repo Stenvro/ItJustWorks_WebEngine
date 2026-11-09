@@ -170,6 +170,8 @@ import { WeaponBlood } from '../gameplay/combat/weapon-blood.ts';
 import { armorSkill } from '../gameplay/inventory.ts';
 import { CombatImpacts, type DecalSurfaces, type HitImpact } from './combat-impacts.ts';
 import { splattersForHit } from '../render/screen-blood-data.ts';
+import { PlayerPain, readPlayerPainSettings } from '../gameplay/player-pain.ts';
+import { rumbleGamepad } from './gamepad-input.ts';
 import type { Impact } from '../world/impact-records.ts';
 import { CombatProjectiles } from './combat-projectiles.ts';
 import type { GameSession } from './game-session.ts';
@@ -615,6 +617,8 @@ export class ActorCombat implements CombatBridge {
   readonly #brain: ActorCombatAi;
   /** When a caster's spell last counted as a blow on a victim ("caster:victim"). */
   readonly #spellHits = new Map<string, number>();
+  /** The player's pains (src/gameplay/player-pain.ts). */
+  readonly #pain = new PlayerPain();
   /** Body part data (BPTD) by form id, once read: the environment blood's limbs. */
   readonly #bodyPartData = new Map<number, Promise<readonly BodyPart[]>>();
 
@@ -3126,6 +3130,8 @@ export class ActorCombat implements CombatBridge {
       // A ragdoll its graph drives yields to the blow where it landed ([RagdollAnim]
       // bRagdollFeedback).
       this.#options.bodies.feedback(targetRef, hit.direction, hit.point);
+    } else {
+      this.#hurtPlayer(true);
     }
   }
 
@@ -5039,6 +5045,7 @@ export class ActorCombat implements CombatBridge {
           this.#options.session.ini.number('Combat', 'bPlayerAlwaysStaggered') !== 0,
       };
       this.#impulses = readImpulseSettings((name) => settings.number(name));
+      this.#pain.settings = readPlayerPainSettings((name) => settings.number(name));
       this.#combatMusic.settings = readCombatMusicSettings((name) => settings.number(name));
     });
   }
@@ -5220,10 +5227,21 @@ export class ActorCombat implements CombatBridge {
     if (this.#spellHits.size > 256) this.#spellHits.clear();
     this.#brain.hit(caster, victim);
     if (caster === PLAYER_REF && victim !== PLAYER_REF) this.#struck(victim);
-    // TODO(M13): the player's own hit blur and ouch sound (a blow's too) are not identified.
-    if (painful && this.#fighters.get(victim)?.state.life === LifeState.alive) {
+    if (victim === PLAYER_REF) this.#hurtPlayer(painful);
+    else if (painful && this.#fighters.get(victim)?.state.life === LifeState.alive) {
       this.#bark(victim, 'Hit', caster);
     }
+  }
+
+  /**
+   * A hit hurt the player: their pain (src/gameplay/player-pain.ts), the gamepad's pain rumble
+   * with the Vibration setting on; a Painless one none. The load order has no hit blur or ouch
+   * sound for the player to show besides (player-pain.ts).
+   */
+  #hurtPlayer(painful: boolean): void {
+    const rumble = this.#pain.hit(this.#clock, painful);
+    if (rumble && this.#options.session.ini.bool('Controls', 'bGamePadRumble'))
+      rumbleGamepad(rumble.strength, rumble.strength, rumble.seconds);
   }
 
   /**

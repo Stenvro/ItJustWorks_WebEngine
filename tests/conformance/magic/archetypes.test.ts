@@ -23,6 +23,7 @@ import {
   summonDistance,
   TARGET_VALUES,
 } from '../../../src/gameplay/magic/effect-rules.ts';
+import { disguises, disguiseStep } from '../../../src/gameplay/magic/disguise.ts';
 import {
   invisibilityRefraction,
   invisibilityVeil,
@@ -644,9 +645,15 @@ describe('a Magelight on a moving body (inferred: carried as a stuck arrow is)',
   });
 });
 
-describe('what the original’s archetypes do that ours do not yet', () => {
+describe('Disguise (no vanilla effect; CommonLibSSE DisguiseEffect: its own state)', () => {
   // Summon Creature's search when its way is blocked: src/ai/pathfinding.test.ts (summonPlace).
-  it.todo(
-    'Disguise: unused by vanilla, as the engine does it (its start keeps the actor as the player’s disguise; its detection check is not read yet)',
-  );
+  it('goes Initiate, Waiting while detected, Normal; failed conditions fail it for good (inferred)', () => {
+    let state = disguiseStep('initiate', true, true);
+    expect(state).toBe('waiting');
+    state = disguiseStep(state, true, false);
+    expect(disguises(state)).toBe(true);
+    state = disguiseStep(state, false, false);
+    expect(state).toBe('fail');
+    expect(disguises(disguiseStep(state, true, false))).toBe(false);
+  });
 });

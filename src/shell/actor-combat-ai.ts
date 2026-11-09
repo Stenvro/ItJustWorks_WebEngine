@@ -30,8 +30,9 @@ import {
   Assistance,
   assists,
   attackDps,
-  attacksOnSight,
+  attacksOnSightOf,
   daresHelp,
+  helpsUnweighed,
   drawConfidenceModifier,
   mayBoostConfidence,
   maySwitchTarget,
@@ -824,8 +825,13 @@ export class ActorCombatAi {
     return (
       reaction !== undefined &&
       mind.profile !== undefined &&
-      attacksOnSight(mind.profile.aggression, reaction)
+      attacksOnSightOf(mind.profile.aggression, reaction, this.#disguised(target))
     );
+  }
+
+  /** Whether a Disguise effect on an actor took hold (magic-engine.ts aiState). */
+  #disguised(reference: number): boolean {
+    return this.#options.session.scriptsReady?.magic.aiState(reference).disguised === true;
   }
 
   /**
@@ -1531,7 +1537,7 @@ export class ActorCombatAi {
     // A package that ignores combat (PKDT Ignore Combat) keeps it out of fights it would pick.
     const running = this.#options.ai?.()?.current(mind.reference);
     if (running && (running.flags & PackageFlag.ignoreCombat) !== 0) return false;
-    if (attacksOnSight(profile.aggression, reaction)) {
+    if (attacksOnSightOf(profile.aggression, reaction, this.#disguised(reference))) {
       if (mind.mode !== 'idle' || !profile.aggroRadius || !detected) return true;
       // Its aggro radius, where its package has the behaviour.
       if (running && (running.interrupts & InterruptFlag.aggroRadiusBehavior) === 0) return true;
@@ -1634,13 +1640,13 @@ export class ActorCombatAi {
   /** It takes up another's fight: it remembers `enemy` as its own. */
   /**
    * Whether one its assistance would have help dares take on `foe` (daresHelp: its confidence,
-   * the levels, the strengths). The player's teammates always do. One that does not dare keeps
-   * out of the fight and runs from it (as a cowardly spectator does): a street of townsfolk
-   * does not crowd a criminal, only the brave of them and the guards. Until both levels are
-   * read it waits.
+   * the levels, the strengths). The player's teammates and the commanded (a summon in its
+   * summoner's fight) always do (helpsUnweighed). One that does not dare keeps out of the fight
+   * and runs from it (as a cowardly spectator does): a street of townsfolk does not crowd a
+   * criminal, only the brave of them and the guards. Until both levels are read it waits.
    */
   #helps(mind: Mind, profile: Profile, foe: FighterView): boolean {
-    if (profile.teammate || mind.mode !== 'idle') return true;
+    if (helpsUnweighed(profile, mind.mode !== 'idle')) return true;
     const own = this.#levels.get(mind.reference);
     const theirs = this.#levels.get(foe.reference);
     if (own === undefined || theirs === undefined) return false;
@@ -1679,7 +1685,10 @@ export class ActorCombatAi {
   #onSight(mind: Mind, profile: Profile, magic: MagicAiState, other: number): boolean {
     if (magic.frenzied) return true;
     const reaction = this.#reaction(mind.reference, other);
-    return reaction !== undefined && attacksOnSight(profile.aggression, reaction);
+    return (
+      reaction !== undefined &&
+      attacksOnSightOf(profile.aggression, reaction, this.#disguised(other))
+    );
   }
 
   /**

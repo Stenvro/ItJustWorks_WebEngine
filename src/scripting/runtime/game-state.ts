@@ -400,6 +400,8 @@ export interface ActiveEffectState {
    * held, a value effect acting each frame (magic-engine.ts endHeld).
    */
   readonly held?: boolean;
+  /** A Disguise effect's own state (gameplay/magic/disguise.ts; none: Initiate). */
+  disguise?: 'initiate' | 'waiting' | 'normal' | 'fail';
 }
 
 /** What the magic system keeps of an actor besides the effects on it. */

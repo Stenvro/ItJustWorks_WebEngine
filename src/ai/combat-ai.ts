@@ -456,6 +456,20 @@ export function attacksOnSight(aggression: number, reaction: number): boolean {
 }
 
 /**
+ * attacksOnSight against one who may be disguised (a Disguise effect that took hold on it:
+ * src/gameplay/magic/disguise.ts): a disguised actor is attacked on sight by the frenzied only.
+ * TODO(M13): inferred, what the original's disguise hides is not read.
+ */
+export function attacksOnSightOf(
+  aggression: number,
+  reaction: number,
+  disguised: boolean,
+): boolean {
+  if (disguised) return aggression >= Aggression.frenzied;
+  return attacksOnSight(aggression, reaction);
+}
+
+/**
  * The aggression an actor fights by: its own (actor value 0), but a commanded one's (a summon,
  * a raised corpse, a commanded creature: the magic system's commander) is its commander's side
  * whatever its base's. It attacks on sight those its commander regards as enemies (its
@@ -486,7 +500,11 @@ export async function shouldAttack(
     (await runtime.actors.value(actor, ActorValue.aggression)).current,
     commander !== undefined && commander !== actor,
   );
-  return attacksOnSight(aggression, await reactionOf(runtime, actor, other));
+  return attacksOnSightOf(
+    aggression,
+    await reactionOf(runtime, actor, other),
+    runtime.magic.aiState(other).disguised,
+  );
 }
 
 /**
@@ -866,6 +884,22 @@ export function daresHelp(confidence: number, own: Measure, foe: Measure): boole
     default:
       return confidence >= Confidence.foolhardy;
   }
+}
+
+/**
+ * Whether one takes up a fight its assistance would have it help in without weighing whether
+ * it dares (daresHelp): the player's teammates, one already fighting, and a commanded actor (a
+ * summon, a raised corpse, a commanded creature): it fights for its commander whoever the foe,
+ * a neutral its commander attacked as well; a cowardly or weaker
+ * summon does not stand aside from its summoner's fight. TODO(M13): inferred that the original
+ * puts no confidence check between a commanded actor and its commander's fights (its summons
+ * join every fight their summoner is in, never one it is not).
+ */
+export function helpsUnweighed(
+  profile: { readonly teammate: boolean; readonly commanded: boolean },
+  fighting: boolean,
+): boolean {
+  return profile.teammate || profile.commanded || fighting;
 }
 
 export interface FleeInput {

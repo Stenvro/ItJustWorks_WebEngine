@@ -489,7 +489,14 @@ the player in a runtime on the game data, `--audit` reads every record).
   blow's does) unless every hostile effect of it is Painless (MGEF 0x4000000, 228 effects: the
   traps' fire and gas, Frenzy and Fury, the Nightingale's Subterfuge, the creatures' poisoning
   bites; Creation Kit "Magic Effect": the target does not cry out; on the player it also leaves
-  out the hit blur and the ouch sound, which the engine has for no hit yet: TODO(M13)).
+  out the hit blur and the ouch sound). On the player a painful hit (a blow, or a spell not all
+  Painless) gives the gamepad's pain rumble, fRumblePainStrength (0.75) on both motors for
+  fRumblePainTime (0.5 s), at most once every fPainDelay (1.5 s), with the Vibration setting on
+  (src/gameplay/player-pain.ts; TODO(M13): inferred from the settings, none of them a GMST of the
+  load order). The load order has no player hit blur or ouch sound to show: no image-space
+  modifier, sound descriptor, sound file, default object or game setting names one, and the
+  player's base has no voice type to cry out with (TODO(M13): whether the engine has a built-in
+  blur of its own).
 - Snap To Navmesh (MGEF 0x8, 92 effects: every summon, the frost walls): the target point moves
   onto the navmesh (Creation Kit "Magic Effect"): a summon's place (summonPlace) and the hazard a
   wall's burst leaves. Gory Visuals (19) is not used by the game (Creation Kit).
@@ -552,7 +559,10 @@ the player in a runtime on the game data, `--audit` reads every record).
   meanwhile has it no more); out of combat a summon (and a raised corpse) follows its commander,
   coming up from beyond fSummonedCreatureMaxFollowDist (400) to fSummonedCreatureMinFollowDist
   (250) from it (the engine package Follow Commander: src/ai/engine-packages.ts; TODO(M13): the
-  band's use is inferred); Reanimate raises a corpse (it falls again as it
+  band's use is inferred); in combat it takes up every fight its commander is in, a neutral its
+  commander attacked as well, without weighing whether it dares (combat-ai.ts helpsUnweighed),
+  and attacks its commander's enemies on sight, never the neutral (fightingAggression; TODO(M13):
+  inferred that no confidence check stands between a summon and its summoner's fights); Reanimate raises a corpse (it falls again as it
   ends); Banish ends a summoning; Bound Weapon puts its weapon in the hand; Spawn Hazard and
   Spawn Scripted Ref place their form; Disarm takes the weapons out of the hands
   (sPlayerDisarmedMessage), not a bound one nor a Can't Drop one (WEAP DNAM 0x8); Soul Trap and Actor.TrapSoul put a dead actor's soul (by level:
@@ -575,7 +585,10 @@ the player in a runtime on the game data, `--audit` reads every record).
   unless that is within fSummonDistanceCheckThreshold (750) and nearer than the place ahead.
   The engine then looks for the navmesh near that place, the way to it clear: the summon stands
   as far toward it as it could walk straight on the navmeshes (src/ai/pathfinding.ts
-  summonPlace; TODO(M13): the engine's search elsewhere when the way is blocked);
+  summonPlace); with that way blocked (it would stand less than half as far) it looks at the
+  same distance in other directions, 45° at a time either way round to behind the summoner, and
+  stands in the first clear one, else where it got farthest (TODO(M13): the order of the
+  engine's search is inferred);
   fMagicSummonMaxAppearTime (4 s: the summon appears at the latest
   then, whatever its placement art does) is not used.
 - Slow Time (src/shell/time-flow.ts): its magnitude on the player (the slowest) is the world's
@@ -625,7 +638,8 @@ the player in a runtime on the game data, `--audit` reads every record).
   (EFSH) and hit art (ARTO) on the target as the effect takes hold (with FX Persist while it
   lasts, else their own time once), the light of a Light effect over its shoulder (Candlelight;
   Magelight's projectile that strikes a surface stays there, its model and its effect's light,
-  for the effect's duration as cast: projectile-flight.ts sticksAsLight, TODO(M13) how many stay;
+  for the effect's duration as cast: projectile-flight.ts sticksAsLight; one of a caster's at a
+  time, the next that strikes ending the last: lightsGivingWay, UESP "Skyrim:Magelight";
   on a moving body (dynamic or keyframed) it is carried where it struck the body, turning with
   it (stuckOnBody; TODO(M13): inferred from a stuck arrow; a save keeps where it is, not the body);
   TODO(M13): where the engine floats it; fMagicLightForwardOffset, SideOffset and HeightOffset
@@ -662,9 +676,15 @@ the player in a runtime on the game data, `--audit` reads every record).
   strength besides (InstanceFade.refraction), bending the scene behind as refraction shapes do.
   TODO(M13): not yet looked at in the browser; the engine's fade in and out.
 - Concussion (no vanilla effect; observed in the original): its effect adds nothing to every
-  effect's part (its scripts, visuals, sounds); fConcussionTimer is never read. TODO(M13):
-  Disguise (no vanilla effect) is not run yet: in the original it keeps the actor as the
-  player's disguise while it lasts and has its own detection check, not yet read.
+  effect's part (its scripts, visuals, sounds); fConcussionTimer is never read.
+- Disguise (no vanilla effect; src/gameplay/magic/disguise.ts): its effect has a state of its
+  own (CommonLibSSE DisguiseEffect: Initiate, Waiting, Normal, Fail, kept in a save), its own
+  condition evaluation and a detection checker of its own, looked at with the conditions
+  (fActiveEffectConditionUpdateInterval). TODO(M13): the rule between the states is inferred:
+  at its first look a disguise put on while another actor detects its actor waits until no one
+  does; then it holds (Normal): those who would attack its actor on sight do not, only the
+  frenzied (combat-ai.ts attacksOnSightOf; fights already begun go on); its conditions failing
+  break it for good (Fail), though they hold again.
 - Art objects (ARTO) hang on the actor's skeleton: the art model's nodes follow the bones of
   their names each frame, its skinned shapes with them.
 - Detect Life shows its hit shader (LifeDetected's particles, through walls) on the living

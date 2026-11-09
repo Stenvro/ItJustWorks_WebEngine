@@ -7,12 +7,14 @@ import {
   Assistance,
   assists,
   attacksOnSight,
+  attacksOnSightOf,
   COMBAT_AI_DEFAULTS,
   Confidence,
   daresHelp,
   drawConfidenceModifier,
   fightingAggression,
   fleeRatio,
+  helpsUnweighed,
   readCombatAiSettings,
   selectTarget,
   shouldFlee,
@@ -52,6 +54,14 @@ describe('combat AI: entering combat', () => {
     ).toEqual([true, true, true, true]);
   });
 
+  it('attacks a disguised actor on sight only frenzied (Disguise, inferred)', () => {
+    const { enemy, neutral } = FightReaction;
+    expect(attacksOnSightOf(Aggression.aggressive, enemy, false)).toBe(true);
+    expect(attacksOnSightOf(Aggression.aggressive, enemy, true)).toBe(false);
+    expect(attacksOnSightOf(Aggression.veryAggressive, neutral, true)).toBe(false);
+    expect(attacksOnSightOf(Aggression.frenzied, enemy, true)).toBe(true);
+  });
+
   it('fights a commanded actor by its commander’s side: their enemies, never the neutral', () => {
     const { enemy, neutral } = FightReaction;
     for (const own of [
@@ -65,6 +75,18 @@ describe('combat AI: entering combat', () => {
       expect(attacksOnSight(aggression, neutral)).toBe(false);
       expect(fightingAggression(own, false)).toBe(own);
     }
+  });
+
+  it('takes up its commander’s fight unweighed: a summon helps whatever its confidence', () => {
+    // A cowardly summon would never dare by its confidence; commanded, it takes the fight up.
+    const own = { level: 1, strength: 1 };
+    const foe = { level: 50, strength: 100 };
+    expect(daresHelp(Confidence.cowardly, own, foe)).toBe(false);
+    expect(helpsUnweighed({ teammate: false, commanded: true }, false)).toBe(true);
+    expect(helpsUnweighed({ teammate: true, commanded: false }, false)).toBe(true);
+    expect(helpsUnweighed({ teammate: false, commanded: false }, true)).toBe(true);
+    // Neither commanded nor a teammate nor fighting: its daring decides.
+    expect(helpsUnweighed({ teammate: false, commanded: false }, false)).toBe(false);
   });
 
   it('helps allies, or friends and allies, by assistance', () => {

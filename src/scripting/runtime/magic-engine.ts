@@ -52,6 +52,7 @@ import {
   type EffectSettings,
 } from '../../gameplay/magic/effect-rules.ts';
 import { effectItemCost } from '../../gameplay/magic/casting.ts';
+import { disguises, disguiseStep } from '../../gameplay/magic/disguise.ts';
 import {
   INVISIBILITY_DEFAULTS,
   INVISIBILITY_SETTING_NAMES,
@@ -162,6 +163,11 @@ export interface MagicAiState {
   readonly paralyzed: boolean;
   readonly invisible: boolean;
   readonly ethereal: boolean;
+  /**
+   * A Disguise effect on it has taken hold (gameplay/magic/disguise.ts): those who would attack
+   * it on sight do not.
+   */
+  readonly disguised: boolean;
 }
 
 /** ActorTypeNPC and ActorTypeUndead (Skyrim.esm KYWD): black souls; Turn Undead's targets. */
@@ -505,10 +511,12 @@ export class MagicEngine {
     // The archetypes of its active effects, gathered in one walk over the effects (asked of
     // every loaded actor each frame: a walk per archetype was 2 % of a Whiterun frame).
     const archetypes = new Set<number>();
+    let disguised = false;
     for (const [, entry] of this.effectsOn(actor)) {
       if (entry.inactive) continue;
       const archetype = this.#effects.get(entry.effect)?.archetype;
       if (archetype !== undefined) archetypes.add(archetype);
+      if (archetype === EffectArchetype.disguise && disguises(entry.disguise)) disguised = true;
     }
     const has = (archetype: number): boolean => archetypes.has(archetype);
     return {
@@ -520,6 +528,7 @@ export class MagicEngine {
       paralyzed: has(EffectArchetype.paralysis),
       invisible: has(EffectArchetype.invisibility),
       ethereal: has(EffectArchetype.etherealize),
+      disguised,
     };
   }
 
@@ -1603,7 +1612,7 @@ export class MagicEngine {
       // Cloaks act each cloak interval (#cloaks); Soul Trap as its target dies (died). Concussion
       // (observed in the original: its effect adds nothing to every effect's part; no vanilla
       // effect uses it; fConcussionTimer is never read), Telekinesis, Grab Actor, Light, Detect
-      // Life, Guide, Disguise (TODO(M13): the original's own Disguise part is not read yet),
+      // Life, Guide, Disguise (its state a look at a time: #pulse, gameplay/magic/disguise.ts),
       // Slow Time, Etherealize, Command Summoned, Script: their state is the effect itself
       // (aiState, timeMultiplier) and their scripts; what they show (lights, Detect Life's
       // shader, Clairvoyance's trail) the world's magicEffect shows (src/shell/actor-effects.ts).
@@ -2343,9 +2352,31 @@ export class MagicEngine {
       if (!effect) continue;
       const holds = await this.#conditionsHold(key, entry);
       if (!runtime.state.activeEffects.has(key) || this.#ending.has(key)) continue;
+      // A Disguise looks with its own detection checker too; failed, it stays failed though its
+      // conditions hold again (gameplay/magic/disguise.ts).
+      if (effect.archetype === EffectArchetype.disguise)
+        entry.disguise = disguiseStep(
+          entry.disguise ?? 'initiate',
+          holds,
+          this.#seen(entry.target),
+        );
       if (holds && entry.inactive) await this.#activate(key, entry, effect);
       else if (!holds && !entry.inactive) await this.#deactivate(key, entry, false);
     }
+  }
+
+  /**
+   * A Disguise's detection checker: whether another loaded actor detects `actor` now (the
+   * world's detection: src/shell/actor-senses.ts). TODO(M13): inferred, the checker's own rule
+   * is not read.
+   */
+  #seen(actor: number): boolean {
+    const world = this.#runtime.world;
+    if (!world.detects) return false;
+    for (const reference of world.loadedReferences?.() ?? []) {
+      if (reference !== actor && world.detects(reference, actor)) return true;
+    }
+    return false;
   }
 
   /** The cloaks on actors reach those near ([General] fCloakEffectUpdateInterval). */
