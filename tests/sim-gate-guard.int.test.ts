@@ -3,6 +3,10 @@
 // WhiterunGateGuard2Travel) wait by the gate's other side in Tamriel. WhiterunLocation lists them
 // (CWSoldier references), and the plains outside the gate belong to it: the actors away ask them
 // as the player comes there, so they stand by the gate, and the first comes to stop the player.
+// WhiterunGateGuardForcegreet (ForceGreet template) travels to its input 75, "Forcegreet
+// Distance", the player with radius 500 (the template's own is 300), while
+// GetWithinPackageLocation(75) is false; its ForceGreet runs once that turns true, so the guard
+// stops the player from about 500 units, not walking up close.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { hasGamedata, openSim, PLAYER_REF, type Sim } from './helpers/sim.ts';
@@ -15,6 +19,10 @@ const GATE_GUARD_2 = 0xdc9e5;
 const WAIT_MARKER = 0xd1986;
 /** DialogueWhiterunGuardGateStopBranchTopic: the forcegreet's topic. */
 const GATE_STOP_TOPIC = 0xd197a;
+/** WhiterunGateGuardForcegreet's input 75, Forcegreet Distance: the player, radius 500. */
+const FORCEGREET_DISTANCE = 500;
+/** Slack over that radius for the step a body takes and the height between the two. */
+const ARRIVAL_TOLERANCE = 32;
 
 describe.skipIf(!hasGamedata())('Whiterun’s gate guards', () => {
   let sim: Sim;
@@ -55,6 +63,13 @@ describe.skipIf(!hasGamedata())('Whiterun’s gate guards', () => {
     const opened = sim.menus().filter((menu) => menu.menu === 'Dialogue Menu');
     expect(opened.at(-1)).toMatchObject({ reference: GATE_GUARD, opening: GATE_STOP_TOPIC });
     expect(topics).toContain("I'll come back later.");
-    expect(await sim.distance(GATE_GUARD, PLAYER_REF)).toBeLessThan(200);
+    // He came from his wait marker toward the player, into his Forcegreet Distance.
+    const fromMarker = await sim.distance(WAIT_MARKER, PLAYER_REF);
+    const fromGuard = await sim.distance(GATE_GUARD, PLAYER_REF);
+    if (fromMarker === undefined || fromGuard === undefined) throw new Error('no distance');
+    expect(fromMarker).toBeGreaterThan(FORCEGREET_DISTANCE + 300);
+    expect(await sim.distance(GATE_GUARD, WAIT_MARKER)).toBeGreaterThan(300);
+    expect(fromGuard).toBeLessThan(fromMarker - 300);
+    expect(fromGuard).toBeLessThanOrEqual(FORCEGREET_DISTANCE + ARRIVAL_TOLERANCE);
   }, 120_000);
 });
