@@ -395,7 +395,7 @@ describe.skipIf(!hasGamedata())('killing a wild creature (headless simulation)',
     expect(owed).toBe(0);
   });
 
-  it('a guard who only hears an NPC’s alarm answers it', async () => {
+  it('a guard who only hears an NPC’s alarm answers it; the criminal flees it', async () => {
     const { runtime } = sim;
     const whiterun = await sim.formId('FACT', 'CrimeFactionWhiterun');
     const placedGuard = await sim.place(await guardBase(sim, whiterun), PLAYER_REF);
@@ -403,8 +403,11 @@ describe.skipIf(!hasGamedata())('killing a wild creature (headless simulation)',
     expect(await sim.until(() => sim.actor(guard) !== undefined, 20)).toBe(true);
     expect(await runtime.crime.isGuard(placedGuard)).toBe(true);
     const citizens: number[] = [];
+    const { stage } = sim.world;
     for (const actor of sim.actors()) {
       if (actor.dead || actor.reference === guard) continue;
+      // Those still fighting the wolf flee no guard: the combat AI has them.
+      if (stage.combat.engaged(actor.reference)) continue;
       if ((await runtime.actors.crimeFaction(actor.reference)) !== whiterun) continue;
       if (!(await runtime.crime.isGuard(actor.reference))) citizens.push(actor.reference);
     }
@@ -420,6 +423,13 @@ describe.skipIf(!hasGamedata())('killing a wild creature (headless simulation)',
     runtime.world.startCombat = (actor, target) => {
       started.push([actor, target]);
     };
+    const { ai } = stage;
+    const push = ai.pushEngine.bind(ai);
+    const pushed: [number, string, number | undefined][] = [];
+    ai.pushEngine = (reference, kind, runner, target) => {
+      pushed.push([reference, kind, target]);
+      return push(reference, kind, runner, target);
+    };
     // Only the victim sees it: the guard beside them hears the alarm.
     await runtime.crime.commit(CrimeType.steal, criminal, {
       act: 'steal',
@@ -429,8 +439,11 @@ describe.skipIf(!hasGamedata())('killing a wild creature (headless simulation)',
     });
     await sim.step(0.5);
     expect(started).toContainEqual([placedGuard, criminal]);
+    // The criminal, fighting no one, flees the guard that answers (the engine's Flee package).
+    expect(pushed).toContainEqual([criminal, 'flee', placedGuard]);
+    ai.pushEngine = push;
     runtime.world.startCombat = start;
-  });
+  }, 120_000);
 
   it('SetPlayerEnemy lasts iCrimeEnemyCoolDownTimer (24) game hours (original)', async () => {
     const { runtime } = sim;

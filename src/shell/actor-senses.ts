@@ -1338,13 +1338,17 @@ export class ActorSenses implements ScriptSenses {
    * An actor reacts to something, if it may: its AI runs, it is not talking, in a scene or in
    * furniture, nor reacting already, and its package lets it (its interrupt flags: reactions to
    * the player's actions, greeting corpses, observing combat). Its override list for the
-   * situation runs if it has one; else the engine's reaction.
+   * situation runs if it has one; else the engine's reaction. Not one on a crime's Alarm or
+   * fleeing its guard (src/ai/engine-packages.ts): it knows what it is after or away from, and a
+   * search would leave that package (inferred, TODO(M13)).
    */
   #react(kind: ReactionKind, actor: number, at: Vec3, subject: number | undefined): boolean {
     const { movers, furniture, ai, session } = this.#options;
     const runtime = session.scriptsReady;
     if (!runtime || this.reacting(actor) !== undefined || this.inCombat(actor)) return false;
     if (!movers.runsAi(actor) || furniture.holds(actor)) return false;
+    const engine = ai.engineOf(actor);
+    if (engine === 'alarm' || engine === 'flee') return false;
     if (runtime.dialogueSpeaker === actor || runtime.scenes.sceneOf(actor) !== undefined)
       return false;
     const running = ai.current(actor);

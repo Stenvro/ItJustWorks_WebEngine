@@ -2,12 +2,15 @@
 // package, its start's test, its spot away from the player.
 
 import { describe, expect, it } from 'vitest';
-import { pack, packageActor, procedure, tick } from '../../tests/helpers/packages.ts';
+import { lasting, pack, packageActor, procedure, tick } from '../../tests/helpers/packages.ts';
 import {
+  ALARM_SECONDS,
+  alarmPackage,
   avoidPlayer,
   avoidsPlayer,
   awayFrom,
   Breath,
+  fleeFrom,
   followCommander,
   followSpot,
   followsUp,
@@ -243,5 +246,118 @@ describe('what starts Get Up and Surface', () => {
     // Its head out, its breath is full again.
     expect(breath.step(1, false, 0, 100, settings)).toBe(false);
     expect(breath.left).toBeUndefined();
+  });
+});
+
+describe('an NPC criminal, the guard that answers', () => {
+  const CRIMINAL = 0x300;
+  const GUARD = 0x301;
+
+  it('Alarm: the guard runs to the criminal and fights it once it detects it', async () => {
+    const at: { here: [number, number, number] } = { here: [3000, 0, 0] };
+    const criminal: [number, number, number] = [0, 0, 0];
+    const fights: [number, number][] = [];
+    const travels: [number, number, number][] = [];
+    const { actor } = packageActor(
+      [pack(1, procedure('lasting'))],
+      { lasting },
+      {
+        mind: { livePosition: () => criminal },
+        body: {
+          position: () => at.here,
+          // Each leg takes it halfway there.
+          travel: (to) => {
+            travels.push([to[0], to[1], to[2]]);
+            at.here = [(at.here[0] + to[0]) / 2, (at.here[1] + to[1]) / 2, to[2]];
+            return Promise.resolve(true);
+          },
+        },
+      },
+    );
+    await tick(actor, 1);
+    const hooks = {
+      detects: () => Math.hypot(at.here[0] - criminal[0], at.here[1] - criminal[1]) < 500,
+      fight: (guard: number, other: number) => {
+        fights.push([guard, other]);
+      },
+    };
+    expect(actor.push('alarm', alarmPackage(hooks), CRIMINAL)).toBe(true);
+    await tick(actor, 0.25);
+    // Not seen yet: no fight, it heads for the criminal.
+    expect(fights).toEqual([]);
+    expect(travels[0]).toEqual([0, 0, 0]);
+    for (let i = 0; i < 8 && fights.length === 0; i++) await tick(actor, 0.25);
+    expect(fights.map(([, other]) => other)).toEqual([CRIMINAL]);
+    expect(at.here[0]).toBeLessThan(500);
+    await tick(actor, 0.25);
+    expect(actor.engine()).toBeUndefined();
+  });
+
+  it('Alarm gives up on a dead criminal, or one it does not find in its time', async () => {
+    let alive = false;
+    const fights: number[] = [];
+    const { actor } = packageActor(
+      [pack(1, procedure('lasting'))],
+      { lasting },
+      {
+        mind: {
+          livePosition: () => [5000, 0, 0],
+          alive: () => Promise.resolve(alive),
+        },
+        body: { position: () => [0, 0, 0], travel: () => new Promise<boolean>(() => undefined) },
+      },
+    );
+    await tick(actor, 1);
+    const hooks = {
+      detects: () => false,
+      fight: (_guard: number, other: number) => fights.push(other),
+    };
+    expect(actor.push('alarm', alarmPackage(hooks), CRIMINAL)).toBe(true);
+    await tick(actor, 0.25);
+    expect(actor.engine()).toBeUndefined();
+    alive = true;
+    expect(actor.push('alarm', alarmPackage(hooks), CRIMINAL)).toBe(true);
+    for (let i = 0; i < ALARM_SECONDS * 4 - 2; i++) await tick(actor, 0.25);
+    expect(actor.engine()).toBe('alarm');
+    for (let i = 0; i < 4; i++) await tick(actor, 0.25);
+    expect(actor.engine()).toBeUndefined();
+    expect(fights).toEqual([]);
+  });
+
+  it('Flee: the criminal runs beyond fFleeDoneDistanceExterior of the guard, fleeing until safe', async () => {
+    const at: { here: [number, number, number] } = { here: [0, 0, 0] };
+    const travels: [number, number, number][] = [];
+    const fleeing: boolean[] = [];
+    const { actor } = packageActor(
+      [pack(1, procedure('lasting'))],
+      { lasting },
+      {
+        mind: { livePosition: (reference) => (reference === GUARD ? [500, 0, 0] : at.here) },
+        body: {
+          position: () => at.here,
+          travel: (to) => {
+            travels.push([to[0], to[1], to[2]]);
+            at.here = [to[0], to[1], to[2]];
+            return Promise.resolve(true);
+          },
+          fleeing: (on) => {
+            fleeing.push(on);
+          },
+        },
+      },
+    );
+    await tick(actor, 1);
+    expect(actor.push('flee', fleeFrom, GUARD)).toBe(true);
+    await tick(actor, 0.5);
+    // On the guard's far side, the done distance (2500) and its arrival from it.
+    expect(travels).toHaveLength(1);
+    expect(travels[0]?.[0]).toBeLessThan(500 - 2500);
+    expect(fleeing).toEqual([true]);
+    // Safe after fFleeIsSafeTimer (30 s) beyond it: the flight ends, its package goes on.
+    for (let i = 0; i < 50; i++) await tick(actor, 0.5);
+    expect(actor.engine()).toBe('flee');
+    for (let i = 0; i < 14; i++) await tick(actor, 0.5);
+    expect(actor.engine()).toBeUndefined();
+    expect(fleeing).toEqual([true, false]);
   });
 });

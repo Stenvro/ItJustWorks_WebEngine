@@ -16,7 +16,9 @@
 // start weighs beyond detection and combat.
 
 import type { AiSettings } from './ai-settings.ts';
-import type { EnginePackage, EngineRunner } from './package-runtime.ts';
+import { sameSpace } from './package-start.ts';
+import type { EngineRun, EnginePackage, EngineRunner } from './package-runtime.ts';
+import { fleeSafe } from './procedure-runs.ts';
 
 type Vec3 = readonly [number, number, number];
 
@@ -353,5 +355,142 @@ export const followCommander: EngineRunner = async (run) => {
     const walkable = run.mind.walkable ? run.mind.walkable(run.actor, spot) : spot;
     await run.body.travel(walkable ?? [there[0], there[1], there[2]], 'run', ARRIVE);
     await run.wait(STEP);
+  }
+};
+
+// --- Crime: Alarm and the criminal's Flee ----------------------------------------------------------
+//
+// An NPC's crime (docs/gameplay.md, "Crimes and witnesses"; the stage: src/shell/actor-crime.ts):
+// each guard that answers it (one that witnessed it, else the first guard of the crime's faction
+// or its crime group to hear the alarm; iNumberGuardsCrimeResponse at most) fights the criminal,
+// and the criminal, fighting no one, is given Flee aimed at the first of them (the engine's own
+// kAlarm and kFlee packages, CommonLibSSE PACKAGE_TYPE). TODO(M13): Alarm is built but not yet
+// given to the guard: in the headless Bannered Mare it did not find the fleeing criminal in 20 s,
+// so the guard fights at once and the combat AI's search takes it there (actor-crime.ts).
+// - **Alarm.** Once it detects the criminal it starts combat with it and the package ends (the
+//   combat AI takes it on); until then it runs to where the criminal is now, heading anew as the
+//   criminal gets away from the spot it heads for. It gives up once the criminal is dead, in
+//   another cell or worldspace, gone from the stage, or not found in ALARM_SECONDS.
+// - **Flee.** The criminal runs from the guard, counting as fleeing (IsFleeing), until it has
+//   been beyond fFleeDoneDistanceExterior (inside: fFleeDoneDistanceInterior) of it for
+//   fFleeIsSafeTimer (the Flee procedure's rule: procedure-runs.ts fleeSafe), running off again
+//   whenever the guard comes nearer; the guard dead or in another space, it is over. Caught, the
+//   guard's combat takes it on (it fights or flees by its confidence, the combat AI's).
+//
+// Inferred, TODO(M13): the original's two procedures were not followed: the Alarm's way to the
+// criminal (ours: its live position, as the alarm tells where the crime was), its giving up
+// (ALARM_SECONDS), Flee's spot (ours: on the far side of the guard, the done distance from it,
+// turned up to 60° where the straight one is not walkable) and whether it flees only a guard it
+// detects (ours: as the guard answers).
+
+/** The Alarm runs to within this of the criminal (units; ours). */
+const ALARM_REACH = 128;
+/** The criminal this far from the spot the Alarm heads for, it heads anew (units; ours). */
+const ALARM_RETARGET = 256;
+/** The Alarm gives up after this long without detecting the criminal (real seconds; ours). */
+export const ALARM_SECONDS = 60;
+/** A fleeing criminal looks again this often whether it is safe (real seconds; ours). */
+const FLEE_LOOK = 0.5;
+/** It runs off again at most this often in one flight before it holds where it got to (ours). */
+const FLEE_TRIES = 8;
+
+/** Where a reference is now for one going after it or away from it: undefined if dead or elsewhere. */
+async function presentAt(run: EngineRun, reference: number): Promise<Vec3 | undefined> {
+  if (run.mind.alive && !(await run.mind.alive(reference))) return undefined;
+  const [self, other] = await Promise.all([
+    run.mind.placement(run.actor),
+    run.mind.placement(reference),
+  ]);
+  if (self?.space && other?.space && !sameSpace(self.space, other.space)) return undefined;
+  return run.mind.livePosition?.(reference) ?? other?.position;
+}
+
+/** What the Alarm asks the stage: detection, and the fight it starts. */
+export interface AlarmHooks {
+  /** Whether the actor detects the other now. */
+  detects(actor: number, other: number): boolean;
+  /** The actor starts combat with the other (the combat AI). */
+  fight(actor: number, other: number): void;
+}
+
+/** Alarm: the guard goes after the criminal (its target) and fights it once it detects it. */
+export function alarmPackage(hooks: AlarmHooks): EngineRunner {
+  return async (run) => {
+    const criminal = run.target;
+    if (criminal === undefined) return;
+    let leg: { goal: Vec3; done: boolean } | undefined;
+    const halt = (): void => {
+      if (leg && !leg.done && !run.stopped()) run.body.stop();
+    };
+    for (let searched = 0; !run.stopped(); searched += STEP) {
+      if (hooks.detects(run.actor, criminal)) {
+        halt();
+        hooks.fight(run.actor, criminal);
+        return;
+      }
+      const there = await presentAt(run, criminal);
+      const here = run.body.position();
+      if (!there || !here || searched >= ALARM_SECONDS || run.stopped()) {
+        halt();
+        return;
+      }
+      const near = flat(here, there) <= ALARM_REACH;
+      if (!near && (!leg || leg.done || flat(leg.goal, there) > ALARM_RETARGET)) {
+        halt();
+        const current = { goal: there, done: false };
+        leg = current;
+        const arrived = (): void => {
+          current.done = true;
+        };
+        void run.body
+          .travel([there[0], there[1], there[2]], 'run', ALARM_REACH)
+          .then(arrived, arrived);
+      } else if (near) {
+        run.body.face(headingTo(here, there));
+      }
+      await run.wait(STEP);
+    }
+  };
+}
+
+/** Flee: the criminal runs from the guard answering its crime (its target) until it is safe. */
+export const fleeFrom: EngineRunner = async (run) => {
+  const threat = run.target;
+  if (threat === undefined) return;
+  run.body.fleeing?.(true);
+  try {
+    const own = await run.mind.placement(run.actor);
+    const interior = own?.space?.kind === 'interior';
+    const done = interior
+      ? run.settings.fleeDoneDistanceInterior
+      : run.settings.fleeDoneDistanceExterior;
+    let safeFor = 0;
+    let tries = 0;
+    while (!run.stopped()) {
+      const here = run.body.position();
+      const from = await presentAt(run, threat);
+      if (!here || !from) return;
+      const distance = flat(here, from);
+      if (fleeSafe(distance, safeFor, interior, run.settings)) return;
+      if (distance >= done) {
+        await run.wait(FLEE_LOOK);
+        safeFor += FLEE_LOOK;
+        continue;
+      }
+      safeFor = 0;
+      let spot: Vec3 | undefined;
+      if (tries < FLEE_TRIES) {
+        tries++;
+        for (const turn of TURNS) {
+          const point = awayFrom(here, from, done + ARRIVE, turn);
+          spot = run.mind.walkable ? run.mind.walkable(run.actor, point) : point;
+          if (spot) break;
+        }
+      }
+      if (spot) await run.body.travel(spot, 'run', ARRIVE);
+      else await run.wait(FLEE_LOOK);
+    }
+  } finally {
+    run.body.fleeing?.(false);
   }
 };

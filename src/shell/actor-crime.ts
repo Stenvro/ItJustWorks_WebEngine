@@ -11,7 +11,7 @@
 // escape.
 
 import { aiSettingsOf } from '../ai/ai-settings.ts';
-import { StealWarnings, warnThief } from '../ai/engine-packages.ts';
+import { fleeFrom, StealWarnings, warnThief } from '../ai/engine-packages.ts';
 import {
   CrimeType,
   guardAnswers,
@@ -237,15 +237,18 @@ export class ActorCrime {
    * those who hear it (within the alarm's reach, of the crime's faction or its crime group, not
    * fighting) need not see the crime, but only the first of them answers it; a guard who
    * witnessed it answers too, and no more than iNumberGuardsCrimeResponse answer one criminal.
-   * TODO(M13): the criminal not fighting flees the guard that answers (the original's rule; the
-   * stage has no flee to start from here), and how the answering guard's Alarm package ends up
-   * attacking an NPC (here: at once).
+   * Each guard that answers fights the criminal at once (the combat AI's search takes one that
+   * only heard it to where the criminal is); the criminal, fighting no one, flees the first of
+   * them (observed in the original; the engine's Flee package, src/ai/engine-packages.ts).
+   * TODO(M13): the guard's Alarm package. Built as a procedure that runs to the criminal and fights
+   * it once it detects it (alarmPackage), it did not find the fleeing criminal in a headless
+   * Bannered Mare in 20 s, so the combat AI's search keeps that part (docs/gameplay.md).
    */
   async #npcCrime(
     runtime: ScriptRuntime,
     event: Extract<CrimeEvent, { readonly kind: 'npcCrime' }>,
   ): Promise<void> {
-    const { senses, engaged } = this.#options;
+    const { senses, engaged, ai } = this.#options;
     const { criminal } = event;
     let hearers: readonly number[] = [];
     for (const witness of event.witnesses) {
@@ -269,10 +272,23 @@ export class ActorCrime {
     this.#answering.set(criminal, answering);
     for (const guard of answering) if (engaged?.(guard) !== true) answering.delete(guard);
     const limit = aiSettingsOf(this.#options.session).guardsCrimeResponse;
+    let first: number | undefined;
     for (const guard of guards) {
       if (!guardAnswers(answering.size, limit)) break;
       answering.add(guard);
+      first ??= guard;
       runtime.world.startCombat?.(guard, criminal);
+    }
+    // The criminal, fighting no one, flees the guard that answers.
+    const staged = this.#options.get(criminal);
+    if (
+      first !== undefined &&
+      criminal !== PLAYER_REF &&
+      staged !== undefined &&
+      !staged.dead &&
+      engaged?.(criminal) !== true
+    ) {
+      ai.pushEngine(criminal, 'flee', fleeFrom, first);
     }
   }
 
