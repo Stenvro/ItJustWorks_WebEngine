@@ -2277,7 +2277,11 @@ meanwhile.
   reach (fists: the race's unarmed reach, RACE DATA @100; a bash fCombatBashReach) × the
   attacker's size, from its feet to the target's shape, inside the attack data's strike angle
   (ATKD: 50° for attackStart, 35° for power attacks, 85° about ±90° for mounted side swings); it
-  hits the nearest such actor (every one with Sweep), each once an attack. With nothing to hit
+  hits the one it is aimed at (its combat target, the player's aimed actor) where it reaches it,
+  else the nearest such actor (every one with Sweep), each once an attack; a corpse its cell
+  placed dead is no such actor. TODO(M13): the aimed one first is inferred from the player's own
+  aim, which keeps its current target first; by the nearest alone, in Helgen Keep the officer's
+  blows at the player dead ahead fell on the soldier at his side. With nothing to hit
   but a wall in reach (a ray at the chest on L_WEAPON) the attacker recoils. TODO(M13): the
   engine measures from bounds; its cone's exact shape is not documented.
 - **Damage** (`damage.ts`; UESP "Damage", "Block", "Sneak", "Difficulty"): the equip system's
