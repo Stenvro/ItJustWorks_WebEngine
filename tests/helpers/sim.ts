@@ -66,8 +66,10 @@ export interface OpenOptions {
   readonly opening?: boolean;
   /** The seed of the simulation's dice. */
   readonly seed?: number;
-  /** Exterior cells loaded on each side of the player's (default 2, uGridsToLoad 5). */
+  /** Exterior cells loaded on each side of the player's (default: half of uGridsToLoad). */
   readonly gridRadius?: number;
+  /** INI settings of the player's own ("Section:key" to a number), set before the game starts. */
+  readonly ini?: Readonly<Record<string, number>>;
   /**
    * The game files' reads come back up to this many event-loop turns late, at random (a disk
    * whose timing varies: what the simulation does must not change with it).
@@ -169,6 +171,7 @@ export async function openSim(options: OpenOptions = {}): Promise<Sim> {
     ...(options.opening !== undefined && { opening: options.opening }),
     ...(options.seed !== undefined && { seed: options.seed }),
     ...(options.gridRadius !== undefined && { gridRadius: options.gridRadius }),
+    ...(options.ini && { ini: options.ini }),
   });
   const sim = new Sim(world, vfs, await world.session.db);
   if (options.day !== undefined) sim.setDay(options.day);
@@ -1330,6 +1333,15 @@ export class Sim {
       .of('hud')
       .filter((record) => record.type === 'notification')
       .map((record) => record.text);
+  }
+
+  /**
+   * The name the crosshair's activation prompt shows for what it rests on now (an alias's
+   * display name, else its own); undefined while it rests on nothing.
+   */
+  crosshair(): string | undefined {
+    const shown = this.world.log.of('hud').findLast((record) => record.type === 'target');
+    return shown?.text === '' ? undefined : shown?.text;
   }
 
   /** The sounds asked for (descriptors and sounds by editor id). */
