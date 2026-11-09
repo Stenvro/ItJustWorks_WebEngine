@@ -52,14 +52,31 @@ interface HolderBody {
   readonly world: Float32Array;
   /** Not drawn now (disabled, the other person's view). */
   readonly hidden: boolean;
+  /** The actor is female (her skeleton's hands have a scale of their own). */
+  readonly female: boolean;
+}
+
+/** The hands' nodes: a female actor's are scaled 1 while an object hangs on or under one. */
+const HANDS = ['NPC R Hand [RHnd]', 'NPC L Hand [LHnd]'] as const;
+
+/** Whether a node of a pose's skeleton is a hand or lies under one. */
+function inHand(pose: ActorPose, node: string): boolean {
+  const { nodeByName, rig } = pose.skeleton;
+  const hands = new Set(HANDS.map((name) => nodeByName.get(name.toLowerCase())));
+  for (let at = nodeByName.get(node) ?? -1; at >= 0; at = rig.parents[at] ?? -1) {
+    if (hands.has(at)) return true;
+  }
+  return false;
 }
 
 /** An object's model hung on its holder. */
 interface Attached {
   readonly side: Side;
   readonly key: object;
-  /** The node its "Prn" names (lower case; undefined: none, it shows nowhere). */
-  readonly node: string | undefined;
+  /** The node its "Prn" names (lower case), a node of the holder's skeleton. */
+  readonly node: string;
+  /** It hangs on a female actor's hand (or under one): her hands are scaled 1 meanwhile. */
+  readonly femaleHand: boolean;
   /** Its draws (none headless). */
   readonly scene: GpuScene | undefined;
   readonly world: Float32Array;
@@ -173,8 +190,7 @@ export class ActorAnimObjects {
         gone.add(entry.actor);
         continue;
       }
-      const node =
-        attached.node === undefined ? undefined : body.pose.skeleton.nodeByName.get(attached.node);
+      const node = body.pose.skeleton.nodeByName.get(attached.node);
       attached.visibility.hidden = !entry.shown || body.hidden || node === undefined;
       if (node === undefined || attached.visibility.hidden) continue;
       multiply(body.world, body.pose.worlds.subarray(node * 16, node * 16 + 16), attached.world);
@@ -262,8 +278,11 @@ export class ActorAnimObjects {
 
   /**
    * Loads an object's model and hangs it on its holder as shown now: on the node its "Prn"
-   * names (a model without one, or a holder without that node, shows nowhere, as the engine
-   * leaves it unattached). A holder without 3D keeps the entry without a model.
+   * names. A model without one is left unattached and never shows, as in the engine; so is one
+   * whose node the holder's skeleton lacks (inferred, TODO(M13): the engine's attach finds no
+   * node to hang it on). A holder without 3D keeps the entry without a model. A female actor
+   * holding one on a hand (or a node under one) has both hands' scale set to 1 (the female
+   * skeletons give them 0.852) until it goes (observed in the original).
    */
   async #attach(entry: Entry): Promise<void> {
     const generation = this.#generation;
@@ -285,15 +304,17 @@ export class ActorAnimObjects {
         ? 'first'
         : 'body';
     const body = this.#body(entry.actor, side);
+    const node = model?.attachTo?.toLowerCase();
     let attached: Attached | undefined;
-    if (model && body) {
+    if (model && body && node !== undefined && body.pose.skeleton.nodeByName.has(node)) {
       const world = new Float32Array(16);
       const motion: InstanceMotion = { version: 0 };
       const visibility: InstanceVisibility = { hidden: true };
       attached = {
         side,
         key: body.key,
-        node: model.attachTo?.toLowerCase(),
+        node,
+        femaleHand: body.female && inHand(body.pose, node),
         // In the first-person arms' hands: drawn in first person's view, as they are.
         scene: renderer.scene.createScene([
           { model, world, motion, visibility, ...(side === 'first' && { firstPerson: true }) },
@@ -306,6 +327,10 @@ export class ActorAnimObjects {
     if (!this.#list.loaded(entry, attached)) {
       attached?.scene?.destroy();
       return;
+    }
+    // In a female actor's hand: her hands at their full size while she holds it.
+    if (attached?.femaleHand && body) {
+      for (const hand of HANDS) body.pose.setScale(hand, 1);
     }
     // The player holding one cannot switch the camera (the engine turns the control off).
     if (attached && entry.actor === PLAYER_REF) this.#playerHolds = true;
@@ -331,12 +356,24 @@ export class ActorAnimObjects {
     return pending;
   }
 
-  /** Objects taken away: their models go; the player holding none may switch the camera. */
+  /**
+   * Objects taken away: their models go; a female actor holding none in a hand any more has
+   * her hands' own scale back; the player holding none may switch the camera.
+   */
   #unloaded(entries: readonly Entry[]): void {
     let player = false;
     for (const entry of entries) {
-      entry.attached?.scene?.destroy();
-      if (entry.actor === PLAYER_REF && entry.attached) player = true;
+      const attached = entry.attached;
+      attached?.scene?.destroy();
+      if (entry.actor === PLAYER_REF && attached) player = true;
+      if (!attached?.femaleHand) continue;
+      const stillHeld = this.#list
+        .of(entry.actor)
+        .some((held) => held.attached?.femaleHand === true && held.attached.key === attached.key);
+      const body = this.#body(entry.actor, attached.side);
+      if (stillHeld || body?.key !== attached.key) continue;
+      // Back to the skeleton's own (0.852).
+      for (const hand of HANDS) body.pose.setScale(hand, undefined);
     }
     if (player && this.#list.of(PLAYER_REF).every((entry) => !entry.attached)) {
       this.#playerHolds = false;
@@ -368,6 +405,7 @@ export class ActorAnimObjects {
             pose: arms.pose,
             world: arms.world,
             hidden: view.play.bodyShown || view.play.dead,
+            female: avatar.body.look.female,
           }
         );
       }
@@ -376,6 +414,7 @@ export class ActorAnimObjects {
         pose: avatar.body.pose,
         world: avatar.placement.world,
         hidden: !view.play.bodyShown,
+        female: avatar.body.look.female,
       };
     }
     const staged = this.#options.staged(reference);
@@ -386,6 +425,7 @@ export class ActorAnimObjects {
       pose: staged.placed.pose,
       world,
       hidden: staged.visibility.hidden,
+      female: staged.placed.look.female,
     };
   }
 }

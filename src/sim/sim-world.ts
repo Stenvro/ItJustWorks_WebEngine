@@ -1174,7 +1174,10 @@ export class SimWorld {
       yaw,
     );
     if (stance) player.keepStance(stance);
-    player.povSwitchAllowed = () => povSwitchAllowed(this.runtime.controls);
+    // Game.DisablePlayerControls' abCamSwitch keeps the camera as it is, as does an animation
+    // object the player holds (the page's rule, src/shell/world-viewer.ts).
+    player.povSwitchAllowed = () =>
+      povSwitchAllowed(this.runtime.controls) && !this.stage.animObjects.playerHolds;
     player.disabledControls = () => disabledControlFlags(this.runtime.controls);
     player.activationAllowed = () => this.runtime.controls.activate;
     // No auto vanity camera headless: a long wait would turn the cases' first person into third.

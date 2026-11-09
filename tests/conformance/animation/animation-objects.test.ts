@@ -19,11 +19,13 @@ import {
   annotatedAnimObjectEvent,
   type AnimObjectForm,
 } from '../../../src/animation/anim-objects.ts';
+import type { ActorPose } from '../../../src/animation/skeleton.ts';
 import { readAnimationContainer } from '../../../src/formats/hkx/animation.ts';
 import { loadBehaviorFiles, loadCharacterInfo } from '../../../src/formats/hkx/behavior.ts';
 import { Packfile } from '../../../src/formats/hkx/packfile.ts';
+import type { ActorAnimObjects } from '../../../src/shell/actor-anim-objects.ts';
 import { readAnimObjects, type AnimObjectRecord } from '../../../src/world/anim-object-records.ts';
-import { hasGamedata, openSim, type Sim } from '../../helpers/sim.ts';
+import { hasGamedata, loadSim, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 const TANKARD: AnimObjectForm = { editorId: 'AnimObjectTankard', unloadEvent: 'AnimObjectUnequip' };
 const LUTE: AnimObjectForm = { editorId: 'AnimObjectLute', unloadEvent: 'AnimObjectUnequip' };
@@ -209,9 +211,155 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
   });
 });
 
-describe('animation objects (todo)', () => {
-  it.todo('a female actor holding one in a hand has both hands’ scale 1, 0.85 after  [original]');
-  it.todo('while the player holds one, the POV switch is off  [original]');
-  it.todo('saves keep each entry (actor, object, shown) and load it again  [original, M12]');
-  it.todo('an object whose model has no Prn is never shown  [original]');
+// The engine's rules around an object held (docs/animation.md, "Animation objects"), in the
+// Bannered Mare: Hulda (female) given a tankard, the player given one, a book whose model is
+// read without its "Prn", a save made and loaded with Hulda holding hers.
+
+const RIGHT_HAND = 'NPC R Hand [RHnd]';
+const LEFT_HAND = 'NPC L Hand [LHnd]';
+
+/** A node's scale in a pose's world: its basis's length over its parent's. */
+function worldScale(pose: ActorPose, name: string): number {
+  const node = pose.skeleton.nodeByName.get(name.toLowerCase()) ?? -1;
+  const parent = pose.skeleton.rig.parents[node] ?? -1;
+  const length = (at: number): number =>
+    Math.hypot(
+      pose.worlds[at * 16] ?? 0,
+      pose.worlds[at * 16 + 1] ?? 0,
+      pose.worlds[at * 16 + 2] ?? 0,
+    );
+  return length(node) / length(parent);
+}
+
+describe.skipIf(!hasGamedata())('an object held (headless simulation)', () => {
+  let sim: Sim;
+  let loaded: Sim | undefined;
+  const animObjects = (): ActorAnimObjects => sim.world.stage.animObjects;
+  const holds = (reference: number, editorId: string, world = sim): boolean =>
+    world.world.stage.animObjects
+      .held(reference)
+      .some((held) => held.editorId === editorId && held.node !== undefined);
+
+  beforeAll(async () => {
+    sim = await openSim({ interior: BANNERED_MARE, hour: 20 });
+    await sim.step(2);
+  }, 600_000);
+  afterAll(async () => {
+    await loaded?.close();
+    await sim.close();
+  });
+
+  it('an object whose model has no Prn is never shown, drawn or not', async () => {
+    // The book's model read without its "Prn" (every vanilla object's has one).
+    const session = sim.world.session;
+    const original = session.damagedModel.bind(session);
+    let read = false;
+    session.damagedModel = async (path, stage, swaps) => {
+      const model = await original(path, stage, swaps);
+      if (!model || !path.toLowerCase().endsWith('animobjectbook.nif')) return model;
+      read = true;
+      return new Proxy(model, {
+        get: (target, key): unknown => {
+          if (key === 'attachTo') return undefined;
+          const value: unknown = Reflect.get(target, key, target);
+          return typeof value === 'function' ? (value as () => unknown).bind(target) : value;
+        },
+      });
+    };
+    try {
+      animObjects().animObject(HULDA, 'load', 'AnimObjectBook');
+      animObjects().animObject(HULDA, 'draw', 'AnimObjectBook');
+      expect(await sim.until(() => read, 10)).toBe(true);
+      await sim.step(0.5);
+      const book = animObjects()
+        .held(HULDA)
+        .find((held) => held.editorId === 'AnimObjectBook');
+      expect(book).toBeDefined();
+      expect(book?.shown).toBe(false);
+      expect(book?.node).toBeUndefined();
+    } finally {
+      session.damagedModel = original;
+      animObjects().animObject(HULDA, 'unequip', undefined);
+    }
+  });
+
+  it('a female actor holding one in a hand has both hands’ scale 1, 0.85 after', async () => {
+    const hulda = sim.actor(HULDA);
+    expect(hulda?.placed.look.female).toBe(true);
+    const pose = (): ActorPose => {
+      const placed = sim.actor(HULDA)?.placed.pose;
+      if (!placed) throw new Error('Hulda has no pose');
+      return placed;
+    };
+    animObjects().animObject(HULDA, 'unequip', undefined);
+    // Her skeleton's own: 0.852, under every clip.
+    expect(pose().scale(RIGHT_HAND)).toBeCloseTo(0.85, 2);
+    expect(pose().scale(LEFT_HAND)).toBeCloseTo(0.85, 2);
+    await sim.step(0.1);
+    if (
+      !animObjects()
+        .held(HULDA)
+        .some((held) => held.node !== undefined)
+    ) {
+      expect(worldScale(pose(), RIGHT_HAND)).toBeCloseTo(0.85, 2);
+    }
+    // A tankard in her right hand: both hands at 1.
+    animObjects().animObject(HULDA, 'load', 'AnimObjectTankard');
+    animObjects().animObject(HULDA, 'draw', 'AnimObjectTankard');
+    expect(await sim.until(() => holds(HULDA, 'AnimObjectTankard'), 10)).toBe(true);
+    expect(pose().scale(RIGHT_HAND)).toBe(1);
+    expect(pose().scale(LEFT_HAND)).toBe(1);
+    await sim.step(0.1);
+    expect(worldScale(pose(), RIGHT_HAND)).toBeCloseTo(1, 3);
+    expect(worldScale(pose(), LEFT_HAND)).toBeCloseTo(1, 3);
+    // It goes: back to 0.85.
+    animObjects().animObject(HULDA, 'unequip', undefined);
+    expect(pose().scale(RIGHT_HAND)).toBeCloseTo(0.85, 2);
+    expect(pose().scale(LEFT_HAND)).toBeCloseTo(0.85, 2);
+  });
+
+  it('while the player holds one, the POV switch is off', async () => {
+    const player = sim.world.player;
+    expect(player.pov).toBe('first');
+    animObjects().animObject(PLAYER_REF, 'load', 'AnimObjectTankard');
+    expect(await sim.until(() => holds(PLAYER_REF, 'AnimObjectTankard'), 10)).toBe(true);
+    expect(player.povSwitchAllowed?.()).toBe(false);
+    const toggle = async (): Promise<void> => {
+      sim.press('Toggle POV', true);
+      await sim.step(0.1);
+      sim.press('Toggle POV', false);
+      await sim.step(0.1);
+    };
+    await toggle();
+    expect(player.pov).toBe('first');
+    // It goes: the switch is on again.
+    animObjects().animObject(PLAYER_REF, 'unequip', undefined);
+    expect(player.povSwitchAllowed?.()).toBe(true);
+    await toggle();
+    expect(player.pov).toBe('third');
+  });
+
+  it('saves keep each entry (actor, object, shown) and load it again', async () => {
+    animObjects().animObject(HULDA, 'unequip', undefined);
+    animObjects().animObject(HULDA, 'load', 'AnimObjectTankard');
+    animObjects().animObject(HULDA, 'draw', 'AnimObjectTankard');
+    expect(await sim.until(() => holds(HULDA, 'AnimObjectTankard'), 10)).toBe(true);
+    const tankard = await sim.formId('ANIO', 'AnimObjectTankard');
+    expect(animObjects().save()).toContainEqual({
+      actor: HULDA,
+      animObject: tankard,
+      shown: true,
+    });
+    const bytes = await sim.save();
+    // One simulation at a time: the first goes before the save is loaded.
+    await sim.close();
+    loaded = await loadSim(bytes);
+    const again = loaded;
+    expect(await again.until(() => holds(HULDA, 'AnimObjectTankard', again), 30)).toBe(true);
+    const held = again.world.stage.animObjects
+      .held(HULDA)
+      .find((object) => object.editorId === 'AnimObjectTankard');
+    expect(held?.shown).toBe(true);
+    expect(held?.node).toBe('npc r hand [rhnd]');
+  }, 600_000);
 });

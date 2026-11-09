@@ -81,6 +81,34 @@ describe('actor skeletons', () => {
     expect(position(pose, 'WEAPON')).toEqual([0, 5, 80]);
   });
 
+  it("keeps an animated node's own scale under the pose's, and one set on it", () => {
+    // The spine at 0.85 in the model (as the female skeletons' hands are).
+    const scaled: NifFile = {
+      ...nif,
+      blocks: nif.blocks.map((block) =>
+        block.kind === 'node' && block.name === 'NPC Spine [Spn0]'
+          ? { ...block, transform: { ...block.transform, scale: 0.85 } }
+          : block,
+      ),
+    };
+    const own = new ActorSkeleton(buildRig(scaled), havok);
+    expect(own.modelScales[2]).toBeCloseTo(0.85);
+    const pose = new ActorPose(own);
+    pose.update(own.referenceLocals());
+    // The weapon, 5 along the spine, lies 5 × 0.85 along it; the clip's scale of 1 keeps it.
+    expect(position(pose, 'WEAPON')).toEqual([4.25, 0, 60]);
+    expect(pose.setScale('NPC Spine [Spn0]', 1)).toBe(true);
+    pose.update(own.referenceLocals());
+    expect(position(pose, 'WEAPON')).toEqual([5, 0, 60]);
+    pose.setScale('NPC Spine [Spn0]', undefined);
+    expect(pose.scale('NPC Spine [Spn0]')).toBeCloseTo(0.85);
+    // A node no animation moves takes a scale set on it too.
+    pose.setScale('WEAPON', 2);
+    pose.update(own.referenceLocals());
+    expect(pose.world('WEAPON')?.[0]).toBeCloseTo(1.7);
+    expect(pose.setScale('No Such Node', 1)).toBe(false);
+  });
+
   it('turns hkQsTransforms into matrices (translation, rotation, scale)', () => {
     const out = new Float32Array(16);
     qsMatrix(Float32Array.of(1, 2, 3, 0, 0, Math.SQRT1_2, Math.SQRT1_2, 2, 2, 2), 0, out, 0);
