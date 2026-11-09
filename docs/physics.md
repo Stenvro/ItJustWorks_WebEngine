@@ -792,9 +792,18 @@ knock-down, a touch). Rapier solves a joint between two kinematic bodies in ever
 the same: Helgen's opening spent 3.5 of its 4.8 ms a physics step on the 400 joints of 23
 living actors' ragdolls, at three steps a frame. **Breakable** constraints break when the impulse on them in a step exceeds
 their threshold: the beehive's 20 holds its 10 kg (1.6 per step at 60 Hz), the mace trap's pin
-(30) its 108 kg of chain and mace (17.6); the joint's impulse is not exposed, so it is the
-change of momentum of its simulated body that gravity does not explain (TODO(M13): contacts on
-the body count too).
+(30) its mace and the pull of the chain the mace hangs by (17 a step). Rapier does not expose
+its joints' impulses. A breakable point joint (a ball and socket) is solved before each step
+with every point joint reached through simulated bodies (src/physics/joint-impulses.ts: the
+pivots kept together exactly, as Havok solves a constraint chain as one), from what moved the
+bodies since the last step (gravity's speed of the step, a script's push): Rapier's chains drift
+apart a little every step, and that is no load. Besides, as for the other breakables, the change
+of momentum of its simulated body that gravity does not explain counts: the mace's own measured
+only the sum of what holds it, the chain's pull cancelled out of it, and the pin never broke.
+TODO(M13): inferred; Havok's solver iterates with tau's position correction, and contacts on
+the body count too. The mace (TrapMace01, MaceTrap): simulated (SetMotionType 1) it hangs on its
+pin; fireTrap's pushes (ApplyHavokImpulse 15, then 50) break the pin, and the mace swings down
+past its base (the push of 15 already breaks it here: the links' share pulls the chain taut).
 
 Models whose bodies move their nodes one by one (`isArticulated`: constraints, or several
 simulated bodies) are drawn on a pose of their own nodes rather than moved as one: every
