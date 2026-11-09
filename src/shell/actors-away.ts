@@ -64,6 +64,12 @@ export interface ActorsAwayOptions {
    * package ends there is done: src/ai/scene-runtime.ts packageEnded).
    */
   readonly reached?: (actor: number, walk: AwayPackage) => void;
+  /**
+   * The low process puts an actor somewhere: a flier coming into the loaded area in the air
+   * (#fly: `inAir`) is placed there cruising on; anywhere else (its trip's end, out of a door)
+   * it is on the ground.
+   */
+  readonly aloft?: (actor: number, inAir: boolean) => void;
 }
 
 /** The package an actor away walks for: it and the procedure that sent it. */
@@ -804,9 +810,11 @@ export class ActorsAway {
     for (let leg = legs[trip.leg]; leg; leg = legs[trip.leg]) {
       const point = pointAlong(leg.points, Math.min(trip.along, leg.length));
       if (this.#options.loaded({ space: leg.space, position: point })) {
-        // It walked into a loaded cell: it shows from here, its AI going on.
+        // It walked into a loaded cell: it shows from here, its AI going on. A flier flies in:
+        // in the air, cruising on (not set on the ground to take off again). TODO(M13):
+        // inferred, the original's rule for a flier coming out of the low process was not checked.
         this.#trips.delete(actor);
-        void this.#moveTo(runtime, actor, { space: leg.space, position: point });
+        void this.#moveTo(runtime, actor, { space: leg.space, position: point }, trip.flies);
         return;
       }
       if (trip.along < leg.length) return;
@@ -907,7 +915,17 @@ export class ActorsAway {
     }
   }
 
-  async #moveTo(runtime: ScriptRuntime, actor: number, place: AwayPlace): Promise<void> {
+  /**
+   * The low process puts an actor at a place in the game state: on the ground, unless it is a
+   * flier flying into the loaded area (`inAir`). TODO(M13): inferred, the original's rule for a
+   * flier's flying state at the end of a low-process trip was not checked.
+   */
+  async #moveTo(
+    runtime: ScriptRuntime,
+    actor: number,
+    place: AwayPlace,
+    inAir = false,
+  ): Promise<void> {
     const { space, position } = place;
     let cell: number | undefined;
     let world: number | undefined;
@@ -923,6 +941,7 @@ export class ActorsAway {
       // A worldspace's cell no plugin has: the persistent cell holds it.
       cell ??= runtime.forms.db.persistentCell(world);
     }
+    this.#options.aloft?.(actor, inAir);
     runtime.move(actor, [...position], [0, 0, place.heading ?? 0], cell, world);
   }
 }

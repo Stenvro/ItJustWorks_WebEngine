@@ -101,6 +101,11 @@ export interface ActorFlightOptions {
   readonly interior: boolean;
   /** A flier without a controller flew into (or out of) a trigger volume. */
   readonly onTrigger?: (trigger: number, actor: number, entered: boolean) => void;
+  /**
+   * A flier placed in the air (it was aloft off the stage) may not fly there after all: it is
+   * set on the ground under it, as an actor placed there is.
+   */
+  readonly setDown?: (reference: number) => void;
 }
 
 /** A target of a flier's fight, as combat sees it. */
@@ -356,8 +361,11 @@ export class ActorFlight {
   #actors: readonly StagedActor[] = [];
   /** State changes and fight phases, a line each (the flight trace: engineDev.flightTrace). */
   readonly #trace: string[] = [];
-  /** Fliers a loaded save had in the air: they cruise on where they are placed. */
-  readonly #savedAloft = new Set<number>();
+  /**
+   * Fliers in the air off the stage: a loaded save's, one whose cell unloaded under it in
+   * flight, one the low process flew into the loaded area. Placed, they cruise on from there.
+   */
+  readonly #aloftAway = new Set<number>();
   #clock = 0;
 
   constructor(options: ActorFlightOptions) {
@@ -404,9 +412,22 @@ export class ActorFlight {
     return !this.#options.interior;
   }
 
-  /** GetFlyingState (FlyingState): 0 on the ground. */
+  /**
+   * GetFlyingState (FlyingState): 0 on the ground. A flier that left the stage in the air is
+   * still in it (cruising) while it is away: its flying state is its actor's, not its 3D's.
+   * TODO(M13): inferred, the original's flying state for an unloaded flier was not checked.
+   */
   state(reference: number): FlyingStateValue {
-    return this.#fliers.get(reference)?.state ?? FlyingState.none;
+    const flier = this.#fliers.get(reference);
+    if (flier) return flier.state;
+    if (!this.#aloftAway.has(reference) || this.#options.get(reference) !== undefined) {
+      return FlyingState.none;
+    }
+    if (this.#options.session.scriptsReady?.state.actors.get(reference)?.dead === true) {
+      this.#aloftAway.delete(reference);
+      return FlyingState.none;
+    }
+    return FlyingState.cruising;
   }
 
   /** IsFlying: in the air (taking off, cruising, hovering, landing, an action). */
@@ -447,9 +468,25 @@ export class ActorFlight {
     return flier && airborne(flier.state) ? flier.moved?.velocity : undefined;
   }
 
-  /** A loaded save had this flier in the air: placed, it cruises on from there. */
+  /**
+   * This flier is in the air off the stage (a loaded save had it there, the low process flies
+   * it into the loaded area): placed, it cruises on from there.
+   */
   restoreAloft(reference: number): void {
-    this.#savedAloft.add(reference);
+    this.#aloftAway.add(reference);
+  }
+
+  /** Whether it is in the air off the stage (restoreAloft, remove): placed, it stays there. */
+  aloft(reference: number): boolean {
+    return this.#aloftAway.has(reference);
+  }
+
+  /**
+   * It is on the ground off the stage after all: the low process ended its trip at a place (its
+   * package's, out of a door), or it is placed where it may not fly.
+   */
+  landedAway(reference: number): void {
+    this.#aloftAway.delete(reference);
   }
 
   /** Whether it sits on a perch now. */
@@ -1735,14 +1772,18 @@ export class ActorFlight {
     if (!flier.checkedAir && staged.grounded) {
       flier.checkedAir = true;
       const start = staged.placed.start;
+      const aloft = this.#aloftAway.delete(reference);
+      const able = this.mayFly(reference);
       if (
         flier.state === FlyingState.none &&
-        this.mayFly(reference) &&
-        ((start?.kind === 'at' && start.sky === true) ||
-          this.#savedAloft.delete(reference) ||
-          this.#highAboveGround(staged))
+        able &&
+        ((start?.kind === 'at' && start.sky === true) || aloft || this.#highAboveGround(staged))
       ) {
         this.startCruising(reference);
+      } else if (aloft && flier.state === FlyingState.none && !able) {
+        // Placed in the air, it may not fly now (SetAllowFlying false, restrained, hurt since
+        // it was placed): set on the ground under it, not left hanging where it was.
+        this.#options.setDown?.(reference);
       }
     }
     this.#grabFrame(flier, behavior);
@@ -2591,9 +2632,19 @@ export class ActorFlight {
 
   // --- Leaving ----------------------------------------------------------------------------------
 
-  remove(reference: number): void {
-    this.#savedAloft.delete(reference);
+  /**
+   * It leaves the stage. One `leaving` with its cell (or the view) in the air, alive, stays in
+   * the air while it is away (state) and cruises on from where it is placed again.
+   * TODO(M13): inferred, the original's unload and low-process rules for a flier were not
+   * checked (before, it came back on the ground and took off again).
+   */
+  remove(reference: number, leaving = false): void {
     const flier = this.#fliers.get(reference);
+    if (leaving && flier && airborne(flier.state) && !flier.staged.dead && flier.health > 0) {
+      this.#aloftAway.add(reference);
+    } else if (flier || !leaving) {
+      this.#aloftAway.delete(reference);
+    }
     if (!flier) return;
     flier.grab?.done(false);
     flier.travel?.done(false);
@@ -2613,7 +2664,7 @@ export class ActorFlight {
   clear(): void {
     for (const reference of [...this.#fliers.keys()]) this.remove(reference);
     this.#shouts.clear();
-    this.#savedAloft.clear();
+    this.#aloftAway.clear();
   }
 
   #warn(message: string): void {
