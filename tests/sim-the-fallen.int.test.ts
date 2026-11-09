@@ -57,49 +57,6 @@ async function shoutAll(sim: Sim): Promise<void> {
   sim.press('Shout', false);
 }
 
-/** How near a flying dragon has to come before the player shouts at him (units). */
-const SHOUT_REACH = 2500;
-
-/**
- * The player shouts at a flier as a player does: once their voice is ready again (Dragonrend's
- * three words take 15 s to recover) and they are on their feet, when he comes within
- * SHOUT_REACH, following him with their aim all the while the words are held and let out (the
- * shout leaves along the aim as it is let out: VoiceDragonRendProjectile is a 9° cone at 4000
- * units a second). False, without a shout, if `done` comes first or he does not come near in
- * `seconds`.
- */
-async function shoutAt(
-  sim: Sim,
-  flier: number,
-  seconds: number,
-  done: () => Promise<boolean>,
-): Promise<boolean> {
-  const follow = async (): Promise<number> => {
-    const [at, me] = await Promise.all([sim.position(flier), sim.position(PLAYER_REF)]);
-    if (!at || !me) return Infinity;
-    sim.look(at);
-    return Math.hypot(at[0] - me[0], at[1] - me[1], at[2] - me[2]);
-  };
-  const ready = (): boolean =>
-    (sim.runtime.state.actors.get(PLAYER_REF)?.voiceRecoveryTime ?? 0) <= 0 &&
-    sim.world.play?.held === false;
-  for (let waited = 0; !(ready() && (await follow()) < SHOUT_REACH); waited += 0.1) {
-    if (waited >= seconds || (await done())) return false;
-    await sim.step(0.1);
-  }
-  sim.press('Shout', true);
-  for (let held = 0; held < 2; held += 0.1) {
-    await follow();
-    await sim.step(0.1);
-  }
-  sim.press('Shout', false);
-  for (let after = 0; after < 1; after += 0.1) {
-    await follow();
-    await sim.step(0.1);
-  }
-  return true;
-}
-
 /** A quest alias's reference. */
 function alias(sim: Sim, quest: number, id: number): number {
   return sim.runtime.state.quest(quest).aliases.get(id) ?? 0;
@@ -288,7 +245,7 @@ describe.skipIf(!hasGamedata())('MQ301 The Fallen', () => {
       expect(await sim.equip(await sim.formId('SHOU', 'DragonrendShout'))).toBe(true);
       const down = async (): Promise<boolean> => (await attackStage(sim)) >= 4;
       for (let shouts = 0; shouts < 10 && !(await down()); shouts++) {
-        if (!(await shoutAt(sim, odahviing, 60, down))) break;
+        if (!(await sim.shoutAt(odahviing, 60, down))) break;
       }
       expect(await attackStage(sim)).toBeGreaterThanOrEqual(4);
       expect(await sim.until(() => sim.stageDone(MQ301, 180), 120)).toBe(true);
