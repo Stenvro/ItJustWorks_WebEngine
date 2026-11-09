@@ -421,7 +421,12 @@ animated objects alike.
 - **Not past a trigger.** The interval is cut to just short (half a frame) of the next trigger or
   annotation a playing clip passes (the engine walks the active clips' triggers), so that what
   the clips raise (a footstep, a sound) is raised at its moment, not up to a quarter of a second
-  early (`BehaviorRuntime.nextEventIn`).
+  early (`BehaviorRuntime.nextEventIn`). The cut counts the whole step the graph takes: from
+  its own time, which is behind the clock when its last interval ended before this frame (the
+  frames' clock seldom lands on an interval's end). Counted from the clock instead, at Helgen's
+  block with the camera turned away, an update stepped the prisoner's chop 0.181 s (an interval
+  of 0.164 s and the frame it was behind) while his Decapitate was 0.172 s on, and raised it
+  0.164 s before its moment (measured in the simulation at 60 frames a second).
 - **Not for a frame or two.** An interval no longer than (1 + fAnimInterpSlop) frames is not worth
   it: the graph updates every frame. bAnimInterpEnable 0 turns it all off.
 - **Bones of an actor not seen.** At each update the graph generates as many bones as its bone
@@ -1149,12 +1154,18 @@ pose in place; the piece is the actor's instances skinned to the head on a still
 pose as the blow found it (inferred, TODO(M13)): the pose shown at the moment of the clip's
 Decapitate on the animation clock, whenever the cut gets its turn. A graph raises a clip's event
 in the update that passes it and tells how long before that update's end it fell
-(`GraphEvent.late`); a graph updated ahead of the clock (far from the camera, or behind it: up to
-fAnimInterpMaxTime, 0.25 s) raises it that much early, so the blow waits for the clock and takes
-the pose between the two frames shown around its moment. Read from the frame the graph raised it
-in, with the camera turned from Helgen's block, the head flew from a pose and a swing up to a
-quarter of a second before the chop, over the basket's rim and 300 units down the street. The
-piece is drawn where the head's body (the skeleton model's head body,
+(`GraphEvent.late`, at most about a frame where the update is held short of its clips' next
+event: [How often graphs update](#how-often-graphs-update)). The blow's moment is the update's end
+on the animation clock less that (`BlowMoment`; the player's body runs on its avatar's own clock,
+so only the lateness is taken, its update ending at the frame's clock). Where the actor is shown
+as the clock runs, the blow waits for the clock and takes the pose between the two frames shown
+around its moment; where its graph ran ahead and is shown at once (unseen, not interpolated), it
+takes the pose between the one shown before that update and the one after (the graph's at the
+update's two ends; `shownAhead`). At Helgen's block the moment is 6 ms (60 frames a second) to
+39 ms (15) after the pose last shown when the graph raised it. With the camera turned away the
+prisoner's graph raised it 0.164 s early (the update's cut counted from the clock, now from the
+graph's own time): read from the pose then, the head flew over the basket's rim and 478 units
+down the street (measured in the simulation). The piece is drawn where the head's body (the skeleton model's head body,
 alone) carries it; the weapon's motion is read from where the killer's weapon node was over the
 SWING_SECONDS (0.1 s) coming into the blow's moment, between the frames it was shown in
 (`SwingTrail.at`; the engine reads its weapon body's

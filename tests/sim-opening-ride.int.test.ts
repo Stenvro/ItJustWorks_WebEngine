@@ -250,9 +250,10 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
       // head drops into the basket before the block, its flight bent down by the headsman's chop,
       // and the armor coming in does not have him take up the battleaxe he carries. The player
       // looks away from the block meanwhile: the two graphs, behind the camera, update only every
-      // fAnimInterpMaxTime and raise the chop's Decapitate up to that much before its moment.
-      // Found 2026-11-09: the head flew from a pose and a swing read when the graph raised it,
-      // over the basket's rim and 300 units down the street.
+      // fAnimInterpMaxTime, each update held short of the clips' next event. Found 2026-11-09:
+      // that cut was counted from the clock while the graph stepped from its own time a frame
+      // behind, so the prisoner's graph raised the chop's Decapitate 0.164 s before its moment;
+      // the head flew from the pose shown then, over the basket's rim and down the street.
       const stage = sim.world.stage;
       const basketAt = await sim.position(HEAD_BASKET);
       for (let t = 0; t < 60 && stage.dismemberment.headAt(prisoner) === undefined; t += 1 / 60) {

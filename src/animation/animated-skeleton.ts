@@ -98,6 +98,21 @@ interface Interpolation {
 
 const interpolations = new WeakMap<AnimatedSkeleton, Interpolation>();
 
+/**
+ * The update a skeleton's graph ran ahead in whose pose it shows at once (not interpolated: an
+ * actor the camera does not see), from the graph's time before it to its time after (the pose it
+ * shows until its next update); undefined: the pose it shows is the clock's (every frame, or
+ * blending on as the clock runs). Asked while its graph raises what it passed in that update, the
+ * pose shown is still the one from before it.
+ */
+export function shownAhead(
+  animated: AnimatedSkeleton,
+): { readonly from: number; readonly until: number } | undefined {
+  const state = interpolations.get(animated);
+  if (!state?.interpolating || state.shown || !(state.until > state.from)) return undefined;
+  return { from: state.from, until: state.until };
+}
+
 /** The graphs whose bone LOD was given (once each). */
 const boneLodSet = new WeakSet<BehaviorRuntime>();
 
@@ -165,7 +180,15 @@ export function animateSkeletons(
     // (observed in the original: the engine reads the three and sets none; the graphs do).
     if (interval > 0 && behavior && INTERP_BLOCKERS.some((name) => behavior.variable(name) === 1))
       interval = 0;
-    if (interval > 0 && behavior) interval = Math.min(interval, behavior.nextEventIn() - frame / 2);
+    // Short of its clips' next trigger or annotation: the update steps its graph from the graph's
+    // own time, which is behind the clock when its last interval ended before this frame, so the
+    // whole step (the interval and that lag) stays short of it. Measured in the simulation at
+    // Helgen's block, the camera turned away: 0.17 s before the prisoner's Decapitate the update
+    // stepped his chop 0.181 s (an interval of 0.164 s and a frame behind) and raised the event
+    // 0.164 s before its moment on the clock; the head flew from a pose that early.
+    const lag = animated.time === undefined ? 0 : Math.max(0, seconds - animated.time);
+    if (interval > 0 && behavior)
+      interval = Math.min(interval, behavior.nextEventIn() - lag - frame / 2);
     const ahead =
       behavior !== undefined &&
       animated.time !== undefined &&

@@ -5,6 +5,7 @@ import {
   animateSkeletons,
   animationRate,
   boneLeftBound,
+  shownAhead,
   startObjectSkeleton,
   type AnimatedSkeleton,
   type AnimationRate,
@@ -265,6 +266,96 @@ describe('object skeletons', () => {
     expect(raised).toHaveLength(1);
     expect(raised[0]).toBeGreaterThan(0.27);
     expect(raised[0]).toBeLessThan(0.33);
+  });
+
+  it('raises a clip annotation no earlier than a frame before its moment, wherever it falls in the intervals', () => {
+    // Found 2026-11-09 at Helgen's block (the camera turned away): an update whose graph was a
+    // frame behind the clock stepped past the annotation it was held short of and raised the
+    // prisoner's Decapitate 0.164 s before its moment.
+    const early: number[] = [];
+    for (let at = 0.3; at < 1.6; at += 0.037) {
+      const struck: AnimationBinding = {
+        ...swing,
+        animation: { ...swing.animation, annotations: [{ time: at, text: 'HitFrame' }] },
+      };
+      const object = startObjectSkeleton(
+        nodes,
+        {
+          ...graph,
+          root: { ...graph.root, events: ['HitFrame'] },
+          host: { clip: () => struck, behavior: () => undefined },
+        },
+        () => 0.5,
+      );
+      if (!object) throw new Error('no skeleton');
+      const { skeleton } = object;
+      let clock = 0;
+      let raised: number | undefined;
+      skeleton.onEvents = (events) => {
+        if (events.some((event) => event.name === 'HitFrame')) raised ??= clock;
+      };
+      const rate = (): AnimationRate => ({ interval: 0.25, interpolate: false, slop: 0.25 });
+      // The clock as the frames add up (an update's interval ends a frame later where the sum
+      // falls just short of it, and the graph is a frame behind as the next update starts).
+      for (let frame = 0; frame <= 120; frame++) {
+        animateSkeletons([skeleton], clock, rate);
+        clock += 1 / 60;
+      }
+      if (raised === undefined || raised < at - 1 / 60 - 1e-6) early.push(+at.toFixed(3));
+    }
+    expect(early).toEqual([]);
+  });
+
+  it('gives a clip annotation its moment on the clock at the slow rate: its time less its lateness', () => {
+    // The same HitFrame at 0.3 s at 15 frames a second: the update that passes it ends after it,
+    // by up to a frame; the graph's time less the event's lateness is the annotation's moment.
+    const struck: AnimationBinding = {
+      ...swing,
+      animation: { ...swing.animation, annotations: [{ time: 0.3, text: 'HitFrame' }] },
+    };
+    const object = startObjectSkeleton(
+      nodes,
+      {
+        ...graph,
+        root: { ...graph.root, events: ['HitFrame'] },
+        host: { clip: () => struck, behavior: () => undefined },
+      },
+      () => 0.5,
+    );
+    if (!object) throw new Error('no skeleton');
+    const { skeleton } = object;
+    const moments: number[] = [];
+    skeleton.onEvents = (events) => {
+      for (const event of events)
+        if (event.name === 'HitFrame') moments.push((skeleton.time ?? 0) - (event.late ?? 0));
+    };
+    const rate = (): AnimationRate => ({ interval: 0.25, interpolate: false, slop: 0.25 });
+    for (let frame = 0; frame <= 15; frame++) animateSkeletons([skeleton], frame / 15, rate);
+    expect(moments).toHaveLength(1);
+    expect(moments[0]).toBeCloseTo(0.3, 3);
+  });
+
+  it('tells the update an unseen graph ran ahead in, whose pose it shows at once', () => {
+    const object = startObjectSkeleton(nodes, graph, () => 0.5);
+    if (!object) throw new Error('no skeleton');
+    const { skeleton } = object;
+    const unseen = (): AnimationRate => ({ interval: 0.2, interpolate: false, slop: 0.25 });
+    animateSkeletons([skeleton], 0, unseen);
+    animateSkeletons([skeleton], 0.05, unseen);
+    // From the graph's time before the update to its time after (the pose shown).
+    const span = shownAhead(skeleton);
+    expect(span?.from).toBeCloseTo(0);
+    expect(span?.until).toBeCloseTo(0.25);
+    // Interpolated (seen), the pose shown is the clock's; so it is every frame.
+    const seen = startObjectSkeleton(nodes, graph, () => 0.5)?.skeleton;
+    if (!seen) throw new Error('no skeleton');
+    const near = (): AnimationRate => ({ interval: 0.2, interpolate: true, slop: 0.25 });
+    animateSkeletons([seen], 0, near);
+    animateSkeletons([seen], 0.05, near);
+    expect(seen.time).toBeCloseTo(0.25);
+    expect(shownAhead(seen)).toBeUndefined();
+    animateSkeletons([skeleton], 0.3);
+    expect(shownAhead(skeleton)).toBeUndefined();
   });
 
   it('steps unseen graphs without interpolating', () => {

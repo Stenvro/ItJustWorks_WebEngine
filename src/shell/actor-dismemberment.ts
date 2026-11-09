@@ -13,6 +13,7 @@
 // blood art (NAM7) sprays from it for fDecapitateBloodTime. A dismembered actor placed again
 // (its cell loaded again) is cut again as it appears, the head falling from the neck.
 
+import { shownAhead } from '../animation/animated-skeleton.ts';
 import { ActorPose } from '../animation/skeleton.ts';
 import {
   decapitationLaunch,
@@ -87,23 +88,50 @@ const DECAPITATE_BLOOD_TIME = 5;
 const DISMEMBERED_LIMB_VELOCITY = 10;
 
 /**
+ * When in its graph's update a blow fell: `late`, how long before the update's end (the
+ * Decapitate's GraphEvent.late, in seconds of the animation clock); `graphTime`, the update's
+ * end on the animation clock (an actor's graph runs on it, ahead of it between the updates of a
+ * graph far from the camera or unseen). Without `graphTime` the graph runs on a clock of its own
+ * and updates every frame (the player's body: PlayerAvatar's clock, which runs in menus that show
+ * the player and at the player's pace), so its update ends at the frame's animation clock; its
+ * own clock is never compared with the animation clock.
+ */
+export interface BlowMoment {
+  readonly late: number;
+  readonly graphTime?: number;
+}
+
+/**
  * A blow as it fell: the actor as shown at the blow's moment, which the head flies from however
  * long its cut takes (its armor's models may still be read), and who struck. The moment is the
- * Decapitate's on the clock (its clip's annotation, GraphEvent.late), not the frame its graph
- * raised it in: a graph far from the camera, or one the camera does not look at, runs up to
- * fAnimInterpMaxTime ahead of the clock and raises the event that much early, and a frame at
- * 15 a second ends up to 67 ms after it. The actor is shown as the clock reaches the moment (its
- * pose between the two frames around it), and the killer's swing is read up to it. Before, the
- * blow was read from the frame the graph raised it in: with the camera turned from Helgen's
- * block the head flew from a pose and a swing up to a quarter of a second before the chop, over
- * the basket's rim and 300 units down the street. TODO(M13): inferred; the engine queues its cut
- * too, and whether that reads the pose of the blow or of its turn was not read.
+ * Decapitate's on the animation clock (its clip's annotation, GraphEvent.late; BlowMoment), not
+ * the end of the update that raised it, up to a frame later (a frame at 15 a second is 67 ms;
+ * measured at Helgen's block: 6 ms at 60 frames a second, 39 ms at 15), or more for a graph
+ * updated ahead of the clock where nothing held the update short of the event (animateSkeletons
+ * holds it short of the active clips' next trigger or annotation; a clip a transition starts
+ * within the update is not counted). Where the actor is shown as the clock
+ * runs (every frame, or blending on), the blow waits for the clock and takes the pose between the
+ * two frames shown around its moment. Where it is shown at once ahead (unseen, not interpolated),
+ * it takes the pose between the one shown before the update and the one after, the graph's at
+ * the update's two ends. The killer's swing is read up to the moment. TODO(M13): inferred; the
+ * engine queues its cut too, and whether that reads the pose of the blow or of its turn was not
+ * read.
  */
 interface Blow {
-  /** The blow's moment on the animation clock. */
-  readonly time: number;
-  /** When `world` and `worlds` were shown (the clock then). */
+  /**
+   * The blow's moment on the animation clock; undefined until the frame it fell in has its clock
+   * (#settle: a graph on a clock of its own, the player's).
+   */
+  time: number | undefined;
+  /** How long before the end of its graph's update it fell (seconds of the animation clock). */
+  readonly late: number;
+  /** When `world` and `worlds` were shown (the clock then; the graph's time for `ahead`). */
   shownAt: number;
+  /**
+   * The update its graph ran ahead in and shows at once (shownAhead): from the graph's time of
+   * the pose shown before it to its time after; undefined: the pose is shown as the clock runs.
+   */
+  readonly ahead: { readonly from: number; readonly until: number } | undefined;
   readonly world: Float32Array;
   readonly worlds: Float32Array;
   /** The pose is the moment's (the clock reached it). */
@@ -170,9 +198,10 @@ export class ActorDismemberment {
    * The Decapitate handler (the graph's Decapitate, a killmove victim's 2_Decapitate): observed in
    * the original, unless its head is gone already, an actor whose race has a decapitation
    * armor for its sex is given it to wear (AddWornItem: put in its inventory and worn), its head
-   * is recorded as gone, with what it wears, and it is queued for the cut.
+   * is recorded as gone, with what it wears, and it is queued for the cut. `moment`: when in
+   * its graph's update the blow fell; none: as the actor was last shown.
    */
-  async decapitate(reference: number, at?: number): Promise<void> {
+  async decapitate(reference: number, moment?: BlowMoment): Promise<void> {
     const { session } = this.#options;
     const runtime = session.scriptsReady;
     const body = this.#options.body(reference);
@@ -183,9 +212,19 @@ export class ActorDismemberment {
     this.#deciding.add(reference);
     // As last shown (the update raising it has not been posed yet): settled as the clock passes
     // its moment (#settle).
+    const late = moment && Number.isFinite(moment.late) ? Math.max(0, moment.late) : 0;
+    const graphTime =
+      moment?.graphTime !== undefined && Number.isFinite(moment.graphTime)
+        ? moment.graphTime
+        : undefined;
+    const span = graphTime === undefined ? undefined : shownAhead(body.placed);
+    const ahead =
+      span && graphTime !== undefined && Math.abs(span.until - graphTime) < 1e-6 ? span : undefined;
     const blow: Blow = {
-      time: at !== undefined && Number.isFinite(at) ? at : this.#clock,
-      shownAt: this.#clock,
+      time: !moment ? this.#clock : graphTime === undefined ? undefined : graphTime - late,
+      late,
+      shownAt: ahead ? ahead.from : this.#clock,
+      ahead,
       world: new Float32Array(body.world),
       worlds: new Float32Array(body.placed.pose.worlds),
       settled: false,
@@ -337,13 +376,26 @@ export class ActorDismemberment {
 
   /**
    * The blows whose moment the clock has reached take the pose the actor had then, between the
-   * one shown before and the one shown now; those still ahead keep the one shown now.
+   * one shown before and the one shown now; those still ahead keep the one shown now. A blow of
+   * a graph shown ahead at once takes the pose between the two ends of its update, in the frame
+   * it fell (the pose after it is shown by then).
    */
   #settle(): void {
     for (const [blow, reference] of this.#blows) {
       const body = this.#options.body(reference);
       const worlds = body?.placed.pose.worlds;
       if (!body || worlds?.length !== blow.worlds.length) {
+        blow.settled = true;
+        this.#blows.delete(blow);
+        continue;
+      }
+      // A graph on a clock of its own (the player's) updates every frame: its update ended now.
+      blow.time ??= this.#clock - blow.late;
+      if (blow.ahead) {
+        const { from, until } = blow.ahead;
+        const t = Math.min(1, Math.max(0, (blow.time - from) / (until - from)));
+        lerpInto(blow.world, body.world, t);
+        lerpInto(blow.worlds, worlds, t);
         blow.settled = true;
         this.#blows.delete(blow);
         continue;
@@ -655,8 +707,9 @@ export class ActorDismemberment {
   #swingInto(blow: Blow | undefined): Vec3 | undefined {
     const trail = blow?.killer === undefined ? undefined : this.#swings.get(blow.killer);
     if (!blow || !trail) return undefined;
-    const to = trail.at(blow.time);
-    const from = trail.at(blow.time - SWING_SECONDS);
+    const time = blow.time ?? this.#clock;
+    const to = trail.at(time);
+    const from = trail.at(time - SWING_SECONDS);
     if (!to || !from || to.time <= from.time) return undefined;
     const dt = to.time - from.time;
     return [
