@@ -22,6 +22,7 @@ import {
   accumulateRate,
   accumulateStep,
   castStrength,
+  darknessAlpha,
   DUAL_CASTING_POWER,
   EFFECT_DEFAULTS,
   EFFECT_SETTING_NAMES,
@@ -51,9 +52,15 @@ import {
   type EffectSettings,
 } from '../../gameplay/magic/effect-rules.ts';
 import { effectItemCost } from '../../gameplay/magic/casting.ts';
+import {
+  INVISIBILITY_DEFAULTS,
+  INVISIBILITY_SETTING_NAMES,
+  invisibilityRefraction,
+} from '../../gameplay/magic/invisibility.ts';
 import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
 import { ActorValue, SKILL_COUNT } from '../../world/actor-values.ts';
 import { DefaultObjects } from '../../world/default-objects.ts';
+import type { GameSettings } from '../../world/game-settings.ts';
 import {
   EffectArchetype,
   EffectFlag,
@@ -162,10 +169,11 @@ const ACTOR_TYPE_NPC = 0x13794;
 const ACTOR_TYPE_UNDEAD = 0x13796;
 
 /**
- * How often lasting effects and conditions are looked at (seconds). TODO(M13): the engine's
- * interval for active effects' conditions is not documented.
+ * fActiveEffectConditionUpdateInterval's built-in default (observed in the original; no plugin
+ * of the load order sets it): how often active effects' conditions are looked at again
+ * (seconds). Lasting effects follow what actors have as often.
  */
-const PULSE_SECONDS = 1;
+const CONDITION_UPDATE_INTERVAL = 1;
 
 /** [General] fCloakEffectUpdateInterval's built-in default: how often cloaks reach (seconds). */
 const CLOAK_UPDATE_INTERVAL = 0.5;
@@ -249,8 +257,11 @@ export class MagicEngine {
   readonly #ending = new Set<string>();
   /** The value changes of effects that act each second, in order. */
   #changes: Promise<void> = Promise.resolve();
-  #pulseWait = 0;
+  /** Seconds since conditions were last looked at (the first frame looks at once). */
+  #sincePulse = Number.POSITIVE_INFINITY;
   #pulsing = false;
+  /** The game settings once read: the interval is the setting as it is each frame (setgs). */
+  #gameSettings: GameSettings | undefined;
   #cloakWait = 0;
   #cloaking = false;
   /** [General] fCloakEffectUpdateInterval (the session sets the INI's): cloaks reach this often. */
@@ -843,6 +854,9 @@ export class MagicEngine {
         magnitude *= left;
       }
     }
+    // Night Eye's magnitude is 1 as it starts, whatever the effect item's (observed in the
+    // original): its actor value says only whether the actor sees in the dark.
+    if (effect.archetype === EffectArchetype.nightEye) magnitude = 1;
 
     // What it counters and, with Dispel with Keywords, what shares a keyword with it.
     for (const [key, other] of this.effectsOn(target)) {
@@ -889,6 +903,26 @@ export class MagicEngine {
           await this.end(key);
       }
 
+    // A Dual Value Modifier's second weight as its caster's perks have it (observed in the
+    // original: Mod Secondary Value Weight as the effect is adjusted for perks, the spell and the
+    // target its tabs).
+    let secondWeight: number | undefined;
+    if (
+      caster !== undefined &&
+      effect.secondActorValue >= 0 &&
+      (effect.archetype === EffectArchetype.dualValueModifier ||
+        effect.archetype === EffectArchetype.enhanceWeapon)
+    ) {
+      const weight = await runtime.perks.apply(
+        EntryPoint.modSecondaryValueWeight,
+        caster,
+        effect.secondValueWeight,
+        [item.formId, target],
+        { spell: item.formId },
+      );
+      if (weight !== effect.secondValueWeight) secondWeight = weight;
+    }
+
     const handle = new ObjectHandle(runtime.state.nextEffect++, 'activemagiceffect');
     const key = handle.key;
     const number = (await runtime.forms.record(effect.formId))?.fields.has('VMAD')
@@ -910,6 +944,7 @@ export class MagicEngine {
       ...(dual && { dual }),
       ...(options.at && { at: options.at }),
       ...(taper > 0 && { taper, taperMagnitude: magnitude * taperShare }),
+      ...(secondWeight !== undefined && { secondWeight }),
       ...(held && { held }),
     };
     runtime.state.activeEffects.set(key, entry);
@@ -1088,6 +1123,8 @@ export class MagicEngine {
     entry.inactive = false;
     const target = entry.target;
     if (isValueEffect(effect)) await this.#valueStart(entry, effect);
+    if (effect.archetype === EffectArchetype.darkness) await this.#darken(entry, effect);
+    if (effect.archetype === EffectArchetype.invisibility) await this.#refract(entry, effect);
     await this.#archetypeStart(key, entry, effect);
     // The image space while it lasts on the player (Night Eye's, a poison's tint).
     if (target === PLAYER_REF && effect.imageSpaceModifier !== undefined)
@@ -1116,12 +1153,58 @@ export class MagicEngine {
     }
   }
 
+  /**
+   * Darkness, as it starts and as it stops (observed in the original): after its actor value
+   * changed, the actor is drawn at 1 - that value / 100 of its alpha (0 to 1): a darkness of
+   * 100 hides it whole, and with its value back at 0 it is whole again.
+   */
+  async #darken(entry: ActiveEffectState, effect: MagicEffectRecord): Promise<void> {
+    const runtime = this.#runtime;
+    if (!(await runtime.actors.isActor(entry.target))) return;
+    const value =
+      effect.actorValue < 0
+        ? 0
+        : (await runtime.actors.value(entry.target, effect.actorValue)).current;
+    const alpha = darknessAlpha(value);
+    runtime.state.actor(entry.target).alpha = alpha;
+    runtime.world.setAlpha?.(entry.target, alpha, false);
+  }
+
+  /**
+   * Invisibility, as it starts and as it stops (observed in the original): after its actor
+   * value changed, the actor's refraction from that value (invisibilityRefraction): what the
+   * stage draws through its shapes.
+   */
+  async #refract(entry: ActiveEffectState, effect: MagicEffectRecord): Promise<void> {
+    const runtime = this.#runtime;
+    if (!(await runtime.actors.isActor(entry.target))) return;
+    const value =
+      effect.actorValue < 0
+        ? 0
+        : (await runtime.actors.value(entry.target, effect.actorValue)).current;
+    const refraction = invisibilityRefraction(value, {
+      minRefraction: await this.#setting(
+        INVISIBILITY_SETTING_NAMES.minRefraction,
+        INVISIBILITY_DEFAULTS.minRefraction,
+      ),
+      maxRefraction: await this.#setting(
+        INVISIBILITY_SETTING_NAMES.maxRefraction,
+        INVISIBILITY_DEFAULTS.maxRefraction,
+      ),
+    });
+    const state = runtime.state.actor(entry.target);
+    if (refraction > 0) state.refraction = refraction;
+    else delete state.refraction;
+  }
+
   /** It stops acting (it ends, or its conditions fail): all it did is taken back. */
   async #deactivate(key: string, entry: ActiveEffectState, ending: boolean): Promise<void> {
     const runtime = this.#runtime;
     const effect = await this.effect(entry.effect);
     entry.inactive = true;
     this.#takeBack(entry);
+    if (effect?.archetype === EffectArchetype.darkness) await this.#darken(entry, effect);
+    if (effect?.archetype === EffectArchetype.invisibility) await this.#refract(entry, effect);
     if (effect?.archetype === EffectArchetype.peakValueModifier)
       this.#settlePeak(entry.target, entry.effect);
     if (effect) await this.#archetypeEnd(entry, effect, ending);
@@ -1280,7 +1363,12 @@ export class MagicEngine {
       (effect.archetype === EffectArchetype.dualValueModifier ||
         effect.archetype === EffectArchetype.enhanceWeapon)
     ) {
-      this.#add(entry, entry.target, effect.secondActorValue, amount * effect.secondValueWeight);
+      this.#add(
+        entry,
+        entry.target,
+        effect.secondActorValue,
+        amount * (entry.secondWeight ?? effect.secondValueWeight),
+      );
     }
   }
 
@@ -1334,7 +1422,7 @@ export class MagicEngine {
       await this.#modify(
         entry.target,
         effect.secondActorValue,
-        amount * effect.secondValueWeight,
+        amount * (entry.secondWeight ?? effect.secondValueWeight),
         entry.caster,
       );
     }
@@ -1512,8 +1600,10 @@ export class MagicEngine {
       case EffectArchetype.vampireLord:
         if (target === PLAYER_REF) runtime.beastForm = true;
         break;
-      // Cloaks act each cloak interval (#cloaks); Soul Trap as its target dies (died). Concussion,
-      // Telekinesis, Grab Actor, Light, Detect Life, Guide, Disguise,
+      // Cloaks act each cloak interval (#cloaks); Soul Trap as its target dies (died). Concussion
+      // (observed in the original: its effect adds nothing to every effect's part; no vanilla
+      // effect uses it; fConcussionTimer is never read), Telekinesis, Grab Actor, Light, Detect
+      // Life, Guide, Disguise (TODO(M13): the original's own Disguise part is not read yet),
       // Slow Time, Etherealize, Command Summoned, Script: their state is the effect itself
       // (aiState, timeMultiplier) and their scripts; what they show (lights, Detect Life's
       // shader, Clairvoyance's trail) the world's magicEffect shows (src/shell/actor-effects.ts).
@@ -1538,9 +1628,9 @@ export class MagicEngine {
    */
   async #dropWeapon(actor: number, weapon: number): Promise<void> {
     const runtime = this.#runtime;
-    const health = await runtime.removeItem(actor, runtime.formHandle(weapon), 1, true, undefined);
+    const left = await runtime.removeItem(actor, runtime.formHandle(weapon), 1, true, undefined);
     const dropped = await runtime.placeAt(weapon, actor, 1);
-    runtime.dropped(dropped, health);
+    runtime.dropped(dropped, left);
     const hand = runtime.world.nodePlacement?.(actor, 'WEAPON');
     const at = hand?.position ?? (await runtime.placement(actor))?.position;
     if (!at) return;
@@ -2067,8 +2157,8 @@ export class MagicEngine {
   /**
    * Every frame: effects last on (their durations count real seconds; game time passing in a
    * wait counts as the real seconds it stands for), those that act each second act, wards
-   * grow, those that ran out end; about each second lasting effects follow what actors have,
-   * conditions are looked at again and cloaks reach those near.
+   * grow, those that ran out end; each fActiveEffectConditionUpdateInterval lasting effects
+   * follow what actors have and conditions are looked at again; cloaks reach those near.
    */
   /**
    * What a save keeps (RuntimeSave.engines) beside the active effects themselves (GameState):
@@ -2168,9 +2258,19 @@ export class MagicEngine {
       this.#fadingSummons.delete(made);
       this.#runtime.world.enableChanged?.(made, false);
     }
-    this.#pulseWait -= seconds;
-    if (this.#pulseWait <= 0 && !this.#pulsing) {
-      this.#pulseWait = PULSE_SECONDS;
+    // Conditions are looked at again each fActiveEffectConditionUpdateInterval.
+    if (!this.#gameSettings)
+      this.#runtime.detach(
+        this.#runtime.gameSettingTable().then((table) => {
+          this.#gameSettings = table;
+        }),
+      );
+    this.#sincePulse += seconds;
+    const interval =
+      this.#gameSettings?.number('fActiveEffectConditionUpdateInterval') ??
+      CONDITION_UPDATE_INTERVAL;
+    if (this.#sincePulse >= interval && !this.#pulsing) {
+      this.#sincePulse = 0;
       this.#pulsing = true;
       this.#runtime.detach(
         this.#pulse().finally(() => {

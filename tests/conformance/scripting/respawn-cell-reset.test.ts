@@ -19,6 +19,12 @@
 //   (Never Resets), and its lever [00077C50] carries NorLever01SCRIPT, which handles OnReset.
 // - The base scripts' declarations: ObjectReference.OnReset() (`node tools/script-events.ts
 //   OnReset`: 73 scripts).
+// - What a reset restores (the engine's, observed in the original; docs/scripting.md): the cases
+//   below play it out in Mara's Eye Den, Fort Greymoor, Bilegulch Mine, the Winking Skeever and
+//   Whiterun's jail, each reference named where it is used. Inferred there (TODO(M13) in
+//   src/scripting/runtime/cell-reset.ts): a dead persistent actor respawns at its editor place;
+//   a jailing forces its cell's reset past a zone and for a cell met the first time; the reset
+//   sets the enable state the plugins give, not one observed in the original.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -27,12 +33,14 @@ import {
   respawnDue,
   type ResetWaits,
 } from '../../../src/scripting/runtime/cell-reset.ts';
+import { RecordFlag } from '../../../src/formats/esm/record.ts';
 import { Vfs } from '../../../src/vfs/vfs.ts';
+import { parseReference } from '../../../src/world/cell-records.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
 import { openGameFolder } from '../../../tools/gamedata-path.ts';
 import { scriptEventUsage } from '../../../tools/script-event-usage.ts';
 import { worldRulesCensus, type WorldRulesCensus } from '../../../tools/world-rules-census.ts';
-import { hasGamedata, openSim, type Sim } from '../../helpers/sim.ts';
+import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 /** Skyrim.esm's waits (GMST iHoursToRespawnCell, iHoursToRespawnCellCleared). */
 const SKYRIM: ResetWaits = { respawn: 240, cleared: 720 };
@@ -233,45 +241,413 @@ describe.skipIf(!hasGamedata())('a cave whose zone Never Resets (headless simula
   });
 });
 
-describe('what a reset restores', () => {
-  it.todo(
-    'refills a container whose base Respawns with its records’ items, its leveled lists picked ' +
-      'anew (CONT DATA 0x02; the reset’s inventory reset)  [original] (sim)',
-  );
-  it.todo(
-    'keeps the items of a container whose base does not Respawn (a player’s chest)  [original] (sim)',
-  );
-  it.todo(
-    'brings back a dead actor whose base Respawns, alive at its editor place, leveled anew ' +
-      '(NPC_ ACBS 0x08; a leveled actor unless No Respawn)  [original] (sim)',
-  );
-  it.todo(
-    'removes the corpse of an actor that does not respawn once dead longer than ' +
-      'iHoursToClearCorpses (24), unless it started dead  [original] (sim)',
-  );
-  it.todo(
-    'puts an object that is not persistent back at its editor place; a persistent one keeps ' +
-      'its moved place  [original] (sim)',
-  );
-  it.todo(
-    'closes and locks doors and containers again as the plugin placed them  [original] (sim)',
-  );
-  it.todo('lets harvested flora grow again with its cell (FLOR, TREE)  [original] (sim)');
-  it.todo(
-    'levels the encounter zone anew as it is next met after a reset (ECZN; Match PC Below ' +
-      'Minimum)  [original: the zone level is not read yet]',
-  );
-  it.todo(
-    'restores a reference’s initial enable state, if the engine’s reset does (an enable call ' +
-      'with the reference’s state is read, not whether it is the initial state)  [original]',
-  );
-  it.todo(
-    'resets an actor by its own clock (the engine keeps a time on each actor that its respawn ' +
-      'waits from; what sets it is not read)  [original]',
-  );
-  it.todo(
-    'removes what the player dropped in the cell as it resets, if the engine does  [UESP ' +
-      '"Skyrim:Respawning"; original unread]',
-  );
-  it.todo('resets a cell the player is jailed in at once (its detach time forced)  [original]');
+type Vec3 = readonly [number, number, number];
+const apart = (a: Vec3 | undefined, b: Vec3 | undefined): number =>
+  a && b ? Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) : Infinity;
+
+/** A reference's place as its record has it (the editor's). */
+async function editorPlace(sim: Sim, reference: number): Promise<Vec3> {
+  const record = await sim.db.get(reference);
+  if (!record) throw new Error(`No reference ${reference.toString(16)}`);
+  return parseReference(record).position;
+}
+
+const locked = async (sim: Sim, reference: number): Promise<boolean> =>
+  (await sim.native(sim.runtime.referenceHandle(reference), 'ObjectReference', 'IsLocked', [])) ===
+  true;
+
+/** What a container holds now: its items by base, those with a count. */
+async function holds(sim: Sim, container: number): Promise<Map<number, number>> {
+  const items = await sim.runtime.inventory(container);
+  return new Map([...items].filter(([, count]) => count > 0));
+}
+
+// Mara's Eye Den (Skyrim.esm): MarasEyePond01 [000DBF12], its zone MarasEyePondZone [000ECF54]
+// (min level 6, no max, flags 0).
+const DEN = 0xdbf12;
+const DEN_ZONE = 0xecf54;
+/** Two LvlVampire [ACBS flags 0, TPLT LCharVampire: a leveled list]. */
+const VAMPIRE = 0xdbf74;
+const LATE_VAMPIRE = 0xdbfa9;
+/** TreasBanditChest (CONT DATA 0x02: Respawns), locked (XLOC 25). */
+const DEN_CHEST = 0xdc068;
+/** EndTable01 (does not Respawn). */
+const END_TABLE = 0xdc326;
+/** MetalCageDoor01, locked (XLOC). */
+const CAGE_DOOR = 0xdc01e;
+/** CoinPurseMedium (FLOR). */
+const COIN_PURSE = 0xdc3b5;
+/** Quill01, not persistent. */
+const QUILL = 0xdc3b1;
+/** Gold001, enabled as placed. */
+const DEN_GOLD = 0xdc3c7;
+const GOLD = 0xf;
+
+describe.skipIf(!hasGamedata())(
+  'what a reset restores: a den left for a month (simulation)',
+  () => {
+    let sim: Sim;
+    const before = {
+      chestLocked: false,
+      chestItems: 0,
+      chestEmptied: -1,
+      doorLocked: false,
+      doorUnlocked: true,
+      zoneLevel: 0,
+      vampireLevel: 0,
+      quillMoved: undefined as Vec3 | undefined,
+      dropped: 0,
+      goldEnabled: true,
+    };
+    const after = {
+      chestLocked: false,
+      chestItems: 0,
+      table: new Map<number, number>(),
+      doorLocked: false,
+      doorOpen: -1,
+      purseHarvested: true,
+      quill: undefined as Vec3 | undefined,
+      droppedDeleted: false,
+      goldEnabled: false,
+      zoneLevel: 0,
+      vampireDead: true,
+      vampireStaged: false,
+      vampireResets: 0,
+      vampireLevel: 0,
+      lateVampireDead: false,
+    };
+    let quillEditor: Vec3 = [0, 0, 0];
+
+    beforeAll(async () => {
+      sim = await openSim({ interior: DEN, hour: 10 });
+      const runtime = sim.runtime;
+      runtime.godMode = true;
+      await sim.step(1);
+      // The vampire killed, its level and its zone's as met at the player's level 1.
+      before.zoneLevel = await runtime.progression.zoneLevel(DEN_ZONE);
+      before.vampireLevel = await runtime.progression.leveledLevel(VAMPIRE);
+      await sim.kill(VAMPIRE);
+      // The chest emptied and unlocked; the end table's items swapped for 7 gold.
+      before.chestLocked = await locked(sim, DEN_CHEST);
+      before.chestItems = (await holds(sim, DEN_CHEST)).size;
+      await runtime.removeAllItems(DEN_CHEST, PLAYER_REF);
+      before.chestEmptied = (await holds(sim, DEN_CHEST)).size;
+      await sim.native(runtime.referenceHandle(DEN_CHEST), 'ObjectReference', 'Lock', [false]);
+      await runtime.removeAllItems(END_TABLE, PLAYER_REF);
+      await runtime.addItem(END_TABLE, runtime.formHandle(GOLD), 7, true);
+      // The cage door unlocked and opened.
+      before.doorLocked = await locked(sim, CAGE_DOOR);
+      await sim.native(runtime.referenceHandle(CAGE_DOOR), 'ObjectReference', 'Lock', [false]);
+      await sim.native(runtime.referenceHandle(CAGE_DOOR), 'ObjectReference', 'SetOpen', [true]);
+      before.doorUnlocked = await locked(sim, CAGE_DOOR);
+      // The coin purse harvested; the quill moved; a tankard dropped; a gold coin disabled.
+      await runtime.harvest.harvest(PLAYER_REF, COIN_PURSE);
+      quillEditor = await editorPlace(sim, QUILL);
+      runtime.move(QUILL, [quillEditor[0] + 40, quillEditor[1], quillEditor[2] + 10]);
+      const tankard = await sim.formId('MISC', 'BasicTankard01');
+      await runtime.addItem(PLAYER_REF, runtime.formHandle(tankard), 1, true);
+      const known = new Set(runtime.state.created.keys());
+      await sim.drop(tankard);
+      before.dropped = [...runtime.state.created.keys()].find((id) => !known.has(id)) ?? 0;
+      await runtime.setEnabled(DEN_GOLD, false);
+      before.goldEnabled = await sim.enabled(DEN_GOLD);
+      await sim.step(3);
+      before.quillMoved = await sim.position(QUILL);
+      // Away for a month (past iHoursToRespawnCellCleared's 720 hours), the player at level 20;
+      // the other vampire killed a day before the player comes back.
+      await sim.openInterior(BANNERED_MARE);
+      await sim.step(1);
+      runtime.state.actor(PLAYER_REF).level = 20;
+      const left = Math.floor(runtime.state.gameDaysPassed);
+      sim.setDay(left + 30);
+      await sim.kill(LATE_VAMPIRE);
+      sim.setDay(left + 31);
+      await sim.openInterior(DEN);
+      await sim.step(2);
+      after.chestLocked = await locked(sim, DEN_CHEST);
+      after.chestItems = (await holds(sim, DEN_CHEST)).size;
+      after.table = await holds(sim, END_TABLE);
+      after.doorLocked = await locked(sim, CAGE_DOOR);
+      after.doorOpen = sim.openState(CAGE_DOOR);
+      after.purseHarvested = runtime.harvest.isHarvested(COIN_PURSE);
+      after.quill = await sim.position(QUILL);
+      after.droppedDeleted = runtime.state.references.get(before.dropped)?.deleted === true;
+      after.goldEnabled = await sim.enabled(DEN_GOLD);
+      after.zoneLevel = await runtime.progression.zoneLevel(DEN_ZONE);
+      after.vampireDead = await runtime.actors.isDead(VAMPIRE);
+      after.vampireStaged = sim.actor(VAMPIRE) !== undefined;
+      after.vampireResets = runtime.state.resets.get(VAMPIRE) ?? 0;
+      after.vampireLevel = await runtime.progression.leveledLevel(VAMPIRE);
+      after.lateVampireDead = await runtime.actors.isDead(LATE_VAMPIRE);
+    }, 600_000);
+    afterAll(async () => {
+      await sim.close();
+    });
+
+    it('refills a container whose base Respawns with its records’ items, its leveled lists picked anew (CONT DATA 0x02; the reset’s inventory reset)  [original] (sim)', () => {
+      expect(before.chestItems).toBeGreaterThan(0);
+      expect(before.chestEmptied).toBe(0);
+      expect(after.chestItems).toBeGreaterThan(0);
+    });
+
+    it('keeps the items of a container whose base does not Respawn (a player’s chest)  [original] (sim)', () => {
+      expect([...after.table]).toEqual([[GOLD, 7]]);
+    });
+
+    it('brings back a dead actor whose base Respawns, alive at its editor place, leveled anew (NPC_ ACBS 0x08; a leveled actor unless No Respawn)  [original] (sim)', () => {
+      // LvlVampire's ACBS has no Respawn flag: it respawns as a leveled actor.
+      expect(after.vampireDead).toBe(false);
+      expect(after.vampireStaged).toBe(true);
+      expect(after.vampireResets).toBe(1);
+      // Leveled anew: at its zone's level as met again (the player at 20), not the first one.
+      expect(before.vampireLevel).toBeLessThan(after.vampireLevel);
+    });
+
+    it('puts the den’s quill, moved and not persistent, back at its editor place', () => {
+      expect(apart(before.quillMoved, quillEditor)).toBeGreaterThan(20);
+      expect(apart(after.quill, quillEditor)).toBeLessThan(16);
+    });
+
+    it('closes and locks doors and containers again as the plugin placed them  [original] (sim)', () => {
+      expect([before.chestLocked, before.doorLocked, before.doorUnlocked]).toEqual([
+        true,
+        true,
+        false,
+      ]);
+      expect(after.chestLocked).toBe(true);
+      expect(after.doorLocked).toBe(true);
+      expect(after.doorOpen === 0 || after.doorOpen === 3).toBe(true);
+    });
+
+    it('lets harvested flora grow again with its cell (FLOR, TREE)  [original] (sim)', () => {
+      expect(after.purseHarvested).toBe(false);
+    });
+
+    it('levels the encounter zone anew as it is next met after a reset (ECZN; Match PC Below Minimum)  [original: the zone level is not read yet]', () => {
+      // MarasEyePondZone: its minimum (6) for a player of level 1; the minimum plus
+      // fLevelScalingMult (Skyrim.esm 1) of the levels past it for a player of 20.
+      expect(before.zoneLevel).toBe(6);
+      expect(after.zoneLevel).toBe(20);
+    });
+
+    it('restores a reference’s initial enable state, if the engine’s reset does (an enable call with the reference’s state is read, not whether it is the initial state)  [original]', () => {
+      expect(before.goldEnabled).toBe(false);
+      expect(after.goldEnabled).toBe(true);
+    });
+
+    it('resets an actor by its own clock (the engine keeps a time on each actor that its respawn waits from; what sets it is not read)  [original]', () => {
+      // Killed a day before the cell came back: the cell reset, the vampire waits on.
+      expect(after.lateVampireDead).toBe(true);
+    });
+
+    it('removes what the player dropped in the cell as it resets, if the engine does  [UESP "Skyrim:Respawning"; original unread]', () => {
+      expect(before.dropped).not.toBe(0);
+      expect(after.droppedDeleted).toBe(true);
+    });
+  },
+);
+
+// Fort Greymoor (Skyrim.esm): FortGreymoor01 [0001527C], FortGreymoorZone [0003EC1B] (flags 0).
+const FORT = 0x1527c;
+/** Agnis: unique, without Respawn, not persistent, not dead at the start. */
+const AGNIS = 0x20045;
+/** An IronSword placed persistent, and one that is not. */
+const PERSISTENT_SWORD = 0x8c939;
+const LOOSE_SWORD = 0x51736;
+
+describe.skipIf(!hasGamedata())('what a reset restores: a fort left twice (simulation)', () => {
+  let sim: Sim;
+  let agnisEnabledAfterTwoDays = true;
+  let agnisDeadAfterTwoDays = false;
+  const editor = new Map<number, Vec3>();
+  const moved = new Map<number, Vec3 | undefined>();
+  const left = new Map<number, Vec3 | undefined>();
+  const back = new Map<number, Vec3 | undefined>();
+
+  beforeAll(async () => {
+    sim = await openSim({ interior: FORT, hour: 10 });
+    const runtime = sim.runtime;
+    runtime.godMode = true;
+    await sim.step(1);
+    await sim.kill(AGNIS);
+    for (const sword of [PERSISTENT_SWORD, LOOSE_SWORD]) {
+      const at = await editorPlace(sim, sword);
+      editor.set(sword, at);
+      runtime.move(sword, [at[0] + 40, at[1], at[2] + 10]);
+    }
+    await sim.step(3);
+    for (const sword of [PERSISTENT_SWORD, LOOSE_SWORD])
+      moved.set(sword, await sim.position(sword));
+    // Two days away: past iHoursToClearCorpses (24), not iHoursToRespawnCell (240).
+    await sim.openInterior(BANNERED_MARE);
+    await sim.step(1);
+    sim.setDay(Math.floor(runtime.state.gameDaysPassed) + 2);
+    await sim.openInterior(FORT);
+    await sim.step(1);
+    agnisEnabledAfterTwoDays = await sim.enabled(AGNIS);
+    agnisDeadAfterTwoDays = await runtime.actors.isDead(AGNIS);
+    // Eleven days away: the fort resets. Where each sword was left, and where it loads (before
+    // physics moves it on: the persistent one, left mid-air, falls as it loads).
+    await sim.openInterior(BANNERED_MARE);
+    await sim.step(1);
+    for (const sword of [PERSISTENT_SWORD, LOOSE_SWORD]) left.set(sword, await sim.position(sword));
+    sim.setDay(Math.floor(runtime.state.gameDaysPassed) + 11);
+    await sim.openInterior(FORT);
+    for (const sword of [PERSISTENT_SWORD, LOOSE_SWORD]) back.set(sword, await sim.position(sword));
+  }, 600_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it('removes the corpse of an actor that does not respawn once dead longer than iHoursToClearCorpses (24), unless it started dead  [original] (sim)', () => {
+    expect(agnisDeadAfterTwoDays).toBe(true);
+    expect(agnisEnabledAfterTwoDays).toBe(false);
+  });
+
+  it('puts an object that is not persistent back at its editor place; a persistent one keeps its moved place  [original] (sim)', () => {
+    for (const sword of [PERSISTENT_SWORD, LOOSE_SWORD])
+      expect(apart(moved.get(sword), editor.get(sword))).toBeGreaterThan(20);
+    expect(apart(back.get(LOOSE_SWORD), editor.get(LOOSE_SWORD))).toBeLessThan(16);
+    expect(apart(left.get(PERSISTENT_SWORD), editor.get(PERSISTENT_SWORD))).toBeGreaterThan(20);
+    expect(apart(back.get(PERSISTENT_SWORD), left.get(PERSISTENT_SWORD))).toBeLessThan(1);
+  });
+});
+
+// Bilegulch Mine's boss: LvlBanditBossOrcM [ACBS 0x08: Respawns], placed persistent.
+const MINE_BOSS = 0xef02b;
+const MINE_DOOR = 0x1b154;
+
+describe.skipIf(!hasGamedata())('what a reset restores: a mine’s boss (simulation)', () => {
+  let sim: Sim;
+  let editor: Vec3 = [0, 0, 0];
+  let door: Vec3 | undefined;
+  let corpse: Vec3 | undefined;
+  let back: Vec3 | undefined;
+  let dead = true;
+  let carries = 0;
+
+  beforeAll(async () => {
+    sim = await openSim({ interior: BILEGULCH_MINE, hour: 10 });
+    const runtime = sim.runtime;
+    runtime.godMode = true;
+    await sim.step(1);
+    editor = await editorPlace(sim, MINE_BOSS);
+    door = await sim.position(MINE_DOOR);
+    await sim.kill(MINE_BOSS);
+    // Its corpse carried off to the door and stripped.
+    if (door) runtime.move(MINE_BOSS, [door[0], door[1], door[2] + 20]);
+    await runtime.removeAllItems(MINE_BOSS, PLAYER_REF);
+    await sim.step(2);
+    corpse = await sim.position(MINE_BOSS);
+    await sim.openInterior(BANNERED_MARE);
+    await sim.step(1);
+    sim.setDay(Math.floor(runtime.state.gameDaysPassed) + 31);
+    await sim.openInterior(BILEGULCH_MINE);
+    await sim.step(2);
+    dead = await runtime.actors.isDead(MINE_BOSS);
+    back = await sim.position(MINE_BOSS);
+    carries = (await holds(sim, MINE_BOSS)).size;
+  }, 600_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it('brings back a dead persistent actor whose base Respawns alive at its editor place, its inventory its records’ again  [original] (sim)', () => {
+    expect(apart(corpse, door)).toBeLessThan(200);
+    expect(dead).toBe(false);
+    expect(apart(back, editor)).toBeLessThan(apart(back, corpse));
+    expect(apart(back, corpse)).toBeGreaterThan(300);
+    expect(carries).toBeGreaterThan(0);
+  });
+});
+
+// The Winking Skeever (Skyrim.esm): SolitudeWinkingSkeever [00016A0E], no encounter zone, its
+// flora (coin purses); ccBGSSSE001-Fish.esm places a coin purse there flagged No Respawn
+// (ccBGSSSE001_MiscSolitude_CoinPurseLarge, object 000B95).
+const WINKING_SKEEVER = 0x16a0e;
+const FISH_PLUGIN = 'ccBGSSSE001-Fish.esm';
+const FISH_PURSE = 0xb95;
+
+describe.skipIf(!hasGamedata())('harvested flora in an inn left eleven days (simulation)', () => {
+  let sim: Sim;
+  let flora: number | undefined;
+  let purse: number | undefined;
+  let harvested: boolean[] = [];
+  let regrown: boolean[] = [];
+
+  beforeAll(async () => {
+    sim = await openSim({ interior: WINKING_SKEEVER, hour: 10 });
+    const runtime = sim.runtime;
+    await sim.step(1);
+    purse = sim.db.formIdOf(FISH_PLUGIN, FISH_PURSE);
+    for (const reference of sim.db.cellReferences(WINKING_SKEEVER)) {
+      const record = await sim.db.get(reference);
+      if (!record || reference === purse || (record.flags & RecordFlag.noRespawn) !== 0) continue;
+      if (await runtime.harvest.flora(reference)) {
+        flora = reference;
+        break;
+      }
+    }
+    const floras = [flora, purse].filter((reference) => reference !== undefined);
+    for (const reference of floras) await runtime.harvest.harvest(PLAYER_REF, reference);
+    harvested = floras.map((reference) => runtime.harvest.isHarvested(reference));
+    await sim.openInterior(BANNERED_MARE);
+    await sim.step(1);
+    sim.setDay(Math.floor(runtime.state.gameDaysPassed) + 11);
+    // A while in the other inn eleven days on, then back.
+    await sim.step(3);
+    await sim.openInterior(WINKING_SKEEVER);
+    await sim.step(3);
+    regrown = floras.map((reference) => !runtime.harvest.isHarvested(reference));
+  }, 600_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it('lets harvested flora grow again with its cell, but not one flagged No Respawn  [original] (sim)', (context) => {
+    if (purse === undefined) context.skip();
+    expect(flora).toBeDefined();
+    expect(harvested).toEqual([true, true]);
+    expect(regrown).toEqual([true, false]);
+  });
+});
+
+// The Whiterun jail (Skyrim.esm): CrimeFactionWhiterun [000267EA], its prison marker in
+// WhiterunDragonsreachBasement [0004A376] (no encounter zone); a cell door there, WRJailDoor01
+// [0009DC35], locked (XLOC 50).
+const WHITERUN_JAIL = 0x4a376;
+const JAIL_DOOR = 0x9dc35;
+
+describe.skipIf(!hasGamedata())('the cell the player is jailed in (simulation)', () => {
+  let sim: Sim;
+  let unlocked = true;
+  let lockedAgain = false;
+  let open = -1;
+
+  beforeAll(async () => {
+    sim = await openSim({ interior: WHITERUN_JAIL, hour: 10 });
+    const runtime = sim.runtime;
+    await sim.step(1);
+    await sim.native(runtime.referenceHandle(JAIL_DOOR), 'ObjectReference', 'Lock', [false]);
+    await sim.native(runtime.referenceHandle(JAIL_DOOR), 'ObjectReference', 'SetOpen', [true]);
+    unlocked = !(await locked(sim, JAIL_DOOR));
+    await sim.step(2);
+    // Left an hour, then taken back there by the guards.
+    await sim.openInterior(BANNERED_MARE);
+    await sim.step(1);
+    await runtime.crime.jail(await sim.formId('FACT', 'CrimeFactionWhiterun'), false, true);
+    await sim.openAtPlayer();
+    await sim.step(1);
+    lockedAgain = await locked(sim, JAIL_DOOR);
+    open = sim.openState(JAIL_DOOR);
+  }, 600_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it('resets a cell the player is jailed in at once (its detach time forced)  [original]', () => {
+    expect(unlocked).toBe(true);
+    expect(lockedAgain).toBe(true);
+    expect(open === 0 || open === 3).toBe(true);
+  });
 });

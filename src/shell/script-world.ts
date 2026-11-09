@@ -283,10 +283,10 @@ export interface CombatBridge {
   /** A trap's push back: the actor's character controller pushed away from a point. */
   trapPush(actor: number, from: Vec3, force: number): void;
   /**
-   * A Stagger effect's magnitude on an actor, from its caster's side (`from`: where the caster
-   * stands when it is no fighter, a KnockAreaEffect's marker).
+   * A Stagger effect's magnitude on an actor, from `from` when its source gives a place (a
+   * trap's hit, a KnockAreaEffect's marker), else from no direction.
    */
-  staggerEffect(actor: number, magnitude: number): void;
+  staggerEffect(actor: number, magnitude: number, from?: Vec3): void;
   /** Paralysis begins or ends on an actor: it lies as its ragdoll meanwhile. */
   paralyze(actor: number, on: boolean): void;
   /** Grab Actor: the target hangs as its ragdoll before its caster while it lasts. */
@@ -1036,8 +1036,9 @@ export class ScriptWorld implements WorldBridge {
     for (const fights of this.#fights()) void fights.knockDown(actor, from, force);
   }
 
-  stagger(actor: number, magnitude: number): void {
-    for (const fights of this.#fights()) fights.staggerEffect(actor, magnitude);
+  /** A Stagger effect on an actor: from `from` (a trap's hit, a marker) when given. */
+  stagger(actor: number, magnitude: number, _caster?: number, from?: Vec3): void {
+    for (const fights of this.#fights()) fights.staggerEffect(actor, magnitude, from);
   }
 
   paralyze(actor: number, on: boolean): void {

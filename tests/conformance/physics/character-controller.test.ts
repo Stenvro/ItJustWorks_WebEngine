@@ -44,9 +44,15 @@ import {
 import { HAVOK_SCALE } from '../../../src/physics/collision-data.ts';
 import { CollisionMatrix, Layer } from '../../../src/physics/collision-layers.ts';
 import { GRAVITY, initPhysics, PhysicsWorld } from '../../../src/physics/physics-world.ts';
+import { flierGround } from '../../../src/shell/actor-flight.ts';
+import { knockdownGround } from '../../../src/shell/actor-knockdowns.ts';
+import { fallsOntoGround, landscapeOver, unstickFloor } from '../../../src/shell/actor-movers.ts';
+import { actorGround } from '../../../src/shell/actors.ts';
 import { controllerSettings } from '../../../src/shell/player.ts';
+import { GROUND_ABOVE, GROUND_BELOW } from '../../../src/world/actor-ground.ts';
 import { IniSettings } from '../../../src/world/ini-settings.ts';
-import { hasGamedata, openSim, type Sim } from '../../helpers/sim.ts';
+import type { Vec3 } from '../../../src/render/math.ts';
+import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 describe('the controller’s shape (the engine’s rule)', () => {
   it('is two rings of eight points with one below and one above, in a 0.05 Havok shell', () => {
@@ -489,6 +495,134 @@ describe('what carries and pushes characters', () => {
   });
 });
 
+describe('the ground an actor is set down on (the stage’s rule)', () => {
+  beforeAll(async () => {
+    await initPhysics();
+  });
+
+  /** A floor with its top at z 0, and an actor's controller standing on it at the origin. */
+  function standing(): { physics: PhysicsWorld; other: CharacterBody } {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    box(physics, [1000, 1000, 10], [0, 0, -10]);
+    physics.step(STEP);
+    const other = character(physics, [0, 0, 0], 0x14);
+    steps(physics, 2, other);
+    return { physics, other };
+  }
+
+  it('is no living actor’s controller: one set down where another stands is on the floor under them both', () => {
+    const { physics, other } = standing();
+    // From GROUND_ABOVE over the spot, inside the other's capsule: that capsule met at once,
+    // the actor was set GROUND_ABOVE (some 30 units) up, in the other.
+    const hit = actorGround(physics, [0, 0, GROUND_ABOVE], GROUND_ABOVE + GROUND_BELOW);
+    expect(hit).toBeDefined();
+    expect(Math.abs(hit?.point[2] ?? Infinity)).toBeLessThan(1);
+    // From over its head too: not on it.
+    const over = actorGround(physics, [0, 0, 200], 200 + GROUND_BELOW);
+    expect(Math.abs(over?.point[2] ?? Infinity)).toBeLessThan(1);
+    other.free();
+    physics.free();
+  });
+
+  it('is still whatever else the controller stands on (a prop on the spot)', () => {
+    const { physics, other } = standing();
+    const prop = physics.world.createRigidBody(
+      RAPIER.RigidBodyDesc.fixed().setTranslation(h(100), 0, h(10)),
+    );
+    const collider = physics.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(h(20), h(20), h(10)),
+      prop,
+    );
+    physics.register(collider, Layer.props, { reference: 0x30, kind: 'object' });
+    physics.step(STEP);
+    const hit = actorGround(physics, [100, 0, GROUND_ABOVE], GROUND_ABOVE + GROUND_BELOW);
+    expect(hit?.point[2]).toBeCloseTo(20, 0);
+    other.free();
+    physics.free();
+  });
+
+  /** A body of an actor (`reference`) that is no controller: a creature's, a ragdoll's bone. */
+  function actorBody(
+    physics: PhysicsWorld,
+    reference: number,
+    at: readonly [number, number, number],
+  ): void {
+    const body = physics.world.createRigidBody(
+      RAPIER.RigidBodyDesc.fixed().setTranslation(h(at[0]), h(at[1]), h(at[2])),
+    );
+    const collider = physics.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(h(20), h(20), h(10)),
+      body,
+    );
+    physics.register(collider, Layer.props, { reference, kind: 'actor' });
+    physics.step(STEP);
+  }
+
+  it('is the floor under another actor for a stuck actor set on its path where the other stands', () => {
+    const { physics, other } = standing();
+    // From UNSTICK_FLOOR (48) over the point, inside the other's capsule: met at once, it was set
+    // 48 units up in the other, and the move undone as off the floor.
+    expect(Math.abs(unstickFloor(physics, [0, 0, 0], 0x15) ?? Infinity)).toBeLessThan(1);
+    other.free();
+    physics.free();
+  });
+
+  it('is nothing to land on for one falling through the world, another actor under it', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    physics.step(STEP);
+    // No floor anywhere: another actor's controller just under the falling one's feet.
+    const other = character(physics, [0, 0, -200], 0x14);
+    physics.step(STEP);
+    expect(fallsOntoGround(physics, [0, 0, 0], SHAPE.height, 0x15)).toBe(false);
+    // A creature's body that is no controller still is (as for the set-down), its own is not.
+    actorBody(physics, 0x30, [0, 0, -50]);
+    expect(fallsOntoGround(physics, [0, 0, 0], SHAPE.height, 0x15)).toBe(true);
+    expect(fallsOntoGround(physics, [0, 0, 0], SHAPE.height, 0x30)).toBe(false);
+    other.free();
+    physics.free();
+  });
+
+  it('is the floor under another actor for one getting up beside it, not its own bodies', () => {
+    const { physics, other } = standing();
+    // Its ragdoll's root by the other's feet: from 32 over it, inside the other's capsule.
+    actorBody(physics, 0x15, [0, 0, 15]);
+    expect(Math.abs(knockdownGround(physics, [0, 0, 10], 0x15) ?? Infinity)).toBeLessThan(1);
+    other.free();
+    physics.free();
+  });
+
+  it('is the ground under another actor for a flier over it, not the other’s head', () => {
+    const { physics, other } = standing();
+    // A dragon 400 units over the player: its ground is the floor, kept its radius over that.
+    expect(Math.abs(flierGround(physics, [0, 0, 400], 64, 16384, 0x15) ?? Infinity)).toBeLessThan(
+      1,
+    );
+    expect(Math.abs(flierGround(physics, [0, 0, 400], 16, 16384, 0x15) ?? Infinity)).toBeLessThan(
+      1,
+    );
+    other.free();
+    physics.free();
+  });
+
+  it('is the landscape over one under it, not a roof over one on it', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    // The landscape with its top at z 0, a roof over it at z 300.
+    const land = physics.world.createRigidBody(
+      RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0, h(-10)),
+    );
+    physics.register(
+      physics.world.createCollider(RAPIER.ColliderDesc.cuboid(h(1000), h(1000), h(10)), land),
+      Layer.static,
+      { reference: 0, kind: 'landscape' },
+    );
+    box(physics, [100, 100, 10], [0, 0, 310]);
+    physics.step(STEP);
+    expect(landscapeOver(physics, [0, 0, -1000])).toBeCloseTo(0, 0);
+    expect(landscapeOver(physics, [0, 0, 100])).toBeUndefined();
+    physics.free();
+  });
+});
+
 /** WhiterunWorld [0001A26F]: its busiest cell, outdoors (nothing over the actors' heads). */
 const WHITERUN_WORLD = 0x1a26f;
 
@@ -555,5 +689,31 @@ describe.skipIf(!hasGamedata())('an NPC’s controller (headless simulation)', (
     staged().position = [back[0] + 3000, back[1], back[2] + 200];
     await sim.step(0.1);
     expect(staged().position[0] - back[0]).toBeGreaterThan(2800);
+  }, 120_000);
+
+  it('is no ground to one set down where the player stands (PlaceAtMe, MoveTo): it stands on the floor under them both', async () => {
+    await sim.step(1);
+    const feet = (): Vec3 => [...sim.world.player.feet] as Vec3;
+    const placed = await sim.place(await sim.formId('NPC_', 'Hulda'), PLAYER_REF);
+    const set = sim.actor(placed);
+    expect(set).toBeDefined();
+    // Set down at once: on the player's floor, not some 30 units up in the player.
+    expect(Math.abs((set?.position[2] ?? Infinity) - feet()[2])).toBeLessThan(4);
+    // Sent away and back to the player (Actor.MoveTo): the same.
+    const handle = sim.runtime.referenceHandle(placed);
+    const away = feet();
+    await sim.moveTo([away[0] + 400, away[1], away[2]]);
+    await sim.step(0.5);
+    await sim.native(handle, 'ObjectReference', 'MoveTo', [
+      sim.runtime.referenceHandle(PLAYER_REF),
+      0,
+      0,
+      0,
+      true,
+    ]);
+    await sim.world.settle();
+    expect(Math.abs((sim.actor(placed)?.position[2] ?? Infinity) - feet()[2])).toBeLessThan(4);
+    await sim.native(handle, 'ObjectReference', 'Delete', []);
+    await sim.step(0.5);
   }, 120_000);
 });

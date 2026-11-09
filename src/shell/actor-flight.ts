@@ -71,6 +71,7 @@ import type { NavmeshSet } from '../ai/pathfinding.ts';
 import type { BehaviorRuntime } from '../animation/behavior-runtime.ts';
 import { RecordFlag } from '../formats/esm/record.ts';
 import { Layer } from '../physics/collision-layers.ts';
+import type { PhysicsWorld } from '../physics/physics-world.ts';
 import { multiply, transformPoint, type Vec3 } from '../render/math.ts';
 import { ActorValue, actorValueIndex } from '../world/actor-values.ts';
 import { referenceMatrix } from '../world/cell-loader.ts';
@@ -80,6 +81,7 @@ import type { ActorFlightState, ActorMotion, ScriptRuntime } from '../scripting/
 import type { ActorCasting } from './actor-casting.ts';
 import type { ActorFurniture, FurnitureUser, StageObject } from './actor-furniture.ts';
 import type { ActorMovers } from './actor-movers.ts';
+import { actorGround } from './actors.ts';
 import type { StagedActor } from './actor-stage.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
@@ -283,6 +285,24 @@ const AIR_START = 512;
  * it for the ground it may be in (units: as far as #groundUnder looks).
  */
 const LIFT_LOOK = 16384;
+/** The ground under a flier is looked for this far down (units). */
+const GROUND_LOOK = 16384;
+
+/**
+ * The ground under a flier's point: what a ray straight down from `above` over it meets within
+ * `length`, not the flier's own bodies (`own`, its reference), nor any living actor's
+ * controller (actorGround). A dragon over the player is not over ground at the player's head:
+ * it flies, lands and keeps its flight radius over the ground under them.
+ */
+export function flierGround(
+  physics: PhysicsWorld,
+  at: Vec3,
+  above: number,
+  length: number,
+  own?: number,
+): number | undefined {
+  return actorGround(physics, [at[0], at[1], at[2] + above], length, own)?.point[2];
+}
 /** It begins its hover this far from the hover point (the hover-enter clips' 3584 forward). */
 const HOVER_ENTER = 3584;
 /** It begins its landing within this of the approach point (units). */
@@ -1614,7 +1634,7 @@ export class ActorFlight {
 
   /** A point raised to its flight radius over the ground under it (the fly path's goal). */
   #overGround(point: Vec3, flier: Flier): Vec3 {
-    const ground = this.#groundUnder(point);
+    const ground = this.#groundUnder(point, flier.reference);
     const least = (ground ?? point[2]) + this.#flightRadius(flier);
     return point[2] < least ? [point[0], point[1], least] : point;
   }
@@ -1962,7 +1982,7 @@ export class ActorFlight {
     // The graph flies at its own Speed (its acceleration, drag and turns), towards TargetSpeed.
     const speed = graphSpeed !== undefined && graphSpeed > 0 ? graphSpeed : speeds.walk;
     const clearance = this.#flightRadius(flier);
-    const ground = this.#groundUnder(goal);
+    const ground = this.#groundUnder(goal, flier.reference);
     const safe: Vec3 =
       ground !== undefined && goal[2] < ground + clearance
         ? [goal[0], goal[1], ground + clearance]
@@ -1979,7 +1999,7 @@ export class ActorFlight {
     flier.flown = { velocity: [dx * speed, dy * speed, dz * speed], running: gait === 'run' };
     let next = step.position;
     // Never into the ground under it.
-    const below = this.#groundUnder(next);
+    const below = this.#groundUnder(next, flier.reference);
     if (below !== undefined && next[2] < below + clearance / 2)
       next = [next[0], next[1], below + clearance / 2];
     staged.position = [...next];
@@ -2455,17 +2475,11 @@ export class ActorFlight {
     flier.triggers = inside;
   }
 
-  /** The ground under a point (the collision ray straight down), if any within a long way. */
-  #groundUnder(at: Vec3): number | undefined {
+  /** The ground under a point for a flier (`own`, its reference): flierGround. */
+  #groundUnder(at: Vec3, own?: number): number | undefined {
     const physics = this.#options.movers.physics;
     if (!physics?.queriesCurrent) return undefined;
-    const hit = physics.raycast(
-      [at[0], at[1], at[2] + 64],
-      [0, 0, -1],
-      16384,
-      Layer.charController,
-    );
-    return hit?.point[2];
+    return flierGround(physics, at, 64, GROUND_LOOK, own);
   }
 
   /** A point high over the ground (more than AIR_START over it): flown to, not landed at. */
@@ -2488,38 +2502,25 @@ export class ActorFlight {
     if (!physics?.queriesCurrent) return true;
     const staged = flier.staged;
     const [x, y, z] = staged.position;
-    const own = this.#options.movers.colliderOf(staged.reference);
-    const down: Vec3 = [0, 0, -1];
-    if (physics.raycast([x, y, z + 16], down, LIFT_LOOK, Layer.charController, own)) return true;
-    const top = physics.raycast(
-      [x, y, z + LIFT_LOOK],
-      down,
-      2 * LIFT_LOOK,
-      Layer.charController,
-      own,
-    );
-    if (!top) return false;
-    staged.position = [x, y, Math.max(z, top.point[2] + this.#flightRadius(flier))];
+    const own = staged.reference;
+    if (flierGround(physics, staged.position, 16, LIFT_LOOK, own) !== undefined) return true;
+    const top = flierGround(physics, staged.position, LIFT_LOOK, 2 * LIFT_LOOK, own);
+    if (top === undefined) return false;
+    staged.position = [x, y, Math.max(z, top + this.#flightRadius(flier))];
     return true;
   }
 
-  /** Whether an actor stands high over the ground (placed in the air; its own controller left out). */
+  /** Whether an actor stands high over the ground (placed in the air; its own bodies left out). */
   #highAboveGround(staged: StagedActor): boolean {
     const physics = this.#options.movers.physics;
     if (!physics?.queriesCurrent) return false;
-    const [x, y, z] = staged.position;
-    const ground = physics.raycast(
-      [x, y, z + 16],
-      [0, 0, -1],
-      16384,
-      Layer.charController,
-      this.#options.movers.colliderOf(staged.reference),
-    );
+    const z = staged.position[2];
+    const ground = flierGround(physics, staged.position, 16, GROUND_LOOK, staged.reference);
     // With nothing under it at all it is under the world, not in the air: MQ106's Sahloknir
     // lies in his burial mound below the landscape (FXDragonMoundScript restrains him there
     // and keeps him from flying as the mound's cell loads, a frame after he is set down; he
     // started cruising first).
-    return ground !== undefined && z - ground.point[2] > AIR_START;
+    return ground !== undefined && z - ground > AIR_START;
   }
 
   // --- Reading --------------------------------------------------------------------------------

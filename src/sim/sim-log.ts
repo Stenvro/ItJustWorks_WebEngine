@@ -61,11 +61,21 @@ export type SimRecord =
       readonly started: readonly number[];
     }
   | {
-      /** What the HUD shows as text: a notification, a location's name, a subtitle, ... */
+      /**
+       * What the HUD shows as text: a notification, a location's name, a subtitle, the name the
+       * crosshair's activation prompt gives what it rests on ('target': empty once it rests on
+       * nothing), ...
+       */
       readonly kind: 'hud';
       readonly at: number;
       readonly type:
-        'notification' | 'location' | 'discovered' | 'subtitle' | 'helpMessage' | 'loadDoor';
+        | 'notification'
+        | 'location'
+        | 'discovered'
+        | 'subtitle'
+        | 'helpMessage'
+        | 'loadDoor'
+        | 'target';
       readonly text: string;
     }
   | { readonly kind: 'questUpdate'; readonly at: number; readonly update: QuestUpdate }
@@ -297,7 +307,10 @@ export class SimLog {
 
   /** The recording HUD. */
   readonly hud: HudSink = {
-    target: () => undefined,
+    // The activation prompt as it changes (the play tells only a change).
+    target: (target) => {
+      this.#push({ kind: 'hud', at: this.clock(), type: 'target', text: target?.name ?? '' });
+    },
     notification: (text) => {
       this.#push({ kind: 'hud', at: this.clock(), type: 'notification', text });
     },

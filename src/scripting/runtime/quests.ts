@@ -11,6 +11,7 @@
 import { LogEntryFlag, QuestFlag, StageFlag, type QuestRecord } from '../../world/quest-records.ts';
 import { ObjectHandle, type Value } from '../values.ts';
 import { AliasFiller } from './alias-fill.ts';
+import type { QuestState } from './game-state.ts';
 import type { ScriptRuntime } from './runtime.ts';
 import { countQuestStatus } from './stat-events.ts';
 import type { StoryEventData } from './story-manager.ts';
@@ -114,9 +115,15 @@ export class QuestEngine {
     runtime.events.emit('questStartStop', { quest, started: true });
     state.completed = false;
     state.failed = false;
-    // A quest that does not run once is reset as it starts: its scripts start over and their
-    // OnInit runs again (start-game-enabled quests get it twice: at the game's start and now).
+    // A quest that does not run once is reset as it starts: its stages and objectives as at its
+    // first start, its scripts start over and their OnInit runs again (start-game-enabled
+    // quests get it twice: at the game's start and now). From the data: CWGovernment (neither
+    // run once nor repeated stages) is started by the story manager each time a hold's capital
+    // changes hands, does its work in its start-up stage and stops itself, and its shut-down
+    // stage calls back the CWResetGarrison quest that waits for it with no time limit: with the
+    // stages of its last run still done, the second capital's start-up and shut-down never ran.
     if (!runOnce) {
+      clearProgress(state);
       await this.#resetScripts(record);
       await this.initialize(record);
     }
@@ -273,10 +280,7 @@ export class QuestEngine {
     const state = runtime.state.quest(quest);
     const running = state.running;
     if (running) await this.stop(quest);
-    state.stagesDone.clear();
-    state.stage = 0;
-    state.objectives.clear();
-    state.log.length = 0;
+    clearProgress(state);
     // A completed quest reset is taken back from the stats (QuestStatus's reset).
     if (state.completed) runtime.detach(countQuestStatus(runtime, quest, -1));
     state.completed = false;
@@ -318,4 +322,12 @@ export class QuestEngine {
   aliasHandle(quest: number, alias: number, location: boolean): Value {
     return new ObjectHandle(quest, location ? 'locationalias' : 'referencealias', alias);
   }
+}
+
+/** A quest's progress back to before its first start (Quest.Reset, and a start's reset). */
+function clearProgress(state: QuestState): void {
+  state.stagesDone.clear();
+  state.stage = 0;
+  state.objectives.clear();
+  state.log.length = 0;
 }

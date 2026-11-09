@@ -47,6 +47,7 @@ import {
 import { pointLights } from '../world/cell-lighting.ts';
 import type { LightProbe } from '../ai/light-level.ts';
 import {
+  cellReferences,
   doorDestination,
   type CellLight,
   type CellAcousticArea,
@@ -81,6 +82,7 @@ import {
 } from '../world/land.ts';
 import type { RecordDatabase, WorldspaceInfo } from '../world/record-db.ts';
 import { cellKey, WorldFlag, Worldspace, type Arrival } from '../world/worldspace.ts';
+import { loadedGridRadius } from '../world/loaded-grid.ts';
 import { LARGE_REFERENCE_GRID, largeReferencesAround } from '../world/large-references.ts';
 import {
   animateSkeletons,
@@ -157,8 +159,7 @@ import { worldSaveParts } from './world-save-parts.ts';
  * alike, as the engine centres the grid on the player's cell).
  */
 function gridRadius(session: GameSession | undefined): number {
-  const grids = session?.ini.number('General', 'uGridsToLoad') ?? 5;
-  return Math.max(1, Math.floor(grids / 2));
+  return loadedGridRadius(session?.ini.number('General', 'uGridsToLoad'));
 }
 const MAX_PARALLEL_LOADS = 3;
 /** Large references load this many cells around the camera (uLargeRefLODGridSize 11). */
@@ -187,6 +188,8 @@ export interface WorldElements extends SkyElements {
 interface LoadedCell {
   readonly x: number;
   readonly y: number;
+  /** The cell whose data it holds (GameSession.cellData), let go as it is freed. */
+  held?: number;
   /** Its collision is all in the physics world (its actors are set down on it). */
   collided: boolean;
   terrain: GpuTerrainCell | undefined;
@@ -1296,8 +1299,8 @@ export class WorldViewer {
   /**
    * Opens a worldspace. The player arrives at `arrival` (a load door's destination), or as
    * the game would bring them in near `cell` (default: the busiest cell): in front of the
-   * nearest load door, else at the nearest map marker. `stance`: the player's as they come
-   * through a load door (Player.keepStance).
+   * nearest load door, else at the nearest map marker. `stance`: the player as they left the
+   * place before (Player.keepStance).
    */
   async open(
     formId: number,
@@ -1832,9 +1835,8 @@ export class WorldViewer {
       const loaded = new Set(this.#cellLoadedReferences(cell));
       await runtime.cellAttached(
         [
-          ...data.objects.map((object) => object.reference),
-          // Triggers (activators with a primitive) hear who enters them.
-          ...data.primitives.map((primitive) => primitive.reference),
+          // Triggers (activators with a primitive) hear who enters them; markers attach too.
+          ...cellReferences(data),
           ...(this.#stage?.referencesIn(cellKey(cell.x, cell.y)) ?? []),
         ],
         (reference) => loaded.has(reference),
@@ -2261,6 +2263,7 @@ export class WorldViewer {
     // It resets if its time has come, before its references load (cell-reset.ts).
     await session.scriptsReady?.cellResets.attaching(cellId, persistent);
     const data = await session.cellData(cellId, persistent);
+    cell.held = cellId;
     const toggles = findToggles(data);
     const isEnabled = this.#enableState(session, data, cellId, toggles);
     cell.isEnabled = isEnabled;
@@ -2507,7 +2510,12 @@ export class WorldViewer {
     if (!world || !session || !db) return;
     const cellId = await world.cell(large.x, large.y);
     if (cellId === undefined) return;
-    const data = await session.cellData(cellId, world.persistentReferences(large.x, large.y));
+    // Only looked into: the cell itself is not loaded (it takes no room in the cell buffers).
+    const data = await session.cellData(
+      cellId,
+      world.persistentReferences(large.x, large.y),
+      false,
+    );
     const toggles = findToggles(data);
     const isEnabled = enabledReferences(data, toggles, this.#selection(session, cellId, toggles));
     const objects = data.objects.filter(
@@ -2716,6 +2724,9 @@ export class WorldViewer {
 
   /** `streamed`: a cell the streaming left (its collision goes over the next frames). */
   #free(cell: LoadedCell, streamed = false): void {
+    // Its data goes into its buffer (once: a cell may be freed again as its load ends).
+    if (cell.held !== undefined) this.#session?.cellLeft(cell.held);
+    cell.held = undefined;
     for (const entry of cell.placed)
       this.#stage?.effects.unglow(groundGlow(entry.object.reference));
     const runtime = this.#session?.scriptsReady;
@@ -2728,11 +2739,7 @@ export class WorldViewer {
       const data = cell.data;
       runtime.detach(
         runtime.cellDetached(
-          [
-            ...data.objects.map((object) => object.reference),
-            ...data.primitives.map((primitive) => primitive.reference),
-            ...(this.#stage?.referencesIn(key) ?? []),
-          ],
+          [...cellReferences(data), ...(this.#stage?.referencesIn(key) ?? [])],
           (reference) => loaded.has(reference),
         ),
       );
