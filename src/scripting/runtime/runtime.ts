@@ -1060,6 +1060,11 @@ export class ScriptRuntime implements VmHost {
   #index: PersistentIndex | undefined;
   readonly #keywordCache = new Map<number, Promise<number[]>>();
   readonly #cellLocations = new Map<number, Promise<number | undefined>>();
+  /**
+   * Where a script last moved the player, until the world shows them in that cell: the
+   * attached area round the player is the one they are going to meanwhile (`#movedAcross`).
+   */
+  #playerArrival: AreaPlace | undefined;
   /** Per cell: the references its references activate (their XAPR names them), with delays. */
   readonly #activateChildren = new Map<
     number,
@@ -2300,14 +2305,10 @@ export class ScriptRuntime implements VmHost {
     // Where it was (an actor's location may change: actor-locations.ts).
     const before = this.#placementSnapshot(state);
     // Where it was, for whether it moved into or out of the attached area (below).
-    const attachedBefore: AreaPlace | 'shown' | undefined =
-      cell === undefined
-        ? undefined
-        : this.world.livePlacement?.(reference)
-          ? 'shown'
-          : state.position && (state.cell !== undefined || state.world !== undefined)
-            ? { position: state.position, cell: state.cell, world: state.world }
-            : undefined;
+    const attachedBefore = cell === undefined ? undefined : this.#areaPlaceBefore(reference, state);
+    if (reference === PLAYER_REF && cell !== undefined) {
+      this.#playerArrival = { position, cell, world };
+    }
     // A reference taken into a container comes back out into the world.
     const taken = state.container;
     if (taken) {
@@ -2349,8 +2350,7 @@ export class ScriptRuntime implements VmHost {
     after: AreaPlace,
   ): Promise<void> {
     if (reference === PLAYER_REF) return;
-    // Where the player is going, if a script just moved them (the cell they arrive in attaches).
-    const player = await this.placement(PLAYER_REF, false);
+    const player = await this.#playerArea();
     if (!player) return;
     let from = before;
     if (from === undefined) {
@@ -2368,15 +2368,67 @@ export class ScriptRuntime implements VmHost {
     if (was !== is) this.events.emit('moveAttachDetach', { reference, attached: is });
   }
 
+  /**
+   * Where a reference was before a move, for the attached area: shown by the world (in it), or
+   * where a script last put it; undefined: at its editor location (read then).
+   */
+  #areaPlaceBefore(reference: number, state: ReferenceState): AreaPlace | 'shown' | undefined {
+    if (this.world.livePlacement?.(reference)) return 'shown';
+    return state.position && (state.cell !== undefined || state.world !== undefined)
+      ? { position: state.position, cell: state.cell, world: state.world }
+      : undefined;
+  }
+
+  /**
+   * The place the attached area is round: where a script just moved the player, until the
+   * world shows them in that cell (the cell they arrive in attaches); else where the world shows
+   * them. Before, the place a script last left the player in, kept in the game state: none until
+   * a script moved them, so no reference a script moved told OnAttachedToCell or
+   * OnDetachedFromCell, and a stale one once the player had walked on.
+   */
+  async #playerArea(): Promise<AreaPlace | undefined> {
+    const shown = await this.placement(PLAYER_REF);
+    const arrival = this.#playerArrival;
+    if (!arrival) return shown;
+    const there =
+      shown !== undefined &&
+      shown.cell === arrival.cell &&
+      shown.world === arrival.world &&
+      (arrival.world === undefined ||
+        (Math.floor(shown.position[0] / CELL_UNITS) ===
+          Math.floor(arrival.position[0] / CELL_UNITS) &&
+          Math.floor(shown.position[1] / CELL_UNITS) ===
+            Math.floor(arrival.position[1] / CELL_UNITS)));
+    if (!there) return arrival;
+    this.#playerArrival = undefined;
+    return shown;
+  }
+
   moveToEditorLocation(reference: number): void {
     const state = this.state.reference(reference);
     const before = this.#placementSnapshot(state);
+    const attachedBefore = this.#areaPlaceBefore(reference, state);
     delete state.position;
     delete state.rotation;
     delete state.cell;
     delete state.world;
     this.world.moved?.(reference);
     if (before) this.actorLocations.moved(reference, before);
+    // Back where the plugin placed it: told as any move into or out of the attached area.
+    if (reference === PLAYER_REF) return;
+    this.detach(
+      (async () => {
+        const editor = await this.#editorPlacement(reference);
+        const cell = this.forms.db.cellOfReference(reference);
+        // Already there (never moved, or not shown and not moved by a script): no move.
+        if (!editor || attachedBefore === undefined) return;
+        await this.#movedAcross(reference, attachedBefore, {
+          position: editor.position,
+          cell,
+          world: cell === undefined ? undefined : this.forms.db.worldOfCell(cell),
+        });
+      })(),
+    );
   }
 
   /** Where scripts last put a reference (for its location before it moves again). */

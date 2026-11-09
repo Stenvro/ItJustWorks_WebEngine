@@ -694,8 +694,12 @@ stats go to every object registered for them. What each kind becomes:
   whose parent cell changes between an attached cell and a detached one. Ours: a move to
   another cell (MoveTo, an actor walking away or back) between the attached area (the
   player's interior cell, or the uGridsToLoad cells round the player's outside, where the
-  player is going if a script just moved them) and the rest. The player is always attached.
-  A cell attaching or detaching with its references is OnCellAttach / OnCellDetach instead.
+  player is going if a script just moved them, until the world shows them in that cell; else
+  where the world shows them) and the rest; MoveToMyEditorLocation too. The player is always
+  attached. Before, the area was read round where a script last left the player, none until
+  one did, so no reference a script moved was told either event (and a stale place once the
+  player walked on). A cell attaching or detaching with its references is OnCellAttach /
+  OnCellDetach instead. `tests/conformance/scripting/script-events.test.ts`.
 - **Translations** (`ScriptRuntime.translate`): failed at once for a reference without its 3D,
   almost complete as it passes fRefTranslationAlmostDonePercent (0.9) of its way, complete at
   the end.

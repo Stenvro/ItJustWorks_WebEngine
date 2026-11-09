@@ -26,6 +26,7 @@
 // - A blocked reference does not pass its activation on: the traps' triggers (TrapTriggerBase)
 //   unblock themselves, activate themselves and block again to set off their children.
 
+import fs from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SCRIPT_EVENTS } from '../../../src/scripting/runtime/script-events.ts';
 import { Vfs } from '../../../src/vfs/vfs.ts';
@@ -352,6 +353,17 @@ describe.skipIf(!hasGamedata())('the world’s events to the scripts (headless s
     for (const sit of sits) expect(sit.args).toEqual([{ form: expect.any(Number) as number }]);
   });
 
+  it('sends OnActivate(akActionRef = the actor) to the furniture an actor’s AI goes to use', () => {
+    const sits = sent('OnSit', undefined, opened, left).filter((sit) => sit.target !== PLAYER_REF);
+    expect(sits.length).toBeGreaterThan(0);
+    for (const sit of sits) {
+      const [furniture] = sit.args;
+      const chair = (furniture as { form: number }).form;
+      const activations = sent('OnActivate', chair, opened, sit.at + 1e-6).map((e) => e.args);
+      expect(activations).toContainEqual([{ form: sit.target }]);
+    }
+  });
+
   it('sends the player OnItemAdded(item, 1, None, None) for an item added from nowhere', () => {
     expect(sent('OnItemAdded', PLAYER_REF, took, struck).map((event) => event.args)).toEqual([
       [{ form: dagger }, 1, null, null],
@@ -387,104 +399,235 @@ describe.skipIf(!hasGamedata())('the world’s events to the scripts (headless s
   });
 });
 
-// The events vanilla scripts wait for that no interaction case above covers yet, each with when
-// the original sends it, its arguments and to whom (the Creation Kit's event pages, the base
-// scripts' declarations; CommonLibSSE's event sources). "Produced:" names our producer where one
-// exists; the case is to be written in the simulation. "Not produced" ones are missing.
-const TO_WRITE: Readonly<Record<string, string>> = {
-  OnActivate: 'by an NPC’s AI (an actor going through a door: akActionRef the actor)  [CK]',
-  OnTriggerEnter:
-    'to a trigger volume as a reference enters it (akActionRef)  [CK; produced: trigger-volumes.ts]',
-  OnTriggerLeave: 'to a trigger volume as a reference leaves it (akActionRef)  [CK; produced]',
-  OnTrigger:
-    'to a trigger volume while a reference stays in it, again each fTriggerEventDelayMS (500 ms)  [CK; produced]',
-  OnUpdate:
-    'to a form registered with RegisterForUpdate/RegisterForSingleUpdate, in real seconds  [CK; produced: VM]',
-  OnUpdateGameTime:
-    'to a form registered with RegisterForUpdateGameTime/RegisterForSingleUpdateGameTime, in game hours  [CK; produced: VM]',
-  OnInit:
-    'to every script as its object comes into being, before its other events  [CK; produced: VM]',
-  OnBeginState:
-    'to a script as GotoState enters a state (the compiler’s GotoState)  [PEX; produced: VM]',
-  OnEndState: 'to a script as GotoState leaves a state  [PEX; produced: VM]',
-  OnEffectStart:
-    'to an active magic effect’s scripts as it starts (akTarget, akCaster)  [CK; produced: magic-engine.ts]',
-  OnEffectFinish:
-    'to an active magic effect’s scripts as it ends (akTarget, akCaster)  [CK; produced]',
-  OnContainerChanged:
-    'to an item reference that moves between containers or the world (akNewContainer, akOldContainer)  [CK; produced]',
-  OnItemRemoved:
-    'to the container an item left (akBaseItem, aiItemCount, akItemReference, akDestContainer)  [CK; produced]',
-  OnCombatStateChanged:
-    'to an NPC whose combat state changes (akTarget, aeCombatState 0 none, 1 combat, 2 searching)  [CK; produced: actor-combat-ai.ts]',
-  OnAnimationEvent:
-    'to a form registered for a reference’s animation event as its graph raises it (akSource, asEventName)  [CK; produced]',
-  OnAnimationEventUnregistered:
-    'to a form registered for an animation event that the reference’s graph unloads (akSource, asEventName)  [CK; not produced]',
-  OnReset:
-    'to a reference as its cell resets (not one deleted)  [CK, TESResetEvent; not produced: cell reset]',
-  OnEquipped:
-    'to an item with scripts as an actor equips it (akActor)  [CK; produced: equipment-engine.ts]',
-  OnUnequipped: 'to an item with scripts as an actor unequips it (akActor)  [CK; produced]',
-  OnObjectUnequipped:
-    'to an actor that unequips an item (akBaseObject, akReference)  [CK; produced]',
-  OnRead: 'to a book reference as it is read (opened)  [CK; produced: book-menu.ts]',
-  OnEnterBleedout:
-    'to an actor whose life state turns to bleeding out  [CK; produced: actor-combat.ts]',
-  OnGetUp:
-    'to an actor as it gets up from furniture (akFurniture)  [CK; produced: actor-furniture.ts]',
-  OnOpen:
-    'to a container as it opens (akActionRef: who opened it; doors: covered above)  [CK, TESOpenCloseEvent; produced]',
-  OnClose: 'to a door or container as it closes (akActionRef)  [CK, TESOpenCloseEvent; produced]',
-  OnDestructionStageChanged:
-    'to a destructible reference as it goes to another stage (aiOldStage, aiCurrentStage)  [CK; produced]',
-  OnAttachedToCell:
-    'to a reference moved into the attached area by itself (not with its cell)  [CK, TESMoveAttachDetachEvent; produced]',
-  OnDetachedFromCell: 'to a reference moved out of the attached area by itself  [CK; produced]',
-  OnPlayerLoadGame:
-    'to the player (and its aliases) as a saved game finishes loading  [CK, TESLoadGameEvent; not produced: M12]',
-  OnSpellCast:
-    'to the caster as a spell, power, scroll or shout takes effect (akSpell), not a script’s Cast  [CK, TESSpellCastEvent; produced]',
-  OnTrapHitStart:
-    'to a trap as it starts touching a living actor (akTarget, velocity, position, aeMaterial, abInitialHit, aeMotionType)  [CK, TESTrapHitEvent; not produced: traps]',
-  OnTrapHit:
-    'to a trap each step it touches a living actor (as OnTrapHitStart)  [CK; not produced: traps]',
-  OnTrapHitStop:
-    'to a trap as it stops touching a living actor (akTarget)  [CK; not produced: traps]',
-  OnGainLOS:
-    'to a form registered with RegisterForLOS/RegisterForSingleLOSGain as the viewer gains sight of the target  [CK; produced]',
-  OnLostLOS:
-    'to a form registered with RegisterForLOS/RegisterForSingleLOSLost as the viewer loses sight  [CK; produced]',
-  OnTranslationComplete: 'to a reference whose TranslateTo reached its end  [CK; produced]',
-  OnTranslationAlmostComplete:
-    'to a reference past fRefTranslationAlmostDonePercent (0.9) of its TranslateTo  [CK; produced]',
-  OnTranslationFailed: 'to a reference whose TranslateTo failed (no 3D)  [CK; produced]',
-  OnGrab: 'to an object the player grabs (Z key, Telekinesis)  [CK, TESGrabReleaseEvent; produced]',
-  OnRelease: 'to an object the player lets go  [CK; produced]',
-  OnRaceSwitchComplete: 'to an actor whose race switch (SetRace) ended  [CK; produced]',
-  OnSleepStart:
-    'to the forms registered with RegisterForSleep as the player’s sleep starts (afSleepStartTime, afDesiredSleepEndTime)  [CK; produced]',
-  OnSleepStop:
-    'to the forms registered with RegisterForSleep as it ends (abInterrupted)  [CK; produced]',
-  OnLockStateChanged:
-    'to a reference whose lock is locked or unlocked  [CK, TESLockChangedEvent; produced]',
-  OnTrackedStatsEvent:
-    'to the forms registered with RegisterForTrackedStatsEvent as an engine stat changes (arStatName, aiStatValue)  [CK; produced]',
-  OnWardHit:
-    'to an actor whose ward a spell meets (akCaster, akSpell, aiStatus 0 friendly, 1 absorbed, 2 broken)  [CK; produced]',
-  OnVampirismStateChanged:
-    'to an actor whose vampirism changes (abIsVampire)  [CK; produced: natives]',
-  OnVampireFeed: 'to the player feeding on an actor (akTarget)  [CK; produced: natives]',
-  OnLycanthropyStateChanged:
-    'to an actor whose lycanthropy changes (abIsWerewolf)  [CK; produced: natives]',
-  OnPackageChange:
-    'to an actor whose package changes (akOldPackage)  [CK, TESPackageEvent; produced]',
-  OnPackageEnd: 'to an actor whose package ends (akOldPackage)  [CK; produced]',
-  OnPlayerFastTravelEnd:
-    'to the player as fast travel ends (afTravelGameTimeHours)  [CK; produced]',
-  OnPlayerBowShot:
-    'to the player as their bow’s arrow leaves (akWeapon, akAmmo, afPower, abSunGazing)  [CK; produced]',
-  OnSell: 'to an item reference the player sells (akSeller)  [CK, TESSellEvent; produced]',
+// Mercer Frey's house (Riften), from the data: a plain trigger box [00094027] (L_TRIGGER) the
+// player arrives in, and in the cellar a spear trap [00050C22] (TrapSpear01, its hits told
+// to its scripts: tests/conformance/physics/traps.test.ts). An item lying in the Bannered Mare
+// (its first MISC reference) is out of the attached area until a script moves it to the player
+// and back (MoveTo, MoveToMyEditorLocation). Expected,
+// from the Creation Kit's event pages and the base scripts' declarations:
+// - OnTriggerEnter(akActionRef), OnTrigger(akActionRef) again each fTriggerEventDelayMS (500 ms)
+//   while it stays inside, OnTriggerLeave(akActionRef) as it leaves: to the trigger.
+// - OnTrapHitStart, then OnTrapHit while the trap keeps touching a living actor, OnTrapHitStop
+//   (akTarget) as the contact ends: to the trap.
+// - OnAttachedToCell / OnDetachedFromCell: to a reference moved into or out of the attached
+//   area by itself (TESMoveAttachDetachEvent), not with its cell.
+const MERCER_FREY_HOUSE = 0x37cc6;
+const TRIGGER_BOX = 0x94027;
+const IN_THE_BOX: [number, number, number] = [-1026, 1346, -60];
+const SPEAR_TRAP = 0x50c22;
+const ON_THE_TRAP: [number, number, number] = [-2371.1, 2148.9, -814.6];
+
+describe.skipIf(!hasGamedata())('triggers, traps and moves (headless simulation)', () => {
+  let sim: Sim;
+  let arrived = 0;
+  let left = 0;
+  let offTheTrap = 0;
+  let movedIn = 0;
+  let movedOut = 0;
+  let item = 0;
+
+  beforeAll(async () => {
+    sim = await openSim({
+      interior: MERCER_FREY_HOUSE,
+      hour: 10,
+      arrival: { position: IN_THE_BOX, heading: 0 },
+    });
+    arrived = 0;
+    await sim.step(1.5);
+    // A script brings an item from the Bannered Mare (MoveTo the player), then sends it back.
+    const handle = (reference: number) => sim.runtime.referenceHandle(reference);
+    for (const reference of sim.db.cellReferences(BANNERED_MARE)) {
+      const base = await sim.runtime.baseOf(reference);
+      if (base !== undefined && (await sim.db.get(base))?.type === 'MISC') {
+        item = reference;
+        break;
+      }
+    }
+    movedIn = sim.time;
+    await sim.native(handle(item), 'ObjectReference', 'MoveTo', [
+      handle(PLAYER_REF),
+      0,
+      0,
+      0,
+      true,
+    ]);
+    await sim.step(1);
+    movedOut = sim.time;
+    await sim.native(handle(item), 'ObjectReference', 'MoveToMyEditorLocation', []);
+    await sim.step(1);
+    // The player goes down to the spear trap and stands on it, then comes back up.
+    left = sim.time;
+    await sim.moveTo(ON_THE_TRAP);
+    await sim.step(3);
+    offTheTrap = sim.time;
+    await sim.moveTo(IN_THE_BOX);
+    await sim.step(1.5);
+  }, 600_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  const sent = (event: string, target: number, since = 0, until = Infinity) =>
+    sim
+      .scriptEvents({ event, target, since })
+      .filter((record) => record.at < until && record.alias === undefined);
+
+  /** What the player set off: events whose akActionRef is the player. */
+  const byPlayer = (records: ReturnType<typeof sent>) =>
+    records.filter(
+      (record) => JSON.stringify(record.args[0]) === JSON.stringify({ form: PLAYER_REF }),
+    );
+
+  it('sends a trigger OnTriggerEnter(the player) as they come into it (with its cell)', () => {
+    expect(byPlayer(sent('OnTriggerEnter', TRIGGER_BOX, arrived, left))).toHaveLength(1);
+    expect(sent('OnTriggerEnter', TRIGGER_BOX, arrived, movedIn).map((e) => e.args)).toEqual([
+      [{ form: PLAYER_REF }],
+    ]);
+  });
+
+  it('sends it OnTrigger(the player) again each fTriggerEventDelayMS (500 ms) while they stay', () => {
+    const told = byPlayer(sent('OnTrigger', TRIGGER_BOX, arrived, left));
+    // 1.5 s, then 2 more inside: at least five tellings, half a second or more apart.
+    expect(told.length).toBeGreaterThanOrEqual(5);
+    for (let i = 1; i < told.length; i++) {
+      expect((told[i]?.at ?? 0) - (told[i - 1]?.at ?? 0)).toBeGreaterThanOrEqual(0.5 - 1e-6);
+    }
+  });
+
+  it('sends it OnTriggerLeave(the player) as they leave, and OnTrigger no more', () => {
+    const leaves = byPlayer(sent('OnTriggerLeave', TRIGGER_BOX, left, offTheTrap));
+    expect(leaves.map((e) => e.args)).toEqual([[{ form: PLAYER_REF }]]);
+    const leftAt = leaves[0]?.at ?? Infinity;
+    expect(byPlayer(sent('OnTrigger', TRIGGER_BOX, leftAt + 1e-6, offTheTrap))).toEqual([]);
+  });
+
+  it('sends the trap OnTrapHit while it keeps touching the player, OnTrapHitStop as it ends', () => {
+    const start = sent('OnTrapHitStart', SPEAR_TRAP, left, offTheTrap);
+    expect(start.length).toBeGreaterThan(0);
+    const hits = sent('OnTrapHit', SPEAR_TRAP, left);
+    for (const hit of hits) {
+      // As OnTrapHitStart: the target, its velocity and position, the material, the flags.
+      expect(hit.args[0]).toEqual({ form: PLAYER_REF });
+      expect(hit.args).toHaveLength(start[0]?.args.length ?? 0);
+    }
+    const stops = sent('OnTrapHitStop', SPEAR_TRAP, left);
+    expect(stops.map((e) => e.args)).toContainEqual([{ form: PLAYER_REF }]);
+    // The stop comes after the start and every hit.
+    const stop = stops.at(-1)?.at ?? -Infinity;
+    for (const event of [...start, ...hits]) expect(event.at).toBeLessThanOrEqual(stop);
+  });
+
+  it('sends an item OnAttachedToCell as a script moves it into the attached area', () => {
+    expect(item).not.toBe(0);
+    expect(sent('OnAttachedToCell', item, movedIn, movedOut)).toHaveLength(1);
+    expect(sent('OnDetachedFromCell', item, movedIn, movedOut)).toEqual([]);
+  });
+
+  it('sends it OnDetachedFromCell as a script moves it back out of it', () => {
+    expect(sent('OnDetachedFromCell', item, movedOut, left)).toHaveLength(1);
+    expect(sent('OnAttachedToCell', item, movedOut, left)).toEqual([]);
+  });
+});
+
+// Breezehome (Whiterun), from the data: the player sits in one of its chairs and gets up
+// (OnSit, then OnGetUp(akFurniture) to the actor: TESFurnitureEvent).
+const BREEZEHOME = 0x165a8;
+
+describe.skipIf(!hasGamedata())('getting up from furniture (headless simulation)', () => {
+  let sim: Sim;
+  let chair = 0;
+  let sat = false;
+  let gotUp = false;
+
+  beforeAll(async () => {
+    sim = await openSim({ interior: BREEZEHOME, hour: 12 });
+    await sim.step(1);
+    const seat = sim.world
+      .placedObjects()
+      .find(({ object }) => object.furniture?.sit === true && object.baseType === 'FURN');
+    chair = seat?.object.reference ?? 0;
+    if (chair !== 0 && sim.activate(chair)) {
+      sat = await sim.until(
+        () => sim.scriptEvents({ event: 'OnSit', target: PLAYER_REF }).length > 0,
+        10,
+      );
+      sim.press('Forward', true);
+      gotUp = await sim.until(
+        () => sim.scriptEvents({ event: 'OnGetUp', target: PLAYER_REF }).length > 0,
+        10,
+      );
+      sim.press('Forward', false);
+    }
+  }, 600_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it('sends the player OnGetUp(the chair) as they get up from it, after OnSit(the chair)', () => {
+    expect(chair).not.toBe(0);
+    expect(sat).toBe(true);
+    expect(gotUp).toBe(true);
+    const sits = sim.scriptEvents({ event: 'OnSit', target: PLAYER_REF });
+    const ups = sim.scriptEvents({ event: 'OnGetUp', target: PLAYER_REF });
+    expect(sits.filter((e) => e.alias === undefined).map((e) => e.args)).toEqual([
+      [{ form: chair }],
+    ]);
+    expect(ups.filter((e) => e.alias === undefined).map((e) => e.args)).toEqual([
+      [{ form: chair }],
+    ]);
+    expect(sits[0]?.at ?? Infinity).toBeLessThanOrEqual(ups[0]?.at ?? -Infinity);
+  });
+});
+
+// The events vanilla scripts wait for that the cases of this suite do not cover, each checked in
+// the simulation by another suite of tests/conformance (its file named): what each sends, when
+// and with which arguments is written there (the Creation Kit's event pages, the base scripts'
+// declarations; CommonLibSSE's event sources).
+const CHECKED_ELSEWHERE: Readonly<Record<string, string>> = {
+  OnUpdate: 'scripting/script-events-registered.test.ts (RegisterForSingleUpdate)',
+  OnUpdateGameTime: 'scripting/script-events-registered.test.ts',
+  OnInit: 'scripting/script-events-actions.test.ts (PlaceAtMe)',
+  OnBeginState: 'scripting/script-events-items.test.ts (the map’s GotoState)',
+  OnEndState: 'scripting/script-events-items.test.ts',
+  OnEffectStart: 'scripting/script-events-items.test.ts (a potion)',
+  OnEffectFinish: 'scripting/script-events-items.test.ts',
+  OnContainerChanged: 'scripting/script-events-items.test.ts (the map taken)',
+  OnItemRemoved: 'scripting/script-events-registered.test.ts',
+  OnCombatStateChanged: 'scripting/script-events-registered.test.ts (the wolf)',
+  OnAnimationEvent: 'scripting/script-events-items.test.ts (FootLeft)',
+  OnAnimationEventUnregistered: 'scripting/script-events-items.test.ts',
+  OnReset: 'scripting/respawn-cell-reset.test.ts',
+  OnEquipped: 'scripting/script-events-items.test.ts (the sword)',
+  OnUnequipped: 'scripting/script-events-items.test.ts',
+  OnObjectUnequipped: 'scripting/script-events-registered.test.ts',
+  OnRead: 'scripting/script-events-actions.test.ts (a book where it lies)',
+  OnEnterBleedout: 'scripting/script-events-items.test.ts (Hulda, essential)',
+  OnClose: 'scripting/script-events-actions.test.ts (the strongbox)',
+  OnDestructionStageChanged: 'scripting/script-events-items.test.ts (the urn)',
+  OnPlayerLoadGame: 'scripting/save-load.test.ts',
+  OnSpellCast: 'scripting/script-events-actions.test.ts (the ward)',
+  OnTrapHitStart: 'physics/traps.test.ts (the spear trap, the swinging log)',
+  OnGainLOS: 'scripting/script-events-registered.test.ts',
+  OnLostLOS: 'scripting/script-events-registered.test.ts',
+  OnTranslationComplete: 'scripting/script-events-registered.test.ts',
+  OnTranslationAlmostComplete: 'scripting/script-events-registered.test.ts',
+  OnTranslationFailed: 'scripting/script-events-actions.test.ts',
+  OnGrab: 'scripting/script-events-actions.test.ts (the bowl)',
+  OnRelease: 'scripting/script-events-actions.test.ts',
+  OnRaceSwitchComplete: 'scripting/script-events-items.test.ts (SetRace)',
+  OnSleepStart: 'scripting/script-events-actions.test.ts',
+  OnSleepStop: 'scripting/script-events-actions.test.ts',
+  OnLockStateChanged: 'scripting/script-events-items.test.ts (the strongbox)',
+  OnTrackedStatsEvent: 'scripting/script-events-registered.test.ts',
+  OnWardHit: 'scripting/script-events-actions.test.ts',
+  OnVampirismStateChanged: 'scripting/script-events-items.test.ts',
+  OnVampireFeed: 'scripting/script-events-items.test.ts',
+  OnLycanthropyStateChanged: 'scripting/script-events-items.test.ts',
+  OnPackageChange: 'scripting/script-events-actions.test.ts (Carlotta at 22:00)',
+  OnPackageEnd: 'scripting/script-events-registered.test.ts',
+  OnPlayerFastTravelEnd: 'scripting/script-events-actions.test.ts (to Riverwood)',
+  OnPlayerBowShot: 'scripting/script-events-actions.test.ts',
+  OnSell: 'scripting/script-events-actions.test.ts (the apple)',
 };
 
 /** The events the cases above cover in the simulation. */
@@ -505,10 +648,29 @@ const COVERED = [
   'OnMagicEffectApply',
   'OnDying',
   'OnDeath',
+  'OnTriggerEnter',
+  'OnTrigger',
+  'OnTriggerLeave',
+  'OnTrapHit',
+  'OnTrapHitStop',
+  'OnAttachedToCell',
+  'OnDetachedFromCell',
+  'OnGetUp',
 ];
 
-describe('the events still to check in the simulation', () => {
-  for (const [event, when] of Object.entries(TO_WRITE)) it.todo(`sends ${event} ${when}`);
+describe('the events checked in the simulation', () => {
+  it('names, for each event checked in another suite, a suite that sends it', () => {
+    const suites = new URL('../', import.meta.url);
+    for (const [event, where] of Object.entries(CHECKED_ELSEWHERE)) {
+      const file = where.split(' ')[0] ?? '';
+      const text = fs.readFileSync(new URL(file, suites), 'utf8').toLowerCase();
+      expect(
+        text.includes(`'${event.toLowerCase()}'`) || text.includes(event.toLowerCase()),
+        event,
+      ).toBe(true);
+    }
+    for (const event of COVERED) expect(CHECKED_ELSEWHERE[event], event).toBeUndefined();
+  });
 });
 
 describe.skipIf(!hasGamedata())('the events the load order’s scripts wait for (data)', () => {
@@ -538,7 +700,9 @@ describe.skipIf(!hasGamedata())('the events the load order’s scripts wait for 
   });
 
   it('lists a case for every event a base script declares (besides the story events)', () => {
-    const listed = new Set([...COVERED, ...Object.keys(TO_WRITE)].map((e) => e.toLowerCase()));
+    const listed = new Set(
+      [...COVERED, ...Object.keys(CHECKED_ELSEWHERE)].map((e) => e.toLowerCase()),
+    );
     const missing = [...usage.declared.keys()].filter(
       (event) => !event.startsWith('onstory') && !listed.has(event),
     );
