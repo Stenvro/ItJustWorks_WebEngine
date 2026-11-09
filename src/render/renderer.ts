@@ -142,6 +142,7 @@ import {
   focusLayer,
   type FocusSet,
   type FrameShadows,
+  type InstanceVisibility,
   type LargeRefMask,
   type ShadowCasters,
   type LodMask,
@@ -317,8 +318,18 @@ export class Renderer {
   showGrass = true;
   /** Distant land and tree LOD are drawn (the console's tll). */
   showLod = true;
-  /** Trees are drawn (the console's tt; TODO(M13): the near trees, TREE references, too). */
-  showTrees = true;
+  /**
+   * The trees' switch (the console's tt): hidden, the near trees (TREE references, placed with it:
+   * switched-visibility.ts) are not drawn, nor the distant tree LOD.
+   */
+  readonly treeVisibility: InstanceVisibility = { hidden: false };
+  /** Trees are drawn, near and distant (the console's tt). */
+  get showTrees(): boolean {
+    return !this.treeVisibility.hidden;
+  }
+  set showTrees(on: boolean) {
+    this.treeVisibility.hidden = !on;
+  }
   /** Water is drawn (the console's tws). */
   showWater = true;
   /** The water reflects the sky, land, LOD and flagged references ([Water] bUseWaterReflections). */

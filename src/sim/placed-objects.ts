@@ -12,6 +12,7 @@ import { articulatedPose } from '../physics/articulation.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
 import type { GpuModel } from '../render/gpu-model.ts';
 import { transformPoint, type Vec3 } from '../render/math.ts';
+import { switchedVisibility } from '../render/switched-visibility.ts';
 import type {
   GpuWaterType,
   InstanceVisibility,
@@ -47,6 +48,11 @@ export interface PlaceOptions {
   readonly simulated: boolean;
   /** Its shown state (hidden while disabled). */
   readonly visibility?: InstanceVisibility;
+  /**
+   * The trees' switch (the console's tt: Renderer.treeVisibility): a TREE reference is drawn only
+   * while it is not hidden either.
+   */
+  readonly trees?: InstanceVisibility;
   /** A pose of its own where nothing else poses it (a tree swaying in the wind). */
   readonly sway?: (
     model: GpuModel,
@@ -138,7 +144,10 @@ export function placeObject(
   const posed = skeletal
     ? { pose: skeletal.skeleton.pose, poseNodes: skeletal.poseNodes }
     : (articulated ?? options.sway?.(model, object));
-  const visibility = options.visibility;
+  const visibility =
+    object.baseType === 'TREE' && options.trees
+      ? switchedVisibility(options.visibility, options.trees)
+      : options.visibility;
   return {
     object,
     ...(skeletal && { skeleton: skeletal.skeleton }),

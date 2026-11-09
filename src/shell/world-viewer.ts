@@ -1232,7 +1232,7 @@ export class WorldViewer {
     this.#detachScripts = session.scriptWorld.attach(this.#scriptView);
     this.#created = new CreatedObjects(session, this.#renderer);
     this.#flora?.clear();
-    this.#flora = new FloraLooks(session, this.#renderer);
+    this.#flora = new FloraLooks(session, this.#renderer, this.#renderer.treeVisibility);
     this.#destruction?.clear();
     this.#destruction = new DestructionLooks(
       session,
@@ -2448,6 +2448,7 @@ export class WorldViewer {
         {
           simulated,
           ...(visibility && { visibility: visibility(object.reference) }),
+          trees: this.#renderer.treeVisibility,
           sway: (swayed, swaying) => this.#treeSway(swayed, swaying),
         },
       );

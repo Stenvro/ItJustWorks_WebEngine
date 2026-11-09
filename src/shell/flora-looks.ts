@@ -7,6 +7,7 @@
 import { HARVESTED_SWITCH_CHILD } from '../world/flora-records.ts';
 import type { CellObject } from '../world/cell-loader.ts';
 import type { RenderPort } from '../render/render-port.ts';
+import { switchedVisibility } from '../render/switched-visibility.ts';
 import type { GpuScene, InstanceVisibility } from '../render/scene-renderer.ts';
 import type { GameSession } from './game-session.ts';
 
@@ -30,10 +31,13 @@ export class FloraLooks {
   readonly #session: GameSession;
   readonly #renderer: RenderPort;
   readonly #floras = new Map<number, Flora>();
+  /** The trees' switch (the console's tt): a harvested tree's look hides with it. */
+  readonly #trees: InstanceVisibility | undefined;
 
-  constructor(session: GameSession, renderer: RenderPort) {
+  constructor(session: GameSession, renderer: RenderPort, trees?: InstanceVisibility) {
     this.#session = session;
     this.#renderer = renderer;
+    this.#trees = trees;
   }
 
   /**
@@ -101,7 +105,14 @@ export class FloraLooks {
           return;
         }
         const visibility: InstanceVisibility = { hidden: true };
-        const scene = this.#renderer.scene.createScene([{ model, world: flora.world, visibility }]);
+        const trees = flora.object.baseType === 'TREE' ? this.#trees : undefined;
+        const scene = this.#renderer.scene.createScene([
+          {
+            model,
+            world: flora.world,
+            visibility: trees ? switchedVisibility(visibility, trees) : visibility,
+          },
+        ]);
         flora.harvested = { scene, visibility };
       })
       .catch(() => {
