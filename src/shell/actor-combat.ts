@@ -129,8 +129,13 @@ import {
 } from '../gameplay/combat/hit-test.ts';
 import {
   rangedKillCameraPlays,
+  selfAreaKill,
+  spellCameraRide,
+  spellLoosedDamage,
   spellPredictedKill,
+  type SelfAreaCandidate,
 } from '../gameplay/combat/ranged-kill-camera.ts';
+import { flightKind } from '../gameplay/magic/projectile-flight.ts';
 import { deathForce, spellDeathForce } from '../gameplay/combat/death-force.ts';
 import type { INI_DEFAULTS } from '../world/ini-settings.ts';
 import { ARROW_TILT, tiltUp, WORLD_GRAVITY } from '../gameplay/combat/projectile.ts';
@@ -177,7 +182,7 @@ import type { PlaySession } from './play-session.ts';
 import type { PlayerAvatar } from './player-avatar.ts';
 import type { CombatBridge } from './script-world.ts';
 import type { Terminal } from './terminal.ts';
-import type { MagicItemRecord } from '../world/magic-records.ts';
+import { Delivery, type MagicItemRecord } from '../world/magic-records.ts';
 import { KillmoveCamera, type KillmoveSubjects } from './killmove-camera.ts';
 import { PlayerCombat, type CastingButtons } from './player-combat.ts';
 import type { ActorTalk } from './actor-talk.ts';
@@ -1633,8 +1638,8 @@ export class ActorCombat implements CombatBridge {
     if (play) {
       play.heldByPair = player?.state.paired !== undefined;
       // A shot cut away (its camera too near what it looks at) shows the player's first person
-      // while its playback goes on.
-      const shown = this.#camera?.cutAway === true ? undefined : this.#camera;
+      // while its playback goes on; a First Person Camera shot leaves the player's view as it is.
+      const shown = this.#camera?.showsPlayerView === true ? undefined : this.#camera;
       if (this.#camera?.cutAway === true && play.cameraOverride === this.#camera) {
         play.player.setPov('first');
       }
@@ -3877,8 +3882,13 @@ export class ActorCombat implements CombatBridge {
 
   /**
    * The magic kill camera (observed in the original): as the ranged one, for a spell or staff cast
-   * whose projectile is predicted to kill, the camera riding it, the casting type and delivery in
-   * GetVATSValue. A beam or flame has no flight to ride: no camera.
+   * the player looses that is predicted to kill, the casting type, delivery and projectile type
+   * in GetVATSValue; the kill cameras' tree chooses by them what plays (spellCameraRide). An
+   * aimed spell's kill is the one its projectile flies at: a missile's or lobber's camera rides
+   * it, a flame's its spray, a beam's (reaching at once) nothing; a concentration spell's spray
+   * is predicted by its interval's share (`seconds`: spellLoosedDamage). A self spell's kill is
+   * the nearest its area reaches and is predicted to kill (selfAreaKill; the SelfCastTest
+   * paths' cameras circle the caster).
    */
   spellLoosed(
     actor: number,
@@ -3890,10 +3900,15 @@ export class ActorCombat implements CombatBridge {
       readonly at: Vec3;
       readonly caster: number;
     }>,
+    seconds?: number,
   ): void {
     const fighter = this.#fighters.get(actor);
     if (!fighter?.player) return;
-    this.#magicKillCamera(fighter, item, from, aim, flying).catch((error: unknown) => {
+    const camera =
+      item.delivery === Delivery.self
+        ? this.#selfKillCamera(fighter, item)
+        : this.#magicKillCamera(fighter, item, from, aim, flying, seconds);
+    camera.catch((error: unknown) => {
       this.#warn(`a spell's kill camera: ${describe(error)}`);
     });
   }
@@ -3908,6 +3923,7 @@ export class ActorCombat implements CombatBridge {
       readonly at: Vec3;
       readonly caster: number;
     }>,
+    seconds: number | undefined,
   ): Promise<void> {
     const runtime = this.#options.session.scriptsReady;
     if (!runtime || !this.#shotCameraMay(fighter)) return;
@@ -3917,21 +3933,27 @@ export class ActorCombat implements CombatBridge {
         ? undefined
         : await runtime.casting.projectile(effect.projectile);
     if (!fired) return;
+    const ride = spellCameraRide(flightKind(fired));
     const flight = (): Vec3 | undefined => {
+      if (ride === 'none') return undefined;
       let last: Vec3 | undefined;
       for (const shot of flying()) {
         if (shot.caster === fighter.reference && shot.projectile === fired.editorId) last = shot.at;
       }
       return last;
     };
-    if (!flight()) return;
+    // A missile or lobber not in the air was not loosed.
+    if (ride === 'flight' && !flight()) return;
     const victim = this.#shotAt(fighter, from, aim, Math.min(10000, fired.range), {
       speed: fired.speed,
       gravity: WORLD_GRAVITY * fired.gravity,
     });
     if (!victim || victim.state.life === LifeState.dead) return;
     const health = await runtime.actors.value(victim.reference, ActorValue.health);
-    const damage = await runtime.casting.predictedDamage(fighter.reference, item, victim.reference);
+    const damage = spellLoosedDamage(
+      await runtime.casting.predictedDamage(fighter.reference, item, victim.reference),
+      seconds,
+    );
     const fatal =
       spellPredictedKill(damage, health.current) &&
       !(await runtime.actors.isEssential(victim.reference));
@@ -3942,6 +3964,46 @@ export class ActorCombat implements CombatBridge {
         return position && { position, heading };
       },
       projectileType: fired.type,
+      spell: { delivery: item.delivery, castingType: item.castType },
+    });
+  }
+
+  /**
+   * A self spell's kill camera (the SelfCastTest paths: delivery Self in GetVATSValue): on the
+   * nearest actor its area reaches whom the effects reaching that far are predicted to kill
+   * (selfAreaKill; inferred, TODO(M13)). A self spell without an area (a cloak, a heal) has none.
+   */
+  async #selfKillCamera(fighter: Fighter, item: MagicItemRecord): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime || !item.effects.some((entry) => entry.area > 0)) return;
+    if (!this.#shotCameraMay(fighter)) return;
+    const feet = this.#feet(fighter);
+    if (!feet) return;
+    const candidates: SelfAreaCandidate[] = [];
+    for (const other of this.#fighters.values()) {
+      if (other === fighter || other.state.life === LifeState.dead) continue;
+      const at = this.#feet(other);
+      if (!at) continue;
+      const distance = Math.hypot(at[0] - feet[0], at[1] - feet[1], at[2] - feet[2]);
+      const damage = await runtime.casting.predictedDamage(
+        fighter.reference,
+        item,
+        other.reference,
+        distance,
+      );
+      if (!(damage > 0)) continue;
+      candidates.push({
+        reference: other.reference,
+        distance,
+        damage,
+        health: (await runtime.actors.value(other.reference, ActorValue.health)).current,
+        essential: await runtime.actors.isEssential(other.reference),
+      });
+    }
+    const kill = selfAreaKill(candidates);
+    const victim = kill === undefined ? undefined : this.#fighters.get(kill);
+    if (!victim) return;
+    await this.#shotCamera(fighter, victim, true, {
       spell: { delivery: item.delivery, castingType: item.castType },
     });
   }

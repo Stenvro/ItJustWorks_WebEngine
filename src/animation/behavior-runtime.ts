@@ -701,6 +701,13 @@ export class BehaviorRuntime {
   #updates = 0;
   /** How the last update moved the actor. */
   #motion: RootMotion = NO_MOTION;
+  /**
+   * The root bone's local transform (TRANSFORM_FLOATS) a synchronized clip with
+   * bApplyMotionFromRoot took off the pose it gave (motionFromRoot); `#takingRoot` while the
+   * update's pose is generated, kept once that pose is.
+   */
+  #rootTaken: Float32Array | undefined;
+  #takingRoot: Float32Array | undefined;
   /** Pose buffers by depth of the generation. */
   readonly #buffers: Float32Array[] = [];
   readonly #boneCount: number;
@@ -1815,6 +1822,7 @@ export class BehaviorRuntime {
     this.#footIkControls = undefined;
     this.#eyes = undefined;
     this.#awaitingClips = 0;
+    this.#takingRoot = undefined;
     const generated = this.#generate(this.#root, 0);
     // A clip it needs is still being read (a landing's, first played on the stairs), or nothing
     // it plays gives a pose (17 clips vanilla graphs name are in no archive): it holds the pose it
@@ -1825,6 +1833,7 @@ export class BehaviorRuntime {
       return;
     }
     this.#posed ||= generated !== undefined;
+    this.#rootTaken = this.#takingRoot;
     const reference = this.skeleton.referencePose;
     const bones = this.#boneCount * TRANSFORM_FLOATS;
     // Bone LOD: far from the camera the last bones keep their pose (setBoneLod).
@@ -2186,12 +2195,17 @@ export class BehaviorRuntime {
         readonly markErrorThreshold: number;
         readonly ignoreMarkPlacement: boolean;
         readonly reorientSupport: boolean;
+        /** bApplyMotionFromRoot: the actor moves by its root bone (motionFromRoot). */
+        readonly applyMotionFromRoot: boolean;
+        /** SyncAnimPrefix (the second side's "2_"), if it names one. */
+        readonly syncPrefix: string | undefined;
       }
     | undefined {
     for (const node of this.#active) {
       const sync = node as BehaviorGenerator;
       if (sync.kind !== 'synchronized-clip' || sync.generator?.kind !== 'clip') continue;
       return {
+        syncPrefix: sync.syncPrefix,
         animation: sync.generator.animation,
         binding: this.#host.clip(sync.generator.animation),
         time: this.#clips.get(sync.generator)?.time ?? 0,
@@ -2200,9 +2214,57 @@ export class BehaviorRuntime {
         markErrorThreshold: sync.markErrorThreshold,
         ignoreMarkPlacement: sync.ignoreMarkPlacement,
         reorientSupport: sync.reorientSupport,
+        applyMotionFromRoot: sync.applyMotionFromRoot,
       };
     }
     return undefined;
+  }
+
+  /**
+   * bApplyMotionFromRoot (observed in the original): a synchronized clip with it moves the
+   * actor itself by its skeleton's root bone (the first bone without a parent) as it plays. Its
+   * pose leaves that bone at the origin, unturned (its scale kept), and this is the bone's local
+   * translation and rotation (x, y, z; quaternion x, y, z, w) it took off in the last pose made:
+   * the actor's placement is its mark's composed with it (paired-clips.ts placeByRoot).
+   * Undefined when the last pose made played no such clip.
+   */
+  motionFromRoot():
+    | {
+        readonly translation: readonly [number, number, number];
+        readonly rotation: readonly [number, number, number, number];
+      }
+    | undefined {
+    const root = this.#rootTaken;
+    if (!root) return undefined;
+    return {
+      translation: [root[0] ?? 0, root[1] ?? 0, root[2] ?? 0],
+      rotation: [root[3] ?? 0, root[4] ?? 0, root[5] ?? 0, root[6] ?? 1],
+    };
+  }
+
+  /** The skeleton's root bone: the first without a parent (-1: none). */
+  #rootBone(): number {
+    const parents = this.skeleton.parents;
+    for (let bone = 0; bone < this.#boneCount; bone++) {
+      if ((parents[bone] ?? -1) < 0) return bone;
+    }
+    return -1;
+  }
+
+  /**
+   * A synchronized clip with bApplyMotionFromRoot gave this pose: its root bone's local
+   * translation and rotation are taken off (kept for motionFromRoot), the bone left at the
+   * origin. An additive pose holds no placement to take.
+   */
+  #takeRoot(generated: Generated): Generated {
+    const bone = this.#rootBone();
+    if (generated.additive || bone < 0) return generated;
+    const at = bone * TRANSFORM_FLOATS;
+    const pose = generated.pose;
+    this.#takingRoot = pose.slice(at, at + TRANSFORM_FLOATS);
+    pose.fill(0, at, at + 6);
+    pose[at + 6] = 1;
+    return generated;
   }
 
   /** The active synchronized clip's partner prefix (SyncAnimPrefix), if one names it. */
@@ -4711,8 +4773,11 @@ export class BehaviorRuntime {
         return { pose: out, additive: false };
       }
       case 'state-tagging':
-      case 'synchronized-clip':
         return this.#pass(node.generator, depth);
+      case 'synchronized-clip': {
+        const generated = this.#pass(node.generator, depth);
+        return generated && node.applyMotionFromRoot ? this.#takeRoot(generated) : generated;
+      }
       case 'gamebryo-sequence':
       case 'other':
         return undefined;

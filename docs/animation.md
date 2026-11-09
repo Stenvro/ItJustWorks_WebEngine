@@ -969,9 +969,21 @@ progress, turned by it with bReorientSupportChar), and once there it moves by it
 (`atMark`). bApplyMotionFromRoot (13 clips: the rider's Mount and Dismount, DragonMount and
 DragonDismount, the dragon's grapple and mount) moves the actor itself by its skeleton's root
 bone (the first without a parent) as the clip plays: the actor's placement becomes the mark's
-composed with that bone's pose, and the bone is left at the origin. TODO(M13): not built; ours
-draws the rider at the horse's root with the bone moving it, the same picture, but the actor's
-own place does not follow (a dismount's end stands it by `dismountOffset`). While paired, both actors are held (no character controller, no locomotion events:
+composed with that bone's pose, and the bone is left at the origin. Ours: the synchronized
+clip with the flag takes its root bone's local translation and rotation off the pose it gives
+(`BehaviorRuntime.motionFromRoot`, the bone left at the origin, its scale kept); the rider's mark
+is set once as its clip plays, the horse's (or dragon's) placement composed with where the clip
+puts the rider's placement track ("NPC") from the horse's ("2_": `trackMark`, `markFrom`), and
+the rider stands each frame at the mark composed with the bone's pose at its scale
+(`placeByRoot`; src/shell/actor-mounts.ts #byRoot): Paired_Mount's rider goes from 63.5 units to
+the horse's left, turned to it, up to its seat (1.7, 4.4, 130.4 from the horse's root, where
+Paired_Dismount begins), Paired_Dismount sets it down 111.6 units to the horse's left. The
+rider got off stands where its clip left it (unless there is no room there: the dismount's
+place beside the horse, inferred, TODO(M13)). Before its clip plays, an NPC mounting stands
+where it is. The dragon's own sides with the flag (CLIP_Ground_KillMove_Bite_Grapple,
+CLIP_Ground_Mount_Default) keep its root bone at the origin through the clip ("2_NPC Root
+[Root]"), so they move it nowhere. Tests: tests/conformance/animation/paired-animations.test.ts
+("bApplyMotionFromRoot"). While paired, both actors are held (no character controller, no locomotion events:
 a teleported victim would otherwise fall and turn its graph out of the clip; the player's keys
 do not move them). The pair lasts as long as its clips: a graph that leaves its synchronized clip
 is in its pair no more, whether or not it raised PairEnd (a bear killmove's leader raises none).
@@ -1114,8 +1126,14 @@ the shot's, cleared as it ends. The playback hands the view to the kill camera o
 of a shot that is not cut away (nor flagged First Person Camera), so the next shot takes the
 view back. Ours shows the player's first-person view for the rest of the shot, its playback
 (time, image space) going on, and the next shot takes the view back
-(`KillmoveCamera.cutAway`). TODO(M13): what the kill camera shows on the one vanilla shot
-flagged First Person Camera (1stPCam, no model) is unread; ours plays it as any other. A ranged shot's Near Target Distance
+(`KillmoveCamera.cutAway`). The one vanilla shot flagged First Person Camera (1stPCam: no
+model, Max Time 10 s, the paths 1stPRandom and 1stPFailsafeCam, both only in first person) is
+never handed the view, so its playback runs as for any shot (its time, its safety time, the
+kill camera's sound; it keeps another kill camera from starting) while the player's own
+first-person view shows; the camera stands at the player's view, for a next shot to dolly from
+(`KillmoveCamera.firstPerson`, `showsPlayerView`). Before, a path with it gave no playback at
+all. Inferred, TODO(M13): that the view it shows is the player's camera as it was, with no view
+of its own. A ranged shot's Near Target Distance
 (CAMS DATA, 18 shots; observed in the original): as the kill's projectile flies during the
 kill camera, once it is within the current shot's distance of the point it is aimed at on
 the target (the target's body part the shooter aims at; ours: its torso node, else its

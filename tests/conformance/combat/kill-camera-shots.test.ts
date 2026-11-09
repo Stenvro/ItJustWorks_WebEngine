@@ -153,4 +153,33 @@ describe('the kill camera', () => {
     later.update(0.1);
     expect(later.position).toEqual([0, 750, 80]);
   });
+
+  it('leaves the player their own view through a First Person Camera shot, its playback on', () => {
+    // 1stPCam: no model, flagged First Person Camera, Max Time 10 s.
+    const first = shot({ flags: CameraShotFlag.firstPersonCamera, maxTime: 10, minTime: 1 });
+    const after = shot({ location: CameraSubject.target, maxTime: 1 });
+    const view: Vec3 = [5, 6, 120];
+    const camera = KillmoveCamera.ofShots(
+      [first, after],
+      subjects([0, 500, 0], { from: () => view }),
+    );
+    expect(camera.firstPerson).toBe(true);
+    expect(camera.showsPlayerView).toBe(true);
+    expect(camera.cutAway).toBe(false);
+    // Its playback runs: its time passes and it is not done; the camera stands at the view.
+    camera.update(5);
+    expect(camera.done).toBe(false);
+    expect(camera.timeMultiplier).toBe(1);
+    expect(camera.position).toEqual(view);
+    // The next shot takes the view, dollying from where the player's view was (start mode 0).
+    camera.update(5.1);
+    expect(camera.firstPerson).toBe(false);
+    expect(camera.showsPlayerView).toBe(false);
+    expect(camera.position).toEqual(view);
+    camera.update(0.5);
+    expect(camera.position).not.toEqual(view);
+    // A shot without the flag hands its view over.
+    const plain = KillmoveCamera.ofShots([after], subjects([0, 500, 0]));
+    expect(plain.showsPlayerView).toBe(false);
+  });
 });

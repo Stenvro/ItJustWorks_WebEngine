@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { rangedKillCameraChance, rangedKillCameraPlays } from './ranged-kill-camera.ts';
+import {
+  rangedKillCameraChance,
+  rangedKillCameraPlays,
+  selfAreaKill,
+  spellCameraRide,
+  spellLoosedDamage,
+} from './ranged-kill-camera.ts';
 
 const settings = {
   longDistance: 2500,
@@ -44,5 +50,30 @@ describe('rangedKillCameraChance', () => {
   it('rolls under the chance', () => {
     expect(rangedKillCameraPlays(shot, settings, 50)).toBe(true);
     expect(rangedKillCameraPlays(shot, settings, 50.5)).toBe(false);
+  });
+});
+
+describe('the magic kill camera', () => {
+  it('rides a missile or lobber in flight, a flame its spray, a beam or cone nothing', () => {
+    expect(spellCameraRide('flying')).toBe('flight');
+    expect(spellCameraRide('lobber')).toBe('flight');
+    expect(spellCameraRide('spray')).toBe('spray');
+    expect(spellCameraRide('instant')).toBe('none');
+    expect(spellCameraRide('cone')).toBe('none');
+  });
+
+  it("predicts a concentration spray by its interval's share, any other cast whole", () => {
+    // Flames: 8 a second; a spray every 0.25 s carries 2.
+    expect(spellLoosedDamage(8, 0.25)).toBe(2);
+    expect(spellLoosedDamage(25, undefined)).toBe(25);
+  });
+
+  it("takes the nearest a self spell's area is predicted to kill, not an essential one", () => {
+    const near = { reference: 1, distance: 300, damage: 225, health: 400, essential: false };
+    const killed = { reference: 2, distance: 900, damage: 175, health: 150, essential: false };
+    const nearer = { reference: 3, distance: 600, damage: 175, health: 100, essential: false };
+    const essential = { reference: 4, distance: 100, damage: 225, health: 50, essential: true };
+    expect(selfAreaKill([near, killed, nearer, essential])).toBe(3);
+    expect(selfAreaKill([near, essential])).toBeUndefined();
   });
 });

@@ -1727,15 +1727,26 @@ export class CastingEngine {
   /**
    * The health a cast of an item would take from a target (the magic kill camera's prediction):
    * each hostile effect on Health, its magnitude by its seconds (a concentration spell's a
-   * second's) through what the target keeps of it.
+   * second's) through what the target keeps of it. `areaDistance`: only the effects whose area
+   * reaches that far (a self spell's area round its caster, as area() reaches: an effect with No
+   * Area reaches none).
    */
-  async predictedDamage(actor: number, item: MagicItemRecord, target: number): Promise<number> {
+  async predictedDamage(
+    actor: number,
+    item: MagicItemRecord,
+    target: number,
+    areaDistance?: number,
+  ): Promise<number> {
     const runtime = this.#runtime;
     let damage = 0;
     for (const [index, entry] of item.effects.entries()) {
       const effect = await runtime.magic.effect(entry.effect);
       if (!effect || (effect.flags & EffectFlag.hostile) === 0) continue;
       if (effect.actorValue !== HEALTH) continue;
+      if (areaDistance !== undefined) {
+        const area = (effect.flags & EffectFlag.noArea) !== 0 ? 0 : entry.area * UNITS_PER_FOOT;
+        if (!(area > 0) || areaDistance > area) continue;
+      }
       const seconds = item.castType === CastType.concentration ? 1 : Math.max(1, entry.duration);
       const keeps = await runtime.magic.foresee(item, index, target, actor);
       damage += Math.max(0, entry.magnitude) * seconds * keeps;

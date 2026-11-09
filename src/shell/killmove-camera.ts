@@ -244,8 +244,12 @@ export class KillmoveCamera implements Camera {
       if (record?.type !== 'CAMS') continue;
       const shot = parseCameraShot(record);
       if (shot.maxTime === 0 && shot.minTime === 0) return undefined;
-      // The first-person shot (no model): the player's own camera.
-      if (shot.model === undefined) return undefined;
+      // A shot without a model (the one vanilla shot flagged First Person Camera, 1stPCam): its
+      // playback runs with the player's own view (firstPerson).
+      if (shot.model === undefined) {
+        made.push({ record: shot, model: undefined });
+        continue;
+      }
       const path = meshPath(shot.model);
       if (!session.vfs.has(path)) continue;
       made.push({ record: shot, model: readCameraModel(parseNif(await session.vfs.read(path))) });
@@ -303,6 +307,15 @@ export class KillmoveCamera implements Camera {
     this.#projectile = flying ?? this.#projectile;
     const record = current.record;
     if (flying) this.#flagNearTarget(flying.position, record, target);
+    // A First Person Camera shot: the playback does not hand it the view (firstPerson); the
+    // camera stands where the player's view is, for the next shot to move from.
+    if (this.firstPerson) {
+      this.position = subjects.from?.() ?? this.position;
+      this.#dolly = undefined;
+      this.#near = false;
+      this.radialBlur = 0;
+      return;
+    }
     // Where the shot is measured from and what it looks at (shotPoint); without the follow
     // flags, where they were as the shot began.
     if (this.#spots?.shot !== this.#shot) this.#spots = { shot: this.#shot };
@@ -475,6 +488,29 @@ export class KillmoveCamera implements Camera {
     const view = lookAt(this.position, target, this.up);
     const projection = perspectiveReversedZ(this.fovY, aspect, this.near);
     return multiply(projection, view, out);
+  }
+
+  /**
+   * The current shot is flagged First Person Camera (CAMS flag 0x8; vanilla's one is 1stPCam,
+   * no model, Max Time 10 s, under 1stPRandom and 1stPFailsafeCam). Observed in the original:
+   * the playback hands the view to the kill camera on every update of a shot that is neither
+   * cut away nor flagged so; with the flag it does not, and the player's own first-person view
+   * shows while the playback (its time, its safety time) runs on as for any shot. TODO(M13):
+   * that its first-person view is the player's camera as it was (no view of its own) is
+   * inferred; no vanilla path asks it outside first person (IsPC1stPerson).
+   */
+  get firstPerson(): boolean {
+    const shot = this.#shots[this.#shot];
+    return (
+      !this.done &&
+      shot !== undefined &&
+      (shot.record.flags & CameraShotFlag.firstPersonCamera) !== 0
+    );
+  }
+
+  /** The player's own view shows now, not this camera's: its shot cut away or first person. */
+  get showsPlayerView(): boolean {
+    return this.cutAway || this.firstPerson;
   }
 
   /** How fast the world's clock runs during the current shot (CAMS global time multiplier). */

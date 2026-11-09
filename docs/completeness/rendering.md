@@ -40,7 +40,8 @@ Still inferred (each a TODO(M13) where it lives): which limb an ordinary blow re
 environment blood's); the trees' LOD fade (#19: the original's LOD tree instances each carry an
 alpha and a hidden flag by their reference, what sets the alpha is unread); the lens flare's
 target sizes' rounding (#33: the sizes are observed in the original's render target table, its
-creation not found); what the kill camera shows on the one shot flagged First Person Camera.
+creation not found); that the one shot flagged First Person Camera shows the player's camera as
+it was (its playback now runs with the player's view; it gave no playback before).
 
 Done in round 15, all observed in the original: dynamic decals on the world (#87) are built
 from the struck shapes' triangles: each shape under the node that holds the struck collision
@@ -280,7 +281,8 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 ## Next biggest open items
 
 No open rows. The inferred details above, biggest first: the trees' LOD alpha (#19), the limb
-an ordinary blow records, the lens flare's target sizes (#33), the First Person Camera shot.
+an ordinary blow records, the lens flare's target sizes (#33), the First Person Camera shot's
+view (inferred: the player's camera as it was).
 
 ## Systems
 

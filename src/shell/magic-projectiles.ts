@@ -490,11 +490,16 @@ export class MagicProjectiles {
     }
   }
 
-  /** What flies now (the QA monitors): each projectile's editor id, where it is, whose. */
-  *flying(): Iterable<{ readonly projectile: string; readonly at: Vec3; readonly caster: number }> {
+  /**
+   * What flies now (the QA monitors): each projectile's editor id, where it is, whose. A flame's
+   * sprays show as their stream (flames()); `sprays` counts them too (the magic kill camera
+   * rides a flame's).
+   */
+  *flying(
+    sprays = false,
+  ): Iterable<{ readonly projectile: string; readonly at: Vec3; readonly caster: number }> {
     for (const flying of this.#flying) {
-      // A flame's sprays show as their stream (flames()).
-      if (flying.done || flying.stream) continue;
+      if (flying.done || (flying.stream && !sprays)) continue;
       yield {
         projectile: flying.projectile.editorId,
         at: flying.flight.position,

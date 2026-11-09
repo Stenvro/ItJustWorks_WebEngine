@@ -135,7 +135,9 @@ Round 5 (2026-11-04) read the mechanics left from the original (docs/ai.md "Use 
 - Flee Through Door goes through a load door (actor-stage.ts fleeThrough), not the one it came by,
   none with an enemy at it, none out of its encounter zone; the hide after Flee To Cover
   (#hide, hideFails) ends in Boost Confidence.
-- The magic kill camera (actor-combat.ts spellLoosed).
+- The magic kill camera (actor-combat.ts spellLoosed); its beams, flames, cones and self casts
+  by the tree's projectile type, delivery and casting type (2026-11-09; a concentration
+  spray's prediction and a self cast's kill inferred).
 - The encounter zone bounds a fight (zonesAllow); the odds stand at 100 for a frenzied actor and
   after 120 s unengaged (oddsWeighed); combat music and daresHelp weigh damage per second;
   left-hand attacks have their own attack data (the actor's melee options keep them apart);
