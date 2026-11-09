@@ -18,6 +18,7 @@ import {
   findPath,
   inwardOnNavmesh,
   PathSearch,
+  pathSearchStats,
   onNavmeshColumn,
   randomReachablePoint,
   straightReach,
@@ -697,26 +698,57 @@ describe('inwardOnNavmesh', () => {
 
 describe('PathSearch', () => {
   it('finds the path findPath finds, a share at a time', () => {
-    // A 30 by 30 field (1,800 triangles) and a goal off it: the search takes all of it.
+    // A way winding to and fro over a 30 by 30 field (930 triangles) to its far end: the search
+    // takes most of it.
     const squares: [number, number][] = [];
-    for (let x = 0; x < 30; x++) for (let y = 0; y < 30; y++) squares.push([x, y]);
+    for (let y = 0; y < 31; y++) {
+      if (y % 2 === 0) for (let x = 0; x < 30; x++) squares.push([x, y]);
+      else squares.push([y % 4 === 1 ? 29 : 0, y]);
+    }
     const set = setOf([gridMesh(1, squares)]);
     const from: Point = [50, 50, 0];
-    const to: Point = [5000, 1500, 0];
+    const to: Point = [50, 3050, 0];
     const whole = findPath(set, from, to, { radius: 10 });
-    expect(whole?.complete).toBe(false);
+    expect(whole?.complete).toBe(true);
     const search = new PathSearch(set, from, to, { radius: 10 });
     let shares = 0;
+    let total = 0;
     while (!search.done) {
-      search.run(200);
+      const taken = search.run(100);
+      // Never more than its share (a frame's budget is a cap).
+      expect(taken).toBeLessThanOrEqual(100);
+      total += taken;
       shares++;
     }
     expect(shares).toBeGreaterThan(5);
     expect(search.result).toEqual(whole);
-    // One reached at once ends in its first share.
+    expect(search.taken).toBe(total);
+    // One reached at once ends in its first share, and counts the nodes it took.
     const near = new PathSearch(set, from, [250, 250, 0], { radius: 10 });
-    near.run(200);
+    const taken = near.run(200);
     expect(near.done).toBe(true);
+    expect(taken).toBeGreaterThan(0);
     expect(near.result).toEqual(findPath(set, from, [250, 250, 0], { radius: 10 }));
+  });
+
+  it('takes exactly the nodes it is given, a share of one node at a time', () => {
+    const squares: [number, number][] = [];
+    for (let x = 0; x < 10; x++) for (let y = 0; y < 10; y++) squares.push([x, y]);
+    const set = setOf([gridMesh(1, squares)]);
+    const from: Point = [50, 50, 0];
+    const to: Point = [5000, 50, 0];
+    pathSearchStats.trace = [];
+    const whole = findPath(set, from, to, { radius: 10 });
+    const nodes = pathSearchStats.trace.at(-1)?.nodes ?? 0;
+    pathSearchStats.trace = undefined;
+    const search = new PathSearch(set, from, to, { radius: 10 });
+    let shares = 0;
+    while (!search.done) {
+      expect(search.run(1)).toBeLessThanOrEqual(1);
+      shares++;
+    }
+    expect(search.taken).toBe(nodes);
+    expect(shares).toBeGreaterThanOrEqual(nodes);
+    expect(search.result).toEqual(whole);
   });
 });

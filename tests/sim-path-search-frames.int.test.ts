@@ -11,7 +11,8 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { findPath, pathSearchStats } from '../src/ai/pathfinding.ts';
-import type { ActorMovers } from '../src/shell/actor-movers.ts';
+import { LEAVE_HIGH_DISTANCE } from '../src/ai/process-levels.ts';
+import type { ActorMovers, SearchPacing } from '../src/shell/actor-movers.ts';
 import { navmeshTriangle } from '../src/world/navmesh.ts';
 import { hasGamedata, openSim, PLAYER_REF, SIM_STEP, type Sim } from './helpers/sim.ts';
 
@@ -23,14 +24,16 @@ const BANDIT_DISABLER = 0xa45eb;
 /** The box's south and north faces. */
 const BOX_SOUTH = -5038;
 const BOX_NORTH = -4925;
-/** One share of a search (PathSearch gives way every 128 nodes). */
+/** A search's first share (more than a short way takes). */
 const SHARE = 128;
-/** A search under way is held: no nodes a frame for searches going on. */
-const HOLD = { frame: 0, first: SHARE };
-/** Searches go on, one share a frame. */
-const SLOW = { frame: SHARE, first: SHARE };
+/** A search under way is held: the frame's nodes are all the first shares' reserve. */
+const HOLD: SearchPacing = { frame: SHARE, reserve: SHARE, first: SHARE };
+/** Searches go on, one share a frame besides the reserve. */
+const SLOW: SearchPacing = { frame: 2 * SHARE, reserve: SHARE, first: SHARE };
 /** Searches end at once. */
-const FREE = { frame: 1e9, first: 1e9 };
+const FREE: SearchPacing = { frame: 1e9, reserve: 0, first: 1e9 };
+/** Beyond this from the player an actor walks without a controller (LEAVE_HIGH_DISTANCE). */
+const WALKER_AWAY = LEAVE_HIGH_DISTANCE + 500;
 
 describe.skipIf(!hasGamedata())('path searches over frames (headless simulation)', () => {
   let sim: Sim;
@@ -39,6 +42,10 @@ describe.skipIf(!hasGamedata())('path searches over frames (headless simulation)
   let near: Vec3;
   /** A point deep in the barrow past the box, a search of several shares away. */
   let far: Vec3;
+  /** Where the player stands at first (the walkers are placed there). */
+  let start: Vec3;
+  /** A point on the navmesh far enough from `start` that actors there walk without controllers. */
+  let away: Vec3;
   /** The walkers placed: each test's travels end after it, passed or not. */
   const placed: number[] = [];
 
@@ -84,6 +91,7 @@ describe.skipIf(!hasGamedata())('path searches over frames (headless simulation)
     const at = sim.actor(PLAYER_REF)?.position ?? (await sim.position(PLAYER_REF));
     if (!at) throw new Error('no player position');
     const from: Vec3 = [at[0], at[1], at[2]];
+    start = from;
     const set = sim.world.navmeshes;
     // A point a short walk from the player, south of the box, reached by a complete path.
     const candidates: Vec3[] = [];
@@ -132,8 +140,26 @@ describe.skipIf(!hasGamedata())('path searches over frames (headless simulation)
     pathSearchStats.trace = undefined;
     // Several shares: held over frames under every pacing below.
     expect(most).toBeGreaterThan(4 * SHARE);
+    // The triangle centre farthest from the player (the barrow is 15,000 units long).
+    let farthest = 0;
+    for (let triangle = 0; triangle < on.navmesh.triangles.length; triangle++) {
+      const [a, b, c] = navmeshTriangle(on.navmesh, triangle);
+      const centre: Vec3 = [
+        (a[0] + b[0] + c[0]) / 3,
+        (a[1] + b[1] + c[1]) / 3,
+        (a[2] + b[2] + c[2]) / 3,
+      ];
+      const off = Math.hypot(centre[0] - from[0], centre[1] - from[1]);
+      if (off > farthest) {
+        farthest = off;
+        away = centre;
+      }
+    }
+    expect(farthest).toBeGreaterThan(WALKER_AWAY);
   }, 600_000);
   afterEach(async () => {
+    // The player back where the walkers are placed.
+    await sim.moveTo(start);
     // Each test's walkers go: the next one's walk alone from the player.
     for (const reference of placed.splice(0)) {
       movers.stop(reference);
@@ -223,5 +249,104 @@ describe.skipIf(!hasGamedata())('path searches over frames (headless simulation)
     await sim.until(() => second.arrived !== undefined, 20);
     expect(second.arrived, `at ${String(sim.actor(reference)?.position)}`).toBe(true);
     expect(distance(reference, near)).toBeLessThan(64);
+  }, 180_000);
+
+  it('never takes the path to where a moving destination was once it has moved on', async () => {
+    await boxStands(false);
+    const reference = await walker();
+    movers.searchPacing = HOLD;
+    let target: Vec3 = far;
+    go(reference, far, { moving: { position: () => target, recalc: 100 } });
+    await sim.step(SIM_STEP * 3);
+    expect(searching(reference)).toBe(true);
+    // The destination moves past its recalc distance while the search is held; then it ends.
+    target = near;
+    movers.searchPacing = FREE;
+    const ends: (readonly number[])[] = [];
+    for (let frame = 0; frame < 10; frame++) {
+      await sim.step(SIM_STEP);
+      const way = points(reference);
+      const end = way.at(-1);
+      if (way.length > 1 && end) ends.push(end);
+    }
+    // Every path it was given leads to where the destination is now: none to the far point.
+    expect(ends.length).toBeGreaterThan(0);
+    for (const end of ends) {
+      expect(Math.hypot((end[0] ?? 0) - near[0], (end[1] ?? 0) - near[1])).toBeLessThan(64);
+    }
+  }, 180_000);
+
+  it("drops a moved actor's search under way as it goes on walking without its controller", async () => {
+    await boxStands(false);
+    const reference = await walker();
+    movers.searchPacing = HOLD;
+    let target: Vec3 = far;
+    go(reference, far, { moving: { position: () => target, recalc: 100 } });
+    await sim.step(SIM_STEP * 3);
+    expect(searching(reference)).toBe(true);
+    // The player goes far off: the actor walks on without a controller (its search held, its
+    // destination moving on to a short way from it).
+    target = near;
+    await sim.moveTo(away);
+    // It searches again as a walker: its destination followed on (a short way, ended at once).
+    // Kept, the held search held the travel: its destination stayed the far point.
+    const followed = await sim.until(() => {
+      const to = movers.travelOf(reference)?.destination;
+      return to !== undefined && Math.hypot(to[0] - near[0], to[1] - near[1]) < 1;
+    }, 3);
+    expect(followed).toBe(true);
+    expect(await sim.until(() => !searching(reference) && points(reference).length > 1, 3)).toBe(
+      true,
+    );
+  }, 180_000);
+
+  it("paces a walker's search over frames as a moved actor's", async () => {
+    await boxStands(false);
+    const reference = await walker();
+    // The player goes far off: the actor walks on without its controller, its AI begun anew
+    // (held from its packages again).
+    await sim.moveTo(away);
+    await sim.step(SIM_STEP * 3);
+    sim.world.stage.ai.hold(reference, true);
+    await sim.step(SIM_STEP * 3);
+    movers.searchPacing = SLOW;
+    go(reference, far);
+    // Its search goes on over frames and ends with its path through the hall. Searched at once,
+    // it never searched over frames.
+    let frames = 0;
+    let searched = 0;
+    const ended = (): boolean => !searching(reference) && points(reference).length > 1;
+    while (frames < 60 && !ended()) {
+      await sim.step(SIM_STEP);
+      frames++;
+      if (searching(reference) && points(reference).length < 2) searched++;
+    }
+    expect(searched).toBeGreaterThan(1);
+    expect(ended()).toBe(true);
+    expect(points(reference).at(-1)?.[1] ?? -Infinity).toBeGreaterThan(BOX_NORTH);
+  }, 180_000);
+
+  it("keeps a frame's nodes within its budget, a new search's first share among them", async () => {
+    await boxStands(false);
+    const longs = [await walker(), await walker(), await walker()];
+    const short = await walker();
+    // Three long searches begin in one frame, then a short one: the frame's nodes are 4 shares,
+    // the reserve two of them.
+    const pacing: SearchPacing = { frame: 4 * SHARE, reserve: 2 * SHARE, first: SHARE };
+    movers.searchPacing = pacing;
+    await sim.step(SIM_STEP);
+    movers.searchNodesMost = 0;
+    for (const reference of longs) go(reference, far);
+    await sim.step(SIM_STEP);
+    for (const reference of longs) expect(searching(reference)).toBe(true);
+    // A short way begun as they go on ends in its first frame, within the reserve they leave.
+    go(short, near);
+    await sim.step(SIM_STEP);
+    expect(searching(short)).toBe(false);
+    expect(points(short).length).toBeGreaterThan(1);
+    for (let frame = 0; frame < 10; frame++) await sim.step(SIM_STEP);
+    // No frame took more than its budget, however many searches went on or began in it.
+    expect(movers.searchNodesMost).toBeGreaterThan(pacing.reserve);
+    expect(movers.searchNodesMost).toBeLessThanOrEqual(pacing.frame);
   }, 180_000);
 });

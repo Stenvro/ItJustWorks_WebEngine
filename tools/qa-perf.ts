@@ -178,10 +178,17 @@ export function summariseProfile(profile: CpuProfile, top = 60): ProfileSummary 
 /** Installed once in the world: rAF deltas, GPU completion times, long animation frames. */
 const RECORDER = `(() => {
   if (window.__perf) return true;
-  const perf = { deltas: [], gpu: [], loaf: [], last: undefined };
+  const perf = { deltas: [], gpu: [], loaf: [], nodes: [], last: undefined, paths: undefined, taken: undefined };
+  // The path search nodes each frame took (pathSearchStats.taken: every search, every share).
+  void import('/src/ai/pathfinding.ts').then((m) => { perf.paths = m.pathSearchStats; });
   const tick = (now) => {
     if (perf.last !== undefined) perf.deltas.push(now - perf.last);
     perf.last = now;
+    const taken = perf.paths?.taken;
+    if (taken !== undefined) {
+      if (perf.taken !== undefined) perf.nodes.push(taken - perf.taken);
+      perf.taken = taken;
+    }
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
@@ -393,6 +400,8 @@ interface WindowReport {
   readonly loaf: readonly unknown[];
   /** Per frame (physics steps, path searches and their nodes) and totals now. */
   readonly counts: Record<string, number>;
+  /** The path search nodes of single frames: the most, and the 99th percentile. */
+  readonly searchNodes: { readonly max: number; readonly p99: number };
   /** The path searches of the plain window by the actor that searched (TRACE_TAKE). */
   readonly searchers: readonly unknown[];
 }
@@ -440,7 +449,7 @@ function windowMarkdown(w: WindowReport): string {
   const lines = [
     `## ${String(w.index)}: ${String(w.at)} s, MQ101 stage ${String(w.state.stage)}, ${w.state.cell}`,
     '',
-    `fps ${ms(f.fps)} · p50 ${ms(f.p50)} · p95 ${ms(f.p95)} · p99 ${ms(f.p99)} · max ${ms(f.max)} ms · > 33 ms ${String(f.over33)} · > 50 ms ${String(f.over50)} · GPU p50 ${ms(w.gpu.p50)} / p95 ${ms(w.gpu.p95)} ms · main thread busy ${(w.busyShare * 100).toFixed(0)} % · GC ${ms(w.profile.gcMs)} ms`,
+    `fps ${ms(f.fps)} · p50 ${ms(f.p50)} · p95 ${ms(f.p95)} · p99 ${ms(f.p99)} · max ${ms(f.max)} ms · > 33 ms ${String(f.over33)} · > 50 ms ${String(f.over50)} · GPU p50 ${ms(w.gpu.p50)} / p95 ${ms(w.gpu.p95)} ms · main thread busy ${(w.busyShare * 100).toFixed(0)} % · GC ${ms(w.profile.gcMs)} ms · search nodes a frame max ${String(w.searchNodes.max)} / p99 ${String(w.searchNodes.p99)}`,
     '',
     '| inclusive (function) | ms/frame |',
     '| --- | ---: |',
@@ -533,9 +542,9 @@ async function main(): Promise<void> {
       const state = await page.eval<WindowReport['state']>(STATE, 20000);
       if (options.untilStage !== undefined && state.stage >= options.untilStage) break;
       const reset =
-        '(window.__perf.deltas.length = 0, window.__perf.gpu.length = 0, window.__perf.loaf.length = 0, true)';
+        '(window.__perf.deltas.length = 0, window.__perf.gpu.length = 0, window.__perf.loaf.length = 0, window.__perf.nodes.length = 0, true)';
       const read =
-        '({ deltas: [...window.__perf.deltas], gpu: [...window.__perf.gpu], loaf: [...window.__perf.loaf] })';
+        '({ deltas: [...window.__perf.deltas], gpu: [...window.__perf.gpu], loaf: [...window.__perf.loaf], nodes: [...window.__perf.nodes] })';
       // First the frames as they are (the profiler slows the page), then the same time profiled.
       await page.eval(COUNTERS, 10000, true).catch((error: unknown) => {
         if (windows.length < 2)
@@ -545,7 +554,13 @@ async function main(): Promise<void> {
       const before = await page.eval<Counts>(COUNTS).catch((): Counts => ({}));
       await page.eval(TRACE_START).catch(() => undefined);
       await sleep(options.window * 1000);
-      const data = await page.eval<{ deltas: number[]; gpu: number[]; loaf: unknown[] }>(read);
+      const data = await page.eval<{
+        deltas: number[];
+        gpu: number[];
+        loaf: unknown[];
+        nodes: number[];
+      }>(read);
+      const nodesSorted = [...data.nodes].sort((a, b) => a - b);
       const after = await page.eval<Counts>(COUNTS).catch((): Counts => ({}));
       const searchers = await page.eval<unknown[]>(TRACE_TAKE).catch(() => []);
       // Starting the profiler holds the page for about 600 ms: its window begins after that.
@@ -576,12 +591,16 @@ async function main(): Promise<void> {
         profile: summary,
         loaf: data.loaf,
         counts: perFrame(before, after, data.deltas.length),
+        searchNodes: {
+          max: nodesSorted.at(-1) ?? 0,
+          p99: nodesSorted[Math.floor(nodesSorted.length * 0.99)] ?? 0,
+        },
         searchers,
       };
       windows.push(report);
       const f = report.frames;
       ctx.note(
-        `window ${name}: ${ms(f.fps)} fps, p50 ${ms(f.p50)}, p95 ${ms(f.p95)}, max ${ms(f.max)} ms, GPU p50 ${ms(report.gpu.p50)} ms, busy ${(report.busyShare * 100).toFixed(0)} %, ${JSON.stringify(report.counts)}`,
+        `window ${name}: ${ms(f.fps)} fps, p50 ${ms(f.p50)}, p95 ${ms(f.p95)}, max ${ms(f.max)} ms, GPU p50 ${ms(report.gpu.p50)} ms, busy ${(report.busyShare * 100).toFixed(0)} %, search nodes a frame max ${String(report.searchNodes.max)} / p99 ${String(report.searchNodes.p99)}, ${JSON.stringify(report.counts)}`,
       );
       fs.writeFileSync(
         path.join(options.out, 'perf.json'),

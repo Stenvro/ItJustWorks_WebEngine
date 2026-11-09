@@ -1781,10 +1781,10 @@ What it was, and what changed:
 - **Path searches over frames** (`PathSearch`, docs/ai.md, "Paths"): a search for a goal off the
   actor's island takes the whole island, 12,000 triangles round Helgen, 10–25 ms in one frame
   (the soldiers going for Alduin on the tower, five to ten such searches a minute). The searches
-  now take about 2,000 nodes of a frame, those waiting longest first (a search begun takes at
-  least 256 in its first frame); the search itself is cheaper too (its nodes
-  by number, a triangle's corners read once for its edges, a cut triangle's corners only when it
-  is first cut, `sqrt` for `hypot`).
+  of all actors' travels together now take at most 2,000 nodes of a frame, those waiting longest
+  first with 512 kept for searches' first shares (docs/ai.md, "Searches over frames"); the search
+  itself is cheaper too (its nodes by number, a triangle's corners read once for its edges, a cut
+  triangle's corners only when it is first cut, `sqrt` for `hypot`).
 - **Smaller ones:** a behavior reference's file worked out once a name (`ClipHost.behavior`: it
   normalized the path for every reference node a graph passed, every update); an actor's
   commander, which walks every active effect of the world, worked out only when asked
@@ -1810,11 +1810,13 @@ steps a frame were not counted before):
 
 A second run once the searches waiting longest took the frame's nodes first (and a search begun
 256 at least): Alduin's attack 46.4 fps over twelve windows (slowest 38.7, p95 22–28 ms in all
-but two, 1.3 physics steps a frame, 400–940 search nodes a frame, all within the 2,000); the cart
+but two, 1.3 physics steps a frame, 400–940 search nodes a frame on a window's average; the most
+in one frame was not measured, and the walkers' searches were not paced yet); the cart
 ride, arrival and execution 59, 57 and 63 fps, with no searches in the cart ride's windows (the
 machine is shared: windows without the changed work vary by ±10 fps between runs).
 
-What is left (TODO(M13)): Alduin's attack is still 30–40 fps. Its actors (behavior graphs 4 ms,
+What is left (TODO(M13)): Alduin's attack is still below 60 fps (46 over the second run's
+windows, the slowest 39). Its actors (behavior graphs 4 ms,
 the movers' travels 4–6 ms with the searches' 2 ms share, combat 1.6 ms) and the physics at 1.5–2
 steps a frame are the largest parts; Rapier's own step (2–3 ms, ~450 active bodies: the actors'
 keyframed biped bodies and controllers) has no symbols to break it down. The actors searching

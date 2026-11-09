@@ -569,13 +569,6 @@ export class CharacterBody {
   }
 
   /**
-   * A body of its own actor (its ragdoll's bones, what it holds or wears that has collision):
-   * the engine's character and its bodies share a collision system group, which does not
-   * collide with itself, so they never block or push its controller. (A kinematic shape of an
-   * archer's own, inside its capsule, pushed it out every step: it slid about at up to 600
-   * units a second while it stood.)
-   */
-  /**
    * Whether its actor owns a collider a controller meets besides this controller (#ownBody's
    * test can leave something out that Rapier's groups take: QueryGroups.controllerSolid).
    */
@@ -586,6 +579,13 @@ export class CharacterBody {
     );
   }
 
+  /**
+   * A body of its own actor (its ragdoll's bones, what it holds or wears that has collision):
+   * the engine's character and its bodies share a collision system group, which does not
+   * collide with itself, so they never block or push its controller. (A kinematic shape of an
+   * archer's own, inside its capsule, pushed it out every step: it slid about at up to 600
+   * units a second while it stood.)
+   */
   #ownBody(collider: RAPIER.Collider): boolean {
     const owner = this.physics.ownerOf(collider);
     return (

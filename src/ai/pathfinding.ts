@@ -298,15 +298,17 @@ export function findPath(
   to: Vec3,
   options: PathOptions,
 ): NavPath | undefined {
-  const steps = searchSteps(set, from, to, options, true);
-  for (;;) {
-    const step = steps.next();
-    if (step.done === true) return step.value;
-  }
+  const share: SearchShare = { allowance: Infinity, taken: 0 };
+  const step = searchSteps(set, from, to, options, true, share).next();
+  pathSearchStats.taken += share.taken;
+  return step.done === true ? step.value : undefined;
 }
 
-/** A search gives way after this many nodes (PathSearch: the rest in a later share). */
-const SHARE_NODES = 128;
+/** A search's share: it gives way once it has taken `allowance` nodes (`taken`, counted). */
+interface SearchShare {
+  allowance: number;
+  taken: number;
+}
 
 /**
  * findPath taken a share at a time (`run`): a long search (a goal off the actor's island explores
@@ -314,12 +316,19 @@ const SHARE_NODES = 128;
  * search, the same path.
  */
 export class PathSearch {
-  readonly #steps: Generator<number, NavPath | undefined, undefined>;
+  readonly #steps: Generator<undefined, NavPath | undefined, undefined>;
+  readonly #share: SearchShare = { allowance: 0, taken: 0 };
   #done = false;
   #result: NavPath | undefined;
+  #taken = 0;
 
   constructor(set: NavmeshSet, from: Vec3, to: Vec3, options: PathOptions) {
-    this.#steps = searchSteps(set, from, to, options, true);
+    this.#steps = searchSteps(set, from, to, options, true, this.#share);
+  }
+
+  /** The nodes it has taken so far. */
+  get taken(): number {
+    return this.#taken;
   }
 
   /** Whether it has ended (`result` is its path, if any). */
@@ -331,17 +340,20 @@ export class PathSearch {
     return this.#result;
   }
 
-  /** Searches on until it ends or has taken about `nodes` more nodes; the nodes it took. */
+  /** Searches on until it ends or has taken `nodes` more nodes (never more); the nodes it took. */
   run(nodes: number): number {
-    let taken = 0;
-    while (!this.#done && taken < nodes) {
-      const step = this.#steps.next();
-      if (step.done === true) {
-        this.#done = true;
-        this.#result = step.value;
-      } else taken += step.value;
+    if (this.#done || !(nodes > 0)) return 0;
+    const share = this.#share;
+    share.allowance = nodes;
+    share.taken = 0;
+    const step = this.#steps.next();
+    if (step.done === true) {
+      this.#done = true;
+      this.#result = step.value;
     }
-    return taken;
+    this.#taken += share.taken;
+    pathSearchStats.taken += share.taken;
+    return share.taken;
   }
 }
 
@@ -353,13 +365,15 @@ export const pathSearchStats: {
   searches: number;
   nodes: number;
   reached: number;
+  /** The nodes all searches have taken, as they take them (a search over frames, each share). */
+  taken: number;
   /** Set to an array, every search is kept in it (from, to, nodes taken, whether it reached). */
   trace: { from: Vec3; to: Vec3; nodes: number; reached: boolean }[] | undefined;
-} = { searches: 0, nodes: 0, reached: 0, trace: undefined };
+} = { searches: 0, nodes: 0, reached: 0, taken: 0, trace: undefined };
 
 /**
  * findPath; `closeAvoided`: whether the triangles under the avoid nodes are closed. Gives way
- * every SHARE_NODES nodes (the nodes taken since).
+ * once it has taken its share's allowance of nodes (counted in its `taken`).
  */
 function* searchSteps(
   set: NavmeshSet,
@@ -367,7 +381,8 @@ function* searchSteps(
   to: Vec3,
   options: PathOptions,
   closeAvoided: boolean,
-): Generator<number, NavPath | undefined, undefined> {
+  share: SearchShare,
+): Generator<undefined, NavPath | undefined, undefined> {
   let avoidedClosed = false;
   const start = set.locate(from);
   const goal = set.locate(to);
@@ -457,7 +472,9 @@ function* searchSteps(
     if (!node) break;
     node.closed = true;
     searched++;
-    if (searched % SHARE_NODES === 0) yield SHARE_NODES;
+    // Its share spent: it gives way before the node is taken (the next share takes it).
+    if (share.taken >= share.allowance) yield;
+    share.taken++;
     const key = keyOf(node.navmesh.formId, node.triangle);
     if (key === goalKey && (goalPart < 0 || node.part === goalPart)) {
       reached = node;
@@ -555,7 +572,9 @@ function* searchSteps(
   pathSearchStats.nodes += searched;
   if (reached) pathSearchStats.reached++;
   pathSearchStats.trace?.push({ from, to, nodes: searched, reached: reached !== undefined });
-  if (!reached && avoidedClosed) return yield* searchSteps(set, from, to, options, false);
+  if (!reached && avoidedClosed) {
+    return yield* searchSteps(set, from, to, options, false, share);
+  }
   const end = reached ?? best;
   const chain: Node[] = [];
   for (let node: Node | undefined = end; node; node = node.parent) chain.push(node);
