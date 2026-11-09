@@ -1413,8 +1413,10 @@ loses its data (the world's references carry none yet); a tempered item's value 
   entry): a trapped soul smaller than the smallest empty gem that holds it stays in that empty
   gem instead of its filled form (a grand gem with a petty soul). Recharging and enchanting use
   it as the gem's soul (a reusable gem is kept, emptied); a gem holding one is not empty for the
-  next soul. TODO(M13): the menus list one entry per base (its greatest partial soul), not one
-  per soul level, and the inventory card shows the record's soul.
+  next soul. The soul stays with the gem: put into a container and taken back, dropped (the
+  reference keeps it: ReferenceState.soul) and picked up again. TODO(M13): the menus list one
+  entry per base (its greatest partial soul), not one per soul level, and the inventory card
+  shows the record's soul.
 
 ### Alchemy
 

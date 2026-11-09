@@ -125,8 +125,10 @@ const ownReference = (hit: PickHit): number | undefined =>
 /**
  * A door that is not a load door, or a container, whose model has an open sequence: its
  * sequence state (doors open and close as they are activated, containers while their menu is
- * open). A door comes in open as the scripts left it (`openState`, GetOpenState's 1 open .. 4
- * closing), else as placed (ONAM): its open sequence played long ago, held at its end.
+ * open). A door or a container comes in open as the game left it (`openState`, GetOpenState's
+ * 1 open .. 4 closing: a script's SetOpen, a door's swing), else as placed (a door's ONAM): its
+ * open sequence played long ago, held at its end. Kept with the reference until its cell
+ * resets (the Creation Kit's SetOpen: a door's or a container's).
  */
 export function openable(
   object: CellObject,
@@ -140,8 +142,9 @@ export function openable(
     return undefined;
   }
   const open =
-    object.baseType === 'DOOR' &&
-    (openState === undefined ? object.openByDefault === true : openState === 1 || openState === 2);
+    openState === undefined
+      ? object.baseType === 'DOOR' && object.openByDefault === true
+      : openState === 1 || openState === 2;
   return open ? { sequence: 'open', start: -OPENED_LONG_AGO } : { sequence: undefined, start: 0 };
 }
 
