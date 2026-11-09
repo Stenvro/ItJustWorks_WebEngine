@@ -462,7 +462,14 @@ worldspaces on screen:
   so tells its parent as the one who opened it (OnOpen). **Parent Activate Only** (XAPD, 1,037
   vanilla children): only its parents activate such a child; the crosshair offers it nothing and
   it is shut to actors walking by (Blind Cliff Cave's lever gate stayed open to every bandit
-  before). TODO(M13): whether the engine refuses a script's Activate on one too. The load
+  before). A script's Activate of one by an activator that is not one of its parents is
+  refused (no OnActivate, no default processing; Activate returns false). Inferred from the
+  data: every vanilla script that activates a Parent Activate Only reference names one of its
+  parents as the activator, often through a property kept for nothing else
+  (highGateRuinsLeverPuzzle's openMarker for a trap door with no scripts, bwcStatuePuzzle's
+  doorMarker, soljundMasterScript's portMarker, the pillar puzzles' puzzleDoorActivator, nine
+  scripts in all); none names another. TODO(M13): whether abDefaultProcessingOnly passes the
+  check (refused here too). `tests/conformance/scripting/script-events.test.ts`. The load
   order has 6,527 such pairs (5,691 children of 2,782 parents: 1,625 ambushes, 2,000-odd traps,
   default2StateActivator's doors and gates; `node tools/activate-children-audit.ts`); the
   runtime finds a parent's children in its own cell, its worldspace's persistent cell and the

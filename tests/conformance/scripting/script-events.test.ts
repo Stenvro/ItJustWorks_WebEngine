@@ -118,14 +118,116 @@ describe.skipIf(!hasGamedata())('activation through the scripts (headless simula
       .filter((event) => event.reference === GATE && event.actor !== LEVER);
     expect(before).toEqual([]);
   });
+});
 
-  it.todo(
+// The same cave, the lever's and the gate's activation blocked by a script and the gate
+// activated by scripts' Activate:
+// - ObjectReference.BlockActivation (Creation Kit): "the OnActivate event still fires", the
+//   default processing does not; a blocked reference passes nothing on to its activate children
+//   (TrapTriggerBase unblocks itself, activates itself and blocks again to set off its
+//   children). defaultsetStageActSCRIPT sets its stage in OnActivate, so the blocked lever
+//   still sets stage 20.
+// - A Parent Activate Only reference takes a script's Activate only from one of its activate
+//   parents (inferred from the data: the vanilla scripts that activate such a reference all
+//   name its parent as the activator, e.g. highGateRuinsLeverPuzzle passes its openMarker
+//   property, the trap door's parent, to a door with no scripts; docs/scripting.md
+//   "Activation"). Refused, it gets no OnActivate and Activate returns false.
+describe.skipIf(!hasGamedata())('blocked and refused activation (headless simulation)', () => {
+  let sim: Sim;
+  let blockedAt = 0;
+  let byPlayerAt = 0;
+  let byPlayer: unknown;
+  let gateBlockedAt = 0;
+  let byParentBlocked: unknown;
+  let gateStateBlocked = 0;
+  let byParentAt = 0;
+  let byParent: unknown;
+  let gateStateClosed = 0;
+
+  beforeAll(async () => {
+    sim = await openSim({ interior: BLIND_CLIFF_CAVE, hour: 12 });
+    await sim.step(1);
+    const handle = (reference: number) => sim.runtime.referenceHandle(reference);
+    const activate = (activator: number) =>
+      sim.native(handle(GATE), 'ObjectReference', 'Activate', [handle(activator), false]);
+    const block = (reference: number, blocked: boolean) =>
+      sim.native(handle(reference), 'ObjectReference', 'BlockActivation', [blocked]);
+    gateStateClosed = sim.openState(GATE);
+    // The player pulls the lever while a script blocks its activation.
+    await block(LEVER, true);
+    blockedAt = sim.time;
+    sim.activate(LEVER);
+    await sim.step(GATE_DELAY + 2);
+    // A script has the player activate the gate (not its parent).
+    byPlayerAt = sim.time;
+    byPlayer = await activate(PLAYER_REF);
+    await sim.step(2);
+    // The gate's own activation blocked: its parent's Activate reaches its scripts only.
+    await block(GATE, true);
+    gateBlockedAt = sim.time;
+    byParentBlocked = await activate(LEVER);
+    await sim.step(2);
+    gateStateBlocked = sim.openState(GATE);
+    await block(GATE, false);
+    byParentAt = sim.time;
+    byParent = await activate(LEVER);
+    await sim.step(3);
+  }, 300_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  const onActivate = (target: number, since: number, until = Infinity) =>
+    sim
+      .scriptEvents({ event: 'OnActivate', target, since })
+      .filter((event) => event.at < until && event.alias === undefined)
+      .map((event) => event.args);
+  const gateOpened = (since: number, until = Infinity) =>
+    sim
+      .records(since)
+      .filter(
+        (record) =>
+          record.kind === 'game' &&
+          record.type === 'openClose' &&
+          record.at < until &&
+          record.event.reference === GATE,
+      );
+
+  it(
     'sends OnActivate to a reference whose activation a script blocks (BlockActivation) without ' +
       'its default action or its children (CK, ObjectReference.BlockActivation; TrapTriggerBase)',
+    () => {
+      expect(onActivate(LEVER, blockedAt, byPlayerAt)).toEqual([[{ form: PLAYER_REF }]]);
+      // Its OnActivate ran its scripts: defaultsetStageActSCRIPT set the stage.
+      expect(sim.stageDone(DUN_BLIND_CLIFF_QST, LEVER_STAGE)).toBe(true);
+      // No child: the gate got nothing and stayed shut.
+      expect(onActivate(GATE, blockedAt, byPlayerAt)).toEqual([]);
+      expect(gateOpened(blockedAt, byPlayerAt)).toEqual([]);
+      // A blocked door gets OnActivate from its parent but does not swing.
+      expect(byParentBlocked).toBe(true);
+      expect(onActivate(GATE, gateBlockedAt, byParentAt)).toEqual([[{ form: LEVER }]]);
+      expect(gateOpened(gateBlockedAt, byParentAt)).toEqual([]);
+      expect(gateStateBlocked).toBe(gateStateClosed);
+    },
   );
-  it.todo(
+
+  it(
     'refuses a script’s Activate on a Parent Activate Only reference by one that is not its ' +
-      'parent, if the engine does (XAPD; the engine’s rule for scripts is unread)  [original]',
+      'parent (XAPD; inferred from the scripts that activate one: they name its parent)',
+    () => {
+      expect(byPlayer).toBe(false);
+      expect(onActivate(GATE, byPlayerAt, gateBlockedAt)).toEqual([]);
+      expect(gateOpened(byPlayerAt, gateBlockedAt)).toEqual([]);
+      // Its parent's Activate is taken: the gate opens, by the lever.
+      expect(byParent).toBe(true);
+      expect(onActivate(GATE, byParentAt)).toEqual([[{ form: LEVER }]]);
+      expect(sim.events('openClose')).toContainEqual({
+        reference: GATE,
+        actor: LEVER,
+        opened: true,
+      });
+      expect([OPEN, OPENING]).toContain(sim.openState(GATE));
+    },
   );
 });
 
