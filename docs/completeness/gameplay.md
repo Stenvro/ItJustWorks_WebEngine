@@ -46,9 +46,13 @@ Round 2 built down:
 - Painless (MGEF 0x4000000, 228 effects): a hostile spell that takes hold makes its target cry
   out (its Hit line) unless every hostile effect of it is Painless (magic-engine.ts painful,
   actor-combat.ts spellHit; tests/conformance/magic/projectiles-explosions.test.ts); on the
-  player a painful hit gives the pain rumble instead (src/gameplay/player-pain.ts; TODO(M13):
-  inferred from fRumblePainTime, fRumblePainStrength, fPainDelay); the load order has no player
-  hit blur or ouch sound to show (no IMAD, SNDR, sound file or default object names one).
+  player a painful hit gives the hit blur (Skyrim.esm IMAD 0x00000162 GetHit, a 0.25 s radial
+  blur), their Hit line (the generic Hit topic's grunts, the only infos of it the player may
+  say) and the pain rumble (src/gameplay/player-pain.ts, actor-combat.ts #hurtPlayer;
+  TODO(M13): inferred that every painful hit gives all three, spaced by fPainDelay; the
+  player's voice stays the Player base's MaleEvenToned whatever the race menu chose); an arrow
+  in the player sounds its impact's player sound (WPNImpactArrowVsFleshPLAYER, IPCT NAM1:
+  src/audio/impacts.ts blowSound; TODO(M13): inferred from the editor ids).
 - Snap To Navmesh (MGEF 0x8, 92: every summon, the frost walls): the summon's place and a wall's
   hazard go onto the navmesh (magic-engine.ts #summon, magic-projectiles.ts #burst). Gory Visuals
   (19): not used by the game (Creation Kit "Magic Effect").

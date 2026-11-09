@@ -490,13 +490,26 @@ the player in a runtime on the game data, `--audit` reads every record).
   traps' fire and gas, Frenzy and Fury, the Nightingale's Subterfuge, the creatures' poisoning
   bites; Creation Kit "Magic Effect": the target does not cry out; on the player it also leaves
   out the hit blur and the ouch sound). On the player a painful hit (a blow, or a spell not all
-  Painless) gives the gamepad's pain rumble, fRumblePainStrength (0.75) on both motors for
-  fRumblePainTime (0.5 s), at most once every fPainDelay (1.5 s), with the Vibration setting on
-  (src/gameplay/player-pain.ts; TODO(M13): inferred from the settings, none of them a GMST of the
-  load order). The load order has no player hit blur or ouch sound to show: no image-space
-  modifier, sound descriptor, sound file, default object or game setting names one, and the
-  player's base has no voice type to cry out with (TODO(M13): whether the engine has a built-in
-  blur of its own).
+  Painless) is their pain (src/gameplay/player-pain.ts), at most once every fPainDelay (1.5 s).
+  Its hit blur is the image-space modifier GetHit (Skyrim.esm IMAD 0x00000162, among the forms
+  below 0x800 the engine refers to by id: a radial blur from 0.4 to none over 0.25 s;
+  `node tools/imad-info.ts GetHit`) at full strength. Its cry is the player's Hit line (the Hit
+  topic subtype, as an NPC hit has; the combat's talk.bark): the generic Hit topic (DIAL
+  0x13EBB) begins with six grunts ("Agh!", "Oof!", "Nargh!", "Argh!", "Weergh!", "Yeagh!", each
+  at GetRandomPercent <= 30), the only infos of it not barred from the player (the rest name
+  GetIsID Player == 0 or another speaker), voiced for the Player base's voice type
+  MaleEvenToned among others (TODO(M13): the player's voice stays the Player base's whatever the
+  race menu chose; the race's own default voice types, RACE VTCK by sex, are not yet theirs).
+  Its rumble is the gamepad's, fRumblePainStrength (0.75) on both motors for fRumblePainTime
+  (0.5 s), with the Vibration setting on (none of the three settings a GMST of the load order:
+  the engine's built-in defaults). TODO(M13): inferred that every painful hit gives all three
+  and that fPainDelay spaces all of them (the settings' names say only "pain"). The blow's own
+  impact sound on the player is the impact's second sound (IPCT NAM1, src/audio/impacts.ts
+  blowSound): an arrow's on flesh is WPNImpactArrowVsFleshPLAYER (SNDR 0x000EA9F8, in
+  WPNArrowVsFleshImpact, WPNArrowVsFleshDraugrImpact and BloodSprayImpactArrowInsect), where
+  others hear WPNImpactArrowVsFleshSD; an impact without a second sound plays its first.
+  TODO(M13): inferred from the editor ids (the load order's second sounds are the physics
+  impacts' heavy sounds and the footsteps' and arrows' player sounds).
 - Snap To Navmesh (MGEF 0x8, 92 effects: every summon, the frost walls): the target point moves
   onto the navmesh (Creation Kit "Magic Effect"): a summon's place (summonPlace) and the hazard a
   wall's burst leaves. Gory Visuals (19) is not used by the game (Creation Kit).
@@ -564,7 +577,9 @@ the player in a runtime on the game data, `--audit` reads every record).
   helpsUnweighed), and attacks its commander's enemies on sight, never the neutral
   (fightingAggression); a fight of its commander's allies that its commander is not in it
   weighs as anyone does (daresHelp; its assistance is at least Helps Allies), unless it is
-  fighting already (TODO(M13): inferred that no confidence check stands between a summon and
+  fighting already; every fight near it it could take up is looked at, its commander's first
+  (combat-ai.ts assistCase), so an ally's fight it does not dare join never hides its
+  commander's (TODO(M13): inferred that no confidence check stands between a summon and
   its summoner's own fights, and the usual one stands before its allies'); Reanimate raises a corpse (it falls again as it
   ends); Banish ends a summoning; Bound Weapon puts its weapon in the hand; Spawn Hazard and
   Spawn Scripted Ref place their form; Disarm takes the weapons out of the hands

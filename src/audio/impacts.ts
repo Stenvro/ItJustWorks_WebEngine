@@ -72,6 +72,23 @@ export async function impactAgainst(
   return undefined;
 }
 
+/**
+ * The sound of a weapon's (or a shot's) impact on an actor: its second sound (IPCT NAM1) for a
+ * heavy blow (a power attack) or a hit on the player, else its first (SNAM); the second, where
+ * the impact has none, falls back to the first. The load order's second sounds say both uses:
+ * the physics impacts' are their heavy sounds (PHYBodyMediumDirtH), the footsteps' and the
+ * arrows' on flesh their player's (FSTPlayerCarpetWalkR; WPNImpactArrowVsFleshPLAYER in
+ * WPNArrowVsFleshImpact, WPNArrowVsFleshDraugrImpact, BloodSprayImpactArrowInsect).
+ * TODO(M13): inferred from those editor ids, that a hit on the player plays the second sound.
+ */
+export function blowSound(
+  impact: Pick<Impact, 'sound' | 'heavySound'>,
+  heavy: boolean,
+  onPlayer: boolean,
+): number | undefined {
+  return heavy || onPlayer ? (impact.heavySound ?? impact.sound) : impact.sound;
+}
+
 export class ImpactSounds {
   readonly #records: ImpactRecords;
   readonly #settings: ImpactSettings;

@@ -336,6 +336,12 @@ settling as their cell loads (the warm start, `[HAVOK]` fWarmStartMaxTime)
 make no sound until they first come to rest. A plate dropped in Breezehome plays
 PHYMaterialCeramicLSD, a basket PHYBasketL/H, a sword PHYMaterialBlade2HandH.
 
+A blow's or a shot's impact on an actor (`blowSound`) plays the impact's second sound (NAM1,
+else its first) for a power attack or a hit on the player, else its first: an arrow in the
+player's flesh sounds WPNImpactArrowVsFleshPLAYER, in anyone else's WPNImpactArrowVsFleshSD.
+TODO(M13): inferred from the editor ids (the second sounds are the physics impacts' heavy ones,
+the footsteps' and the arrows' player ones; docs/gameplay.md, "Hit reaction").
+
 ## Footsteps
 
 Actors' animations raise events their footsteps answer (`actor-sounds.ts`): the footstep

@@ -28,6 +28,7 @@ import {
   type CombatZone,
   aggroResponse,
   Assistance,
+  assistCase,
   assists,
   attackDps,
   attacksOnSightOf,
@@ -46,6 +47,7 @@ import {
   turnsOnAttacker,
   yieldOver,
   yields,
+  type AssistCase,
   type CombatAiSettings,
   type TargetCandidate,
 } from '../ai/combat-ai.ts';
@@ -1564,10 +1566,12 @@ export class ActorCombatAi {
     if (reference === PLAYER_REF && this.#playerHeldOff() >= this.#settings.acceptYieldTime) {
       return false;
     }
-    // Helping: one it helps fights `other`, or `other` fights one it helps.
+    // Helping: one it helps fights `other`, or `other` fights one it helps. Every such fight is
+    // looked at (assistCase), so one it does not dare join does not hide another it would.
     const assistance = profile.teammate
       ? Math.max(profile.assistance, Assistance.helpsFriendsAndAllies)
       : profile.assistance;
+    const cases: AssistCase[] = [];
     for (const fighter of views.values()) {
       if (fighter.reference === mind.reference) continue;
       const target = this.#fightTarget(fighter, views);
@@ -1577,22 +1581,26 @@ export class ActorCombatAi {
         // itself, its bounty and the guards' arrest: src/shell/actor-crime.ts).
         const victim = this.#reaction(mind.reference, target);
         if (victim !== undefined && assists(assistance, victim)) {
-          return this.#helps(mind, profile, other, target) && this.#join(mind, reference);
-        }
-        if (profile.guard && victim !== FightReaction.enemy && this.#innocent(target, reference)) {
-          return this.#join(mind, reference);
+          cases.push({ helped: target });
+        } else if (
+          profile.guard &&
+          victim !== FightReaction.enemy &&
+          this.#innocent(target, reference)
+        ) {
+          cases.push({ helped: target, unweighed: true });
         }
       } else if (target === reference) {
         // `fighter` fights `other`: help it.
         const ally = this.#reaction(mind.reference, fighter.reference);
         if (ally !== undefined && assists(assistance, ally)) {
-          return (
-            this.#helps(mind, profile, other, fighter.reference) && this.#join(mind, reference)
-          );
+          cases.push({ helped: fighter.reference });
         }
       }
     }
-    return false;
+    const taken = assistCase(cases, profile.commander, (helped) =>
+      this.#helps(mind, profile, other, helped),
+    );
+    return taken !== undefined && this.#join(mind, reference);
   }
 
   /**

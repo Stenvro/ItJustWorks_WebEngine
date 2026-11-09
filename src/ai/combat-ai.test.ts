@@ -14,6 +14,7 @@ import {
   drawConfidenceModifier,
   fightingAggression,
   fleeRatio,
+  assistCase,
   helpsUnweighed,
   readCombatAiSettings,
   selectTarget,
@@ -106,6 +107,35 @@ describe('combat AI: entering combat', () => {
     expect(helpsUnweighed(summon, false, bandit)).toBe(false);
     // Once it fights, it takes up the next fight unweighed, as anyone already fighting.
     expect(helpsUnweighed(summon, true, bandit)).toBe(true);
+  });
+
+  it('takes up its commander’s fight whatever order the fighters come in', () => {
+    // A cowardly summon (it dares nothing weighed) near its commander C, who fights the bandit
+    // B, while B also fights the ally N: N's case (weighed: false) must not hide C's.
+    const commander = 0x100;
+    const ally = 0x101;
+    const summon = { teammate: false, commanded: true, commander };
+    const asked: number[] = [];
+    const helps = (helped: number): boolean => {
+      asked.push(helped);
+      return helpsUnweighed(summon, false, helped);
+    };
+    for (const cases of [
+      [{ helped: ally }, { helped: commander }],
+      [{ helped: commander }, { helped: ally }],
+    ]) {
+      asked.length = 0;
+      expect(assistCase(cases, commander, helps)).toEqual({ helped: commander });
+      // The commander's case is asked first: the ally's foe does not scare it off meanwhile.
+      expect(asked).toEqual([commander]);
+    }
+    // Only N's fight: it weighs, and a coward stays out.
+    expect(assistCase([{ helped: ally }], commander, helps)).toBeUndefined();
+    // A guard's defence of an innocent needs no weighing, wherever it comes.
+    asked.length = 0;
+    const guard = { helped: ally, unweighed: true };
+    expect(assistCase([{ helped: 0x102 }, guard], undefined, helps)).toBe(guard);
+    expect(asked).toEqual([]);
   });
 
   it('helps allies, or friends and allies, by assistance', () => {

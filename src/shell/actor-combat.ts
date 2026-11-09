@@ -3015,6 +3015,7 @@ export class ActorCombat implements CombatBridge {
             position: hit.point,
             direction: hit.direction,
             heavy: hit.power,
+            onPlayer: target.player,
             ...(environmentBlood !== undefined && { environmentBlood }),
           },
           this.#play?.physics,
@@ -3131,7 +3132,7 @@ export class ActorCombat implements CombatBridge {
       // bRagdollFeedback).
       this.#options.bodies.feedback(targetRef, hit.direction, hit.point);
     } else {
-      this.#hurtPlayer(true);
+      this.#hurtPlayer(true, attackerRef);
     }
   }
 
@@ -5227,19 +5228,29 @@ export class ActorCombat implements CombatBridge {
     if (this.#spellHits.size > 256) this.#spellHits.clear();
     this.#brain.hit(caster, victim);
     if (caster === PLAYER_REF && victim !== PLAYER_REF) this.#struck(victim);
-    if (victim === PLAYER_REF) this.#hurtPlayer(painful);
+    if (victim === PLAYER_REF) this.#hurtPlayer(painful, caster);
     else if (painful && this.#fighters.get(victim)?.state.life === LifeState.alive) {
       this.#bark(victim, 'Hit', caster);
     }
   }
 
   /**
-   * A hit hurt the player: their pain (src/gameplay/player-pain.ts), the gamepad's pain rumble
-   * with the Vibration setting on; a Painless one none. The load order has no hit blur or ouch
-   * sound for the player to show besides (player-pain.ts).
+   * A hit by `attacker` hurt the player: their pain (src/gameplay/player-pain.ts), a Painless
+   * one none. The hit blur (the image-space modifier GetHit, IMAD 0x162), their Hit line (the
+   * Hit topic's grunts the player may say, in their voice: talk.bark), and the gamepad's pain
+   * rumble with the Vibration setting on.
    */
-  #hurtPlayer(painful: boolean): void {
-    const rumble = this.#pain.hit(this.#clock, painful);
+  #hurtPlayer(painful: boolean, attacker: number): void {
+    const pain = this.#pain.react(this.#clock, painful);
+    if (!pain) return;
+    void this.#options.session.imageSpaceModifiers.apply(pain.blur);
+    this.#options
+      .talk?.()
+      ?.bark(PLAYER_REF, 'Hit', attacker)
+      .catch((error: unknown) => {
+        this.#warn(`the player's cry: ${describe(error)}`);
+      });
+    const rumble = pain.rumble;
     if (rumble && this.#options.session.ini.bool('Controls', 'bGamePadRumble'))
       rumbleGamepad(rumble.strength, rumble.strength, rumble.seconds);
   }

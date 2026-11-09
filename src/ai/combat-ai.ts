@@ -910,6 +910,36 @@ export function helpsUnweighed(
   return profile.commanded && profile.commander === helped;
 }
 
+/**
+ * A fight one could take up for another (the fighters near, each that `other` attacks or that
+ * attacks `other`): `helped` is the one it would help (its assistance reaches it, weighed by
+ * daresHelp unless helpsUnweighed); a guard's defence of an innocent (`unweighed`) needs no
+ * weighing.
+ */
+export interface AssistCase {
+  readonly helped: number;
+  readonly unweighed?: boolean;
+}
+
+/**
+ * Whether one takes up a fight against another for any of the fighters it would help: every
+ * case is looked at, not only the first, so one ally whose fight it does not dare join does not
+ * hide another it would join (a cowardly summon whose commander fights stays out only if no case
+ * holds, whatever order the fighters come in). The commander's case comes first, and a case that
+ * needs no weighing before those that do, so `helps` (which may scare it from the foe it does not
+ * dare) is not asked of a fight it takes up anyway. Returns the case it takes up the fight for.
+ */
+export function assistCase(
+  cases: Iterable<AssistCase>,
+  commander: number | undefined,
+  helps: (helped: number) => boolean,
+): AssistCase | undefined {
+  const rank = (entry: AssistCase): number =>
+    entry.unweighed ? 0 : commander !== undefined && entry.helped === commander ? 1 : 2;
+  const ordered = [...cases].sort((a, b) => rank(a) - rank(b));
+  return ordered.find((entry) => entry.unweighed === true || helps(entry.helped));
+}
+
 export interface FleeInput {
   /** The strength ratio of its side against its enemies (strengthRatio). */
   readonly ratio: number;

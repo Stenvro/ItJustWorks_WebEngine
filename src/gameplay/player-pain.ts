@@ -1,17 +1,28 @@
-// The player's pain as a hit hurts them: the gamepad's pain rumble, fRumblePainStrength on both
-// motors for fRumblePainTime seconds, at most once every fPainDelay seconds; a hit whose every
-// hostile effect is Painless (MGEF 0x4000000) gives none (Creation Kit "Magic Effect": with
-// Painless the player gets no hit reaction). Platform-independent.
+// The player's pain as a hit hurts them: the hit blur, their cry and the gamepad's pain rumble.
+// A hit whose every hostile effect is Painless (MGEF 0x4000000) gives none (Creation Kit "Magic
+// Effect": with Painless the player gets no hit blur or hit sound). Platform-independent.
 //
-// What the load order has for the rest of the player's hit reaction: nothing. No image-space
-// modifier, sound descriptor, sound file, default object or game setting of Skyrim.esm and the
-// DLCs names a player hit blur or an "ouch" sound, and the player's base (Player, 0x7) has no
-// voice type to cry out with (`node tools/imad-info.ts`, `node tools/actor-info.ts 00000007`);
-// the screen blood of a blow that bleeds is src/render/screen-blood-data.ts.
+// - The hit blur: the image-space modifier GetHit (Skyrim.esm IMAD 0x00000162, one of the forms
+//   below 0x800 that the engine refers to by id; a radial blur from 0.4 down to none over
+//   0.25 s: `node tools/imad-info.ts GetHit`), applied at full strength.
+// - The cry: the player says their Hit line (the Hit topic subtype, HIT_), as the dialogue
+//   engine picks it for them. The load order has it: the generic Hit topic (DIAL 0x13EBB) begins
+//   with six grunts, "Agh!", "Oof!", "Nargh!", "Argh!", "Weergh!", "Yeagh!" (each at
+//   GetRandomPercent <= 30, all but the first not for child voices), the only infos of that topic
+//   not barred from the player (the rest name GetIsID Player == 0 or another speaker), voiced for the Player base's
+//   voice type, MaleEvenToned, among others.
+// - The rumble: fRumblePainStrength on both motors for fRumblePainTime seconds.
+// The impact's own sound on the player (an arrow's WPNImpactArrowVsFleshPLAYER) is the impact's:
+// src/audio/impacts.ts blowSound. The screen blood of a blow that bleeds:
+// src/render/screen-blood-data.ts.
 //
-// TODO(M13): inferred from the settings' names (none of them is a GMST of the load order; their
-// values are the engine's built-in defaults): that the pain rumble follows each painful hit on
-// the player and that fPainDelay spaces it.
+// TODO(M13): inferred: that every painful hit gives the reaction and that fPainDelay (between
+// the player's pains) spaces all of it, the blur and the cry as the rumble; that the blur shows
+// in both cameras. The rumble's settings are none of them a GMST of the load order (their
+// values are the engine's built-in defaults).
+
+/** GetHit: the player's hit blur (Skyrim.esm IMAD 0x00000162). */
+export const PLAYER_HIT_IMAGE_SPACE_MODIFIER = 0x162;
 
 /** The settings of the player's pain. */
 export interface PlayerPainSettings {
@@ -47,6 +58,16 @@ export interface PainRumble {
   readonly seconds: number;
 }
 
+/** What a pain does to the player. */
+export interface PainReaction {
+  /** The image-space modifier of the hit blur (GetHit), applied at full strength. */
+  readonly blur: number;
+  /** The player cries out: their Hit line (the Hit topic subtype). */
+  readonly cry: true;
+  /** The gamepad's rumble; none with either setting at 0. */
+  readonly rumble: PainRumble | undefined;
+}
+
 /** The player's pains over time. */
 export class PlayerPain {
   settings: PlayerPainSettings;
@@ -57,15 +78,25 @@ export class PlayerPain {
   }
 
   /**
-   * A hit hurt the player at `now` (seconds): its rumble, or none (Painless, or within
+   * A hit hurt the player at `now` (seconds): the pain's reaction, or none (Painless, or within
    * fPainDelay of the last pain).
    */
-  hit(now: number, painful: boolean): PainRumble | undefined {
+  react(now: number, painful: boolean): PainReaction | undefined {
     if (!painful || now - this.#last < this.settings.delay) return undefined;
     this.#last = now;
     const { rumbleStrength, rumbleSeconds } = this.settings;
-    return rumbleSeconds > 0 && rumbleStrength > 0
-      ? { strength: rumbleStrength, seconds: rumbleSeconds }
-      : undefined;
+    return {
+      blur: PLAYER_HIT_IMAGE_SPACE_MODIFIER,
+      cry: true,
+      rumble:
+        rumbleSeconds > 0 && rumbleStrength > 0
+          ? { strength: rumbleStrength, seconds: rumbleSeconds }
+          : undefined,
+    };
+  }
+
+  /** A hit hurt the player at `now`: its rumble only (react). */
+  hit(now: number, painful: boolean): PainRumble | undefined {
+    return this.react(now, painful)?.rumble;
   }
 }
