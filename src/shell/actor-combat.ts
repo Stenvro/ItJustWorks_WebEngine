@@ -1531,13 +1531,6 @@ export class ActorCombat implements CombatBridge {
     const seen = new Set<number>();
     for (const staged of this.#options.actors()) {
       if (staged.dead || staged.visibility.hidden) continue;
-      // A corpse placed dead (Starts Dead, not raised since) is no fighter, as one killed here
-      // is not: blows fell on Gunjar's body in Helgen Keep, taken as a living actor's.
-      if (
-        staged.placed.actor.startsDead &&
-        runtime.state.actors.get(staged.reference)?.dead !== false
-      )
-        continue;
       // One fighting already fights on while it is loaded (a dragon orbits far beyond the reach),
       // and one kept in the high process (a scene's: MQ104's dragon circling the watchtower) is
       // a fighter wherever it is.
@@ -2411,6 +2404,16 @@ export class ActorCombat implements CombatBridge {
     for (const other of this.#fighters.values()) {
       if (other === fighter || current.struck.has(other.reference)) continue;
       if (other.state.life === LifeState.dead || other.state.paired === 'support') continue;
+      // A corpse its cell placed dead (Starts Dead, not raised since) is no living target: the
+      // soldiers' blows fell on Gunjar's body in Helgen Keep (its ragdoll still takes the blow's
+      // knock below, as any moving body in reach).
+      const runtime = this.#options.session.scriptsReady;
+      if (
+        other.body?.actor.startsDead === true &&
+        runtime?.state.actors.get(other.reference)?.dead !== false
+      ) {
+        continue;
+      }
       const at = this.#feet(other);
       if (!at) continue;
       targets.push({ reference: other.reference, feet: at, ...this.#size(other) });
