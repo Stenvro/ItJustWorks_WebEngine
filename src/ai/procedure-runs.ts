@@ -1198,7 +1198,8 @@ const say: ProcedureRunner = async (run) => {
  * then opens the conversation with its topic from where it stands. One whose greeting could not
  * begin (the player in a menu, another conversation) tries again after fAIForceGreetingTimer.
  * The way to the player is the package's own, a Travel before it to its Forcegreet Distance: the
- * templates' 150 for most, Paarthurnax's 1200 from his marker, none from a chair
+ * ForceGreet template's 300 unless a package sets its own (Whiterun's gate guard 500),
+ * Paarthurnax's 1200 from his marker, none from a chair
  * (ForceGreetFromSitting), and their ForceGreet's own places are "near the player, 5000".
  * TODO(M13): whether the procedure itself ever walks closer (nothing in the data asks it to).
  */
