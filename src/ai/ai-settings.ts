@@ -37,6 +37,13 @@ export interface AiSettings {
   readonly escortWaitDistanceInterior: number;
   readonly escortWaitDistanceExterior: number;
   /**
+   * The Flee procedure's safety (procedure-runs.ts fleeSafe): it is safe once beyond
+   * fFleeDoneDistanceExterior (inside: Interior) of what it flees for fFleeIsSafeTimer seconds.
+   */
+  readonly fleeIsSafeTimer: number;
+  readonly fleeDoneDistanceExterior: number;
+  readonly fleeDoneDistanceInterior: number;
+  /**
    * fAIDistanceRadiusMinLocation, fAIMarkerDestinationRadius, fAIFurnitureDestinationRadius:
    * an actor is at a place, a marker or furniture within this (or the place's radius if larger).
    */
@@ -218,6 +225,9 @@ const SETTINGS: readonly (readonly [keyof AiSettings, string, number])[] = [
   ['escortStartStopDelayTime', 'fAIEscortStartStopDelayTime', 1],
   ['escortWaitDistanceInterior', 'fAIEscortWaitDistanceInterior', 512],
   ['escortWaitDistanceExterior', 'fAIEscortWaitDistanceExterior', 2],
+  ['fleeIsSafeTimer', 'fFleeIsSafeTimer', 30],
+  ['fleeDoneDistanceExterior', 'fFleeDoneDistanceExterior', 2500],
+  ['fleeDoneDistanceInterior', 'fFleeDoneDistanceInterior', 600],
   ['distanceRadiusMinLocation', 'fAIDistanceRadiusMinLocation', 100],
   ['markerDestinationRadius', 'fAIMarkerDestinationRadius', 25],
   ['furnitureDestinationRadius', 'fAIFurnitureDestinationRadius', 25],

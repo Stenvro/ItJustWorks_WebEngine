@@ -82,6 +82,11 @@ export interface TalkSettings {
    */
   readonly playerActionTimer: number;
   readonly knockingTimer: number;
+  /**
+   * fSandBoxExtraDialogueRange: the In Game Dialogue package's second place reaches this much
+   * farther than its first (inGameDialoguePlaces).
+   */
+  readonly extraDialogueRange: number;
 }
 
 /**
@@ -111,6 +116,7 @@ export const VANILLA_TALK: TalkSettings = {
   randomSceneAgainMax: 30,
   playerActionTimer: 20,
   knockingTimer: 40,
+  extraDialogueRange: 384,
 };
 
 /** The settings from the game's (a setting the load order does not have keeps its vanilla value). */
@@ -143,6 +149,7 @@ export function talkSettings(setting: (name: string) => number | undefined): Tal
     randomSceneAgainMax: setting('fRandomSceneAgainMaxTime') ?? v.randomSceneAgainMax,
     playerActionTimer: setting('fCommentOnPlayerActionsTimer') ?? v.playerActionTimer,
     knockingTimer: setting('fCommentOnPlayerKnockingThings') ?? v.knockingTimer,
+    extraDialogueRange: setting('fSandBoxExtraDialogueRange') ?? v.extraDialogueRange,
   };
 }
 
@@ -509,6 +516,30 @@ export function triggerDistance(
       ? settings.conversationDistanceMax
       : settings.conversationDistance;
   return starter === 'sitting' ? reach + 20 : reach;
+}
+
+/**
+ * The places of the engine's In Game Dialogue package, which holds two actors talking while their
+ * scene plays: the first round the other actor, as wide as they came together to (`reach`:
+ * triggerDistance, or DialogueActivate's fAIDialogueDistance); the second its radius plus
+ * fSandBoxExtraDialogueRange (384), observed in the original as the package is made, the only
+ * reader of that setting.
+ */
+export function inGameDialoguePlaces(
+  reach: number,
+  settings: Pick<TalkSettings, 'extraDialogueRange'>,
+): { readonly first: number; readonly second: number } {
+  return { first: reach, second: reach + settings.extraDialogueRange };
+}
+
+/**
+ * Whether one of two talking actors strayed from its In Game Dialogue package: farther from the
+ * other than the second place reaches; it then comes back within the first. Inferred, TODO(M13):
+ * what the original does with the two places is not read (a sandbox's place and its outer one:
+ * fSandBoxRadiusHysteresis plays that part for a sandbox).
+ */
+export function strayedFromDialogue(apart: number, places: { readonly second: number }): boolean {
+  return apart > places.second;
 }
 
 /** The speed (units a second) from which a scene's speaker counts as moving (observed in the original). */

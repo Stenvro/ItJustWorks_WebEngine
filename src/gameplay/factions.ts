@@ -112,6 +112,34 @@ export interface FavorSettings {
   readonly favorLover: number;
 }
 
+/** The favor points a relationship rank stands for (the iFavor* thresholds; below friend none). */
+export function rankFavorPoints(rank: number, settings: FavorSettings): number {
+  if (rank >= RelationshipRank.lover) return settings.favorLover;
+  if (rank >= RelationshipRank.ally) return settings.favorAlly;
+  if (rank >= RelationshipRank.confidant) return settings.favorConfidant;
+  if (rank >= RelationshipRank.friend) return settings.favorFriend;
+  return 0;
+}
+
+/**
+ * Whether an actor does the player a favor of a cost (a commanded follower's: the favor cost a
+ * reference carries, REFR XFVC): its price, iCrimeFavorBaseValue + the cost × fCrimeFavorMult
+ * (0 and 1: the cost itself), within the favor points its relationship with the player stands
+ * for (rankFavorPoints). A favor without a cost is always done. Inferred, TODO(M13): the original
+ * reads the two settings only in its check of a favor's cost against the relationship rank; the
+ * comparison's form is not read. Vanilla gives a cost to two references (MQ102RikkeWaitMarker
+ * 25, a table 10).
+ */
+export function doesFavor(
+  relationshipRank: number,
+  cost: number,
+  settings: FavorSettings & { readonly favorBaseValue: number; readonly favorMult: number },
+): boolean {
+  if (!(cost > 0)) return true;
+  const price = settings.favorBaseValue + cost * settings.favorMult;
+  return price <= rankFavorPoints(relationshipRank, settings);
+}
+
 /**
  * The relationship rank favor points reach (iFavorFriendValue 25, iFavorConfidantValue 50,
  * iFavorAllyValue 100), at least the rank there was: favors and gifts raise a relationship,

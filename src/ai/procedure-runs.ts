@@ -1383,28 +1383,89 @@ const flee: ProcedureRunner = async (run) => {
   }
 };
 
+/**
+ * Whether a fleeing actor is safe (the Flee procedure is done): it has been beyond
+ * fFleeDoneDistanceExterior (inside: fFleeDoneDistanceInterior) of what it flees for
+ * fFleeIsSafeTimer seconds; `safeFor` counts from when it last came beyond (nearer again, it
+ * starts over). These settings are the Flee package's, not the combat tree's (whose fight ends
+ * on fFleeDistance* and on seeing no enemy). Inferred, TODO(M13): the original reads the three
+ * there; how its procedure counts the time was not followed.
+ */
+export function fleeSafe(
+  away: number,
+  safeFor: number,
+  interior: boolean,
+  settings: Pick<
+    AiSettings,
+    'fleeIsSafeTimer' | 'fleeDoneDistanceExterior' | 'fleeDoneDistanceInterior'
+  >,
+): boolean {
+  const done = interior ? settings.fleeDoneDistanceInterior : settings.fleeDoneDistanceExterior;
+  return away >= done && safeFor >= settings.fleeIsSafeTimer;
+}
+
+/** A fleeing actor looks again this often whether it is safe (real seconds; ours). */
+const FLEE_LOOK = 0.5;
+
+/**
+ * Flee's way: to its flee-to place, else away from what it flees by its flee distance (at least
+ * the done distance); then, with something to flee from, it stays away until it is safe
+ * (fleeSafe), running off again whenever it comes within the done distance of it.
+ */
 const fleeAway: ProcedureRunner = async (run) => {
+  const settings = settingsOf(run);
   const to = await placeIn(run, 1);
-  const here = run.body.position();
-  let goal: Vec3 | undefined = to?.position;
-  if (!goal && here) {
-    const threat = (await targetsIn(run, 0))[0];
-    const from = threat === undefined ? undefined : await run.mind.placement(threat);
-    const distance = Math.max(run.inputs.number(5, 1024), atPlace(run));
-    const dx = from ? here[0] - from.position[0] : 0;
-    const dy = from ? here[1] - from.position[1] : 1;
-    const length = Math.hypot(dx, dy) || 1;
-    goal = [here[0] + (dx / length) * distance, here[1] + (dy / length) * distance, here[2]];
+  const threat = (await targetsIn(run, 0))[0];
+  const own = await run.mind.placement(run.actor);
+  const interior = (to?.space ?? own?.space)?.kind === 'interior';
+  const done = interior ? settings.fleeDoneDistanceInterior : settings.fleeDoneDistanceExterior;
+  const threatAt = async (): Promise<Vec3 | undefined> =>
+    threat === undefined
+      ? undefined
+      : (run.mind.livePosition?.(threat) ?? (await run.mind.placement(threat))?.position);
+  const runOff = async (): Promise<boolean> => {
+    const here = run.body.position();
+    let goal: Vec3 | undefined = to?.position;
+    if (!goal && here) {
+      const from = await threatAt();
+      const distance = Math.max(run.inputs.number(5, 1024), atPlace(run), from ? done : 0);
+      const dx = from ? here[0] - from[0] : 0;
+      const dy = from ? here[1] - from[1] : 1;
+      const length = Math.hypot(dx, dy) || 1;
+      goal = [here[0] + (dx / length) * distance, here[1] + (dy / length) * distance, here[2]];
+    }
+    if (!goal) return false;
+    return run.body.travel(goal, 'run', Math.max(to?.radius ?? 0, atPlace(run)), to?.space);
+  };
+  if (!(await runOff())) return 'failure';
+  if (threat === undefined) return 'success';
+  // Away from it: safe after its time beyond the done distance.
+  let safeFor = 0;
+  let tries = 0;
+  while (!run.stopped()) {
+    const here = run.body.position();
+    const from = await threatAt();
+    if (!here || !from) return 'success';
+    const distance = Math.hypot(here[0] - from[0], here[1] - from[1]);
+    if (fleeSafe(distance, safeFor, interior, settings)) return 'success';
+    if (distance < done) {
+      safeFor = 0;
+      // Off again while it may; after that it holds where it got to (nowhere farther to go).
+      if (tries < FLEE_TRIES) {
+        tries++;
+        if (await runOff()) continue;
+      }
+      await run.wait(FLEE_LOOK);
+      continue;
+    }
+    await run.wait(FLEE_LOOK);
+    safeFor += FLEE_LOOK;
   }
-  if (!goal) return 'failure';
-  const arrived = await run.body.travel(
-    goal,
-    'run',
-    Math.max(to?.radius ?? 0, atPlace(run)),
-    to?.space,
-  );
-  return arrived ? 'success' : 'failure';
+  return 'failure';
 };
+
+/** It runs off again at most this often in one flee before it holds where it got to (ours). */
+const FLEE_TRIES = 8;
 
 /** A hover faces this far ahead along its place's heading (units). */
 const HOVER_FACE = 1024;

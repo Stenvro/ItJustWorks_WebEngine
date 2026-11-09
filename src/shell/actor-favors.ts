@@ -19,6 +19,7 @@
 // farther than fFavorRequestRadius from it. Doing the favor clears its favor state
 // (IsInFavorState). Notes: docs/ai.md ("Followers, mounts and vehicles").
 
+import { doesFavor } from '../gameplay/factions.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { ActorValue } from '../world/actor-values.ts';
 import type { Vec3 } from '../render/math.ts';
@@ -367,6 +368,16 @@ export class ActorFavors {
     if (!moralityAllows(morality, crime)) {
       void talk.say(follower, 'MREF');
       return false;
+    }
+    // A reference with a favor cost (XFVC) asks more of the relationship than it may give.
+    const cost =
+      target === undefined ? 0 : (await runtime.forms.record(target))?.fields.f32('XFVC');
+    if (cost !== undefined && cost > 0) {
+      const rank = await runtime.actors.relationshipRank(follower, PLAYER_REF);
+      if (!doesFavor(rank, cost, await runtime.crime.settings())) {
+        void talk.say(follower, 'REFU');
+        return false;
+      }
     }
     const lock = target === undefined ? undefined : await runtime.lock(target);
     if ((kind === 'open' || kind === 'loot') && lock?.locked && lock.level > KEY_ONLY) {

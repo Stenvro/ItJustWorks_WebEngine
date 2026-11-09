@@ -23,6 +23,12 @@ import type { PackageInput } from '../../../src/ai/package-records.ts';
 import type { SandboxSpot } from '../../../src/ai/package-runtime.ts';
 import { PROCEDURES } from '../../../src/ai/procedure-runs.ts';
 import {
+  inGameDialoguePlaces,
+  strayedFromDialogue,
+  talkSettings,
+  VANILLA_TALK,
+} from '../../../src/ai/talk.ts';
+import {
   nextSandboxEvent,
   pickSandbox,
   sandboxDuration,
@@ -436,11 +442,22 @@ describe.skipIf(!hasGamedata())('sandbox: an inn’s evening (headless simulatio
 });
 
 describe('sandbox: the rest of the engine’s rule', () => {
-  // Stays: observed in the original, fSandBoxExtraDialogueRange is read only as the engine makes
-  // an actor's In Game Dialogue package (Actor's dialogue start: its second location's radius is
-  // its first's plus this), not by the sandbox. We have no such package to give it to: actors'
-  // conversations are the story manager's scenes (docs/ai.md, "Actor dialogue").
-  it.todo('widens an In Game Dialogue package’s second place by fSandBoxExtraDialogueRange (384)');
+  // Observed in the original, fSandBoxExtraDialogueRange is read only as the engine makes an
+  // actor's In Game Dialogue package (its second location's radius is its first's plus this), not
+  // by the sandbox. Ours holds two actors talking in their scene (src/shell/actor-talk.ts); what
+  // the second place does (one drawn beyond it comes back) is inferred (talk.ts).
+  it('widens an In Game Dialogue package’s second place by fSandBoxExtraDialogueRange (384)', () => {
+    expect(VANILLA_TALK.extraDialogueRange).toBe(384);
+    const places = inGameDialoguePlaces(200, VANILLA_TALK);
+    expect(places).toEqual({ first: 200, second: 584 });
+    expect(
+      talkSettings((name) => (name === 'fSandBoxExtraDialogueRange' ? 100 : undefined))
+        .extraDialogueRange,
+    ).toBe(100);
+    // Beyond the second place, one of the two strays (and comes back within the first).
+    expect(strayedFromDialogue(584, places)).toBe(false);
+    expect(strayedFromDialogue(585, places)).toBe(true);
+  });
 
   it('waits fSandBoxDelayEvalSeconds (5 s) before it is evaluated again on arrival', async () => {
     // Its way to its chair takes 13 s, the timer at 13 of 15 as it sits: the next evaluation is
