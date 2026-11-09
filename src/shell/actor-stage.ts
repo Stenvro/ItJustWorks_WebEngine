@@ -1254,18 +1254,20 @@ export class ActorStage {
         this.#invisibility = {
           playerMinimum: await read('playerMinimum'),
           minRefraction: await read('minRefraction'),
+          maxRefraction: await read('maxRefraction'),
         };
       })();
     }
     for (const staged of this.#actors.values()) {
       const fade = staged.placed.instances[0]?.fade;
       if (!fade) continue;
-      const invisible = invisibilityVeil(
-        runtime.magic.aiState(staged.reference).invisible,
-        staged.reference === PLAYER_REF,
-        this.#invisibility,
-      );
-      fade.veil = 1 - (1 - invisible) * this.#alpha(runtime, staged.reference, frame);
+      const invisible = runtime.magic.aiState(staged.reference).invisible;
+      const veil = invisibilityVeil(invisible, staged.reference === PLAYER_REF, this.#invisibility);
+      fade.veil = 1 - (1 - veil) * this.#alpha(runtime, staged.reference, frame);
+      // The shimmer through its shapes: the refraction its Invisibility set (magic-engine.ts).
+      fade.refraction = invisible
+        ? (runtime.state.actors.get(staged.reference)?.refraction ?? 0)
+        : 0;
     }
   }
 

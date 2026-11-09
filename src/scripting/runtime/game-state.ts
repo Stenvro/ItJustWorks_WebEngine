@@ -227,6 +227,11 @@ export interface ActorState {
   vehicle?: number;
   /** SetAlpha: how opaque it is drawn (0..1; none: 1). */
   alpha?: number;
+  /**
+   * The refraction an Invisibility effect drew it with as the effect last started or stopped
+   * (src/gameplay/magic/invisibility.ts invisibilityRefraction; none: 0).
+   */
+  refraction?: number;
   /** SetHeadTracking(false): its head tracks nothing. */
   headTrackingOff?: boolean;
   /** SetLookAt: what scripts have it look at, until ClearLookAt. */
@@ -383,6 +388,11 @@ export interface ActiveEffectState {
    */
   readonly taper?: number;
   readonly taperMagnitude?: number;
+  /**
+   * A Dual Value Modifier's (or Enhance Weapon's) second actor value weight as its caster's
+   * perks left it (Mod Secondary Value Weight); none: its magic effect's.
+   */
+  readonly secondWeight?: number;
   /**
    * Held by a concentration spell, without a duration of its own: it lasts while the spell is
    * held, a value effect acting each frame (magic-engine.ts endHeld).

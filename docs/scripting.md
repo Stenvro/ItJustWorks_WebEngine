@@ -104,7 +104,8 @@ As the Creation Kit wiki's "Threading Notes (Papyrus)" describe them (`papyrus-v
   waits. MQ101's dunCGDragonVoiceStormCall
   (magicProjectileStormScript: an OnUpdate with some ten such natives, then fRecast) sent a
   meteor every 0.12 s while every native returned at once, about two and a half times the
-  game's rate.
+  game's rate; with them a frame each it sends one every 0.1 s and some fifteen frames, as the
+  game does (tests/conformance/magic/casting.test.ts, in the sim at 60 frames a second).
 - A script error (a runaway thread, too deep a call stack) stops its thread and is reported,
   never thrown at the engine, as the game logs it.
 - **Faults the thread survives** (observed in the original, logged with its stack in the

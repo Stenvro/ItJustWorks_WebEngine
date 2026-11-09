@@ -487,7 +487,8 @@ the player in a runtime on the game data, `--audit` reads every record).
   onto the navmesh (Creation Kit "Magic Effect"): a summon's place (summonPlace) and the hazard a
   wall's burst leaves. Gory Visuals (19) is not used by the game (Creation Kit).
 - Conditions: the effect item's and the magic effect's, on the target ("target" runs on the
-  caster), evaluated as it is applied and about each second (TODO(M13): the engine's interval):
+  caster), evaluated as it is applied and each fActiveEffectConditionUpdateInterval (1 s, its
+  built-in default; observed in the original; the setting as it is each frame):
   while they fail the effect is inactive (it does nothing, its scripts finished; again active,
   they start anew). An effect at once whose conditions fail does nothing. A disease's
   GetRandomPercent conditions are its chance of being caught, not checked while it lasts.
@@ -498,6 +499,11 @@ the player in a runtime on the game data, `--audit` reads every record).
 
 ### What effects do
 
+- Night Eye and Darkness (no vanilla effect uses either; observed in the original): Night
+  Eye starts at magnitude 1 whatever its effect item's, so its actor value only says the actor
+  sees in the dark; what the player sees is its effect's image space (fMagicNightEyeAmbient,
+  0.75, is registered by the engine and never read). Darkness, as it starts and as it stops,
+  draws its actor at 1 - its actor value / 100 of its alpha (0 to 1): `darknessAlpha`.
 - Value effects (Value Modifier, Peak Value Modifier, Dual Value Modifier, Absorb, Accumulate
   Magnitude, Value and Parts, Enhance Weapon, Invisibility, Night Eye, Darkness, Paralysis,
   Grab Actor): Recover effects (and Peak Value Modifiers, whose class undoes them as they are
@@ -613,6 +619,8 @@ the player in a runtime on the game data, `--audit` reads every record).
   lasts, else their own time once), the light of a Light effect over its shoulder (Candlelight;
   Magelight's projectile that strikes a surface stays there, its model and its effect's light,
   for the effect's duration as cast: projectile-flight.ts sticksAsLight, TODO(M13) how many stay;
+  on a moving body (dynamic or keyframed) it is carried where it struck the body, turning with
+  it (stuckOnBody; TODO(M13): inferred from a stuck arrow; a save keeps where it is, not the body);
   TODO(M13): where the engine floats it; fMagicLightForwardOffset, SideOffset and HeightOffset
   are registered but never read by the engine, original), the image-space modifier while an effect
   acts on the player (aimed at it: radial blur and depth of field that use their target), the
@@ -631,13 +639,25 @@ the player in a runtime on the game data, `--audit` reads every record).
   the birth rate (ramp up, full, ramp down, then the persistent count a second), moving off
   along the normal and with the shader's velocity and acceleration, sized by the two scale keys
   and coloured by the three colour keys over their lives, turning, in a frame of the texture's
-  atlas (TODO(M13): Particle Animated's frame runs), through the particle palette. TODO(M13):
+  atlas (with Particle Animated running through its frames: from its start frame, at its Frame
+  Count a second, looping back to its loop start frame after its end frame; TODO(M13): that the
+  count is frames a second is inferred from the vanilla shaders), through the particle palette.
+  TODO(M13):
   holes (NAM7), addon models (DEBR), the ambient sound.
 - Invisibility (src/gameplay/magic/invisibility.ts; observed in the original): an invisible
   actor is drawn veiled, dithered away as a distance fade is (the renderer's InstanceFade.veil),
   all but fInvisibilityMinRefraction (0.01); the player all but fMagicPlayerMinimumInvisibility
-  (0.1), the least of their alpha the engine keeps. TODO(M13): the refraction shimmer through the
-  actor (fInvisibilityMaxRefraction) and the engine's fade in and out.
+  (0.1), the least of their alpha the engine keeps. As the effect starts and as it stops, its
+  actor value's share s (value / 100, 0 to 1) sets the actor's refraction to
+  fInvisibilityMinRefraction + (1 - s) × (fInvisibilityMaxRefraction - min), none at 0
+  (invisibilityRefraction; vanilla Invisibility, No Magnitude, gives the value 1: 0.495 with
+  Skyrim.esm's 0.5); the stage draws the actor's lit shapes into the refraction buffer with that
+  strength besides (InstanceFade.refraction), bending the scene behind as refraction shapes do.
+  TODO(M13): not yet looked at in the browser; the engine's fade in and out.
+- Concussion (no vanilla effect; observed in the original): its effect adds nothing to every
+  effect's part (its scripts, visuals, sounds); fConcussionTimer is never read. TODO(M13):
+  Disguise (no vanilla effect) is not run yet: in the original it keeps the actor as the
+  player's disguise while it lasts and has its own detection check, not yet read.
 - Art objects (ARTO) hang on the actor's skeleton: the art model's nodes follow the bones of
   their names each frame, its skinned shapes with them.
 - Detect Life shows its hit shader (LifeDetected's particles, through walls) on the living
@@ -745,8 +765,10 @@ Format/SPEL"; the game settings.
   NPCs release a ready spell at once; a concentration spell they hold while it serves: at a
   target while it lives and stays within its projectile's reach (and the magicka lasts), one
   without a target 2.5 s at most, a ward at least the combat AI's fCombatMagicWardMinCastTime
-  (1.5 s) and then while a spell or arrow flies at it (projectile-flight.ts wardHeld; TODO(M13):
-  the AI's ward behaviour past its minimum), a healing spell less once their health is whole; UseMagic's for its cast time. The combat AI's spells, staffs, heals,
+  (1.5 s) and then while a spell or arrow flies at it and its magicka share is at least
+  fCombatMagicWardMagickaCastLimit (0.25) (projectile-flight.ts wardHeld; TODO(M13): inferred,
+  the ward caster's own checks past its minimum are not read: fCombatMagicWardMagickaEquipLimit,
+  fCombatMagicWardAttackRangeDistance and fCombatMagicWardAttackReachMult are not read yet), a healing spell less once their health is whole; UseMagic's for its cast time. The combat AI's spells, staffs, heals,
   potions, summons, wards and buffs: docs/ai.md, "Combat AI".
 - What shows (src/shell/actor-casting.ts, magic-projectiles.ts, magic-fx.ts): the casting art
   in the hand (MGEF casting art, on the player's hands while their magic is drawn; dual cast:
@@ -1482,6 +1504,18 @@ the 92 entry points used). Code: `src/world/perk-records.ts` (the record),
 `src/gameplay/perk-entry-points.ts` (the entry points, functions, order),
 `src/scripting/runtime/perk-engine.ts` (perks held, entry points applied),
 `src/scripting/runtime/perk-hooks.ts` (the equip system's and crafting's hooks).
+
+Entry points no vanilla perk uses that the engine asks (observed in the original; for mods):
+Mod Secondary Value Weight (the caster's, as a Dual Value Modifier is adjusted for perks, its
+spell and target the tabs: the second actor value's weight), Mod Max Placeable Mines (the
+player's, of iMaxPlayerRunes: Skyrim.esm 1; the player's oldest rune at rest gives way to the
+next, TODO(M13): inferred, UESP "Skyrim:Rune") and Get Should Attack (the other actor the
+owner, the would-be attacker its tab; TODO(M13): where the engine asks it is not read, here a 0
+keeps the other off the attacker's targets). The engine also asks Calculate Mine Explode
+Chance (the player, from 100), Adjust Limb Damage and Mod Addiction Chance (the potion usage
+monitor past fAddictionUsageMonitorThreshold, 25): TODO(M13), not run yet; no call was found
+for Mod Addiction Duration, Mod Positive Chem Duration, Mod Player Reputation, Mod Lockpick
+Level Allowed and Set Progression Picking.
 
 ### Records
 
