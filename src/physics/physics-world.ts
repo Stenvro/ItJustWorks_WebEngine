@@ -1534,11 +1534,14 @@ export class PhysicsWorld {
   /**
    * Breakable constraints break when the impulse on them in a step exceeds their threshold
    * (Havok's units: kg·m/s, the beehive's 20 holding its 10 kg, a step taking 1.6). The joint's
-   * impulse is not exposed: it is the change of momentum of its simulated body that gravity
-   * does not explain (TODO(M13): contacts on the body count as well).
+   * impulse is not exposed: it is the change of momentum that gravity does not explain of the
+   * simulated bodies it holds: its simulated body and every simulated body jointed to it, taken
+   * together (the mace trap's pin holds its mace and the chain hung from it: 108 kg, 17.6 a
+   * step; the impulses that set the trap off, on the mace and on each link, pull on it as one).
+   * Inferred, TODO(M13): what the system's other anchors take (a chain's fixed end) counts
+   * towards it too; contacts on the bodies count as well.
    */
   #breakJoints(): void {
-    const gravity = this.world.gravity;
     for (const placed of this.#breakable) {
       const joint = placed.joint;
       const threshold = placed.constraint.breakable?.threshold ?? Infinity;
@@ -1549,20 +1552,9 @@ export class PhysicsWorld {
         continue;
       }
       let impulse = 0;
-      for (const { body, data } of [placed.a, placed.b]) {
-        const before = this.#velocities.get(body.handle);
-        if (!before || !body.isDynamic()) continue;
-        const after = body.linvel();
-        const g = data.gravityFactor * this.#size;
-        impulse = Math.max(
-          impulse,
-          body.mass() *
-            Math.hypot(
-              after.x - before.x - gravity.x * g,
-              after.y - before.y - gravity.y * g,
-              after.z - before.z - gravity.z * g,
-            ),
-        );
+      for (const side of [placed.a, placed.b]) {
+        if (!side.body.isDynamic()) continue;
+        impulse = Math.max(impulse, this.#heldImpulse(side));
       }
       if (impulse > threshold) {
         this.world.removeImpulseJoint(joint, true);
@@ -1570,6 +1562,38 @@ export class PhysicsWorld {
         this.#forgetJoint(placed);
       }
     }
+  }
+
+  /**
+   * The impulse of a step on a simulated body and the simulated bodies jointed to it (through
+   * joints between simulated bodies), gravity's left out: the sum of their momentum changes.
+   */
+  #heldImpulse(start: PlacedBody): number {
+    const gravity = this.world.gravity;
+    const seen = new Set<number>();
+    const queue: PlacedBody[] = [start];
+    let x = 0;
+    let y = 0;
+    let z = 0;
+    for (let side = queue.pop(); side; side = queue.pop()) {
+      const { body, data } = side;
+      if (seen.has(body.handle) || !body.isDynamic()) continue;
+      seen.add(body.handle);
+      const before = this.#velocities.get(body.handle);
+      if (before) {
+        const after = body.linvel();
+        const g = data.gravityFactor * this.#size;
+        const mass = body.mass();
+        x += mass * (after.x - before.x - gravity.x * g);
+        y += mass * (after.y - before.y - gravity.y * g);
+        z += mass * (after.z - before.z - gravity.z * g);
+      }
+      for (const joint of this.#jointsOf.get(body.handle) ?? []) {
+        if (!joint.joint) continue;
+        queue.push(joint.a.body === body ? joint.b : joint.a);
+      }
+    }
+    return Math.hypot(x, y, z);
   }
 
   /**

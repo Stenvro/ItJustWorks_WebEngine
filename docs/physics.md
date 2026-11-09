@@ -793,8 +793,12 @@ the same: Helgen's opening spent 3.5 of its 4.8 ms a physics step on the 400 joi
 living actors' ragdolls, at three steps a frame. **Breakable** constraints break when the impulse on them in a step exceeds
 their threshold: the beehive's 20 holds its 10 kg (1.6 per step at 60 Hz), the mace trap's pin
 (30) its 108 kg of chain and mace (17.6); the joint's impulse is not exposed, so it is the
-change of momentum of its simulated body that gravity does not explain (TODO(M13): contacts on
-the body count too).
+change of momentum that gravity does not explain of the simulated bodies it holds: its simulated
+body and those jointed to it, taken together (inferred, TODO(M13): what the system's other
+anchors take counts towards it, and contacts on the bodies count too). The mace trap's
+MaceTrap.fireTrap makes it dynamic and pushes it down twice (ApplyHavokImpulse 15, then 50):
+the push on the mace and its links breaks the pin and the mace swings down on its chain
+(`tests/conformance/physics/traps.test.ts`, WarehouseTraps).
 
 Models whose bodies move their nodes one by one (`isArticulated`: constraints, or several
 simulated bodies) are drawn on a pose of their own nodes rather than moved as one: every

@@ -28,6 +28,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { EXPLOSION_DEFAULTS, gameplayImpulse } from '../../../src/gameplay/magic/explosions.ts';
 import { arrowKnock } from '../../../src/gameplay/impulses.ts';
 import { parseVmad } from '../../../src/formats/esm/vmad.ts';
+import { HAVOK_SCALE } from '../../../src/physics/collision-data.ts';
 import { CollisionMatrix as Matrix, Layer } from '../../../src/physics/collision-layers.ts';
 import { ActivatorKeywords } from '../../../src/scripting/runtime/activator-keywords.ts';
 import { ActorValue } from '../../../src/world/actor-values.ts';
@@ -304,11 +305,74 @@ describe.skipIf(!hasGamedata())('a log set off by its tripwire (headless simulat
   });
 });
 
+const MACE = 0x2464d;
+const MACE_WIRE = 0x247a9;
+/** Under the chain's anchor, on the floor: the mace passes here at the bottom of its swing. */
+const IN_THE_MACES_WAY: readonly [number, number, number] = [1539, -1585, -128];
+
+// TrapMace01 [0001B3C0] (PhysicsTrapHit, MaceTrap): its mace hangs held up by a pin (a breakable
+// ball and socket, threshold 30) at the end of a chain of 11 links from its base. MaceTrap's
+// fireTrap makes it dynamic and pushes it down twice (ApplyHavokImpulse 15, then 50): the push
+// on the mace and its chain breaks the pin (src/physics/physics-world.ts #breakJoints: the
+// impulse on the bodies the pin holds, taken together), and the mace swings down on its chain.
+// In WarehouseTraps the tripwire [000247A9] is the activate parent of the mace [0002464D].
+describe.skipIf(!hasGamedata())(
+  'a hanging mace set off by its tripwire (headless simulation)',
+  () => {
+    let sim: Sim;
+    let actor = 0;
+    let unhurt = 0;
+    let since = 0;
+    let lowest = Infinity;
+    let held = Infinity;
+    const maceHeight = (): number | undefined => {
+      const placed = sim.world.play?.placementsOf(MACE) ?? [];
+      // The heaviest of its bodies: the mace itself.
+      let best: { mass: number; z: number } | undefined;
+      for (const { body } of placed.flatMap((one) => one.bodies)) {
+        if (!best || body.mass() > best.mass) best = { mass: body.mass(), z: body.translation().z };
+      }
+      return best && best.z * HAVOK_SCALE;
+    };
+
+    beforeAll(async () => {
+      sim = await openSim({ interior: WAREHOUSE_TRAPS, hour: 10 });
+      await sim.step(0.5);
+      since = sim.time;
+      held = maceHeight() ?? Infinity;
+      actor = await sim.place(await sim.formId('NPC_', 'Hulda'), MACE);
+      await sim.native(sim.runtime.referenceHandle(actor), 'ObjectReference', 'SetPosition', [
+        ...IN_THE_MACES_WAY,
+      ]);
+      await sim.step(0.2);
+      unhurt = (await sim.runtime.actors.value(actor, ActorValue.health)).current;
+      const wire = await sim.position(MACE_WIRE);
+      expect(wire).toBeDefined();
+      if (wire) await sim.moveTo([wire[0], wire[1], wire[2]]);
+      for (let i = 0; i < 16; i++) {
+        await sim.step(0.125);
+        lowest = Math.min(lowest, maceHeight() ?? Infinity);
+      }
+      await sim.step(0.5);
+    }, 600_000);
+    afterAll(async () => {
+      await sim.close();
+    });
+
+    it('swings a hanging mace set off by its tripwire into an actor in its way  [data: TrapMace01, MaceTrap] (sim)', async () => {
+      expect(sim.events('activate')).toContainEqual({ target: MACE, actor: MACE_WIRE });
+      // Held up by its pin, then down on its chain: more than a link's length lower.
+      expect(held).toBeGreaterThan(90);
+      expect(lowest).toBeLessThan(held - 100);
+      const sent = sim.scriptEvents({ event: 'OnTrapHitStart', target: MACE, since });
+      expect(sent.map((event) => event.args[0])).toContainEqual({ form: actor });
+      const health = await sim.runtime.actors.value(actor, ActorValue.health);
+      expect(unhurt - health.current).toBeGreaterThan(10);
+    });
+  },
+);
+
 describe('what traps do', () => {
-  it.todo(
-    'swings a hanging mace set off by its tripwire (TrapMace01: PhysicsTrapHit alone, and its ' +
-      'chain does not move when woken: what lets it go is not known)  [data] (sim)',
-  );
   it('takes a body on L_CLOUDTRAP as a trap, its material told  [original]', async () => {
     await initPhysics();
     const physics = new PhysicsWorld(new Matrix([]), 0);

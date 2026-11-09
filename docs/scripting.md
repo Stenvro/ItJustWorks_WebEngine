@@ -820,9 +820,10 @@ in Inactive, so by the scripts the first step arms the plate and the next one fi
 the original: a volume tells one enter per reference, GetTriggerObjectCount is 0 for an empty one and
 OnCellLoad goes to every reference of a fully loaded cell, so nothing there makes the first step
 fire. TODO(M13): whether the original's first step on these plates fires is not known (UESP has a
-wrong plate launch a fireball, without saying on which step). TODO(M13): a hanging mace
-(TrapMace01, on its tripwire) does not swing: its chain's links are simulated, a pin is fixed, and
-what lets it go is not known. Observed in the original: no code reads fLockTrapGoOffBase or
+wrong plate launch a fireball, without saying on which step). A hanging mace
+(TrapMace01, on its tripwire) swings: MaceTrap's fireTrap makes it dynamic and pushes it down,
+which breaks the breakable pin holding it up ([physics.md](physics.md), breakable constraints).
+Observed in the original: no code reads fLockTrapGoOffBase or
 fLockTrapGoOffMult, so a failed pick sets no trap off. fProjectileKnockMultTrap and
 fGameplayImpulseMultTrap are the pushed body's: what is on L_TRAP takes less of a blow.
 
