@@ -296,9 +296,10 @@ what fills it was not found).
       vanilla graph plays one (tests/conformance/animation/clips.test.ts). TODO(M13): the engine's
       rule, for a mod's.
 - [x] Engine handlers: the response files' 95 of 97 (above).
-- [ ] An event no node takes is not reported as not handled. (bDisableInterp has no setter in
-      the engine, observed in the original: the graphs set it; it is read with bIsSynced and
-      bSpeedSynced: round 8.)
+- [x] An event no node takes is reported as not handled (BehaviorRuntime.answered): a death
+      idle its graph does not take lets the body go at once (tests/conformance/animation/
+      graph-runtime.test.ts). (bDisableInterp has no setter in the engine, observed in the
+      original: the graphs set it; it is read with bIsSynced and bSpeedSynced: round 8.)
 - [x] Head tracking (docs/animation.md, "Head tracking"; the settings above).
 - [x] Look-at, direct-at (BSLookAtModifier, BSDirectAtModifier) and limb IK.
 - [ ] Foot IK: the narrow quadrupeds' (the formats' list).
@@ -318,6 +319,8 @@ what fills it was not found).
 - [x] Animation objects (but the female hands' scale, the POV switch while one is held).
 - [x] Ambient idles (but which idles skip the next PickNewIdle, the complex scene's wait).
 - [x] Weapons and aim, casting, horses, first person.
-- [ ] Graph state in saves: actors' graphs rebuilt from furniture and packages, not saved.
+- [x] Graph state in saves: each actor's graph's states, clips' times, variables, events not
+      handled yet, transitions and modifiers (docs/formats/save.md, "Animation graphs";
+      tests/conformance/animation/graph-runtime.test.ts).
 - [x] Clips: compression, root motion, float tracks, annotations.
 - [x] Sounds of animations: footsteps, SoundPlay, NPCSoundPlay, SoundStop, SoundRelease.

@@ -848,8 +848,11 @@ DeathAnimationRoot's MS12BedDeath, then Ragdoll if the killer holds a bow, a sta
 victim is paired, in furniture, bleeding out, swimming, or half the time, else DeathAnim). The
 idles' conditions on their target see the killer (inferred, TODO(M13)). A Ragdoll idle, or none,
 lets the ragdoll go at once; an animated death keeps the body on its graph (still animating
-while dead) until the graph adds the ragdoll; one whose graph did not take the idle (its states
-unchanged 0.3 s on) goes limp, and so does one whose graph never adds it, or keeps it keyframed
+while dead) until the graph adds the ragdoll; one whose graph did not take the idle goes limp at
+once (observed in the original: the graph reports an event no active node takes as not handled;
+ours reads the graph's answer the update after the idle was sent, `BehaviorRuntime.answered`, and
+a graph that has not answered 0.3 s on by its states, unchanged: not taken), and so does one whose
+graph never adds it, or keeps it keyframed
 or powered, 8 s after it began (TODO(M13): what the engine does with such a graph; before, a
 graph that kept its ragdoll keyframed held the corpse on its feet for good). A killmove's
 victim dies in its paired clip. Seen in the browser (Riverwood): a villager's DeathAnim,

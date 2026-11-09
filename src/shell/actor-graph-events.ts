@@ -63,8 +63,13 @@ interface Dying {
   /** Its Death line waits for its graph's DeathEmote (until then, or DEATH_EMOTE_WAIT). */
   cry: (() => void) | undefined;
   /**
-   * The graph's active states as its death idle was sent (undefined: checked, or a killmove's):
-   * a graph whose states did not change by DEATH_TAKEN did not take it.
+   * The death idle's event its graph was sent, until the graph answers whether it took it
+   * (undefined: answered, or a killmove's).
+   */
+  idle: string | undefined;
+  /**
+   * The graph's active states as its death idle was sent: a graph that has not answered by
+   * DEATH_TAKEN (it has not updated since) and whose states did not change did not take it.
    */
   before: string | undefined;
   /**
@@ -82,9 +87,11 @@ interface Dying {
  */
 const DEATH_WAIT = 8;
 /**
- * A death idle its graph names but does not take (no active state answers it: a cow's
- * DeathAnimation while it grazes) leaves its states as they were: after this long the body is
- * let go (seconds). The engine's graphs report an event no active node takes as not handled.
+ * A death idle its graph does not take (no active state answers it: a cow's DeathAnimation
+ * while it grazes) lets the body go at once: observed in the original, the graph reports an
+ * event no active node takes as not handled (BehaviorRuntime.answered, read the update after it
+ * was sent). A graph that has not answered this long after (seconds) is judged by its states:
+ * unchanged, it did not take it.
  */
 const DEATH_TAKEN = 0.3;
 /** A death cry waiting for its graph's DeathEmote is said after this at the latest (seconds). */
@@ -584,6 +591,7 @@ export class ActorGraphEvents {
       phase: 'animating',
       since: 0,
       cry: waitsForEmote ? cry : undefined,
+      idle: before === undefined ? undefined : event,
       before,
       paired,
     });
@@ -682,9 +690,23 @@ export class ActorGraphEvents {
         if (!holds || dying.since >= DEATH_WAIT) this.#limp(dying);
         continue;
       }
+      // Whether its graph took its death idle: as the graph answers (the update after the idle
+      // was sent), else by its states once DEATH_TAKEN has passed.
+      if (dying.idle !== undefined) {
+        const answer = graph?.answered(dying.idle);
+        if (answer === false || !graph) {
+          this.#limp(dying);
+          continue;
+        }
+        if (answer === true) {
+          dying.idle = undefined;
+          dying.before = undefined;
+        }
+      }
       if (dying.before !== undefined && dying.since >= DEATH_TAKEN) {
         const before = dying.before;
         dying.before = undefined;
+        dying.idle = undefined;
         if (!graph || statesOf(graph) === before) {
           this.#limp(dying);
           continue;
