@@ -291,18 +291,38 @@ describe.skipIf(!hasGamedata())('an object held (headless simulation)', () => {
       if (!placed) throw new Error('Hulda has no pose');
       return placed;
     };
+    /**
+     * Steps with her own idles' objects kept out of her hands (her bar rag): what she holds is
+     * only what this case gives her.
+     */
+    const stepHoldingNothingElse = async (seconds: number): Promise<void> => {
+      const objects = animObjects();
+      const original = objects.animObject.bind(objects);
+      objects.animObject = (reference, kind, editorId) => {
+        if (reference === HULDA && kind !== 'unequip') return;
+        original(reference, kind, editorId);
+      };
+      try {
+        await sim.step(seconds);
+      } finally {
+        objects.animObject = original;
+      }
+    };
+    /** Her hands in her pose's world as her clips put them now. */
+    const handsInWorld = (): [number, number] => [
+      worldScale(pose(), RIGHT_HAND),
+      worldScale(pose(), LEFT_HAND),
+    ];
     animObjects().animObject(HULDA, 'unequip', undefined);
-    // Her skeleton's own: 0.852, under every clip.
+    await stepHoldingNothingElse(0.2);
+    expect(animObjects().held(HULDA)).toHaveLength(0);
+    // Her skeleton's own: 0.852, under every clip (a clip's own hand scale is 1).
+    expect(sim.actor(HULDA)?.placed.behavior?.playing().length ?? 0).toBeGreaterThan(0);
     expect(pose().scale(RIGHT_HAND)).toBeCloseTo(0.85, 2);
     expect(pose().scale(LEFT_HAND)).toBeCloseTo(0.85, 2);
-    await sim.step(0.1);
-    if (
-      !animObjects()
-        .held(HULDA)
-        .some((held) => held.node !== undefined)
-    ) {
-      expect(worldScale(pose(), RIGHT_HAND)).toBeCloseTo(0.85, 2);
-    }
+    const [right, left] = handsInWorld();
+    expect(right).toBeCloseTo(0.852, 2);
+    expect(left).toBeCloseTo(0.852, 2);
     // A tankard in her right hand: both hands at 1.
     animObjects().animObject(HULDA, 'load', 'AnimObjectTankard');
     animObjects().animObject(HULDA, 'draw', 'AnimObjectTankard');
@@ -310,12 +330,18 @@ describe.skipIf(!hasGamedata())('an object held (headless simulation)', () => {
     expect(pose().scale(RIGHT_HAND)).toBe(1);
     expect(pose().scale(LEFT_HAND)).toBe(1);
     await sim.step(0.1);
-    expect(worldScale(pose(), RIGHT_HAND)).toBeCloseTo(1, 3);
-    expect(worldScale(pose(), LEFT_HAND)).toBeCloseTo(1, 3);
-    // It goes: back to 0.85.
+    const [rightHeld, leftHeld] = handsInWorld();
+    expect(rightHeld).toBeCloseTo(1, 3);
+    expect(leftHeld).toBeCloseTo(1, 3);
+    // It goes: back to 0.85, in her pose's world as her clips go on.
     animObjects().animObject(HULDA, 'unequip', undefined);
     expect(pose().scale(RIGHT_HAND)).toBeCloseTo(0.85, 2);
     expect(pose().scale(LEFT_HAND)).toBeCloseTo(0.85, 2);
+    await stepHoldingNothingElse(0.2);
+    expect(animObjects().held(HULDA)).toHaveLength(0);
+    const [rightAfter, leftAfter] = handsInWorld();
+    expect(rightAfter).toBeCloseTo(0.852, 2);
+    expect(leftAfter).toBeCloseTo(0.852, 2);
   });
 
   it('while the player holds one, the POV switch is off', async () => {
