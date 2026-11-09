@@ -23,16 +23,27 @@
 //   dunKarthspirePlatePuzzleSCRIPT, MQ203's 69 plates alone, casts in its Active state's
 //   OnTriggerEnter instead (see the plates' test in tests/sim-alduins-wall.int.test.ts).
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { EXPLOSION_DEFAULTS, gameplayImpulse } from '../../../src/gameplay/magic/explosions.ts';
 import { arrowKnock } from '../../../src/gameplay/impulses.ts';
 import { parseVmad } from '../../../src/formats/esm/vmad.ts';
-import { HAVOK_SCALE } from '../../../src/physics/collision-data.ts';
+import { parseNif } from '../../../src/formats/nif/nif.ts';
+import {
+  buildCollision,
+  HAVOK_SCALE,
+  type CollisionBody,
+  type CollisionData,
+} from '../../../src/physics/collision-data.ts';
 import { CollisionMatrix as Matrix, Layer } from '../../../src/physics/collision-layers.ts';
 import { ActivatorKeywords } from '../../../src/scripting/runtime/activator-keywords.ts';
 import { ActorValue } from '../../../src/world/actor-values.ts';
-import { initPhysics, PhysicsWorld } from '../../../src/physics/physics-world.ts';
+import {
+  GRAVITY,
+  initPhysics,
+  PhysicsWorld,
+  type PlacedCollision,
+} from '../../../src/physics/physics-world.ts';
 import { EventHub, type GameEvents } from '../../../src/scripting/runtime/event-hub.ts';
 import {
   TRAP_HIT_EVENT_DELAY_MS,
@@ -305,72 +316,346 @@ describe.skipIf(!hasGamedata())('a log set off by its tripwire (headless simulat
   });
 });
 
-const MACE = 0x2464d;
-const MACE_WIRE = 0x247a9;
-/** Under the chain's anchor, on the floor: the mace passes here at the bottom of its swing. */
+// TrapMace01: the mace hangs by a chain of eleven links from its base and is held up beside it
+// by a pin (bhkBreakableConstraint, a ball and socket of threshold 30). MaceTrap.fireTrap makes
+// its bodies simulated (SetMotionType 1), waits initialDelay (0.2 s) and pushes them down
+// (ApplyHavokImpulse 0, 0, −1 by 15, then by 50): the pin breaks and the mace swings down past its
+// base. Havok's measure (hkpBreakableConstraintData, inferred from its documented solver): the
+// root of the sum of the squares of the wrapped constraint's solver results, the impulses its rows
+// took over the step's iterations (the world's four, tau 0.6, damping 1; the chain's links as one
+// block with the chain's own tau 1, damping 0.6 and constraint force mixing).
+const MACE_MODEL = 'meshes\\traps\\macetrap\\trapmace01.nif';
+
+describe.skipIf(!hasGamedata())('a hanging mace’s pin (data: TrapMace01)', () => {
+  let collision: CollisionData;
+  beforeAll(async () => {
+    await initPhysics();
+    const vfs = await Vfs.mount(openGameFolder());
+    try {
+      collision = buildCollision(parseNif(await vfs.read(MACE_MODEL)));
+    } finally {
+      await vfs.close();
+    }
+  });
+
+  const hang = (
+    model: CollisionData = collision,
+  ): {
+    physics: PhysicsWorld;
+    placed: PlacedCollision;
+    mace: () => [number, number, number];
+    pinned: () => boolean;
+    load: () => number | undefined;
+  } => {
+    const physics = new PhysicsWorld(new Matrix([]), GRAVITY);
+    const placed = physics.addObject(
+      model,
+      new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1000, 1]),
+      { reference: 1, kind: 'object' },
+      false,
+    );
+    const body = placed.bodies.find(({ data }) => data.node === 'Mace01')?.body;
+    if (!body) throw new Error('no mace');
+    const pin = placed.joints.find((joint) => joint.constraint.breakable);
+    if (!pin) throw new Error('no pin');
+    // OnCellAttach: keyframed; fireTrap: simulated.
+    physics.setMotion(placed, true);
+    physics.step(1 / 60);
+    physics.setMotion(placed, false);
+    return {
+      physics,
+      placed,
+      mace: () => {
+        const t = body.translation();
+        return [t.x * HAVOK_SCALE, t.y * HAVOK_SCALE, t.z * HAVOK_SCALE - 1000];
+      },
+      pinned: () => pin.joint !== undefined,
+      load: () => physics.breakableLoad(pin),
+    };
+  };
+  const push = (physics: PhysicsWorld, placed: PlacedCollision, magnitude: number): void => {
+    physics.impulse(placed, [0, 0, -1], magnitude, (layer) => gameplayImpulse(1, layer, undefined));
+  };
+  /** The pin's solver results in the step of fireTrap's first push (15), the mace hung so. */
+  const firstPush = (model: CollisionData = collision): number | undefined => {
+    const { physics, placed, load } = hang(model);
+    for (let i = 0; i < 12; i++) physics.step(1 / 60);
+    push(physics, placed, 15);
+    physics.step(1 / 60);
+    const taken = load();
+    physics.free();
+    return taken;
+  };
+
+  it('weighs the pin by its solver results over the step’s four iterations, as Havok does', () => {
+    const { physics, load } = hang();
+    for (let i = 0; i < 180; i++) physics.step(1 / 60);
+    // At rest: its share of the mace's weight and the chain's pull (below its threshold, 30).
+    expect(load()).toBeGreaterThan(15);
+    expect(load()).toBeLessThan(20);
+    physics.free();
+    // fireTrap's first push (15) breaks it: the links' push (3.2 each) pulls the chain taut.
+    // Four iterations leave the pin less of it than a rigid solve of the group (68.9).
+    const pushed = firstPush() ?? 0;
+    expect(pushed).toBeGreaterThan(30);
+    expect(pushed).toBeLessThan(60);
+  });
+
+  it('solves the chain with its own damping (0.6): the links keep some of the push into the next step', () => {
+    const chain = collision.constraints?.find((constraint) => constraint.chain)?.chain;
+    expect(chain?.tau).toBe(1);
+    expect(chain?.damping).toBeCloseTo(0.6, 5);
+    const stiff: CollisionData = {
+      ...collision,
+      constraints: collision.constraints?.map((constraint) =>
+        constraint.chain
+          ? { ...constraint, chain: { ...constraint.chain, damping: 1 } }
+          : constraint,
+      ),
+    };
+    // A chain that took all of its links' speed error each iteration would pass the pin more.
+    expect((firstPush(stiff) ?? 0) - (firstPush() ?? 0)).toBeGreaterThan(5);
+  });
+
+  it('softens a malleable joint by its strength (its virtual mass factor)', () => {
+    // No vanilla model has one: the pin wrapped in a malleable constraint of strength 0.5.
+    const soft: CollisionData = {
+      ...collision,
+      constraints: collision.constraints?.map((constraint) =>
+        constraint.breakable
+          ? { ...constraint, data: { type: 'malleable', inner: constraint.data, strength: 0.5 } }
+          : constraint,
+      ),
+    };
+    const softened = firstPush(soft);
+    expect(softened).toBeDefined();
+    expect((firstPush() ?? 0) - (softened ?? 0)).toBeGreaterThan(5);
+  });
+
+  it('holds the mace up beside its base under its weight and its chain’s', () => {
+    const { physics, mace, pinned } = hang();
+    const held = mace();
+    // Held 126 units out from the base, a little above it.
+    expect(held[0]).toBeLessThan(-120);
+    expect(held[2]).toBeGreaterThan(15);
+    for (let i = 0; i < 180; i++) physics.step(1 / 60);
+    expect(pinned()).toBe(true);
+    expect(Math.hypot(mace()[0] - held[0], mace()[2] - held[2])).toBeLessThan(5);
+    physics.free();
+  });
+
+  it('lets the mace go as fireTrap pushes it, and it swings down past its base and up the other side', () => {
+    const { physics, placed, mace, pinned } = hang();
+    for (let i = 0; i < 12; i++) physics.step(1 / 60);
+    push(physics, placed, 15);
+    physics.step(1 / 60);
+    push(physics, placed, 50);
+    physics.step(1 / 60);
+    expect(pinned()).toBe(false);
+    let lowest = Infinity;
+    let farthest = -Infinity;
+    for (let i = 0; i < 90; i++) {
+      physics.step(1 / 60);
+      lowest = Math.min(lowest, mace()[2]);
+      farthest = Math.max(farthest, mace()[0]);
+    }
+    // Down to the chain's length (132 units) under the base, and past it on the other side.
+    expect(lowest).toBeLessThan(-110);
+    expect(farthest).toBeGreaterThan(30);
+    physics.free();
+  });
+});
+
+const MACE_TRIPWIRE = 0x247a9;
+const HANGING_MACE = 0x2464d;
+/** Under the mace's base: its swing passes here (the room's floor). */
 const IN_THE_MACES_WAY: readonly [number, number, number] = [1539, -1585, -128];
 
-// TrapMace01 [0001B3C0] (PhysicsTrapHit, MaceTrap): its mace hangs held up by a pin (a breakable
-// ball and socket, threshold 30) at the end of a chain of 11 links from its base. MaceTrap's
-// fireTrap makes it dynamic and pushes it down twice (ApplyHavokImpulse 15, then 50): the push
-// on the mace and its chain breaks the pin (src/physics/physics-world.ts #breakJoints: the
-// impulse on the bodies the pin holds, taken together), and the mace swings down on its chain.
-// In WarehouseTraps the tripwire [000247A9] is the activate parent of the mace [0002464D].
-describe.skipIf(!hasGamedata())(
-  'a hanging mace set off by its tripwire (headless simulation)',
-  () => {
-    let sim: Sim;
-    let actor = 0;
-    let unhurt = 0;
-    let since = 0;
-    let lowest = Infinity;
-    let held = Infinity;
-    const maceHeight = (): number | undefined => {
-      const placed = sim.world.play?.placementsOf(MACE) ?? [];
-      // The heaviest of its bodies: the mace itself.
-      let best: { mass: number; z: number } | undefined;
-      for (const { body } of placed.flatMap((one) => one.bodies)) {
-        if (!best || body.mass() > best.mass) best = { mass: body.mass(), z: body.translation().z };
+describe.skipIf(!hasGamedata())('a mace set off by its tripwire (headless simulation)', () => {
+  let sim: Sim;
+  let actor = 0;
+  let unhurt = 0;
+  let since = 0;
+  let held: readonly number[] = [];
+  let swung: readonly number[] = [];
+  let struckAt: readonly number[] = [];
+  const staggered: [number, number][] = [];
+  const hitAt: (readonly number[] | undefined)[] = [];
+  const staggeredFrom: (readonly number[] | undefined)[] = [];
+
+  const maceAt = (): readonly number[] => {
+    for (const placed of sim.world.play?.placementsOf(HANGING_MACE) ?? []) {
+      const body = placed.bodies.find(({ data }) => data.node === 'Mace01')?.body;
+      if (!body) continue;
+      const t = body.translation();
+      return [t.x * HAVOK_SCALE, t.y * HAVOK_SCALE, t.z * HAVOK_SCALE];
+    }
+    return [];
+  };
+
+  beforeAll(async () => {
+    sim = await openSim({ interior: WAREHOUSE_TRAPS, hour: 10 });
+    await sim.step(0.5);
+    since = sim.time;
+    held = maceAt();
+    actor = await sim.place(await sim.formId('NPC_', 'Hulda'), HANGING_MACE);
+    await sim.native(sim.runtime.referenceHandle(actor), 'ObjectReference', 'SetPosition', [
+      ...IN_THE_MACES_WAY,
+    ]);
+    await sim.step(0.2);
+    unhurt = (await sim.runtime.actors.value(actor, ActorValue.health)).current;
+    const world = sim.runtime.world;
+    const stagger = world.stagger?.bind(world);
+    vi.spyOn(world, 'stagger').mockImplementation((who, magnitude, caster, from) => {
+      staggered.push([who, magnitude]);
+      if (who === actor) hitAt.push(from);
+      stagger?.(who, magnitude, caster, from);
+    });
+    // Where the stagger the actor takes comes from (ActionStaggerStart's staggerDirection).
+    const combat = sim.world.stage.combat;
+    const staggerFrom = combat.stagger.bind(combat);
+    vi.spyOn(combat, 'stagger').mockImplementation((who, magnitude, from) => {
+      if (who === actor) staggeredFrom.push(from);
+      staggerFrom(who, magnitude, from);
+    });
+    const wire = await sim.position(MACE_TRIPWIRE);
+    expect(wire).toBeDefined();
+    if (wire) await sim.moveTo([wire[0], wire[1], wire[2]]);
+    await sim.until(() => sim.events('trapHit').some((event) => event.target === actor), 4);
+    swung = maceAt();
+    struckAt = (await sim.position(actor)) ?? [];
+    await sim.step(0.5);
+  }, 600_000);
+  afterAll(async () => {
+    vi.restoreAllMocks();
+    await sim.close();
+  });
+
+  it('swings the mace its tripwire sets off down from its pin  [data: TrapMace01, MaceTrap]', () => {
+    expect(sim.events('activate')).toContainEqual({ target: HANGING_MACE, actor: MACE_TRIPWIRE });
+    expect(held).toHaveLength(3);
+    expect(swung).toHaveLength(3);
+    // Held up beside its base; when it meets the actor it has swung down toward the floor.
+    expect((held[2] ?? 0) - (swung[2] ?? 0)).toBeGreaterThan(100);
+  });
+
+  it('hurts and staggers the actor in its way, which OnTrapHitStart tells  [data: PhysicsTrapHit]', async () => {
+    const sent = sim.scriptEvents({ event: 'OnTrapHitStart', target: HANGING_MACE, since });
+    expect(sent[0]?.args[0]).toEqual({ form: actor });
+    const health = await sim.runtime.actors.value(actor, ActorValue.health);
+    // MaceTrap's LvlDamage1 is 40.
+    expect(unhurt - health.current).toBeGreaterThan(10);
+    // PhysicsTrapHit's staggerAmount on TrapMace01.
+    expect(staggered).toContainEqual([actor, expect.closeTo(0.2, 5)]);
+  });
+
+  it('staggers the actor from where the mace hit it (ProcessTrapHit’s position)  [data: PhysicsTrapHit]', () => {
+    const hit = hitAt[0];
+    expect(hit).toHaveLength(3);
+    expect(staggeredFrom).toContainEqual(hit);
+    // The hit's position is the contact's point on the mace, not the actor's own centre (a
+    // stagger from there would come from no side).
+    const [x = 0, y = 0] = hit ?? [];
+    expect(Math.hypot(x - (struckAt[0] ?? 0), y - (struckAt[1] ?? 0))).toBeGreaterThan(5);
+  });
+});
+
+describe('a breakable hinge (Havok’s solver results)', () => {
+  // A 10 kg bar 4 long (Havok units) held out level from a bracket by a hinge at its end whose
+  // axle runs along it: the hinge's angular rows hold the bar's turn, its weight's torque on a
+  // lever of 2 (3.27 a step against the weight's 1.63), and its solver results count them.
+  const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  const part = (min: number[], max: number[]): CollisionBody['shapes'][number] => {
+    const points: number[] = [];
+    for (const x of [min[0] ?? 0, max[0] ?? 0]) {
+      for (const y of [min[1] ?? 0, max[1] ?? 0]) {
+        for (const z of [min[2] ?? 0, max[2] ?? 0]) points.push(x, y, z);
       }
-      return best && best.z * HAVOK_SCALE;
+    }
+    return {
+      type: 'convex',
+      layer: Layer.clutter,
+      material: 0,
+      points: Float32Array.from(points),
+      radius: 0,
     };
+  };
+  const base: CollisionBody = {
+    node: 'Bracket',
+    transform: IDENTITY,
+    motion: 'fixed',
+    phantom: false,
+    layer: Layer.clutter,
+    mass: 0,
+    inertia: [0, 0, 0],
+    centerOfMass: [0, 0, 0],
+    friction: 0.5,
+    restitution: 0.4,
+    linearDamping: 0,
+    angularDamping: 0,
+    gravityFactor: 1,
+    maxLinearVelocity: 0,
+    maxAngularVelocity: 0,
+    quality: 0,
+    solverDeactivation: 1,
+    shapes: [part([-5, -5, -5], [0, 5, 5])],
+  };
+  const length = 4 * HAVOK_SCALE;
+  const bar: CollisionBody = {
+    ...base,
+    node: 'Bar',
+    motion: 'dynamic',
+    mass: 10,
+    inertia: [0.1, (10 * 16) / 12, (10 * 16) / 12],
+    centerOfMass: [length / 2, 0, 0],
+    shapes: [part([0, -5, -5], [length, 5, 5])],
+  };
+  const frame = {
+    pivot: [0, 0, 0] as [number, number, number],
+    axes: [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+    ] as [[number, number, number], [number, number, number], [number, number, number]],
+  };
+  const held = (threshold: number): { held: boolean; load: number | undefined } => {
+    const model: CollisionData = {
+      bodies: [base, bar],
+      constraints: [
+        {
+          bodyA: 0,
+          bodyB: 1,
+          data: { type: 'hinge', a: frame, b: frame },
+          breakable: { threshold, removeWhenBroken: false },
+        },
+      ],
+      skipped: [],
+    };
+    const physics = new PhysicsWorld(new Matrix([]), GRAVITY);
+    const placed = physics.addObject(model, IDENTITY, { reference: 1, kind: 'object' }, false);
+    for (const { body } of placed.bodies) physics.release(body);
+    const hinge = placed.joints[0];
+    if (!hinge) throw new Error('no hinge');
+    let load: number | undefined;
+    for (let i = 0; i < 20 && hinge.joint !== undefined; i++) {
+      physics.step(1 / 60);
+      load = physics.breakableLoad(hinge) ?? load;
+    }
+    const result = { held: hinge.joint !== undefined, load };
+    physics.free();
+    return result;
+  };
 
-    beforeAll(async () => {
-      sim = await openSim({ interior: WAREHOUSE_TRAPS, hour: 10 });
-      await sim.step(0.5);
-      since = sim.time;
-      held = maceHeight() ?? Infinity;
-      actor = await sim.place(await sim.formId('NPC_', 'Hulda'), MACE);
-      await sim.native(sim.runtime.referenceHandle(actor), 'ObjectReference', 'SetPosition', [
-        ...IN_THE_MACES_WAY,
-      ]);
-      await sim.step(0.2);
-      unhurt = (await sim.runtime.actors.value(actor, ActorValue.health)).current;
-      const wire = await sim.position(MACE_WIRE);
-      expect(wire).toBeDefined();
-      if (wire) await sim.moveTo([wire[0], wire[1], wire[2]]);
-      for (let i = 0; i < 16; i++) {
-        await sim.step(0.125);
-        lowest = Math.min(lowest, maceHeight() ?? Infinity);
-      }
-      await sim.step(0.5);
-    }, 600_000);
-    afterAll(async () => {
-      await sim.close();
-    });
-
-    it('swings a hanging mace set off by its tripwire into an actor in its way  [data: TrapMace01, MaceTrap] (sim)', async () => {
-      expect(sim.events('activate')).toContainEqual({ target: MACE, actor: MACE_WIRE });
-      // Held up by its pin, then down on its chain: more than a link's length lower.
-      expect(held).toBeGreaterThan(90);
-      expect(lowest).toBeLessThan(held - 100);
-      const sent = sim.scriptEvents({ event: 'OnTrapHitStart', target: MACE, since });
-      expect(sent.map((event) => event.args[0])).toContainEqual({ form: actor });
-      const health = await sim.runtime.actors.value(actor, ActorValue.health);
-      expect(unhurt - health.current).toBeGreaterThan(10);
-    });
-  },
-);
+  it('weighs the turn its angular rows hold with its pivot’s impulse', async () => {
+    await initPhysics();
+    const weight = (10 * GRAVITY) / 60;
+    const strong = held(5);
+    expect(strong.held).toBe(true);
+    expect(strong.load).toBeCloseTo(Math.hypot(1, 2) * weight, 0);
+    // Above the weight alone (1.63), below the weight and its turn (3.65): it breaks.
+    expect(held(2.5).held).toBe(false);
+  });
+});
 
 describe('what traps do', () => {
   it('takes a body on L_CLOUDTRAP as a trap, its material told  [original]', async () => {

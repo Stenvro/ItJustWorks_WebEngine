@@ -136,7 +136,13 @@ async function goTo(
   const reach = arrive ?? (await destinationRadius(run, place.reference, place.radius));
   // A flier in the air is not there by standing under it: it flies there, or lands there.
   const airborne = run.body.airborne?.() === true;
-  if (here && !airborne && horizontal(here, place.position) <= reach) return true;
+  if (
+    here &&
+    !airborne &&
+    horizontal(here, place.position) <= reach &&
+    (await inSpaceOf(run, place))
+  )
+    return true;
   const target = place.reference;
   return run.body.travel(
     place.position,
@@ -145,6 +151,17 @@ async function goTo(
     place.space,
     target === undefined ? options : { ...options, target },
   );
+}
+
+/**
+ * Whether the actor is in a place's cell or worldspace (a place without one: the actor's own).
+ * Interiors' coordinates overlap: one standing where furniture in another cell would be is not
+ * at it.
+ */
+async function inSpaceOf(run: ProcedureRun, place: PackagePlace): Promise<boolean> {
+  if (!place.space) return true;
+  const self = await run.mind.placement(run.actor);
+  return !self?.space || sameSpace(self.space, place.space);
 }
 
 /**
@@ -556,7 +573,7 @@ const wander: ProcedureRunner = async (run) => {
       continue;
     }
     last = point;
-    await run.body.travel(point, 'walk', WANDER_ARRIVE);
+    await run.body.travel(point, 'walk', WANDER_ARRIVE, place.space);
     // At least until the next update (a pause of 0 is no endless loop).
     await run.wait(wanderPause(run, energy));
   }
@@ -588,7 +605,7 @@ async function atIdleMarker(
     if (
       !(await goTo(
         run,
-        { position: at.position, radius: 0 },
+        { position: at.position, radius: 0, space: at.space },
         settingsOf(run).markerDestinationRadius,
       ))
     )
@@ -715,16 +732,27 @@ const sandboxing: ProcedureRunner = async (run) => {
   let at: SandboxChoice | undefined;
   // Where its last walk led (its wandering goes on across the place from there).
   let lastWalk: Vec3 | undefined;
-  const scan = async (): Promise<SandboxSpot[]> =>
-    (await run.mind.around(place.position, radius, run.actor)).filter((spot) => {
-      if (!allows[spot.kind] && !(spot.kind === 'sit' && eats)) return false;
-      // Within the place's height (fSandboxCylinderBottom..Top of it).
-      const rise = spot.position[2] - place.position[2];
-      return rise <= settings.sandboxCylinderTop && rise >= settings.sandboxCylinderBottom;
-    });
+  // Its spots are only ever those of its place's own cell or worldspace, scanned once it is
+  // there: away from it (its place in another cell) it finds none, so it goes there first.
+  // Interiors' coordinates overlap: scanned from the cell it stood in, the place's point picked
+  // that cell's furniture and idle markers near it until the next rescan.
+  // TODO(M13): inferred (its place, as a Travel's, is a place in its own cell); how the
+  // engine scans a place in another cell is not known.
+  const scan = async (): Promise<SandboxSpot[]> => {
+    if (!(await inSpaceOf(run, place))) return [];
+    return (await run.mind.around(place.position, radius, run.actor, place.space)).filter(
+      (spot) => {
+        if (!allows[spot.kind] && !(spot.kind === 'sit' && eats)) return false;
+        // Within the place's height (fSandboxCylinderBottom..Top of it).
+        const rise = spot.position[2] - place.position[2];
+        return rise <= settings.sandboxCylinderTop && rise >= settings.sandboxCylinderBottom;
+      },
+    );
+  };
   // It scans its place every fMin..fMaxSandboxRescanSeconds (real seconds, at random), not as
   // each activity ends: a pick takes the last scan's list.
-  let spots = await scan();
+  const away = !(await inSpaceOf(run, place));
+  let spots = away ? [] : await scan();
   // In furniture of its place that it may use (one placed in it as its cell loaded, a loaded
   // save's actor seated as it was saved): it goes on in it, a stay of that kind, before its
   // first pick. Else it gets up and goes into its place. A loaded save's sandboxer at the
@@ -745,7 +773,8 @@ const sandboxing: ProcedureRunner = async (run) => {
   let resume: { pick: SandboxChoice; began: number; hours: number } | undefined;
   if (step && stepKind !== undefined && kept && step.reference === seat) {
     resume = { pick: { kind: stepKind, reference: seat, spot: kept }, ...step };
-  } else if (step && stepKind !== undefined && !kept && step.reference === undefined) {
+  } else if (step && stepKind !== undefined && !kept && step.reference === undefined && !away) {
+    // (Away from its place, what it did there does not go on where it is: it goes there first.)
     resume = { pick: { kind: stepKind }, ...step };
   } else if (step && stepKind !== undefined && !kept && step.kind === SandboxKind.idleMarker) {
     const marker = spots.find((spot) => spot.reference === step.reference);
@@ -756,6 +785,8 @@ const sandboxing: ProcedureRunner = async (run) => {
     await run.body.leaveFurniture();
     if (run.stopped()) return 'failure';
     await goTo(run, place);
+    // Its place in another cell: its first scan is there, once it has arrived.
+    if (away && !run.stopped()) spots = await scan();
   }
   void (async () => {
     while (!run.stopped()) {
@@ -789,16 +820,20 @@ const sandboxing: ProcedureRunner = async (run) => {
     resume = undefined;
     const here = run.body.position();
     // Outside its place by more than fSandBoxRadiusHysteresis (and in no furniture there): it
-    // goes back in first. Within the band it stays where it is.
+    // goes back in first. Within the band it stays where it is. Not in its place's cell (its
+    // way there was cut, or it was moved out): it goes there and scans it once there.
+    const elsewhere = !resumed && at?.reference === undefined && !(await inSpaceOf(run, place));
     if (
-      !resumed &&
-      here &&
-      at?.reference === undefined &&
-      place.radius > 0 &&
-      horizontal(here, place.position) > radius + settings.sandboxRadiusHysteresis
+      elsewhere ||
+      (!resumed &&
+        here &&
+        at?.reference === undefined &&
+        place.radius > 0 &&
+        horizontal(here, place.position) > radius + settings.sandboxRadiusHysteresis)
     ) {
       await goTo(run, place);
       if (run.stopped()) break;
+      if (elsewhere) spots = await scan();
     }
     const candidates: SandboxChoice[] = [];
     for (const spot of spots) {
@@ -920,7 +955,7 @@ const sandboxing: ProcedureRunner = async (run) => {
             continue;
           }
           lastWalk = point;
-          await run.body.travel(point, 'walk', WANDER_ARRIVE);
+          await run.body.travel(point, 'walk', WANDER_ARRIVE, place.space);
           await waitFor(run, wanderPause(run, energy));
         }
         at = undefined;
@@ -987,12 +1022,15 @@ const useFurniture =
     const at = first === undefined ? undefined : await run.mind.placement(first);
     if (at) {
       // To the furniture itself (a flier lands on its perch: observed in the original, the
-      // Sit's way there is a travel to the furniture, landed on in the air).
+      // Sit's way there is a travel to the furniture, landed on in the air). Furniture in
+      // another cell or worldspace: its way leads through the load doors, as a Travel's
+      // (MQ201's Rulindil, from Elenwen's solar to the chair in the Embassy's dungeon).
       await goTo(
         run,
-        { position: at.position, radius: 0, reference: first },
+        { position: at.position, radius: 0, reference: first, space: at.space },
         settingsOf(run).furnitureDestinationRadius,
       );
+      if (run.stopped()) return 'failure';
       if (await sit()) return inIt();
       run.body.face(at.heading);
     }

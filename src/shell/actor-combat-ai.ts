@@ -181,6 +181,7 @@ import { CastingSource } from '../scripting/runtime/casting-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { MagicAiState } from '../scripting/runtime/magic-engine.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
+import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { ActorValue } from '../world/actor-values.ts';
 import { AmmoFlag, WeaponType } from '../world/item-records.ts';
 import { seededRandom } from '../world/actors.ts';
@@ -705,6 +706,8 @@ export class ActorCombatAi {
   readonly #reactions = new Map<string, { value: number | undefined; read: number }>();
   readonly #reacting = new Set<string>();
   readonly #profiles = new CombatProfiles();
+  /** Get Should Attack's last answers by "attacker:other", and when to ask again. */
+  readonly #attacks = new Map<string, { should: boolean; until: number }>();
   readonly #health = new Map<
     number,
     { share: number; points: number; read: number; reduction: number }
@@ -1477,6 +1480,8 @@ export class ActorCombatAi {
         tracked !== undefined || (lastKnown !== undefined && mind.enemies.has(reference));
       if (!sees && !remembered) continue;
       if (!this.#hostileTo(mind, view, profile, magic, other, views, sees || detected)) continue;
+      // The other's perks may keep it from attacking (Get Should Attack).
+      if (!this.#shouldAttack(mind.reference, reference)) continue;
       // Its encounter zone bounds its fight (observed in the original).
       if (!this.#withinZone(mind.reference, reference)) continue;
       if (mind.mode !== 'idle' && !tracked) this.#track(mind, reference);
@@ -1759,6 +1764,33 @@ export class ActorCombatAi {
     const theirs = this.#zones.get(other);
     if (!own || !theirs) return true;
     return zonesAllow(own, theirs);
+  }
+
+  /**
+   * Whether an actor would attack another as the other's perks last said (Get Should Attack:
+   * the other the perk owner, the actor its Attacker tab; 0 keeps it from attacking). Asked
+   * again each fCombatSelectTargetUpdateTime; until the first answer, it would. TODO(M13):
+   * inferred: the engine asks it (observed in the original) where its AI weighs whether to
+   * attack, which no vanilla perk uses; here it keeps the other off its targets.
+   */
+  #shouldAttack(attacker: number, other: number): boolean {
+    const key = `${String(attacker)}:${String(other)}`;
+    const known = this.#attacks.get(key);
+    if (!known || this.#clock >= known.until) {
+      const entry = { should: known?.should ?? true, until: Infinity };
+      this.#attacks.set(key, entry);
+      const runtime = this.#options.session.scriptsReady;
+      void runtime?.perks
+        .apply(EntryPoint.getShouldAttack, other, 1, [attacker])
+        .then((value) => {
+          entry.should = value !== 0;
+          entry.until = this.#clock + this.#settings.selectTargetUpdateTime;
+        })
+        .catch(() => {
+          entry.until = this.#clock + this.#settings.selectTargetUpdateTime;
+        });
+    }
+    return known?.should ?? true;
   }
 
   /** An actor's armour's damage reduction (0 .. 1), as last read. */

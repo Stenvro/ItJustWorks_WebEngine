@@ -21,11 +21,12 @@ const PALACE_OF_THE_KINGS = 0x1677c;
 const COUNCIL_TRIGGER = 0x868cb;
 const PLAYER_CHAIR = 0x28e36;
 /**
- * How long the council may take. Its scenes take some 15 minutes as they are, 11 of them in the
- * one line whose begin changes the holds' owners (CWScript's setOwner: TODO(M13) why the script
- * takes that long here).
+ * How long the council may take. Its scenes take some 16 minutes, under a minute of them the
+ * holds changing hands (260 to 265: CWScript's setOwner waits 5 seconds at a time for the
+ * garrison quests, and each capital's CWGovernment run). Should a garrison quest never call back,
+ * setOwner waits 600 seconds before it gives up, and the council does not end in time.
  */
-const COUNCIL_SECONDS = 1800;
+const COUNCIL_SECONDS = 1200;
 
 /** The game with Arngeir willing to host the council (stage 15). */
 let councilAgreed: Uint8Array | undefined;

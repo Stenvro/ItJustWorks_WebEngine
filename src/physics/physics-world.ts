@@ -33,6 +33,12 @@ import {
   type SolverJoint,
   type SolverSettings,
 } from './constraint-solver.ts';
+import {
+  groupImpulses,
+  solverResultSize,
+  type GroupJoint,
+  type ImpulseBody,
+} from './joint-impulses.ts';
 
 export type Rapier = typeof RAPIER;
 
@@ -123,6 +129,11 @@ export function sweptBody(
  */
 const SOLVER_ITERATIONS = 8;
 /**
+ * The most point joints solved with a breakable one (#solveBreakable): the mace trap's pin and
+ * chain are 13; a ragdoll's are under 30.
+ */
+const BREAKABLE_GROUP_JOINTS = 64;
+/**
  * Placed bodies start with what overlaps their placement leaves (books whose corners reach
  * into a shelf's back panel, a cover into the board under it): for this long after they are
  * placed to settle, the solver's push out of those overlaps only moves them, without the speed
@@ -152,10 +163,53 @@ const DEACTIVATION_TURN = 0.05;
 const DEACTIVATION_CHECK = 0.25;
 const DEACTIVATION_SECONDS = 1;
 
+/** A body's deactivation reference (PhysicsWorld.#deactivate): Havok units and a rotation. */
+interface DeactivationReference {
+  x: number;
+  y: number;
+  z: number;
+  rotation: RAPIER.Rotation;
+  /** How long the body has stayed near it, as of the last check. */
+  seconds: number;
+}
+
+/**
+ * Whether a body has left its deactivation reference: moved farther than DEACTIVATION_DISTANCE
+ * from it or turned farther than DEACTIVATION_TURN.
+ */
+function movedFrom(reference: DeactivationReference, body: RAPIER.RigidBody): boolean {
+  const t = body.translation();
+  if (Math.hypot(t.x - reference.x, t.y - reference.y, t.z - reference.z) > DEACTIVATION_DISTANCE) {
+    return true;
+  }
+  const q = body.rotation();
+  const r = reference.rotation;
+  const turned =
+    2 * Math.acos(Math.min(1, Math.abs(r.x * q.x + r.y * q.y + r.z * q.z + r.w * q.w)));
+  return turned > DEACTIVATION_TURN;
+}
+
 /** A deactivation group (PhysicsWorld.#deactivate): one system's awake bodies. */
 interface RestingGroup {
   readonly bodies: RAPIER.RigidBody[];
   resting: boolean;
+}
+
+/** The handles of the bodies a body touches (a contact point in the last step). */
+function touchingBodies(world: RAPIER.World, body: RAPIER.RigidBody): Set<number> {
+  const touching = new Set<number>();
+  const narrow = world.narrowPhase;
+  for (let i = 0; i < body.numColliders(); i++) {
+    const handle = body.collider(i).handle;
+    narrow.contactPairsWith(handle, (other) => {
+      const otherBody = world.getCollider(other).parent();
+      if (!otherBody || otherBody.handle === body.handle || touching.has(otherBody.handle)) return;
+      narrow.contactPair(handle, other, world.bodies, (manifold) => {
+        if (manifold.numContacts() > 0) touching.add(otherBody.handle);
+      });
+    });
+  }
+  return touching;
 }
 
 /**
@@ -206,6 +260,152 @@ function contactIslands(
 
 /** The layers of ragdolls' bodies: the living's (powered, hit) and the dead's. */
 const RAGDOLL_LAYERS: ReadonlySet<number> = new Set([Layer.biped, Layer.bipedNoCc, Layer.deadBip]);
+
+/**
+ * How deep (Havok units) a settling body must be in a welded triangle, pushed towards its back,
+ * before it is put out at the triangle's front instead (PhysicsWorld.#weld): below Rapier's
+ * allowed error, contacts are resting ones.
+ */
+const WELD_DEPTH = 0.005;
+/** How far in front of the triangle a body put out by #weld is left (Havok units). */
+const WELD_MARGIN = 0.001;
+/**
+ * How squarely the push must point to the triangle's back (the cosine of its angle to the
+ * back): a push off one of its edges or corners (a book on a table's top against the edge of
+ * its side) is not one through it.
+ */
+const WELD_FACING = 0.7;
+/**
+ * How far up a welded triangle's front must face (the cosine of its slope) for a body sunk
+ * into it to be put out on it (#weld): ground a body may rest on, at most 60° steep.
+ */
+const WELD_GROUND = 0.5;
+/**
+ * How far under a settling body's lowest point (Havok units: 2 game units) something it may
+ * stand on still holds it up (PhysicsWorld.#supported).
+ */
+const WELD_SUPPORT_GAP = 2 / HAVOK_SCALE;
+
+/**
+ * How far a collider reaches along a world direction (Havok units, from the world's origin):
+ * the largest `p · direction` over its shape. Undefined for shapes no simulated body has
+ * (meshes, heightfields).
+ */
+function colliderReach(collider: RAPIER.Collider, direction: RAPIER.Vector): number | undefined {
+  const at = collider.translation();
+  const q = collider.rotation();
+  // The direction in the collider's frame (the inverse rotation of a unit quaternion).
+  const local = rotateVector({ x: -q.x, y: -q.y, z: -q.z, w: q.w }, direction);
+  const base = at.x * direction.x + at.y * direction.y + at.z * direction.z;
+  const shape = collider.shape;
+  let reach: number;
+  switch (shape.type) {
+    case RAPIER.ShapeType.Ball:
+      reach = (shape as RAPIER.Ball).radius;
+      break;
+    case RAPIER.ShapeType.Cuboid:
+    case RAPIER.ShapeType.RoundCuboid: {
+      const box = shape as RAPIER.Cuboid | RAPIER.RoundCuboid;
+      const h = box.halfExtents;
+      reach = Math.abs(h.x * local.x) + Math.abs(h.y * local.y) + Math.abs(h.z * local.z);
+      if (box instanceof RAPIER.RoundCuboid) reach += box.borderRadius;
+      break;
+    }
+    case RAPIER.ShapeType.Capsule: {
+      const capsule = shape as RAPIER.Capsule;
+      reach = capsule.halfHeight * Math.abs(local.y) + capsule.radius;
+      break;
+    }
+    case RAPIER.ShapeType.Cylinder:
+    case RAPIER.ShapeType.RoundCylinder: {
+      const cylinder = shape as RAPIER.Cylinder | RAPIER.RoundCylinder;
+      reach =
+        cylinder.halfHeight * Math.abs(local.y) + cylinder.radius * Math.hypot(local.x, local.z);
+      if (cylinder instanceof RAPIER.RoundCylinder) reach += cylinder.borderRadius;
+      break;
+    }
+    case RAPIER.ShapeType.ConvexPolyhedron:
+    case RAPIER.ShapeType.RoundConvexPolyhedron: {
+      const convex = shape as RAPIER.ConvexPolyhedron | RAPIER.RoundConvexPolyhedron;
+      const v = convex.vertices;
+      reach = -Infinity;
+      for (let i = 0; i + 2 < v.length; i += 3) {
+        const d = (v[i] ?? 0) * local.x + (v[i + 1] ?? 0) * local.y + (v[i + 2] ?? 0) * local.z;
+        if (d > reach) reach = d;
+      }
+      if (convex instanceof RAPIER.RoundConvexPolyhedron) reach += convex.borderRadius;
+      break;
+    }
+    default:
+      return undefined;
+  }
+  return base + reach;
+}
+
+/**
+ * How far behind a triangle's plane (Havok units) a collider's deepest point lies; undefined
+ * for shapes no simulated body has.
+ */
+function behindFace(
+  collider: RAPIER.Collider,
+  face: { readonly normal: RAPIER.Vector; readonly offset: number },
+): number | undefined {
+  const reach = colliderReach(collider, {
+    x: -face.normal.x,
+    y: -face.normal.y,
+    z: -face.normal.z,
+  });
+  return reach === undefined ? undefined : face.offset + reach;
+}
+
+/**
+ * A welded (one-sided in the files) mesh's triangles as a two-sided collider has them: its
+ * vertices (game units, the collider's frame) times `scale` are the collider's (Havok units).
+ */
+interface WeldedMesh {
+  readonly vertices: Float32Array;
+  readonly indices: Uint32Array;
+  readonly scale: number;
+}
+
+/**
+ * The front of a mesh collider's triangle in the world (unit; counter-clockwise, as the welded
+ * meshes' fronts are: collision-data.ts) and its plane's offset along it (Havok units), or
+ * undefined for a degenerate triangle. Read from our own collision data (`mesh`), not from the
+ * collider's shape, which Rapier copies out whole on every read.
+ */
+function triangleFront(
+  collider: RAPIER.Collider,
+  mesh: WeldedMesh,
+  triangle: number,
+): { readonly normal: RAPIER.Vector; readonly offset: number } | undefined {
+  const { vertices, indices, scale } = mesh;
+  if (3 * triangle + 2 >= indices.length) return undefined;
+  const a = (indices[3 * triangle] ?? 0) * 3;
+  const b = (indices[3 * triangle + 1] ?? 0) * 3;
+  const c = (indices[3 * triangle + 2] ?? 0) * 3;
+  const ax = (vertices[a] ?? 0) * scale;
+  const ay = (vertices[a + 1] ?? 0) * scale;
+  const az = (vertices[a + 2] ?? 0) * scale;
+  const ux = (vertices[b] ?? 0) * scale - ax;
+  const uy = (vertices[b + 1] ?? 0) * scale - ay;
+  const uz = (vertices[b + 2] ?? 0) * scale - az;
+  const vx = (vertices[c] ?? 0) * scale - ax;
+  const vy = (vertices[c + 1] ?? 0) * scale - ay;
+  const vz = (vertices[c + 2] ?? 0) * scale - az;
+  const nx = uy * vz - uz * vy;
+  const ny = uz * vx - ux * vz;
+  const nz = ux * vy - uy * vx;
+  const length = Math.hypot(nx, ny, nz);
+  if (!(length > 0)) return undefined;
+  const q = collider.rotation();
+  const at = collider.translation();
+  const normal = rotateVector(q, { x: nx / length, y: ny / length, z: nz / length });
+  const corner = rotateVector(q, { x: ax, y: ay, z: az });
+  const offset =
+    (corner.x + at.x) * normal.x + (corner.y + at.y) * normal.y + (corner.z + at.z) * normal.z;
+  return { normal, offset };
+}
 
 /**
  * Kinds of collider some queries want alone, as Rapier collision groups' memberships (bits):
@@ -272,9 +472,37 @@ function linkPivots(data: ConstraintData): readonly [Vec3, Vec3, number] | undef
       return [data.pivotA, data.pivotB, data.length];
     case 'hinge':
       return [data.a.pivot, data.b.pivot, 0];
+    case 'malleable':
+      return linkPivots(data.inner);
     default:
       return undefined;
   }
+}
+
+/** A joint's error as Havok's solver would leave it (linear; about a hinge's two axes). */
+interface GroupError {
+  readonly linear: Vec3;
+  readonly angular: readonly number[];
+}
+
+/**
+ * A joint's error after a step of `step` seconds whose solve left its rows `left` of their
+ * speed, its linear part at most `most` (Havok corrects at most a chain's maxErrorDistance).
+ */
+function openError(
+  was: GroupError | undefined,
+  left: GroupError,
+  step: number,
+  most: number,
+): GroupError {
+  const at = (i: 0 | 1 | 2): number => (was?.linear[i] ?? 0) + left.linear[i] * step;
+  const linear: Vec3 = [at(0), at(1), at(2)];
+  const size = Math.hypot(...linear);
+  const k = size > most && size > 0 ? most / size : 1;
+  return {
+    linear: [linear[0] * k, linear[1] * k, linear[2] * k],
+    angular: left.angular.map((x, i) => (was?.angular[i] ?? 0) + x * step),
+  };
 }
 
 /** A keyframed body pulling a placed body by a joint (PhysicsWorld.addHitch). */
@@ -629,18 +857,21 @@ const EASED_CHANGE = 1e-3;
 function articulated(
   data: ConstraintData,
 ): Extract<ConstraintData, { type: 'ragdoll' | 'limited-hinge' }> | undefined {
-  // TODO(M13): the malleable constraint's strength (softness) is not applied.
   if (data.type === 'malleable') return articulated(data.inner);
   return data.type === 'ragdoll' || data.type === 'limited-hinge' ? data : undefined;
 }
 
 /**
  * What the constraint solver (constraint-solver.ts) keeps of a ragdoll or limited hinge
- * constraint (its friction), its frames scaled by `toLocal`; undefined for the other kinds.
+ * constraint (its friction), its frames scaled by `toLocal`; undefined for the other kinds. A
+ * malleable one's strength softens its rows (Havok's virtual mass factor). TODO(M13): Rapier's
+ * joint that keeps its pivot and limits stays stiff (Rapier has no per-joint softness); no
+ * vanilla model has a malleable constraint.
  */
 function solverConstraint(data: ConstraintData, toLocal: number): SolverConstraint | undefined {
   const inner = articulated(data);
   if (!inner) return undefined;
+  const strength = data.type === 'malleable' ? data.strength : undefined;
   const frame = (f: ConstraintFrame) => ({
     pivot: [f.pivot[0] * toLocal, f.pivot[1] * toLocal, f.pivot[2] * toLocal] as Vec3,
     axes: [f.axes[0], f.axes[1]] as const,
@@ -651,6 +882,7 @@ function solverConstraint(data: ConstraintData, toLocal: number): SolverConstrai
     b: frame(inner.b),
     maxFriction: inner.maxFriction,
     ...(inner.type === 'ragdoll' && { cone: Math.abs(inner.coneMaxAngle) }),
+    ...(strength !== undefined && { strength }),
   };
 }
 
@@ -816,8 +1048,33 @@ export class PhysicsWorld {
   #impacts: PhysicsImpact[] = [];
   /** Simulated bodies' velocities before the step (Havok units per second). */
   readonly #velocities = new Map<number, RAPIER.Vector>();
+  /** Their angular velocities before the step (#holdAwake). */
+  readonly #spins = new Map<number, RAPIER.Vector>();
   /** Joints that break under too much force, while they hold. */
   readonly #breakable = new Set<PlacedJoint>();
+  /**
+   * The solver results of each breakable joint solved with its group in the step under way
+   * (#solveBreakable): what it weighs against its threshold.
+   */
+  readonly #breakableLoads = new Map<PlacedJoint, number>();
+  /**
+   * The error of each joint of those groups as Havok's solver would leave it (#solveBreakable):
+   * what its iterations left of the pivots' speed, over the steps (linear: Havok units; angular:
+   * radians about a hinge's axes across its axle). Rapier's own joints drift apart a little every
+   * step, which Havok's do not: that is no load.
+   */
+  readonly #groupErrors = new Map<PlacedJoint, GroupError>();
+  /** The last solver results of each breakable joint solved with its group (breakableLoad). */
+  readonly #lastLoads = new WeakMap<PlacedJoint, number>();
+  /** The order joints were made in: Havok solves an island's constraints so. */
+  readonly #jointOrder = new WeakMap<PlacedJoint, number>();
+  #nextJoint = 0;
+  /**
+   * The velocities the bodies of those joints' groups had after the last step (linear, then
+   * angular): what moved them since (a push, gravity) is what their joints take.
+   */
+  #groupVelocities = new Map<number, readonly [RAPIER.Vector, RAPIER.Vector]>();
+  readonly #groupBodies = new Map<number, RAPIER.RigidBody>();
   /**
    * The placed joints that have not broken, by the handles of their two bodies, and the scale
    * each one's frames are made at (Havok units per game unit of its placement).
@@ -882,7 +1139,12 @@ export class PhysicsWorld {
    * those rolled off what they lay on: tools/settle-audit.ts).
    */
   readonly #ragdollFaces = new Set<number>();
-  readonly #twoSided = new Set<number>();
+  /**
+   * The two-sided originals of the welded meshes, with their triangles as our collision data
+   * has them (#weld reads a triangle's front there: Rapier's `collider.shape` copies a mesh's
+   * whole vertex and index buffers out of the physics engine on every read).
+   */
+  readonly #twoSided = new Map<number, WeldedMesh>();
   /**
    * Simulated bodies placed to wait (until their cell settles, or for good: "Don't Havok
    * Settle", statics). Havok leaves a deactivated body where it is until an active one touches
@@ -908,10 +1170,7 @@ export class PhysicsWorld {
    * Where each awake simulated body was when it last moved (its deactivation reference: the
    * position in Havok units and the rotation), and for how long it has stayed near it.
    */
-  readonly #still = new Map<
-    number,
-    { x: number; y: number; z: number; rotation: RAPIER.Rotation; seconds: number }
-  >();
+  readonly #still = new Map<number, DeactivationReference>();
   /** Simulated seconds since the deactivation was last checked. */
   #sinceDeactivation = 0;
   /** Simulated seconds. */
@@ -1044,8 +1303,8 @@ export class PhysicsWorld {
   }
 
   /** A two-sided mesh and its one-sided copy for ragdolls (#ragdollFaces). */
-  #pairFaces(twoSided: RAPIER.Collider, faces: RAPIER.Collider): void {
-    this.#twoSided.add(twoSided.handle);
+  #pairFaces(twoSided: RAPIER.Collider, faces: RAPIER.Collider, mesh: WeldedMesh): void {
+    this.#twoSided.set(twoSided.handle, mesh);
     this.#ragdollFaces.add(faces.handle);
   }
 
@@ -1264,7 +1523,11 @@ export class PhysicsWorld {
             .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Multiply);
           const twin = this.world.createCollider(faces, body);
           this.register(twin, shape.layer, owner, shape.material);
-          this.#pairFaces(collider, twin);
+          this.#pairFaces(collider, twin, {
+            vertices: shape.vertices,
+            indices: shape.indices,
+            scale: s,
+          });
           colliders.push(twin);
         }
       }
@@ -1300,6 +1563,7 @@ export class PhysicsWorld {
       if (!a || !b || a.body === b.body) continue;
       const placed: PlacedJoint = { joint: undefined, a, b, constraint };
       joints.push(placed);
+      this.#jointOrder.set(placed, this.#nextJoint++);
       this.#jointScales.set(placed, scale / HAVOK_SCALE);
       const solved = solverConstraint(constraint.data, scale / HAVOK_SCALE);
       if (solved) this.#solverJoints.set(placed, { a: a.body, b: b.body, constraint: solved });
@@ -1517,6 +1781,7 @@ export class PhysicsWorld {
   /** A joint is gone for good (broken, or its bodies removed). */
   #forgetJoint(placed: PlacedJoint): void {
     this.#breakable.delete(placed);
+    this.#groupErrors.delete(placed);
     this.#jointScales.delete(placed);
     this.#easing.delete(placed);
     this.#clipped.delete(placed);
@@ -1532,17 +1797,199 @@ export class PhysicsWorld {
   }
 
   /**
+   * What a breakable joint weighed against its threshold in the last step it was solved with its
+   * group (Havok's solver results: #solveBreakable), also in the step it broke; undefined for one
+   * never solved so.
+   */
+  breakableLoad(joint: PlacedJoint): number | undefined {
+    return this.#lastLoads.get(joint);
+  }
+
+  /**
+   * Before the step: the solver results each breakable joint (a ball and socket, a hinge) takes
+   * in it, solved as Havok solves it with every point joint that holds the bodies it reaches
+   * through simulated bodies (src/physics/joint-impulses.ts: the step's iterations, the world's
+   * tau and damping, a chain's own, a hinge's angular rows): the mace trap's pin holds its mace
+   * against the mace's weight and the pull of the chain it hangs by. Rapier does not expose its
+   * joints' impulses.
+   */
+  #solveBreakable(): void {
+    this.#breakableLoads.clear();
+    this.#groupBodies.clear();
+    const sub = (a: RAPIER.Vector, b: RAPIER.Vector): RAPIER.Vector => ({
+      x: a.x - b.x,
+      y: a.y - b.y,
+      z: a.z - b.z,
+    });
+    const gravity = this.world.gravity;
+    for (const placed of this.#breakable) {
+      if (!placed.joint?.isValid() || !this.#linksClipped.has(placed)) continue;
+      const { a, b } = placed;
+      if (
+        !(a.body.isDynamic() && !a.body.isSleeping()) &&
+        !(b.body.isDynamic() && !b.body.isSleeping())
+      )
+        continue;
+      // The group: the point joints reached through simulated bodies.
+      const group: PlacedJoint[] = [];
+      const seen = new Set<PlacedJoint>();
+      const visited = new Set<number>();
+      const queue: PlacedBody[] = [];
+      const add = (joint: PlacedJoint): void => {
+        if (seen.has(joint) || group.length >= BREAKABLE_GROUP_JOINTS) return;
+        seen.add(joint);
+        const link = this.#linksClipped.get(joint);
+        if (!joint.joint?.isValid() || link?.rest !== 0) return;
+        group.push(joint);
+        queue.push(joint.a, joint.b);
+      };
+      add(placed);
+      while (queue.length > 0) {
+        const next = queue.shift();
+        if (!next || visited.has(next.body.handle) || !next.body.isDynamic()) continue;
+        visited.add(next.body.handle);
+        for (const joint of this.#jointsOf.get(next.body.handle) ?? []) add(joint);
+      }
+      // A body made a moment ago has no mass yet (Rapier computes it as it steps).
+      const unweighed = ({ body }: PlacedBody): boolean =>
+        body.isDynamic() && !(body.invMass() > 0);
+      if (group.some((joint) => unweighed(joint.a) || unweighed(joint.b))) continue;
+      const index = new Map<number, number>();
+      const bodies: ImpulseBody[] = [];
+      const indexOf = ({ body, data }: PlacedBody): number => {
+        const known = index.get(body.handle);
+        if (known !== undefined) return known;
+        this.#groupBodies.set(body.handle, body);
+        // What moved it since the last step: Rapier's joints leave a chain's links drifting apart
+        // a little every step (a stiff chain does not), and that drift is no load.
+        const was = this.#groupVelocities.get(body.handle);
+        const now = [body.linvel(), body.angvel()] as const;
+        const lin = was ? sub(now[0], was[0]) : now[0];
+        const ang = was ? sub(now[1], was[1]) : now[1];
+        let entry: ImpulseBody;
+        if (body.isDynamic()) {
+          const m = body.effectiveWorldInvInertia();
+          const g = data.gravityFactor * this.#size;
+          entry = {
+            invMass: body.invMass(),
+            invInertia: [m.m11, m.m12, m.m13, m.m22, m.m23, m.m33],
+            linear: [lin.x + gravity.x * g, lin.y + gravity.y * g, lin.z + gravity.z * g],
+            angular: [ang.x, ang.y, ang.z],
+          };
+        } else {
+          entry = {
+            invMass: 0,
+            invInertia: [0, 0, 0, 0, 0, 0],
+            linear: [lin.x, lin.y, lin.z],
+            angular: [ang.x, ang.y, ang.z],
+          };
+        }
+        bodies.push(entry);
+        index.set(body.handle, bodies.length - 1);
+        return bodies.length - 1;
+      };
+      // Havok solves the island's constraints in the order they were added.
+      group.sort((x, y) => (this.#jointOrder.get(x) ?? 0) - (this.#jointOrder.get(y) ?? 0));
+      const joints: GroupJoint[] = [];
+      for (const joint of group) {
+        const link = this.#linksClipped.get(joint);
+        if (link) joints.push(this.#groupJoint(joint, link, indexOf(joint.a), indexOf(joint.b)));
+      }
+      const results = groupImpulses(bodies, joints, {
+        step: this.#size,
+        iterations: this.solver.iterations,
+      });
+      const own = results[group.indexOf(placed)];
+      if (own) {
+        this.#breakableLoads.set(placed, solverResultSize(own));
+        this.#lastLoads.set(placed, solverResultSize(own));
+      }
+      // What the iterations left of the pivots' speed opens their error over the step.
+      group.forEach((joint, i) => {
+        const left = results[i]?.left;
+        const most = this.#linksClipped.get(joint)?.most ?? MAX_CONSTRAINT_VIOLATION;
+        if (left)
+          this.#groupErrors.set(
+            joint,
+            openError(this.#groupErrors.get(joint), left, this.#size, most),
+          );
+      });
+    }
+  }
+
+  /**
+   * A joint of a breakable joint's group as Havok's solver takes it (joint-impulses.ts): its
+   * pivots from its bodies' centres of mass and their error, a hinge's two angular rows across
+   * its axle with their error; a chain's link with its chain's tau, damping and constraint force
+   * mixing (solved as one block), the others with the world solver's tau and damping; a
+   * malleable constraint's strength as its virtual mass factor.
+   */
+  #groupJoint(
+    joint: PlacedJoint,
+    link: { readonly pivotA: Vec3; readonly pivotB: Vec3; readonly most: number },
+    a: number,
+    b: number,
+  ): GroupJoint {
+    const bodyA = joint.a.body;
+    const bodyB = joint.b.body;
+    const world = (body: RAPIER.RigidBody, pivot: Vec3): RAPIER.Vector => {
+      const t = body.translation();
+      const p = rotateVector(body.rotation(), { x: pivot[0], y: pivot[1], z: pivot[2] });
+      return { x: t.x + p.x, y: t.y + p.y, z: t.z + p.z };
+    };
+    const fromCom = (body: RAPIER.RigidBody, point: RAPIER.Vector): Vec3 => {
+      const c = body.worldCom();
+      return [point.x - c.x, point.y - c.y, point.z - c.z];
+    };
+    const pa = world(bodyA, link.pivotA);
+    const pb = world(bodyB, link.pivotB);
+    const error = this.#groupErrors.get(joint);
+    const { chain, data } = joint.constraint;
+    const strength = data.type === 'malleable' ? Math.max(0, data.strength) : 1;
+    const inner = data.type === 'malleable' ? data.inner : data;
+    let angular: [Vec3, number][] | undefined;
+    if (inner.type === 'hinge') {
+      const axis = (body: RAPIER.RigidBody, v: Vec3): Vec3 => {
+        const r = rotateVector(body.rotation(), { x: v[0], y: v[1], z: v[2] });
+        return [r.x, r.y, r.z];
+      };
+      // About the two axes across its axle (as body A holds it), each with its error.
+      const [axle, across] = inner.a.axes;
+      angular = [across, cross(axle, across)].map((v, i) => [
+        axis(bodyA, v),
+        error?.angular[i] ?? 0,
+      ]);
+    }
+    return {
+      a,
+      b,
+      ra: fromCom(bodyA, pa),
+      rb: fromCom(bodyB, pb),
+      ...(error && { error: error.linear }),
+      ...(angular && { angular }),
+      tau: chain ? chain.tau : this.solver.tau,
+      damping: chain ? chain.damping : this.solver.damping,
+      ...(chain && { softness: chain.constraintForceMixing, block: chain.index }),
+      ...(strength !== 1 && { strength }),
+    };
+  }
+
+  /**
    * Breakable constraints break when the impulse on them in a step exceeds their threshold
-   * (Havok's units: kg·m/s, the beehive's 20 holding its 10 kg, a step taking 1.6). The joint's
-   * impulse is not exposed: it is the change of momentum that gravity does not explain of the
-   * simulated bodies it holds: its simulated body and every simulated body jointed to it, taken
-   * together (the mace trap's pin holds its mace and the chain hung from it: 104 kg, the mace's
-   * 60 and eleven links of 4, 17.0 a step; the impulses that set the trap off, on the mace and on
-   * each link, pull on it as one).
-   * Inferred, TODO(M13): what the system's other anchors take (a chain's fixed end) counts
-   * towards it too; contacts on the bodies count as well.
+   * (Havok's units: kg·m/s, the beehive's 20 holding its 10 kg, a step taking 1.6). A ball and
+   * socket or hinge takes its solver results in the step's solve of its group (#solveBreakable:
+   * the root of the sum of their squares, Havok's hkpBreakableConstraintData measure); the others
+   * (stiff springs: the beehives) the change of momentum of their simulated body that gravity
+   * does not explain. TODO(M13): inferred; contacts on the bodies count as well.
    */
   #breakJoints(): void {
+    const gravity = this.world.gravity;
+    // Where the step left the groups' bodies (#solveBreakable's next step starts from them).
+    const after = new Map<number, readonly [RAPIER.Vector, RAPIER.Vector]>();
+    for (const [handle, body] of this.#groupBodies) {
+      if (body.isValid()) after.set(handle, [body.linvel(), body.angvel()]);
+    }
+    this.#groupVelocities = after;
     for (const placed of this.#breakable) {
       const joint = placed.joint;
       const threshold = placed.constraint.breakable?.threshold ?? Infinity;
@@ -1552,49 +1999,30 @@ export class PhysicsWorld {
         this.#forgetJoint(placed);
         continue;
       }
-      let impulse = 0;
-      for (const side of [placed.a, placed.b]) {
-        if (!side.body.isDynamic()) continue;
-        impulse = Math.max(impulse, this.#heldImpulse(side));
-      }
+      // Solved with its group: its solver results (#solveBreakable).
+      let impulse = this.#breakableLoads.get(placed) ?? 0;
+      if (!this.#breakableLoads.has(placed))
+        for (const { body, data } of [placed.a, placed.b]) {
+          const before = this.#velocities.get(body.handle);
+          if (!before || !body.isDynamic()) continue;
+          const after = body.linvel();
+          const g = data.gravityFactor * this.#size;
+          impulse = Math.max(
+            impulse,
+            body.mass() *
+              Math.hypot(
+                after.x - before.x - gravity.x * g,
+                after.y - before.y - gravity.y * g,
+                after.z - before.z - gravity.z * g,
+              ),
+          );
+        }
       if (impulse > threshold) {
         this.world.removeImpulseJoint(joint, true);
         placed.joint = undefined;
         this.#forgetJoint(placed);
       }
     }
-  }
-
-  /**
-   * The impulse of a step on a simulated body and the simulated bodies jointed to it (through
-   * joints between simulated bodies), gravity's left out: the sum of their momentum changes.
-   */
-  #heldImpulse(start: PlacedBody): number {
-    const gravity = this.world.gravity;
-    const seen = new Set<number>();
-    const queue: PlacedBody[] = [start];
-    let x = 0;
-    let y = 0;
-    let z = 0;
-    for (let side = queue.pop(); side; side = queue.pop()) {
-      const { body, data } = side;
-      if (seen.has(body.handle) || !body.isDynamic()) continue;
-      seen.add(body.handle);
-      const before = this.#velocities.get(body.handle);
-      if (before) {
-        const after = body.linvel();
-        const g = data.gravityFactor * this.#size;
-        const mass = body.mass();
-        x += mass * (after.x - before.x - gravity.x * g);
-        y += mass * (after.y - before.y - gravity.y * g);
-        z += mass * (after.z - before.z - gravity.z * g);
-      }
-      for (const joint of this.#jointsOf.get(body.handle) ?? []) {
-        if (!joint.joint) continue;
-        queue.push(joint.a.body === body ? joint.b : joint.a);
-      }
-    }
-    return Math.hypot(x, y, z);
   }
 
   /**
@@ -1775,7 +2203,7 @@ export class PhysicsWorld {
     const colliders = [collider];
     if (ground) {
       const twin = made(RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES);
-      this.#pairFaces(collider, twin);
+      this.#pairFaces(collider, twin, { vertices, indices, scale: 1 / HAVOK_SCALE });
       colliders.push(twin);
     }
     this.#changed = true;
@@ -1904,8 +2332,11 @@ export class PhysicsWorld {
       this.#recordVelocities();
       if (this.#solverJoints.size > 0) this.#solveJoints();
       if (this.#linksClipped.size > 0) this.#clipLinks();
+      if (this.#breakable.size > 0) this.#solveBreakable();
       this.world.step(this.#events, this.#hooks);
       this.#changed = false;
+      if (this.#settling.size > 0 && this.#twoSided.size > 0) this.#weld();
+      this.#holdAwake();
       if (this.#limits.size > 0) this.#limitVelocities();
       this.#time += size;
       if (this.#depenetrating.size > 0) this.#depenetrate();
@@ -2523,6 +2954,24 @@ export class PhysicsWorld {
    * layer and mass (Havok units, kg·m/s); a held body moves from now on. Fixed and keyframed
    * bodies (a living actor's, an animated object's) are not moved. Returns whether it pushed.
    */
+  /**
+   * The pose (game units) of the moving body a collider belongs to (a dynamic or keyframed
+   * one); undefined for the fixed world, or once the body is gone.
+   */
+  movingPose(
+    collider: RAPIER.Collider,
+  ): { position: Vec3; rotation: [number, number, number, number] } | undefined {
+    if (!collider.isValid()) return undefined;
+    const body = collider.parent();
+    if (!body?.isValid() || body.isFixed()) return undefined;
+    const t = body.translation();
+    const r = body.rotation();
+    return {
+      position: [t.x * HAVOK_SCALE, t.y * HAVOK_SCALE, t.z * HAVOK_SCALE],
+      rotation: [r.x, r.y, r.z, r.w],
+    };
+  }
+
   knock(
     collider: RAPIER.Collider,
     point: Vec3,
@@ -2867,7 +3316,8 @@ export class PhysicsWorld {
   /**
    * The traps an actor's collider touches: bodies on L_TRAP and L_CLOUDTRAP (the layers the
    * engine's trap listener takes as traps, observed in the original) within `margin` game units of it, by
-   * their owners' references, with where it touches and how the trap's body moves.
+   * their owners' references, with where it touches (the contact point on the trap, as a Havok
+   * contact point event tells it) and how the trap's body moves.
    */
   trapsTouching(collider: RAPIER.Collider, margin: number): Map<number, TrapTouch> {
     const found = new Map<number, TrapTouch>();
@@ -2889,8 +3339,11 @@ export class PhysicsWorld {
         if (reference === undefined || reference === 0 || found.has(reference)) return true;
         const body = other.parent();
         const velocity = body?.linvel() ?? { x: 0, y: 0, z: 0 };
+        // Where it touches: the contact's point on the trap (the actor's centre when none).
+        const contact = other.contactShape(reach, at, collider.rotation(), 0);
+        const point = contact?.point1 ?? at;
         found.set(reference, {
-          position: [at.x * HAVOK_SCALE, at.y * HAVOK_SCALE, at.z * HAVOK_SCALE],
+          position: [point.x * HAVOK_SCALE, point.y * HAVOK_SCALE, point.z * HAVOK_SCALE],
           velocity: [velocity.x * HAVOK_SCALE, velocity.y * HAVOK_SCALE, velocity.z * HAVOK_SCALE],
           motionType:
             !body || body.isFixed()
@@ -3120,6 +3573,8 @@ export class PhysicsWorld {
         body.setLinvel(still, false);
         body.setAngvel(still, false);
       });
+      // Moved after the step: queries see it back in its place after the next one.
+      this.#changed = true;
     }
   }
 
@@ -3151,13 +3606,77 @@ export class PhysicsWorld {
   }
 
   /**
+   * Rapier's own sleeping held to Havok's rule (#deactivate). Rapier puts a body, with all it
+   * touches, to sleep once it has moved slower than 0.1 units a second (and turned slower than
+   * about 0.1 radians a second) for half a second, and stops it dead: a box sliding or turning
+   * slowly came to a halt in mid-slide. #deactivate starts Rapier's timer over for every body
+   * not yet inactive long enough, so Rapier rarely gets there; when it does (a body woken
+   * between checks), a body Rapier put to sleep in the step that has not stayed near its
+   * deactivation reference for DEACTIVATION_SECONDS is woken with the speed it had before the
+   * step, and so is what it touches that Rapier put to sleep with it (Havok's island stays
+   * active as a whole). What Rapier puts to sleep by the rule stays asleep, settling or not (a
+   * settling body #deactivate leaves alone). TODO(M13): inferred, as the rule itself; a body
+   * woken so has not moved in that step.
+   */
+  #holdAwake(): void {
+    let slept: Map<number, RAPIER.RigidBody> | undefined;
+    for (const handle of this.#velocities.keys()) {
+      const body = this.world.getRigidBody(handle) as RAPIER.RigidBody | null;
+      if (!body?.isSleeping() || !body.isDynamic() || !body.isEnabled()) continue;
+      (slept ??= new Map()).set(handle, body);
+    }
+    if (!slept) return;
+    const elapsed = this.#sinceDeactivation + this.#size;
+    const waking: RAPIER.RigidBody[] = [];
+    for (const body of slept.values()) {
+      const reference = this.#still.get(body.handle);
+      const resting =
+        reference !== undefined &&
+        !movedFrom(reference, body) &&
+        reference.seconds + elapsed >= DEACTIVATION_SECONDS;
+      if (!resting) waking.push(body);
+    }
+    for (const body of waking) slept.delete(body.handle);
+    // What a woken body touches or is joined to, and what touches that, wakes with it.
+    for (let i = 0; i < waking.length && slept.size > 0; i++) {
+      const body = waking[i];
+      if (!body) continue;
+      const system = this.#systemOf(body);
+      const touching = touchingBodies(this.world, body);
+      for (const [handle, other] of slept) {
+        if (!touching.has(handle) && (system === undefined || this.#systemOf(other) !== system)) {
+          continue;
+        }
+        slept.delete(handle);
+        waking.push(other);
+      }
+    }
+    // Asleep by the rule: woken, it is inactive only after DEACTIVATION_SECONDS again (as
+    // #deactivate leaves what it puts to sleep).
+    for (const handle of slept.keys()) this.#still.delete(handle);
+    for (const body of waking) {
+      body.wakeUp();
+      const v = this.#velocities.get(body.handle);
+      const w = this.#spins.get(body.handle);
+      if (v) body.setLinvel(v, false);
+      if (w) body.setAngvel(w, false);
+    }
+  }
+
+  /** The system (an object's bodies, a ragdoll) a body belongs to, if any. */
+  #systemOf(body: RAPIER.RigidBody): number | undefined {
+    return body.numColliders() > 0 ? this.#systems.get(body.collider(0).handle) : undefined;
+  }
+
+  /**
    * Havok's deactivation (DEACTIVATION_DISTANCE: the distance observed in the original, the rest
    * inferred from Havok's documented behaviour): a body is inactive while it stays within
    * DEACTIVATION_DISTANCE (and DEACTIVATION_TURN) of where it was when it last moved, however
    * it shakes there, and a system of bodies (a ragdoll, a hinged object) that has been inactive
    * for DEACTIVATION_SECONDS as a whole goes to sleep, until something wakes it. Rapier sends
    * bodies to sleep by their speed alone: a ragdoll whose limbs tremble on a slope or against
-   * a rock (stacked joints and contacts never quite at rest) never slept.
+   * a rock (stacked joints and contacts never quite at rest) never slept, and a body moving
+   * slowly slept while still moving (#holdAwake keeps it awake).
    */
   #deactivate(): void {
     this.#sinceDeactivation += this.#size;
@@ -3173,34 +3692,17 @@ export class PhysicsWorld {
       if (!body.isDynamic() || body.isSleeping() || !body.isEnabled()) return;
       const handle = body.handle;
       seen.add(handle);
-      const t = body.translation();
-      const q = body.rotation();
       let entry = still.get(handle);
-      const turned =
-        entry === undefined
-          ? Infinity
-          : 2 *
-            Math.acos(
-              Math.min(
-                1,
-                Math.abs(
-                  entry.rotation.x * q.x +
-                    entry.rotation.y * q.y +
-                    entry.rotation.z * q.z +
-                    entry.rotation.w * q.w,
-                ),
-              ),
-            );
-      if (
-        !entry ||
-        Math.hypot(t.x - entry.x, t.y - entry.y, t.z - entry.z) > DEACTIVATION_DISTANCE ||
-        turned > DEACTIVATION_TURN
-      ) {
-        entry = { x: t.x, y: t.y, z: t.z, rotation: q, seconds: 0 };
+      if (!entry || movedFrom(entry, body)) {
+        const t = body.translation();
+        entry = { x: t.x, y: t.y, z: t.z, rotation: body.rotation(), seconds: 0 };
         still.set(handle, entry);
       } else {
         entry.seconds += elapsed;
       }
+      // Not inactive long enough: Rapier's own sleep timer starts over (it sleeps a body after
+      // half a second, these checks come every quarter), so Rapier does not stop it (#holdAwake).
+      if (entry.seconds < DEACTIVATION_SECONDS) body.wakeUp();
       const collider = body.numColliders() > 0 ? body.collider(0) : undefined;
       const system = collider ? this.#systems.get(collider.handle) : undefined;
       const key = system === undefined ? 'b' + String(handle) : 's' + String(system);
@@ -3231,6 +3733,140 @@ export class PhysicsWorld {
     }
   }
 
+  /**
+   * Havok's one-sided welding for the warm start: a settling body that the step pushed
+   * towards the back of a welded triangle it lies in (the meshes of statics and the landscape
+   * are two-sided here, #twoSided) is put out at that triangle's front instead, with no speed
+   * towards its back. The plugins place clutter sunk into what it lies on (berries into a
+   * table's top, a book into a floor under a rubble pile, a bone into a cave's floor); out of
+   * the deeper side, Rapier pushed it through to the far side (`tools/settle-audit.ts`: 92 of
+   * the 69,455 loose objects of the interiors). Of the welded triangles a body is pushed to the
+   * back of, the deepest one puts it out, each step. Not a body that stands on something under
+   * it (#supported): the triangle passes over it, it is not sunk into it (a chaurus egg on a
+   * cave's floor under the edge of a mound's slope, put out on the slope, rolled 230 units off).
+   * Still open: a body whose floor is not straight under its centre of mass is not seen to stand
+   * (the Blue Palace's bucket 000CC306 is set 28 units up onto what is over it).
+   * Ragdolls meet the one-sided copies instead.
+   * TODO(M13): inferred from the files' welding type (one-sided: objects are put out on the
+   * triangles' front); that Havok does so for a body placed deeper than half into a triangle
+   * was not observed, nor whether it also does so after the warm start (here only while the
+   * body settles).
+   */
+  #weld(): void {
+    const world = this.world;
+    let moved = false;
+    for (const handle of this.#settling.keys()) {
+      const body = world.getRigidBody(handle) as RAPIER.RigidBody | null;
+      if (!body?.isDynamic() || body.isSleeping() || !body.isEnabled()) continue;
+      let deepest = -WELD_DEPTH;
+      let front: RAPIER.Vector | undefined;
+      let lift = 0;
+      // The welded triangles that push the body out at their front (a table's top, under a
+      // dagger lying in it): one that pushes against the way out of another (the same table's
+      // underside, which the dagger reaches into from above) is not gone through.
+      const fronts: RAPIER.Vector[] = [];
+      for (let i = 0; i < body.numColliders(); i++) {
+        const collider = body.collider(i);
+        if (RAGDOLL_LAYERS.has(this.layerOf(collider))) continue;
+        world.contactPairsWith(collider, (other) => {
+          const mesh = this.#twoSided.get(other.handle);
+          if (!mesh) return;
+          world.contactPair(collider, other, (manifold, flipped) => {
+            const contacts = manifold.numContacts();
+            let depth = 0;
+            for (let c = 0; c < contacts; c++) depth = Math.min(depth, manifold.contactDist(c));
+            if (!(depth < -WELD_DEPTH)) return;
+            const triangle = flipped ? manifold.subshape1() : manifold.subshape2();
+            const face = triangleFront(other, mesh, triangle);
+            if (!face) return;
+            // The push on the body: away from the mesh, along the manifold's normal.
+            const n = manifold.normal();
+            const sign = flipped ? 1 : -1;
+            const along = sign * (n.x * face.normal.x + n.y * face.normal.y + n.z * face.normal.z);
+            if (along >= WELD_FACING) fronts.push(face.normal);
+            if (along > -WELD_FACING || !(depth < deepest)) return;
+            // Only what a body may rest on (a floor, a table's top, a slope it can lie on)
+            // puts it out at its front: a fork stuck up into a cairn's underside is not put
+            // out below the floor.
+            if (face.normal.z < WELD_GROUND) return;
+            // How far the body's deepest point lies behind the triangle's plane.
+            const behind = behindFace(collider, face);
+            if (behind === undefined || !(behind > 0)) return;
+            deepest = depth;
+            front = face.normal;
+            lift = behind + WELD_MARGIN;
+          });
+        });
+      }
+      const out = front;
+      if (!out) continue;
+      if (fronts.some((f) => f.x * out.x + f.y * out.y + f.z * out.z < 0)) continue;
+      // It stands on something under the triangle (a floor under a mound's edge, under a
+      // counter it reaches up into): the triangle passes over it, it is not sunk into it.
+      if (this.#supported(body)) continue;
+      const at = body.translation();
+      body.setTranslation(
+        { x: at.x + out.x * lift, y: at.y + out.y * lift, z: at.z + out.z * lift },
+        true,
+      );
+      moved = true;
+      const v = body.linvel();
+      const towards = v.x * out.x + v.y * out.y + v.z * out.z;
+      if (towards < 0) {
+        body.setLinvel(
+          { x: v.x - out.x * towards, y: v.y - out.y * towards, z: v.z - out.z * towards },
+          true,
+        );
+      }
+    }
+    // Moved after the step: ray and shape casts see the new places only after the next one.
+    if (moved) this.#changed = true;
+  }
+
+  /**
+   * Whether a settling body stands on something (#weld): straight under its centre of mass, a
+   * surface that does not move and that it may rest on (facing up, at most 60° steep; a welded
+   * triangle by its front), no farther below than its own lowest point and WELD_SUPPORT_GAP.
+   * TODO(M13): inferred, all of it: the one ray straight down from the centre of mass, the gap
+   * of 2 units (chosen by the settle audit), and reading a trimesh hit's side from Rapier's
+   * featureId (0 the triangle's front, 1 its back: probed, not documented).
+   */
+  #supported(body: RAPIER.RigidBody): boolean {
+    const down = { x: 0, y: 0, z: -1 };
+    let reach = -Infinity;
+    for (let i = 0; i < body.numColliders(); i++) {
+      reach = Math.max(reach, colliderReach(body.collider(i), down) ?? -Infinity);
+    }
+    if (!Number.isFinite(reach)) return false;
+    const com = body.worldCom();
+    // reach is the lowest point's depth below the world's origin (-z).
+    const length = reach + com.z + WELD_SUPPORT_GAP;
+    if (!(length > 0)) return false;
+    const collides = this.filterFor(this.layerOf(body.collider(0)));
+    let found = false;
+    this.world.intersectionsWithRay(
+      new RAPIER.Ray(com, down),
+      length,
+      true,
+      (hit) => {
+        // The hit's normal faces the ray; on a triangle mesh Rapier's feature is the side hit
+        // (0: the triangle's front, counter-clockwise; 1: its back). A welded triangle met at
+        // its back (a table's underside, from inside the table) holds nothing up.
+        // A ray from inside a solid shape (a rubble pile's hull pressing a book into the floor)
+        // meets it at once: nothing the body stands on.
+        const back = this.#twoSided.has(hit.collider.handle) && hit.featureId !== 0;
+        found = !back && hit.timeOfImpact > 0 && hit.normal.z >= WELD_GROUND;
+        return !found;
+      },
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS | RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC,
+      undefined,
+      undefined,
+      body,
+      (collider) => !this.#passing.has(collider.handle) && collides(collider),
+    );
+    return found;
+  }
+
   /** Takes from bodies placed a moment ago the speed the step gave them (DEPENETRATE_SECONDS). */
   #depenetrate(): void {
     const still = { x: 0, y: 0, z: 0 };
@@ -3257,9 +3893,11 @@ export class PhysicsWorld {
   /** Turns the step's contact force events into impacts of the simulated side. */
   #recordVelocities(): void {
     this.#velocities.clear();
+    this.#spins.clear();
     this.world.bodies.forEach((body) => {
       if (!body.isDynamic() || body.isSleeping()) return;
       this.#velocities.set(body.handle, body.linvel());
+      this.#spins.set(body.handle, body.angvel());
     });
     // A settling body is placed for good once it first sleeps (our deactivation leaves it be
     // until then, at most fWarmStartMaxTime: bAllowDeactivationWhileWarmStarting 0).
@@ -3336,6 +3974,19 @@ export class PhysicsWorld {
     return Math.min(1, Math.max(0, 1 + this.#accumulator / this.#size));
   }
 
+  /** A shape of an actor (its controller, its bodies): what rays for a floor leave out. */
+  isActor(collider: RAPIER.Collider): boolean {
+    return this.ownerOf(collider)?.kind === 'actor';
+  }
+
+  /**
+   * A living actor's character controller (the dead have none: their ragdoll's bodies are on
+   * L_DEADBIP): what the ray for an actor's ground leaves out (actorGround, src/shell/actors.ts).
+   */
+  isActorController(collider: RAPIER.Collider): boolean {
+    return this.layerOf(collider) === Layer.charController && this.isActor(collider);
+  }
+
   /**
    * The first collider along a ray (game units) that `layer` collides with; not `exclude`, nor
    * any of the actor `ignore` (a reference: its own bodies, as an actor's sight passes its own
@@ -3343,11 +3994,6 @@ export class PhysicsWorld {
    * nor any collider `skip` says to pass. Not `solid`, a ray that starts inside a shape meets it
    * only where it leaves it (as Havok's ray casts pass what they start inside).
    */
-  /** A shape of an actor (its controller, its bodies): what rays for a floor leave out. */
-  isActor(collider: RAPIER.Collider): boolean {
-    return this.ownerOf(collider)?.kind === 'actor';
-  }
-
   raycast(
     origin: Vec3,
     direction: Vec3,

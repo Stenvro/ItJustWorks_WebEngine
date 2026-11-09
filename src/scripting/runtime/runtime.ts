@@ -60,7 +60,7 @@ import { EquipmentEngine } from './equipment-engine.ts';
 import { ProgressionEngine } from './progression-engine.ts';
 import { CastingEngine } from './casting-engine.ts';
 import { MagicEngine, type MagicEffectShown } from './magic-engine.ts';
-import { CraftingEngine } from './crafting-engine.ts';
+import { CraftingEngine, type ItemsLeft } from './crafting-engine.ts';
 import { CrimeEngine } from './crime-engine.ts';
 import { PerkEngine } from './perk-engine.ts';
 import { actorActivation } from './actor-activation.ts';
@@ -1069,6 +1069,16 @@ export class ScriptRuntime implements VmHost {
     number,
     Promise<Map<number, { readonly child: number; readonly delay: number }[]>>
   >();
+  /**
+   * Where a script sent the player, until the world has them there (#playerArea), and the cell
+   * the world had them in as they were sent (playerInCell).
+   */
+  #playerBound: { readonly place: AreaPlace; readonly from: number | undefined } | undefined;
+  /** References found without scripts of their own as their cell attached (quiet). */
+  readonly #scriptless = new Set<number>();
+  /** The load order's activate children by parent, wherever they stand (read once: XAPR). */
+  #farActivateChildren:
+    Promise<Map<number, { readonly child: number; readonly delay: number }[]>> | undefined;
   #settings: Promise<GameSettings> | undefined;
   #startDate: GameDate | undefined;
   #startDays = 0;
@@ -1187,11 +1197,14 @@ export class ScriptRuntime implements VmHost {
     // An actor runs the scripts of the NPC_ it takes them from: its leveled list's pick, and
     // that one's template when it uses the template's scripts (TemplateFlag.script), as it
     // takes its other parts (Creation Kit: Template Data).
-    const scriptBase = await this.#actorScriptBase(target);
+    // Template links that take their template's scripts but have scripts of their own run
+    // those too (inferred: TODO(M13)), each over the ones further down.
+    const actor = await this.#actorScriptBase(target);
+    const scriptBase = actor?.base;
+    const own = actor?.own ?? [];
     const created = target.alias < 0 ? this.state.created.get(target.formId) : undefined;
     // A created reference runs its base object's scripts.
-    if (created)
-      return this.forms.attachedScripts(new ObjectHandle(scriptBase ?? created.base, 'form'));
+    if (created) return this.forms.baseScripts([...own, scriptBase ?? created.base]);
     // A persistent reference without scripts of its own runs its base's (no read of its own).
     const base = target.alias < 0 ? this.#index?.base.get(target.formId) : undefined;
     if (
@@ -1199,16 +1212,22 @@ export class ScriptRuntime implements VmHost {
       target.formId !== PLAYER_REF &&
       !this.#index?.scripted.has(target.formId)
     ) {
-      return this.forms.attachedScripts(new ObjectHandle(scriptBase ?? base, 'form'));
+      return this.forms.baseScripts([...own, scriptBase ?? base]);
     }
-    return this.forms.attachedScripts(target, scriptBase);
+    return this.forms.attachedScripts(target, scriptBase, own);
   }
 
-  /** For an actor reference (not the player), the NPC_ whose scripts it runs. */
-  async #actorScriptBase(target: ObjectHandle): Promise<number | undefined> {
+  /**
+   * For an actor reference (not the player), the NPC_ whose scripts it runs, and the template
+   * links on the way there that have scripts of their own (ActorInfo.ownScripts).
+   */
+  async #actorScriptBase(
+    target: ObjectHandle,
+  ): Promise<{ readonly base: number; readonly own: readonly number[] } | undefined> {
     if (target.alias >= 0 || target.formId === PLAYER_REF) return undefined;
     if ((await this.formType(target)) !== 'actor') return undefined;
-    return (await this.actors.info(target.formId))?.scripts;
+    const info = await this.actors.info(target.formId);
+    return info && { base: info.scripts, own: info.ownScripts };
   }
 
   native(script: string, fn: string): NativeFunction | undefined {
@@ -1379,35 +1398,54 @@ export class ScriptRuntime implements VmHost {
   async cellAttached(
     references: readonly number[],
     loaded: (reference: number) => boolean,
+    /** The cell (its form id), told with its full load. */
+    cell?: number,
   ): Promise<number[]> {
     const scripted: number[] = [];
     for (const reference of references) {
-      if (await this.#hasScripts(reference)) scripted.push(reference);
+      // Looked at again on every attach: an actor's leveled or template pick is known once it
+      // is resolved, and a reset may pick another.
+      if (await this.#hasScripts(reference)) {
+        scripted.push(reference);
+        this.#scriptless.delete(reference);
+      } else this.#scriptless.add(reference);
     }
     for (const reference of scripted) {
       if (this.#initialized.has(reference)) continue;
       this.#initialized.add(reference);
       await this.vm.startInitialize(this.referenceHandle(reference));
     }
-    // The hub tells it (the relay: OnCellAttach, OnLoad, OnCellLoad). TODO(M13): the engine
-    // tells every reference of the cell; ours those with scripts, their own or those of an
-    // alias that holds them (no other consumer yet): a world encounter's actor in a
-    // WEAliasScript alias counts itself in as it loads and out as it unloads.
+    // The hub tells every reference of the cell that it attached (TESCellAttachDetachEvent,
+    // observed in the original: with scripts or not, for every consumer of the event); the
+    // relay's OnCellAttach reaches those with scripts, their own or those of an alias that
+    // holds them (a world encounter's actor in a WEAliasScript alias counts itself in as it
+    // loads and out as it unloads: quiet).
+    for (const reference of references)
+      this.events.emit('cellAttachDetach', { reference, attached: true });
     const hearing = [
       ...scripted,
       ...references.filter(
         (reference) => !scripted.includes(reference) && this.#heldScripted(reference),
       ),
     ];
-    for (const reference of hearing)
-      this.events.emit('cellAttachDetach', { reference, attached: true });
     // Those its cell reset as it came back are told so (OnReset), after they attached.
     for (const reference of this.cellResets.takeResets(references))
       this.events.emit('reset', { reference });
+    // OnLoad, then once every object's 3D is in, OnCellLoad (TESCellFullyLoadedEvent: the
+    // cell and its references whose 3D is in). TODO(M13): the engine's OnLoad and its full
+    // load reach every reference too; ours those whose scripts hear them.
     const shown = hearing.filter((reference) => loaded(reference));
     for (const reference of shown) this.events.emit('objectLoaded', { reference, loaded: true });
-    this.events.emit('cellFullyLoaded', { cell: undefined, references: shown });
+    this.events.emit('cellFullyLoaded', { cell, references: shown });
     return scripted;
+  }
+
+  /**
+   * Whether a reference's scripts cannot hear its cell's events: it has none of its own (as
+   * its cell attached) and no alias holds it. The relay sends them only where they are heard.
+   */
+  quiet(reference: number): boolean {
+    return this.#scriptless.has(reference) && !this.#heldScripted(reference);
   }
 
   /**
@@ -1440,9 +1478,12 @@ export class ScriptRuntime implements VmHost {
       this.animationGraphUnloaded(reference);
     }
     for (const reference of references) {
-      if (!(await this.#hearsEvents(reference))) continue;
-      if (loaded(reference)) this.events.emit('objectLoaded', { reference, loaded: false });
+      const hears = await this.#hearsEvents(reference);
+      if (hears && loaded(reference))
+        this.events.emit('objectLoaded', { reference, loaded: false });
+      // Every reference of the cell is told it detached (as it attached: cellAttached).
       this.events.emit('cellAttachDetach', { reference, attached: false });
+      if (!hears) continue;
       // What it is no longer in: its trigger volumes are left behind, its traps' contacts end.
       this.triggerVolumes.forget(reference);
       this.trapHits.forget(reference);
@@ -1536,15 +1577,23 @@ export class ScriptRuntime implements VmHost {
 
   /** A reference's activate children activated, by it, each after its delay. */
   async #activateChildrenOf(reference: number, through: ReadonlySet<number>): Promise<void> {
-    for (const { child, delay } of await this.activateChildren(reference)) {
-      if (through.has(child)) continue;
-      const go = (): void => {
-        this.activateRef(child, reference, { chain: through });
-      };
-      // Its delay in the game's real seconds (a menu holds it).
-      if (delay > 0) void this.vm.scheduler.waitReal(delay).then(go);
-      else go();
-    }
+    const done = new Set<number>();
+    const activate = (children: readonly { readonly child: number; readonly delay: number }[]) => {
+      for (const { child, delay } of children) {
+        if (through.has(child) || done.has(child)) continue;
+        done.add(child);
+        const go = (): void => {
+          this.activateRef(child, reference, { chain: through });
+        };
+        // Its delay in the game's real seconds (a menu holds it).
+        if (delay > 0) void this.vm.scheduler.waitReal(delay).then(go);
+        else go();
+      }
+    };
+    // Those round it at once; those far off once the load order's list is read (it is read in
+    // the background from the game's start: warmActivateChildren).
+    activate(await this.#nearActivateChildren(reference));
+    activate(await this.#farActivateChildrenOf(reference));
   }
 
   /**
@@ -1596,12 +1645,10 @@ export class ScriptRuntime implements VmHost {
     // template's (MQ104's dragon takes DragonActorScript from its template's). That
     // is known once the actor is resolved, so such a persistent actor's scripts start as its
     // cell attaches, not with the new game (where nothing is picked yet).
-    const scriptBase = await this.#actorScriptBase(this.referenceHandle(reference));
-    return (
-      scriptBase !== undefined &&
-      scriptBase !== base &&
-      (await this.forms.attachments(scriptBase)) !== undefined
-    );
+    const actor = await this.#actorScriptBase(this.referenceHandle(reference));
+    if (!actor) return false;
+    if (actor.own.length > 0) return true;
+    return actor.base !== base && (await this.forms.attachments(actor.base)) !== undefined;
   }
 
   /**
@@ -2326,6 +2373,13 @@ export class ScriptRuntime implements VmHost {
     if (cell !== undefined) {
       state.cell = cell;
       state.world = world;
+      // The player on their way there (#playerArea) until the world has them there.
+      if (reference === PLAYER_REF) {
+        this.#playerBound = {
+          place: { position, cell, world },
+          from: this.world.livePlacement?.(PLAYER_REF)?.cell,
+        };
+      }
     }
     this.world.moved?.(reference);
     const grid = (at: Vec3): string =>
@@ -2353,8 +2407,7 @@ export class ScriptRuntime implements VmHost {
     after: AreaPlace,
   ): Promise<void> {
     if (reference === PLAYER_REF) return;
-    // Where the player is going, if a script just moved them (the cell they arrive in attaches).
-    const player = await this.placement(PLAYER_REF, false);
+    const player = await this.#playerArea();
     if (!player) return;
     let from = before;
     if (from === undefined) {
@@ -2370,6 +2423,33 @@ export class ScriptRuntime implements VmHost {
     const was = from === 'shown' || inAttachedArea(from, player, this.gridsToLoad);
     const is = inAttachedArea(after, player, this.gridsToLoad);
     if (was !== is) this.events.emit('moveAttachDetach', { reference, attached: is });
+  }
+
+  /**
+   * The world tells which cell it has the player in (every frame: GameSession). Once that is
+   * the cell a script sent them to (they arrived), or another than the one they were in as they
+   * were sent (the world took them on: they arrived and walked out, or took a load door), the
+   * world's place is theirs again for the attached area (#playerArea).
+   */
+  playerInCell(cell: number): void {
+    const bound = this.#playerBound;
+    if (bound && (cell === bound.place.cell || cell !== bound.from)) this.#playerBound = undefined;
+  }
+
+  /**
+   * Where the player is for the attached area: where a script just sent them while they are on
+   * their way (the cell they arrive in attaches), else where the world has them (they walk
+   * through doors and over cell borders without a script: their state keeps a script's last
+   * move only), else where scripts last put them.
+   */
+  async #playerArea(): Promise<AreaPlace | undefined> {
+    const live = this.world.livePlacement?.(PLAYER_REF);
+    // As the world tells it every frame (playerInCell).
+    if (live?.cell !== undefined) this.playerInCell(live.cell);
+    if (this.#playerBound) return this.#playerBound.place;
+    if (live) return { position: live.position, cell: live.cell, world: live.world };
+    const placed = await this.placement(PLAYER_REF, false);
+    return placed && { position: placed.position, cell: placed.cell, world: placed.world };
   }
 
   moveToEditorLocation(reference: number): void {
@@ -2666,10 +2746,24 @@ export class ScriptRuntime implements VmHost {
 
   /**
    * XAPR the other way: the references a reference activates as it is activated (those in its
-   * own cell, or its worldspace's persistent cell, whose Activate Parents name it), with their
-   * delays (seconds). Read once per cell.
+   * own cell, or its worldspace's persistent cell, whose Activate Parents name it; a persistent
+   * one's wherever they stand), with their delays (seconds). Read once per cell.
    */
   async activateChildren(
+    reference: number,
+  ): Promise<readonly { readonly child: number; readonly delay: number }[]> {
+    const found = [...(await this.#nearActivateChildren(reference))];
+    for (const entry of await this.#farActivateChildrenOf(reference)) {
+      if (!found.some((other) => other.child === entry.child)) found.push(entry);
+    }
+    return found;
+  }
+
+  /**
+   * The activate children found round a parent (its own cell, its worldspace's persistent cell,
+   * the exterior cells round its place), read once per cell.
+   */
+  async #nearActivateChildren(
     reference: number,
   ): Promise<readonly { readonly child: number; readonly delay: number }[]> {
     const db = this.forms.db;
@@ -2718,6 +2812,63 @@ export class ScriptRuntime implements VmHost {
       found.push(...((await index).get(reference) ?? []));
     }
     return found;
+  }
+
+  /**
+   * A persistent parent's children wherever they stand (158 of the 6,527 vanilla pairs lie
+   * beyond the cells searched round it, and every parent of the 6,527 is persistent: an
+   * interior's door waking an ambush outside, a marker in the persistent cell enabling books in
+   * a fort). The engine keeps a parent's children on it as they load, so a persistent parent,
+   * always there, knows them wherever they stand. From the load order's list, read in the
+   * background as the game starts (warmActivateChildren): those near it never wait for it.
+   * TODO(M13): inferred; whether a child whose cell is not in memory (neither loaded nor
+   * buffered) is left out in the original is not read; here every one is activated.
+   */
+  async #farActivateChildrenOf(
+    reference: number,
+  ): Promise<readonly { readonly child: number; readonly delay: number }[]> {
+    const flags = this.indexedFlags(reference) ?? (await this.forms.record(reference))?.flags ?? 0;
+    if ((flags & RecordFlag.persistent) === 0) return [];
+    return (await this.#farChildren()).get(reference) ?? [];
+  }
+
+  /**
+   * Starts reading the load order's activate children by parent (XAPR) in the background, as a
+   * game starts or loads: by the time a persistent parent is first activated it is known, and
+   * the read (every placed reference of the load order) holds nothing up meanwhile.
+   */
+  warmActivateChildren(): void {
+    void this.#farChildren().catch((error: unknown) => {
+      this.#warn(`reading the activate children: ${String(error)}`);
+      // Read again when next asked.
+      this.#farActivateChildren = undefined;
+    });
+  }
+
+  /** Every activate child of the load order by its parent (XAPR), read once. */
+  #farChildren(): Promise<Map<number, { readonly child: number; readonly delay: number }[]>> {
+    this.#farActivateChildren ??= (async () => {
+      const byParent = new Map<number, { child: number; delay: number }[]>();
+      await this.forms.db.scan(
+        ['REFR', 'ACHR', 'PGRE', 'PHZD', 'PMIS', 'PARW', 'PBAR', 'PBEA', 'PCON', 'PFLA'],
+        (flags) => (flags & RecordFlag.deleted) === 0,
+        (record) => {
+          for (const data of record.fields.all('XAPR')) {
+            const parent = record.formIdAt(data);
+            if (parent === 0) continue;
+            const delay = data.length >= 8 ? view(data).getFloat32(4, true) : 0;
+            const list = byParent.get(parent) ?? [];
+            list.push({
+              child: record.formId,
+              delay: Number.isFinite(delay) ? Math.max(0, delay) : 0,
+            });
+            byParent.set(parent, list);
+          }
+        },
+      );
+      return byParent;
+    })();
+    return this.#farActivateChildren;
   }
 
   /**
@@ -2808,9 +2959,13 @@ export class ScriptRuntime implements VmHost {
     this.state.inventories.set(container, items);
     if (this.#seeded.has(container)) return items;
     this.#seeded.add(container);
-    // A restocked container's leveled items are picked anew (restock).
+    // A restocked container's leveled items are picked anew (restock), and so are those of one
+    // reset with its cell (resetHeld).
     const restocks = this.state.restocked.get(container)?.count ?? 0;
-    const random = seededRandom((container ^ 0x5bd1e995) + Math.imul(restocks, 0x9e3779b9));
+    const resets = this.state.resets.get(container) ?? 0;
+    const random = seededRandom(
+      (container ^ 0x5bd1e995) + Math.imul(restocks, 0x9e3779b9) + Math.imul(resets, 0x85ebca6b),
+    );
     const actor = await this.actors.info(container);
     const base = actor ? actor.inventory.formId : await this.baseOf(container);
     let level: number | undefined;
@@ -2945,9 +3100,8 @@ export class ScriptRuntime implements VmHost {
     this.world.enableChanged?.(reference, false);
     const items = await this.inventory(container);
     items.set(base, (items.get(base) ?? 0) + count);
-    // An improved item taken keeps its improvement (its stack's health).
-    const health = await this.itemHealth(reference);
-    if (health !== 1) this.crafting.addStack(container, base, health, count, false);
+    // An improved item taken keeps its improvement, a soul gem its partial soul.
+    await this.#stackTaken(reference, container, base, count);
     if (!silent && container === PLAYER_REF) this.detach(this.#itemMessage(base, count, true));
     this.events.emit('containerChanged', { from, to: container, item: base, count, reference });
     await this.equipment.itemsGiven(container, base);
@@ -2965,9 +3119,30 @@ export class ScriptRuntime implements VmHost {
     return view(health).getInt32(0, true) / 100;
   }
 
-  /** An item placed in the world from an inventory keeps the health it left it with. */
-  dropped(reference: number, health: number): void {
-    if (health !== 1) this.state.reference(reference).health = health;
+  /**
+   * An item placed in the world from an inventory keeps what it left it with (removeItem): its
+   * health, a soul gem's partial soul.
+   */
+  dropped(reference: number, left: ItemsLeft): void {
+    if (left.health !== 1) this.state.reference(reference).health = left.health;
+    if (left.soul !== undefined && left.soul > 0) this.state.reference(reference).soul = left.soul;
+  }
+
+  /**
+   * An item reference taken into a container (a count of its base): its stack there gets what
+   * it carries of its own (an improved one's health, a soul gem's partial soul).
+   */
+  async #stackTaken(
+    reference: number,
+    container: number,
+    base: number,
+    count: number,
+  ): Promise<void> {
+    const health = await this.itemHealth(reference);
+    if (health !== 1) this.crafting.addStack(container, base, health, count, false);
+    const soul = this.state.references.get(reference)?.soul;
+    if (soul !== undefined && soul > 0)
+      this.crafting.addStack(container, base, 1, count, false, undefined, soul);
   }
 
   async itemCountOf(container: number, form: Value): Promise<number> {
@@ -3024,6 +3199,10 @@ export class ScriptRuntime implements VmHost {
     }
   }
 
+  /**
+   * Items leave a container (to another, or out of any: dropped, used, removed). What they
+   * carry of their own, if all came from one stack (ItemsLeft: what is dropped keeps it).
+   */
   async removeItem(
     container: number,
     form: Value,
@@ -3032,17 +3211,20 @@ export class ScriptRuntime implements VmHost {
     to: number | undefined,
     /** Which of the item's stacks (improved ones: the crafting engine's) leaves first. */
     stack?: number,
-  ): Promise<number> {
+  ): Promise<ItemsLeft> {
     const items = await this.inventory(container);
-    let health = 1;
+    let left: ItemsLeft = { health: 1 };
     for (const item of await this.#expand(form)) {
       const have = items.get(item) ?? 0;
       const moved = Math.min(have, count);
       if (moved <= 0) continue;
       // Items with data of their own leave as asked, else after the plain ones; all of one
-      // improved stack: their health (what is dropped keeps it).
+      // stack: its health and partial soul (what is dropped keeps them).
       const improved = this.crafting.itemsMoved(container, to, item, moved, have, stack);
-      if (improved.length === 1 && improved[0]?.count === moved) health = improved[0].health;
+      const only = improved.length === 1 ? improved[0] : undefined;
+      if (only?.count === moved) {
+        left = { health: only.health, ...(only.soul !== undefined && { soul: only.soul }) };
+      }
       items.set(item, have - moved);
       const references = this.#referencesMoved(container, to, item, moved, have);
       // Stolen items leave last and stay stolen where they go (crime-engine.ts).
@@ -3072,7 +3254,7 @@ export class ScriptRuntime implements VmHost {
       }
       if (to !== undefined) await this.equipment.itemsGiven(to, item);
     }
-    return health;
+    return left;
   }
 
   /** The reference of an item a container holds that leaves it first (#referencesMoved), if any. */
@@ -3133,9 +3315,8 @@ export class ScriptRuntime implements VmHost {
     this.state.reference(reference).container = { holder: by, base, count: Math.max(1, count) };
     this.world.enableChanged?.(reference, false);
     items.set(base, (items.get(base) ?? 0) + Math.max(1, count));
-    // An improved item taken keeps its improvement (its stack's health).
-    const health = await this.itemHealth(reference);
-    if (health !== 1) this.crafting.addStack(by, base, health, Math.max(1, count), false);
+    // An improved item taken keeps its improvement, a soul gem its partial soul.
+    await this.#stackTaken(reference, by, base, Math.max(1, count));
     this.events.emit('containerChanged', {
       from: undefined,
       to: by,
@@ -3156,6 +3337,23 @@ export class ScriptRuntime implements VmHost {
       days: this.state.gameDaysPassed,
       count: (restocked?.count ?? 0) + 1,
     });
+    this.#emptyHolder(container);
+  }
+
+  /**
+   * A reference resets with its cell (cell-reset.ts): what it held goes (as a restock: the item
+   * references in it, improvements, stolen marks) and its own items (CNTO, leveled lists drawn
+   * anew) are there again as it is next read; an actor's leveled lists and templates are drawn
+   * anew as it is next resolved (GameState.resets seeds both).
+   */
+  resetHeld(reference: number): void {
+    this.state.resets.set(reference, (this.state.resets.get(reference) ?? 0) + 1);
+    this.#emptyHolder(reference);
+    this.actors.forget(reference);
+  }
+
+  /** What a container holds goes: its items are its records' again as it is next read. */
+  #emptyHolder(container: number): void {
     for (const state of this.state.references.values()) {
       if (state.container?.holder !== container) continue;
       delete state.container;
@@ -3445,7 +3643,8 @@ export class ScriptRuntime implements VmHost {
     // Casts charge and concentrate; voices recover.
     if (!this.retired) this.casting.update(realSeconds);
     this.scenes.update(realSeconds);
-    // Harvested flora grow again as their cells reset; hazards burn out and hit.
+    // Harvested flora without a cell grow again (those of a cell, as it resets); hazards burn
+    // out and hit.
     if (!this.retired) this.harvest.update(realSeconds);
     if (!this.retired) this.hazards.update(realSeconds);
     // Destruction stages' self damage per second.
@@ -3842,6 +4041,8 @@ export class ScriptRuntime implements VmHost {
     }
     // Persistent references with scripts (their own or their base's).
     const index = await this.persistentIndex();
+    // The load order's far activate children read meanwhile (in the background).
+    this.warmActivateChildren();
     // Their bases' attachments read side by side (one by one they took seconds in the browser).
     const scripted = await Promise.all(
       index.all.map(async (reference) => {
@@ -3981,6 +4182,7 @@ export class ScriptRuntime implements VmHost {
       },
     );
     await this.persistentIndex();
+    this.warmActivateChildren();
     progress?.('restoring the game state');
     restoreGameState(this.state, save.state);
     // The aliases hold their references again: their events (an alias script's OnDeath), the

@@ -11,6 +11,8 @@
 // - The records: FireDamageFFAimed (Firebolt's effect: weight 0.3, curve 2, 1 s),
 //   EnchFireDamageFFContact (0.2, 2, 1 s), FireDamageConcAimed (Flames: 0.3, 2, 0.1 s);
 //   `node tools/magic-census.ts` for the class.
+// - An effect's conditions are looked at again each fActiveEffectConditionUpdateInterval (the
+//   engine's built-in 1 s, observed in the original; no plugin sets it).
 // - fMagicDualCastingEffectivenessBase 2.2 (Skyrim.esm); UESP "Skyrim:Dual Casting".
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -218,6 +220,51 @@ describe.skipIf(!hasGamedata())('the effects across the load order (data)', () =
     expect(runtime.magic.effectsOn(PLAYER_REF).filter(([, e]) => e.item === flames)).toEqual([]);
     runtime.actors.restore(PLAYER_REF, ActorValue.health, 100);
   }, 60_000);
+
+  it('looks at conditions again each fActiveEffectConditionUpdateInterval (1 s; setgs)', async () => {
+    // A frame lets the looks it began (conditions read through the forms) finish.
+    const settle = async (): Promise<void> => {
+      await runtime.vm.idle();
+      for (let tick = 0; tick < 5; tick++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    const settings = await runtime.gameSettingTable();
+    expect(settings.number('fActiveEffectConditionUpdateInterval')).toBeUndefined();
+    settings.set('fActiveEffectConditionUpdateInterval', 0.2);
+    // Rested (Skyrim.esm 000FB981): its first effect while Survival Mode is off
+    // (GetGlobalValue Survival_ModeToggle == 0, the Creation Club global), its second while on.
+    const rested = 0xfb981;
+    const item = await runtime.magic.item(rested);
+    const toggle = item?.effects[0]?.conditions[0]?.form;
+    if (!item || toggle === undefined) throw new Error('Rested not read');
+    runtime.state.globals.set(toggle, 0);
+    expect(await runtime.actors.addSpell(PLAYER_REF, rested)).toBe(true);
+    await runtime.magic.syncLasting(PLAYER_REF);
+    await settle();
+    // Undefined while it is not on the player at all.
+    const inactive = (): boolean | undefined => {
+      const found = runtime.magic.effectsOn(PLAYER_REF).find(([, e]) => e.item === rested);
+      return found && (found[1].inactive ?? false);
+    };
+    expect(inactive()).toBe(false);
+    // Each change is seen within the interval (and the frames a look takes), whatever the time
+    // it falls at; at 1 s apart, a change could wait a second.
+    for (let round = 0; round < 6; round++) {
+      runtime.state.globals.set(toggle, round % 2 === 0 ? 1 : 0);
+      for (let frame = 0; frame < 10; frame++) {
+        runtime.update(0.05, 0);
+        await settle();
+      }
+      expect(inactive()).toBe(round % 2 === 0);
+      for (let frame = 0; frame < 2; frame++) {
+        runtime.update(0.05, 0);
+        await settle();
+      }
+    }
+    await runtime.actors.removeSpell(PLAYER_REF, rested);
+    await runtime.magic.syncLasting(PLAYER_REF);
+    runtime.state.globals.delete(toggle);
+    settings.set('fActiveEffectConditionUpdateInterval', 1);
+  }, 60_000);
 });
 
 describe('displacement (inferred: one spell’s lasting effect does not stack with itself)', () => {
@@ -237,8 +284,4 @@ describe('displacement (inferred: one spell’s lasting effect does not stack wi
     // The same caster's is a recast, replaced by its own rule.
     expect(displacedBy(burn, { item: 7, index: 0, caster: 1 })).toBe(false);
   });
-});
-
-describe('what the original does that we do not yet', () => {
-  it.todo('conditions are checked at the engine’s interval (we check about each second)');
 });
