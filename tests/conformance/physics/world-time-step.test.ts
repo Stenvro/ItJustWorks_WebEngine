@@ -307,11 +307,13 @@ describe.skipIf(!hasGamedata() || process.env.SKYRIM_SWEEPS !== '1')(
       await vfs.close();
     });
 
-    it('settles the 69,455 loose objects of the 761 interior cells', () => {
+    it('settles the 64,248 loose objects of the 761 interior cells', () => {
+      // 69,455 simulated objects placed to settle, less the 5,207 articulated ones whose placed
+      // ragdoll pose (XRGD) walks completely: those are left at rest, as the session leaves them.
       expect(results.size).toBe(761);
       let settling = 0;
       for (const result of results.values()) settling += result.settling;
-      expect(settling).toBe(69455);
+      expect(settling).toBe(64248);
     });
 
     it('leaves Mistwatch’s bear traps, pitchforks and the rest on their floors', () => {

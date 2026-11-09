@@ -153,6 +153,40 @@ describe('a loose object sunk into what it lies on (the engine’s rule, inferre
     expect(settled(table, clutter(5, 6), -4)).toBeGreaterThan(-1);
   });
 
+  it('stays on the floor it lies on under a welded surface it reaches into from below', () => {
+    // A floor and, 6 units over it, a slab facing up (a mound's edge, a shelf over a chest):
+    // the box 8 tall lies on the floor and reaches 2 units up into the slab. It lies on the
+    // floor; the slab passes over it there. Put out at the slab's front, it ended on the slab.
+    const rest = settled(
+      floor([
+        { z: 0, up: true },
+        { z: 6, up: true },
+      ]),
+      clutter(5, 8),
+      0,
+    );
+    // Pressed between the two, a little into the floor; never through it, nor up on the slab.
+    expect(rest).toBeGreaterThan(-3);
+    expect(rest).toBeLessThan(3);
+  });
+
+  it('is moved out after the step, so ray and shape casts wait for the next one', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    physics.addObject(floor([{ z: 0, up: true }]), IDENTITY, { reference: 1, kind: 'object' });
+    const at = new Float32Array(IDENTITY);
+    at[14] = -7;
+    const placed = physics.addObject(clutter(5, 10), at, { reference: 2, kind: 'object' }, false);
+    physics.step(physics.stepSeconds);
+    physics.settle(placed);
+    expect(physics.queriesCurrent).toBe(true);
+    physics.step(physics.stepSeconds);
+    // Put out on the floor by this step's weld, after the step itself.
+    expect((placed.bodies[0]?.body.translation().z ?? NaN) * HAVOK_SCALE).toBeGreaterThan(-1);
+    expect(physics.queriesCurrent).toBe(false);
+    physics.step(physics.stepSeconds);
+    physics.free();
+  });
+
   it('is not put out through a welded surface facing down (it may not rest on one)', () => {
     // A ceiling facing down, the box pushed up into it from below by less than half: it falls
     // free under it as before, never up through it.
@@ -175,6 +209,12 @@ describe.skipIf(!hasGamedata())('cells settle with every loose object in place (
     'RiftenThievesGuildHeadquarters',
     'Labyrinthian01',
     'DLC2RRBulwarkCave',
+    // Open books on wall shelves (XRGD: posed and at rest, as the session places them), which
+    // left in their rest pose lay in the shelf and were put out into the wall above.
+    'SolitudeBluePalace',
+    'MorthalJorgenandLamisHouse',
+    // Chaurus eggs on the cave's floor under the edge of a mound's slope.
+    'FrostflowAbyss',
   ];
   let vfs: Vfs;
   let db: RecordDatabase;
@@ -203,5 +243,27 @@ describe.skipIf(!hasGamedata())('cells settle with every loose object in place (
 
   it.each(CELLS)('lets none of %s’s loose objects fall through what it lies on', (name) => {
     expect(results.get(name)?.fell.map((object) => object.editorId)).toEqual([]);
+  });
+
+  it('keeps Frostflow Abyss’s chaurus eggs on the floor under the mound, not up on its slope', () => {
+    // [000A439C, 000A439B]: put out at the slope's front, they were set on it and rolled 230
+    // units off.
+    const moved = results.get('FrostflowAbyss')?.moved;
+    for (const reference of [0x000a439c, 0x000a439b]) {
+      const [x, y, z] = moved?.get(reference) ?? [NaN, NaN, NaN];
+      expect([reference, Math.hypot(x, y, z) < 4]).toEqual([reference, true]);
+    }
+  });
+
+  it('poses the open books on the wall shelves and leaves them at rest (XRGD)', () => {
+    // [000CC006, 000CC007] in the Blue Palace, [00105449] in Jorgen and Lami's house: a
+    // complete placed pose leaves them at rest, so they are not among what settles.
+    for (const [cell, reference] of [
+      ['SolitudeBluePalace', 0x000cc006],
+      ['SolitudeBluePalace', 0x000cc007],
+      ['MorthalJorgenandLamisHouse', 0x00105449],
+    ] as const) {
+      expect([reference, results.get(cell)?.moved.has(reference)]).toEqual([reference, false]);
+    }
   });
 });
