@@ -375,7 +375,7 @@ without ambient idles: in the headless simulation a script's IdleHDRight over a 
 guest's ambient idle brought no PickNewIdle until its own end, 24 s on). Not yet: the meal's
 gate; the seated player's chair idles (TODO(M13): seated, the player's body graph raises no
 PickNewIdle in the headless simulation, none in 60 s with bNeutralState 1, so they pick none
-there yet; `tests/conformance/animation/ambient-idles.test.ts`, the seated player's case fails). Seen in
+there yet; `tests/conformance/animation/ambient-idles.test.ts`, the seated player's case is marked it.fails). Seen in
 the headless simulation (the Bannered Mare at 20:00, 60 s): Hulda wiped the counter (IdleBarCounterWipe),
 Lucia put a hand on her hip (IdleHDRight), Saadia and Sinmir took MotionDrivenIdle (armed:
 IdleIfEquipped).
