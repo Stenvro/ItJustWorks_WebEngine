@@ -1252,8 +1252,12 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
   a friend; frenzied (Aggression 3), a crime against the player (a faction that made them its
   enemy, SetPlayerEnemy; guards to attack them) or a relationship of enemy or worse: hostile;
   else a friend (a friend combat reaction, a relationship of friend or better), an ally (an
-  ally reaction, a shared faction without Special Combat), hostile (an enemy reaction), or
-  neutral. The combat reactions are the factions' XNAM, as scripts set them (SetAlly,
+  ally reaction), hostile (an enemy reaction), an ally (a shared faction without Special
+  Combat), or neutral: a shared faction weighs less than a named enmity, and where the actor's
+  factions name none of the other's, the other's towards the actor's count (both inferred:
+  Sovngarde's heroes and Alduin share FavorExcludedFaction, only MQ304AlduinFaction names
+  MQAncientHeroFaction, an enemy, and MQ305 has them fight). The combat reactions are the
+  factions' XNAM, as scripts set them (SetAlly,
   SetEnemy). `attacksOnSight(aggression, reaction)`: aggressive actors attack enemies, very
   aggressive neutrals too, frenzied anyone. TODO(M13): the engine's precedence.
 - Relationships (RELA) and their association types (ASTP: HasAssociationType,

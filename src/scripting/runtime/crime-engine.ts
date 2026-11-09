@@ -1570,6 +1570,19 @@ export class CrimeEngine {
         if (value !== undefined) factionReactions.push(value);
       }
     }
+    // Where the actor's factions name none of the other's, the other's towards the actor's
+    // count (src/ai/combat-reactions.ts, inferred: TODO(M13)). MQAncientHeroFaction names only
+    // itself; MQ304AlduinFaction names it an enemy, and Sovngarde's heroes fight Alduin.
+    if (factionReactions.length === 0) {
+      for (const [otherFaction, otherRank] of theirs) {
+        if (otherRank < 0) continue;
+        for (const [faction, rank] of mine) {
+          if (rank < 0) continue;
+          const value = await actors.factionReaction(otherFaction, faction);
+          if (value !== undefined) factionReactions.push(value);
+        }
+      }
+    }
     const aggression = (await actors.value(actor, ActorValue.aggression)).current;
     return regard({
       factionReactions,
