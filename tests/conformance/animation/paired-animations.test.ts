@@ -263,14 +263,20 @@ describe.skipIf(!hasGamedata())('a pair’s end (headless simulation)', () => {
     sim.world.stage.combat.paired(HULDA),
   ];
 
-  it('pairedStop (PairedStopHandler) ends the pair for both actors  [original, inferred]', () => {
+  it('pairedStop (PairedStopHandler) ends the pair of the side that raised it only  [data, inferred]', () => {
     sim.world.stage.combat.pairIdle(PLAYER_REF, HULDA, 'pa_PairedTest');
     expect(paired()).toEqual([true, true]);
-    // The leader's clip raises it at its end (NPCpairedStop: the first side's own event).
+    // A dying creature's side raises its own 2_pairedStop well before its killer's side raises
+    // NPCpairedStop (the hagraven's Paired_2HMKillMoveHagravenA: 1.13 s against 3.66 s): the
+    // killer, the player here, stays in its pair until its own clip says so.
+    raise(HULDA, [pairedEvent('2_pairedStop', 'pairedStop')]);
+    expect(paired()).toEqual([true, false]);
     raise(PLAYER_REF, [pairedEvent('NPCpairedStop', 'pairedStop')]);
     expect(paired()).toEqual([false, false]);
-    // From the other side the same.
+    // The first side's pairedStop leaves the second in its pair just the same.
     sim.world.stage.combat.pairIdle(PLAYER_REF, HULDA, 'pa_PairedTest');
+    raise(PLAYER_REF, [pairedEvent('NPCpairedStop', 'pairedStop')]);
+    expect(paired()).toEqual([false, true]);
     raise(HULDA, [pairedEvent('2_pairedStop', 'pairedStop')]);
     expect(paired()).toEqual([false, false]);
   });
@@ -284,26 +290,30 @@ describe.skipIf(!hasGamedata())('a pair’s end (headless simulation)', () => {
     // before its end; no other vanilla clip raises VampireFeedEnd).
     raise(PLAYER_REF, [pairedEvent('NPCVampireFeedEnd', 'VampireFeedEnd')]);
     expect(feeding()).toBe(false);
+    // Each side's clip ends its own pair: the feeder's NPCpairedStop at 2.50 s, the victim's
+    // 2_PairEnd at 2.50 s (Paired_VampFeedFront).
     raise(PLAYER_REF, [pairedEvent('NPCpairedStop', 'pairedStop')]);
+    expect(paired()).toEqual([false, true]);
+    raise(HULDA, [pairedEvent('2_PairEnd', 'PairEnd')]);
     expect(paired()).toEqual([false, false]);
   });
 
-  it('a pair kept by a save keeps its partners: pairedStop ends both after a load  [M12, inferred]', () => {
-    // Not a killmove (no killer to find the partner by): a paired idle, as a feeding is.
+  it('a pair kept by a save comes back paired; each side’s pairedStop ends its own  [M12, inferred]', () => {
+    // Not a killmove: a paired idle, as a feeding is.
     const combat = sim.world.stage.combat;
     combat.pairIdle(PLAYER_REF, HULDA, 'pa_PairedTest');
     const player = combat.saveDown(PLAYER_REF);
     const hulda = combat.saveDown(HULDA);
-    expect(player?.paired?.partner).toBe(HULDA);
-    expect(hulda?.paired?.partner).toBe(PLAYER_REF);
     raise(PLAYER_REF, [pairedEvent('NPCpairedStop', 'pairedStop')]);
+    raise(HULDA, [pairedEvent('2_pairedStop', 'pairedStop')]);
     expect(paired()).toEqual([false, false]);
     // Put back as a loaded save puts them back, the second first.
     if (hulda) combat.restoreDown(HULDA, hulda);
     if (player) combat.restoreDown(PLAYER_REF, player);
     expect(paired()).toEqual([true, true]);
-    expect(combat.partnerOf(HULDA)).toBe(PLAYER_REF);
     raise(HULDA, [pairedEvent('2_pairedStop', 'pairedStop')]);
+    expect(paired()).toEqual([true, false]);
+    raise(PLAYER_REF, [pairedEvent('NPCpairedStop', 'pairedStop')]);
     expect(paired()).toEqual([false, false]);
   });
 

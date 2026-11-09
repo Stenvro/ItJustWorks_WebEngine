@@ -453,9 +453,7 @@ tests/graph-save-events.int.test.ts "blends on from a transition caught mid-blen
 Bleedout and paired animations (`SavedActor.down`, `SavedPlayer.down`: `SavedDown`,
 ActorCombat.saveDown): the seconds an actor has been bleeding out (it goes on bleeding out,
 regaining, and gets up as before; its graph is in its bleedout already), its side of a paired
-animation, whether it is a killmove, the seconds in it, a victim's killer and its partner
-(`partner`: any pair, a feeding or a paired idle too, so pairedStop ends a loaded pair for both;
-a save without it derives a killmove's partners from the killer); the deferred kills
+animation, whether it is a killmove, the seconds in it and a victim's killer; the deferred kills
 under way are kept by the actors' engine (`RuntimeSave.engines.deferredKills`). A killmove caught
 in a save plays on to its end, which kills its victim by its killer: neither partner is left
 half-way (before, the victim's deferral and the pair were lost, and it stood with no health,

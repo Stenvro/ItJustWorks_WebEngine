@@ -308,7 +308,8 @@ what fills it was not found).
 - [x] Lip sync (.lip, .fuz) with the dialogue.
 - [x] Paired animations: the support's mark, its side to the clip's end, death limp.
 - [x] Paired animations: events routed per side by their prefix ("2_", "NPC"; the other side's
-      not heard from it); pairedStop ends the pair for both, also after a load (inferred;
+      not heard from it); pairedStop ends only the pair of the side that raised it, the other
+      side's by its own pairedStop or as its graph leaves the clip (inferred;
       tests/conformance/animation/paired-animations.test.ts).
 - [ ] Paired animations: a vampire feeding pair ends the feeding procedures. TODO(M11): our AI
       runs no feeding procedure; VampireFeedEnd ends the feeder's GetVampireFeed (inferred).

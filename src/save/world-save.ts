@@ -89,7 +89,7 @@ export interface SavedTrip {
 /**
  * An actor's bleedout and paired animation as a save keeps them (ActorCombat.saveDown): the
  * seconds it has been bleeding out; its side of a pair, whether it is a killmove, the seconds
- * in it, a victim's killer and the other actor of the pair (any pair: a feeding, a paired idle).
+ * in it and a victim's killer.
  */
 export interface SavedDown {
   readonly bleedout?: number | undefined;
@@ -99,7 +99,6 @@ export interface SavedDown {
         readonly killMove: boolean;
         readonly seconds: number;
         readonly killer?: number | undefined;
-        readonly partner?: number | undefined;
       }
     | undefined;
 }
