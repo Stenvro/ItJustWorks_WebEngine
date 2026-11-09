@@ -6,7 +6,7 @@
 // adds up per candidate), docs/ai.md (Combat detection: the group's target knowledge, stealth
 // points).
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   COMBAT_AI_DEFAULTS,
   fixedTarget,
@@ -18,6 +18,8 @@ import {
   targetScore,
   type TargetCandidate,
 } from '../../../src/ai/combat-ai.ts';
+import { ObjectHandle } from '../../../src/scripting/values.ts';
+import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 import { ENGINE } from './settings.ts';
 
 const settings = COMBAT_AI_DEFAULTS;
@@ -137,5 +139,52 @@ describe('target selection', () => {
     // Gone (dead, given up by its side): the standard selector chooses again.
     expect(fixedTarget([near], 2)).toBeUndefined();
     expect(fixedTarget([near, far], undefined)).toBeUndefined();
+  });
+});
+
+// Only a script's StartCombat (Papyrus) puts the Fixed selector on its target; the engine's own
+// fights (a summons taking up its commander's, guards answering a crime, a follower's attack
+// command, a package's) choose by the standard selector. A save keeps the fixed target with the
+// fight. Two bandits in the Bannered Mare, its patrons gone.
+
+const BANNERED_MARE = 0x1605e;
+
+describe.skipIf(!hasGamedata())('the Fixed selector is a script’s (headless simulation)', () => {
+  let sim: Sim;
+  let engines = 0;
+  let scripts = 0;
+
+  beforeAll(async () => {
+    sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
+    await sim.step(1);
+    for (const actor of sim.actors()) {
+      if (actor.reference !== PLAYER_REF) await sim.kill(actor.reference);
+    }
+    const bandit = await sim.formId('NPC_', 'EncBandit01Melee1HTankNordM');
+    engines = await sim.place(bandit, PLAYER_REF);
+    scripts = await sim.place(bandit, PLAYER_REF);
+    await sim.step(0.5);
+    sim.world.stage.combat.startCombat(engines, PLAYER_REF);
+    await sim.native(new ObjectHandle(scripts, 'actor'), 'Actor', 'StartCombat', [
+      new ObjectHandle(PLAYER_REF, 'actor'),
+    ]);
+    await sim.step(0.5);
+  }, 600_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it('a script’s StartCombat keeps its target, an engine’s fight does not  [CK StartCombat] (inferred)', () => {
+    const combat = sim.world.stage.combat;
+    expect(combat.targetOf(scripts)).toBe(PLAYER_REF);
+    expect(combat.targetOf(engines)).toBe(PLAYER_REF);
+    expect(combat.saveFight(scripts)?.fixed).toBe(PLAYER_REF);
+    expect(combat.saveFight(engines)?.fixed).toBeUndefined();
+  });
+
+  it('a save’s fight keeps its fixed target', () => {
+    const combat = sim.world.stage.combat;
+    combat.resumeFight(engines, { fixed: PLAYER_REF });
+    expect(combat.saveFight(engines)?.fixed).toBe(PLAYER_REF);
   });
 });

@@ -439,7 +439,7 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     if (target === undefined || target === actor) return;
     const state = runtime.state.actor(actor);
     state.combatTargets = [...new Set([...(state.combatTargets ?? []), target])];
-    world.startCombat?.(actor, target);
+    world.startCombat?.(actor, target, { fixed: true });
   });
   act('stopcombat', (actor) => {
     delete runtime.state.actor(actor).combatTargets;

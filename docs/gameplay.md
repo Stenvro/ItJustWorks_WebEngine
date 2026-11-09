@@ -1036,8 +1036,10 @@ nothing but killmoves (the plain power attacks under it are the player's: GetIsI
 NPC's other power attacks are its attack data's. An NPC in melee goes for its kill move (the
 action ActionRightPowerAttack, its tree as above) before its attack data when its strike would
 kill its target (ShouldAttackKill) and the target is the last its combat group fights, as the
-player's need the last hostile actor; the tree giving none, it attacks as ever
-(combat-tactics.ts `killMoveFirst`; inferred, TODO(M13): the original's rule for an NPC was not
+player's need the last hostile actor; only a paired idle its target takes counts (the action's
+plain power attack, a creature's attack data or a plain attack for want of stamina do not:
+actor-combat.ts `killMove`), and the tree giving none, it attacks as ever, its melee node's own
+choice (combat-tactics.ts `killMoveFirst`; inferred, TODO(M13): the original's rule for an NPC was not
 found; UESP has kill moves on the last enemy of a fight).
 
 **ShouldAttackKill(actor)** (its parameter left empty: the target): the attacker's predicted hit

@@ -4,13 +4,15 @@
 // fKillCamBaseOdds 0.1, fKillCamLevelBias 0.01, …LevelMaxBias 0.1, …LevelFactor 0.5); the
 // ranged kill camera's odds, observed in the original ([VATS] fVATSRanged*: docs/gameplay.md).
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { killMoveFirst } from '../../../src/ai/combat-tactics.ts';
 import { COMBAT_DEFAULTS } from '../../../src/gameplay/combat/combat-settings.ts';
 import {
   rangedKillCameraChance,
   spellPredictedKill,
 } from '../../../src/gameplay/combat/ranged-kill-camera.ts';
+import { ActorValue } from '../../../src/world/actor-values.ts';
+import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 import { ENGINE } from './settings.ts';
 
 const vats = {
@@ -63,3 +65,69 @@ describe('kill moves', () => {
     expect(rangedKillCameraChance({ ...shot, distance: 2000 }, vats)).toBe(100);
   });
 });
+
+// An NPC's kill move is a paired idle only (actor-combat.ts killMove): its Special Attack's action
+// gives a creature its power attack and a fighter without stamina its plain attack, and neither
+// counts as one, so its attack goes on as ever (its melee node's own choice). A wolf and a
+// bandit in the Bannered Mare, its patrons gone.
+
+const BANNERED_MARE = 0x1605e;
+
+describe.skipIf(!hasGamedata())(
+  'an NPC’s kill move is a paired idle only (headless simulation)',
+  () => {
+    let sim: Sim;
+
+    beforeAll(async () => {
+      sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
+      await sim.step(1);
+      for (const actor of sim.actors()) {
+        if (actor.reference !== PLAYER_REF) await sim.kill(actor.reference);
+      }
+    }, 600_000);
+    afterAll(async () => {
+      await sim.close();
+    });
+
+    /** Steps until the actor could attack: its kill move asked, then the action's own attack. */
+    const askBoth = async (
+      actor: number,
+      before?: () => Promise<void>,
+    ): Promise<{ killMove: boolean; attack: boolean }> => {
+      const combat = sim.world.stage.combat;
+      combat.startCombat(actor, PLAYER_REF);
+      for (let t = 0; t < 10; t += 0.1) {
+        await sim.step(0.1);
+        await before?.();
+        const killMove = await combat.killMove(actor);
+        // Asked at once after, in the same frame: the action's own attack.
+        const attack = await combat.attack(actor, 'ActionRightPowerAttack');
+        if (attack || killMove) return { killMove, attack };
+      }
+      return { killMove: false, attack: false };
+    };
+
+    it('a wolf’s power attack is no kill move', async () => {
+      const wolf = await sim.place(await sim.formId('NPC_', 'EncWolf'), PLAYER_REF);
+      const asked = await askBoth(wolf);
+      expect(asked.attack).toBe(true);
+      expect(asked.killMove).toBe(false);
+      await sim.kill(wolf);
+    }, 600_000);
+
+    it('a bandit without stamina makes no kill move of its plain attack', async () => {
+      const bandit = await sim.place(
+        await sim.formId('NPC_', 'EncBandit01Melee1HTankNordM'),
+        PLAYER_REF,
+      );
+      const asked = await askBoth(bandit, async () => {
+        const stamina = await sim.runtime.actors.value(bandit, ActorValue.stamina);
+        if (stamina.current > 0) {
+          await sim.runtime.actors.damage(bandit, ActorValue.stamina, stamina.current);
+        }
+      });
+      expect(asked.attack).toBe(true);
+      expect(asked.killMove).toBe(false);
+    }, 600_000);
+  },
+);

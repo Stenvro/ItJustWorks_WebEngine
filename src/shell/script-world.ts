@@ -271,7 +271,8 @@ export interface CombatBridge {
   attackKills(attacker: number, target: number): Promise<boolean> | undefined;
   /** IsLastHostileActor (undefined: it plays no part of the player's fights). */
   lastHostileActor(actor: number): boolean | undefined;
-  startCombat(actor: number, target: number): void;
+  /** `fixed`: a script's StartCombat, whose target the actor keeps (the Fixed selector). */
+  startCombat(actor: number, target: number, options?: { readonly fixed?: boolean }): void;
   stopCombat(actor: number): void;
   /** Whether an actor fights or holds another an enemy (src/shell/actor-combat-ai.ts). */
   hostile(actor: number, other: number): boolean;
@@ -992,8 +993,8 @@ export class ScriptWorld implements WorldBridge {
     return true;
   }
 
-  startCombat(actor: number, target: number): void {
-    for (const fights of this.#fights()) fights.startCombat(actor, target);
+  startCombat(actor: number, target: number, options?: { readonly fixed?: boolean }): void {
+    for (const fights of this.#fights()) fights.startCombat(actor, target, options);
   }
 
   stopCombat(actor: number): void {

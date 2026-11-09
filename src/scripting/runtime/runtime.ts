@@ -331,7 +331,11 @@ export interface WorldBridge {
    * reference; resolves with whether it got there. Undefined: not one the world moves.
    */
   pathTo?(actor: number, target: number, walkRun: number): Promise<boolean> | undefined;
-  startCombat?(actor: number, target: number): void;
+  /**
+   * An actor fights a target. `fixed`: a script's StartCombat (Papyrus), whose target the actor
+   * keeps whatever the scores (the Fixed target selector); the engine's own fights choose freely.
+   */
+  startCombat?(actor: number, target: number, options?: { readonly fixed?: boolean }): void;
   stopCombat?(actor: number): void;
   /** An actor's combat state now (src/shell/actor-combat.ts), if it is loaded. */
   combat?(actor: number): ActorCombatState | undefined;

@@ -280,6 +280,20 @@ export interface CombatAiHost {
   threats(): Iterable<Threat>;
   /** ShouldAttackKill: whether an attacker's next strike would kill a target (undefined: unknown). */
   attackKills?(attacker: number, target: number): Promise<boolean> | undefined;
+  /**
+   * Its kill move on its target: its Special Attack's action, counted only when the idle tree
+   * gives a paired idle its target takes (no plain or creature attack stands for one); whether
+   * one began.
+   */
+  killMove?(reference: number): Promise<boolean>;
+}
+
+/** How a fight is started (ActorCombatAi.startCombat). */
+export interface StartCombatOptions {
+  /** A loaded save's fight keeps the confidence modifier it drew. */
+  readonly modifier?: number | undefined;
+  /** A script's StartCombat: the actor keeps its target (the Fixed selector). */
+  readonly fixed?: boolean | undefined;
 }
 
 /** One of the casts or potions an actor in combat uses for itself (combat-tactics chooseSupport). */
@@ -811,12 +825,18 @@ export class ActorCombatAi {
     );
   }
 
-  /** StartCombat: the actor fights the target (whatever its reaction). */
-  startCombat(actor: number, target: number, modifier?: number): void {
+  /**
+   * StartCombat: the actor fights the target (whatever its reaction). Only a script's (`fixed`:
+   * Papyrus StartCombat) puts the Fixed selector on its target (combat-ai.ts fixedTarget); the
+   * engine's own fights (a summons taking up its commander's, guards answering a crime, a
+   * follower's attack command, a package's, a save's) choose by the standard selector.
+   */
+  startCombat(actor: number, target: number, options: StartCombatOptions = {}): void {
     if (actor === target || actor === PLAYER_REF) return;
+    const { modifier, fixed = false } = options;
     const mind = this.#mind(actor);
     mind.enemies.add(target);
-    mind.fixedTarget = target;
+    if (fixed) mind.fixedTarget = target;
     mind.next = 0;
     if (mind.mode !== 'idle') this.#setTarget(mind, target);
     else if (this.#options.host.fighter(actor)) this.#enter(mind, target, false);
@@ -1928,8 +1948,13 @@ export class ActorCombatAi {
     if (!mind || mind.mode === 'idle' || mind.target === undefined) return undefined;
     const known = this.#groups.saveTarget(reference, mind.target, this.#clock);
     const search = mind.mode === 'search' ? mind.search?.save() : undefined;
-    if (!known && !search) return undefined;
-    return { ...(known && { known }), ...(search && { search }) };
+    const fixed = mind.fixedTarget;
+    if (!known && !search && fixed === undefined) return undefined;
+    return {
+      ...(known && { known }),
+      ...(search && { search }),
+      ...(fixed !== undefined && { fixed }),
+    };
   }
 
   /**
@@ -1941,6 +1966,8 @@ export class ActorCombatAi {
     const mind = this.#minds.get(reference);
     const target = mind?.target;
     if (!mind || mind.mode === 'idle' || target === undefined) return;
+    // A script's target it keeps (the Fixed selector, as the save had it).
+    if (saved.fixed !== undefined) mind.fixedTarget = saved.fixed;
     if (saved.known) this.#groups.restoreTarget(reference, target, saved.known, this.#clock);
     if (!saved.search || !this.#groups.searching(reference)) return;
     const movers = this.#options.movers;
@@ -3044,17 +3071,19 @@ export class ActorCombatAi {
 
   /**
    * Its kill move, if it goes for one (combat-tactics.ts killMoveFirst): its Special Attack's
-   * action, whose idle tree picks the kill move; whether its graph took one.
+   * action, whose idle tree picks the kill move; whether a paired one began (the host's
+   * killMove: anything else the action gives is no kill move, and its attack goes as ever).
    */
   async #killMove(f: CombatFrame): Promise<boolean> {
+    const host = this.#options.host;
     const reference = f.mind.reference;
     const target = f.target.reference;
     const groupTargets = this.#groups.groupOf(reference)?.targets.size ?? 1;
-    if (groupTargets > 1 || !this.#inReach(f, false)) return false;
-    const asked = this.#options.host.attackKills?.(reference, target);
+    if (!host.killMove || groupTargets > 1 || !this.#inReach(f, false)) return false;
+    const asked = host.attackKills?.(reference, target);
     const kills = asked !== undefined && (await asked.catch(() => false));
     if (!killMoveFirst({ kills, groupTargets })) return false;
-    return this.#options.host.attack(reference, 'ActionRightPowerAttack');
+    return host.killMove(reference);
   }
 
   /** How fast its target backs off from it (units per second; sampled while it blocks). */

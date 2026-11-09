@@ -3079,7 +3079,10 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   StartCombat puts a fixed one for its target on top, and while that target is one of its
   candidates it is kept whatever the scores; while it is not (not yet known, given up by its
   group) the standard selector chooses, and once it is dead or gone the fixed one goes
-  (`fixedTarget`; inferred, TODO(M13)).
+  (`fixedTarget`; inferred, TODO(M13)). Only Papyrus StartCombat puts it there: the engine's own
+  fights (a summons taking up its commander's, guards answering a crime, a follower's attack
+  command, a package's, the horse's target lock) choose by the standard one. A save keeps the
+  fixed target with the fight (SavedFight.fixed).
 - **Targets** (`selectTarget`, observed in the original: the standard selector): among those
   its group knows and has not lost, and its current target if known, the highest sum wins; a
   group's sole target needs none; with none known, the one known most recently. The sum: its own
@@ -3215,7 +3218,8 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   it has been beyond fFleeDoneDistanceExterior (2500; inside fFleeDoneDistanceInterior, 600) of
   what it flees for fFleeIsSafeTimer (30 s), running off again whenever it comes nearer
   (procedure-runs.ts `fleeSafe`: the settings are read there in the original, not by the combat
-  tree; the count is inferred).
+  tree; the count is inferred). With what it flees in another cell or worldspace (through a load
+  door) it is safe at once: two spaces' places are no distance apart.
 - **Searching** (`CombatSearch`): once its group has lost all its targets
   ([Combat detection](#combat-detection)) it searches (CombatToLost; GetCombatState 2): it runs
   to where the group last knew its target to be (within

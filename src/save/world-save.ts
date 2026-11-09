@@ -113,6 +113,8 @@ export interface SavedDown {
 export interface SavedFight {
   readonly known?: SavedGroupTarget | undefined;
   readonly search?: SavedCombatSearch | undefined;
+  /** A script's target it keeps (StartCombat: its Fixed target selector), if one. */
+  readonly fixed?: number | undefined;
 }
 
 /** An actor's graph as a save keeps it (older saves: the placed objects' form). */
