@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   NavmeshFlag,
   NavmeshLinkType,
+  navmeshTriangle,
   type Navmesh,
   type NavmeshTriangle,
 } from '../world/navmesh.ts';
@@ -13,6 +14,7 @@ import {
   obstacleCut,
   obstaclesTouch,
 } from './navmesh-obstacles.ts';
+import { islandOf } from './navmesh-islands.ts';
 import { PathFollower } from './path-follower.ts';
 import {
   findPath,
@@ -108,6 +110,18 @@ function setOf(meshes: readonly Navmesh[]): NavmeshSet {
   };
 }
 
+/** A search over frames run to its end at once (it makes the start's island, findPath does not). */
+function searched(
+  set: NavmeshSet,
+  from: Point,
+  to: Point,
+  options: Parameters<typeof findPath>[3],
+): ReturnType<typeof findPath> {
+  const search = new PathSearch(set, from, to, options);
+  search.run(Infinity);
+  return search.result;
+}
+
 // An L: three squares east, then two north from the last.
 const L_SQUARES: [number, number][] = [
   [0, 0],
@@ -177,8 +191,9 @@ describe('findPath', () => {
     // set (a cell loaded as the player went on), the island is made again and reaches it.
     const loaded: Navmesh[] = [linked];
     const set = setOf(loaded);
-    expect(findPath(set, [50, 20, 0], [150, 80, 0], { radius: 5 })?.complete).toBe(false);
+    expect(searched(set, [50, 20, 0], [150, 80, 0], { radius: 5 })?.complete).toBe(false);
     loaded.push(east);
+    expect(searched(set, [50, 20, 0], [150, 80, 0], { radius: 5 })?.complete).toBe(true);
     expect(findPath(set, [50, 20, 0], [150, 80, 0], { radius: 5 })?.complete).toBe(true);
   });
 
@@ -747,10 +762,14 @@ describe('PathSearch', () => {
     for (let x = 40; x < 45; x++) for (let y = 10; y < 15; y++) other.push([x, y]);
     const set = setOf([gridMesh(1, squares), gridMesh(2, other)]);
     const from: Point = [250, 250, 0];
+    const goal: Point = [4250, 1250, 0];
     pathSearchStats.trace = [];
-    const across = findPath(set, from, [4250, 1250, 0], { radius: 10 });
+    // findPath searches at once and makes no island (its flood is past any search's limit): the
+    // island not made yet, it searches all of it for the goal, as a search did before islands.
+    findPath(set, from, goal, { radius: 10 });
+    expect(pathSearchStats.trace.at(-1)?.nodes).toBeGreaterThan(1500);
+    const across = searched(set, from, goal, { radius: 10 });
     const nodes = pathSearchStats.trace.at(-1)?.nodes ?? Infinity;
-    pathSearchStats.trace = undefined;
     // Not complete; it ends on the field's east edge across from the goal.
     expect(across?.complete).toBe(false);
     const end = across?.points.at(-1) ?? [0, 0, 0];
@@ -758,8 +777,12 @@ describe('PathSearch', () => {
     expect(end[1]).toBeCloseTo(1250, 0);
     // The nodes of the way there (the island searched whole took all 1,800).
     expect(nodes).toBeLessThan(900);
+    // The island made, findPath goes by it too.
+    expect(findPath(set, from, goal, { radius: 10 })).toEqual(across);
+    expect(pathSearchStats.trace.at(-1)?.nodes).toBe(nodes);
+    pathSearchStats.trace = undefined;
     // A goal off every navmesh (north of the field): the field's point nearest it.
-    const off = findPath(set, from, [1550, 5000, 0], { radius: 10 });
+    const off = searched(set, from, [1550, 5000, 0], { radius: 10 });
     expect(off?.complete).toBe(false);
     expect(off?.points.at(-1)?.[0]).toBeCloseTo(1550, 0);
     expect(off?.points.at(-1)?.[1]).toBeCloseTo(3000, 0);
@@ -773,21 +796,101 @@ describe('PathSearch', () => {
   it('takes exactly the nodes it is given, a share of one node at a time', () => {
     const squares: [number, number][] = [];
     for (let x = 0; x < 10; x++) for (let y = 0; y < 10; y++) squares.push([x, y]);
-    const set = setOf([gridMesh(1, squares)]);
+    const mesh = gridMesh(1, squares);
     const from: Point = [50, 50, 0];
     const to: Point = [5000, 50, 0];
-    pathSearchStats.trace = [];
-    const whole = findPath(set, from, to, { radius: 10 });
-    const nodes = pathSearchStats.trace.at(-1)?.nodes ?? 0;
-    pathSearchStats.trace = undefined;
-    const search = new PathSearch(set, from, to, { radius: 10 });
+    // Each on a set of its own: neither finds the island the other made.
+    const before = pathSearchStats.taken;
+    const whole = searched(setOf([mesh]), from, to, { radius: 10 });
+    const nodes = pathSearchStats.taken - before;
+    const search = new PathSearch(setOf([mesh]), from, to, { radius: 10 });
     let shares = 0;
     while (!search.done) {
       expect(search.run(1)).toBeLessThanOrEqual(1);
       shares++;
     }
+    // The island made (200 triangles flooded) and its nearest point found are counted too.
+    expect(nodes).toBeGreaterThan(200);
     expect(search.taken).toBe(nodes);
     expect(shares).toBeGreaterThanOrEqual(nodes);
     expect(search.result).toEqual(whole);
+  });
+
+  it('makes the island and finds its nearest point within its shares, once for one goal', () => {
+    // A 50 by 50 field (5,000 triangles) and a goal off it, above and beyond its north edge.
+    const squares: [number, number][] = [];
+    for (let x = 0; x < 50; x++) for (let y = 0; y < 50; y++) squares.push([x, y]);
+    const set = setOf([gridMesh(1, squares)]);
+    const from: Point = [50, 50, 0];
+    const to: Point = [3550, 9000, 1200];
+    const first = new PathSearch(set, from, to, { radius: 10 });
+    let shares = 0;
+    while (!first.done) {
+      // The flood of 5,000 triangles never in one share: a frame's budget stays a cap.
+      expect(first.run(500)).toBeLessThanOrEqual(500);
+      shares++;
+    }
+    expect(first.taken).toBeGreaterThan(5000);
+    expect(shares).toBeGreaterThan(9);
+    expect(first.result?.points.at(-1)?.[0]).toBeCloseTo(3550, 0);
+    expect(first.result?.points.at(-1)?.[1]).toBeCloseTo(5000, 0);
+    // The island made, a search to the same goal from by where the first ended floods nothing and
+    // looks nothing up again (the nearest point kept): it takes only the few nodes of its way.
+    const again = new PathSearch(set, [3550, 4950, 0], to, { radius: 10 });
+    again.run(Infinity);
+    expect(again.done).toBe(true);
+    expect(again.taken).toBeLessThan(20);
+    // Another goal near it: a few grid squares looked at, not the island's 5,000 triangles.
+    const other = new PathSearch(set, [3550, 4950, 0], [3700, 5400, 300], { radius: 10 });
+    other.run(Infinity);
+    expect(other.taken).toBeLessThan(200);
+  });
+
+  it("finds the island's point nearest a goal as a look at every triangle does", () => {
+    // A field whose east half rises (a hill): points around, above, below and far off it.
+    const squares: [number, number][] = [];
+    for (let x = 0; x < 20; x++) for (let y = 0; y < 12; y++) squares.push([x, y]);
+    const mesh = gridMesh(1, squares);
+    // The east half slopes up 40 units a square (a 3D nearest point is not the 2D one).
+    for (let v = 0; v < mesh.vertices.length; v += 3) {
+      const x = mesh.vertices[v] ?? 0;
+      if (x > 1000) mesh.vertices[v + 2] = ((x - 1000) / 100) * 40;
+    }
+    const set = setOf([mesh]);
+    const start = set.locate([50, 50, 0]);
+    if (!start) throw new Error('no start');
+    const island = islandOf(set, start.navmesh, start.triangle);
+    let seed = 7;
+    const random = (): number => {
+      seed = (seed * 16807) % 2147483647;
+      return seed / 2147483647;
+    };
+    for (let i = 0; i < 120; i++) {
+      const point: Point = [random() * 6000 - 2000, random() * 4000 - 1500, random() * 3000 - 500];
+      const near = island.nearest(point);
+      let best = Infinity;
+      for (let t = 0; t < mesh.triangles.length; t++) {
+        const [a, b, c] = navmeshTriangle(mesh, t);
+        // The nearest of many points on the triangle (a fine sampling) bounds the true nearest.
+        for (let u = 0; u <= 10; u++) {
+          for (let w = 0; w <= 10 - u; w++) {
+            const k = 1 - u / 10 - w / 10;
+            const q = [0, 1, 2].map(
+              (j) => (a[j] ?? 0) * k + (b[j] ?? 0) * (u / 10) + (c[j] ?? 0) * (w / 10),
+            );
+            const d = Math.hypot(
+              (q[0] ?? 0) - point[0],
+              (q[1] ?? 0) - point[1],
+              (q[2] ?? 0) - point[2],
+            );
+            if (d < best) best = d;
+          }
+        }
+      }
+      const got = Math.hypot(near.at[0] - point[0], near.at[1] - point[1], near.at[2] - point[2]);
+      // Never farther than the sampled nearest (and so the true one, within the sampling).
+      expect(got).toBeLessThanOrEqual(best + 1e-6);
+      expect(got).toBeGreaterThan(best - 8);
+    }
   });
 });

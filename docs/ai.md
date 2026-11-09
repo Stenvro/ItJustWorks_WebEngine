@@ -170,10 +170,22 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   10–25 ms: the soldiers going for Alduin on the tower, whose top is a navmesh of its own,
   searched again each time he moved 192 units; now 20–80 nodes, to the tower's foot). Inferred:
   the original's pathing ends a way it cannot complete where it gets nearest; TODO(M13): how it
-  picks that point.
+  picks that point. Both are work of the search and are counted as its nodes (below): making an
+  island is a flood of its triangles (one node each; 9,000–12,000 round Helgen, a loaded exterior
+  grid up to ~50,000), done again once one of its navmeshes is unloaded or replaced or a navmesh
+  it links into loads (a cell streamed in), and a search begun on a triangle it has reached while
+  it is made goes on making it; it keeps its triangles in a grid of 256-unit squares as it goes.
+  The nearest point looks at the grid's squares outward from the goal's (each square and each
+  triangle tested a node; about 100 for a goal 1,500 units above or beside the island), and the
+  island keeps the last 16 it found by goal, so the soldiers chasing one dragon find it once. Only
+  a search over frames (`PathSearch`: the travels') makes an island; one searched at once
+  (`findPath`: a wander point's check, a step aside, the Clairvoyance trail) goes by an island
+  already made and otherwise searches within its own limit as before.
 - **Searches over frames** (`PathSearch`, `ActorMovers`): the searches of the actors' travels,
-  moved actors' and walkers' together, take at most 2,000 nodes of a frame (about 2 ms; a search
-  gives way before the node past its share, and counts every node it took); most end within a
+  moved actors' and walkers' together, take at most 2,000 nodes of a frame (about 2 ms at most; a
+  search gives way before the node past its share, and counts every node it took, the island's
+  flooded triangles and the nearest point's squares and triangles among them: those cost less
+  than a search node, 0.2–0.6 µs each against about 1 µs); most end within a
   few dozen and give their path in the frame they began. A long one goes on in the next frames,
   its actor going on as it went meanwhile (its last request kept). The frame's nodes go first to
   the searches going on from earlier frames, but they leave 512 of them to the searches' first

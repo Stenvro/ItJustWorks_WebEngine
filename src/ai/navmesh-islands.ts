@@ -3,6 +3,10 @@
 // options (they only close more). A goal outside the island a search begins in cannot be
 // reached however long it searches; findPath goes to the island's point nearest the goal
 // instead of searching the whole island for it (src/ai/pathfinding.ts, docs/ai.md "Paths").
+//
+// Making an island and finding its nearest point are part of a search, so they take from its
+// share like its nodes (a triangle flooded, a grid cell or triangle looked at: one each) and give
+// way when it is spent: a search over frames never takes more than a frame gives it.
 
 import {
   NavmeshFlag,
@@ -19,10 +23,53 @@ export interface NavmeshLookup {
   navmesh(formId: number): Navmesh | undefined;
 }
 
+/** What a search may take: it gives way once it has taken `allowance` (`taken`, counted). */
+export interface IslandShare {
+  allowance: number;
+  taken: number;
+}
+
+/** A point of an island, and the triangle it lies in. */
+export interface IslandPoint {
+  readonly at: Vec3;
+  readonly navmesh: Navmesh;
+  readonly triangle: number;
+}
+
+/** A nearest point being looked for: the best so far, the triangles looked at. */
+interface NearestQuery {
+  readonly point: Vec3;
+  readonly share: IslandShare;
+  readonly looked: Set<number>;
+  best: IslandPoint | undefined;
+  bestD: number;
+}
+
+/** A square of an island's grid: the triangles whose bounds cover it, the heights they span. */
+interface GridSquare {
+  readonly ids: number[];
+  minZ: number;
+  maxZ: number;
+}
+
+/** The side of the island's grid squares (game units; an exterior cell is 4,096). */
+const GRID = 256;
+/**
+ * The grid's squares are keyed by x and y offset by this: 2,000,000 units either way (a
+ * worldspace is far smaller), the keys small integers (a map keyed by larger ones is far slower).
+ */
+const GRID_OFFSET = 1 << 13;
+/** Nearest points kept per island, for the goals asked most lately (several actors, one goal). */
+const NEAREST_KEPT = 16;
+
+const gridKey = (gx: number, gy: number): number =>
+  (gx + GRID_OFFSET) * 2 * GRID_OFFSET + (gy + GRID_OFFSET);
+
 /**
  * The triangles reached from one triangle over the edges and the links a search crosses (one
- * way: a ledge down is crossed, its foot need not lead back up). Kept while the navmeshes it was
- * made of are the loaded ones and none it led into but found unloaded has loaded since.
+ * way: a ledge down is crossed, its foot need not lead back up). Made a share at a time (`grow`)
+ * and kept while the navmeshes it was made of are the loaded ones and none it led into but found
+ * unloaded has loaded since.
  */
 export class NavmeshIsland {
   /** Each navmesh it reaches, by form id, and the triangles it reaches of it. */
@@ -32,26 +79,139 @@ export class NavmeshIsland {
   >();
   /** Navmeshes its links lead into that were not loaded as it was made. */
   readonly #missing = new Set<number>();
-  /** How many triangles it reaches. */
-  readonly size: number;
+  /** The triangles marked but not yet flooded from (each: its navmesh and index). */
+  readonly #openMesh: Navmesh[] = [];
+  readonly #openTriangle: number[] = [];
+  /**
+   * Its triangles by the grid squares their bounds cover (indices into the two lists below), and
+   * the heights they span in each.
+   */
+  readonly #grid = new Map<number, GridSquare>();
+  readonly #gridMesh: Navmesh[] = [];
+  readonly #gridTriangle: number[] = [];
+  /** The grid squares it covers, and the heights. */
+  #minX = Infinity;
+  #minY = Infinity;
+  #maxX = -Infinity;
+  #maxY = -Infinity;
+  #minZ = Infinity;
+  #maxZ = -Infinity;
+  /** The nearest points lately asked for, by the goal's coordinates. */
+  readonly #nearestKept = new Map<string, IslandPoint>();
+  readonly #set: NavmeshLookup;
+  readonly #slots: WeakMap<Navmesh, (NavmeshIsland | undefined)[]> | undefined;
+  /** How many triangles it reaches (so far, while it is being made). */
+  size = 0;
 
-  constructor(set: NavmeshLookup, navmesh: Navmesh, triangle: number) {
-    const open: [Navmesh, number][] = [[navmesh, triangle]];
-    let size = 0;
-    const mark = (into: Navmesh, index: number): boolean => {
+  /**
+   * `slots`: the triangles' islands of the set (each triangle it marks finds it there, so a
+   * search begun on one while it is being made goes on making it).
+   */
+  constructor(
+    set: NavmeshLookup,
+    navmesh: Navmesh,
+    triangle: number,
+    slots?: WeakMap<Navmesh, (NavmeshIsland | undefined)[]>,
+  ) {
+    this.#set = set;
+    this.#slots = slots;
+    this.#mark(navmesh, triangle);
+  }
+
+  /** Whether it is made whole (every triangle it reaches found). */
+  get complete(): boolean {
+    return this.#openMesh.length === 0;
+  }
+
+  /** The last navmesh marked in: its reached triangles and islands' slots. */
+  #lastMesh: Navmesh | undefined;
+  #lastTriangles: Uint8Array | undefined;
+  #lastSlots: (NavmeshIsland | undefined)[] | undefined;
+
+  #mark(into: Navmesh, index: number): void {
+    if (into !== this.#lastMesh) {
       let entry = this.#reached.get(into.formId);
       if (!entry) {
         entry = { navmesh: into, triangles: new Uint8Array(into.triangles.length) };
         this.#reached.set(into.formId, entry);
       }
-      if (entry.triangles[index] === 1) return false;
-      entry.triangles[index] = 1;
-      size++;
-      return true;
-    };
-    mark(navmesh, triangle);
-    for (let next = open.pop(); next; next = open.pop()) {
-      const [at, index] = next;
+      let own = this.#slots?.get(into);
+      if (this.#slots && !own) {
+        own = new Array<NavmeshIsland | undefined>(into.triangles.length).fill(undefined);
+        this.#slots.set(into, own);
+      }
+      this.#lastMesh = into;
+      this.#lastTriangles = entry.triangles;
+      this.#lastSlots = own;
+    }
+    const triangles = this.#lastTriangles;
+    if (!triangles || triangles[index] === 1) return;
+    triangles[index] = 1;
+    this.size++;
+    this.#openMesh.push(into);
+    this.#openTriangle.push(index);
+    if (this.#lastSlots) this.#lastSlots[index] = this;
+  }
+
+  /** Its grid: the triangle in each square its horizontal bounds cover. */
+  #index(navmesh: Navmesh, index: number): void {
+    const corners = navmesh.triangles[index]?.vertices;
+    if (!corners) return;
+    const v = navmesh.vertices;
+    const a = corners[0] * 3;
+    const b = corners[1] * 3;
+    const c = corners[2] * 3;
+    const ax = v[a] ?? 0;
+    const bx = v[b] ?? 0;
+    const cx = v[c] ?? 0;
+    const ay = v[a + 1] ?? 0;
+    const by = v[b + 1] ?? 0;
+    const cy = v[c + 1] ?? 0;
+    const az = v[a + 2] ?? 0;
+    const bz = v[b + 2] ?? 0;
+    const cz = v[c + 2] ?? 0;
+    const x0 = Math.floor(Math.min(ax, bx, cx) / GRID);
+    const x1 = Math.floor(Math.max(ax, bx, cx) / GRID);
+    const y0 = Math.floor(Math.min(ay, by, cy) / GRID);
+    const y1 = Math.floor(Math.max(ay, by, cy) / GRID);
+    const z0 = Math.min(az, bz, cz);
+    const z1 = Math.max(az, bz, cz);
+    const id = this.#gridMesh.length;
+    this.#gridMesh.push(navmesh);
+    this.#gridTriangle.push(index);
+    for (let gx = x0; gx <= x1; gx++) {
+      for (let gy = y0; gy <= y1; gy++) {
+        const key = gridKey(gx, gy);
+        const square = this.#grid.get(key);
+        if (square) {
+          square.ids.push(id);
+          if (z0 < square.minZ) square.minZ = z0;
+          if (z1 > square.maxZ) square.maxZ = z1;
+        } else this.#grid.set(key, { ids: [id], minZ: z0, maxZ: z1 });
+      }
+    }
+    if (x0 < this.#minX) this.#minX = x0;
+    if (x1 > this.#maxX) this.#maxX = x1;
+    if (y0 < this.#minY) this.#minY = y0;
+    if (y1 > this.#maxY) this.#maxY = y1;
+    if (z0 < this.#minZ) this.#minZ = z0;
+    if (z1 > this.#maxZ) this.#maxZ = z1;
+  }
+
+  /**
+   * Floods on from the triangles marked until it is whole or `share` is spent (each triangle
+   * flooded from takes one); whether it is whole.
+   */
+  grow(share: IslandShare): boolean {
+    const openMesh = this.#openMesh;
+    const openTriangle = this.#openTriangle;
+    while (openMesh.length > 0) {
+      if (share.taken >= share.allowance) return false;
+      share.taken++;
+      const at = openMesh.pop();
+      const index = openTriangle.pop();
+      if (!at || index === undefined) break;
+      this.#index(at, index);
       for (let edge = 0; edge < 3; edge++) {
         const across = triangleNeighbour(at, index, edge);
         if (across === undefined) continue;
@@ -66,7 +226,7 @@ export class NavmeshIsland {
           ) {
             continue;
           }
-          const loaded = set.navmesh(across.navmesh);
+          const loaded = this.#set.navmesh(across.navmesh);
           if (!loaded) {
             this.#missing.add(across.navmesh);
             continue;
@@ -76,10 +236,10 @@ export class NavmeshIsland {
         }
         const t = into.triangles[target];
         if (!t || (t.flags & NavmeshFlag.deleted) !== 0) continue;
-        if (mark(into, target)) open.push([into, target]);
+        this.#mark(into, target);
       }
     }
-    this.size = size;
+    return true;
   }
 
   /** The navmeshes it reaches and, of each, which triangles (1: reached). */
@@ -87,7 +247,7 @@ export class NavmeshIsland {
     for (const { navmesh, triangles } of this.#reached.values()) yield [navmesh, triangles];
   }
 
-  /** Whether it reaches a triangle. */
+  /** Whether it reaches a triangle (of those found so far, while it is being made). */
   has(navmesh: Navmesh, triangle: number): boolean {
     const entry = this.#reached.get(navmesh.formId);
     return entry?.navmesh === navmesh && entry.triangles[triangle] === 1;
@@ -102,60 +262,139 @@ export class NavmeshIsland {
     return true;
   }
 
-  /** Its point nearest to `point` (straight, in 3D), and the triangle it lies in. */
-  nearest(point: Vec3): {
-    readonly at: Vec3;
-    readonly navmesh: Navmesh;
-    readonly triangle: number;
-  } {
-    let best: { at: Vec3; navmesh: Navmesh; triangle: number } | undefined;
-    let bestD = Infinity;
-    for (const { navmesh, triangles } of this.#reached.values()) {
-      for (let index = 0; index < triangles.length; index++) {
-        if (triangles[index] !== 1) continue;
-        const [a, b, c] = navmeshTriangle(navmesh, index);
-        const at = closestOnTriangle(point, a, b, c);
-        const d = (at[0] - point[0]) ** 2 + (at[1] - point[1]) ** 2 + (at[2] - point[2]) ** 2;
-        if (d < bestD) {
-          bestD = d;
-          best = { at, navmesh, triangle: index };
-        }
+  /** Looks at a grid square's triangles for a nearer point (the square and each take one). */
+  *#look(gx: number, gy: number, query: NearestQuery): Generator<undefined, void, undefined> {
+    if (gx < this.#minX || gx > this.#maxX || gy < this.#minY || gy > this.#maxY) return;
+    const { point, share, looked } = query;
+    if (share.taken >= share.allowance) yield;
+    share.taken++;
+    const square = this.#grid.get(gridKey(gx, gy));
+    if (!square) return;
+    // Nothing in it can be nearer than its bounds (the square, the heights its triangles span).
+    const dx = Math.max(gx * GRID - point[0], 0, point[0] - (gx + 1) * GRID);
+    const dy = Math.max(gy * GRID - point[1], 0, point[1] - (gy + 1) * GRID);
+    const dz = Math.max(square.minZ - point[2], 0, point[2] - square.maxZ);
+    if (dx * dx + dy * dy + dz * dz >= query.bestD) return;
+    for (const id of square.ids) {
+      if (looked.has(id)) continue;
+      looked.add(id);
+      if (share.taken >= share.allowance) yield;
+      share.taken++;
+      const navmesh = this.#gridMesh[id];
+      const index = this.#gridTriangle[id];
+      if (!navmesh || index === undefined) continue;
+      const [a, b, c] = navmeshTriangle(navmesh, index);
+      const at = closestOnTriangle(point, a, b, c);
+      const d = (at[0] - point[0]) ** 2 + (at[1] - point[1]) ** 2 + (at[2] - point[2]) ** 2;
+      if (d < query.bestD) {
+        query.bestD = d;
+        query.best = { at, navmesh, triangle: index };
       }
     }
+  }
+
+  /**
+   * Its point nearest to `point` (straight, in 3D), and the triangle it lies in; made whole
+   * first. Looks at the grid squares outward from the point's (each square and each triangle in
+   * one takes one of `share`), giving way when `share` is spent. The last points asked for are
+   * kept (actors going for one goal ask for the same point).
+   */
+  *nearestSteps(point: Vec3, share: IslandShare): Generator<undefined, IslandPoint, undefined> {
+    while (!this.grow(share)) yield;
+    const keyOfPoint = `${String(point[0])},${String(point[1])},${String(point[2])}`;
+    const kept = this.#nearestKept.get(keyOfPoint);
+    if (kept) return kept;
+    const cx = Math.floor(point[0] / GRID);
+    const cy = Math.floor(point[1] / GRID);
+    // The rings of squares round the point's that reach the island's squares.
+    const outside = Math.max(this.#minX - cx, cx - this.#maxX, this.#minY - cy, cy - this.#maxY);
+    const first = Math.max(0, outside);
+    const last = Math.max(
+      Math.abs(cx - this.#minX),
+      Math.abs(cx - this.#maxX),
+      Math.abs(cy - this.#minY),
+      Math.abs(cy - this.#maxY),
+    );
+    const query: NearestQuery = {
+      point,
+      share,
+      looked: new Set(),
+      best: undefined,
+      bestD: Infinity,
+    };
+    // No point of it lies nearer in height than its heights' span.
+    const dz = Math.max(this.#minZ - point[2], 0, point[2] - this.#maxZ);
+    for (let ring = first; ring <= last; ring++) {
+      // Every point of a square `ring` squares out lies at least ring - 1 squares away.
+      const across = Math.max(0, ring - 1) * GRID;
+      if (query.best && query.bestD <= across * across + dz * dz) break;
+      if (ring === 0) {
+        yield* this.#look(cx, cy, query);
+        continue;
+      }
+      const x0 = Math.max(cx - ring, this.#minX);
+      const x1 = Math.min(cx + ring, this.#maxX);
+      for (let gx = x0; gx <= x1; gx++) {
+        yield* this.#look(gx, cy - ring, query);
+        yield* this.#look(gx, cy + ring, query);
+      }
+      const y0 = Math.max(cy - ring + 1, this.#minY);
+      const y1 = Math.min(cy + ring - 1, this.#maxY);
+      for (let gy = y0; gy <= y1; gy++) {
+        yield* this.#look(cx - ring, gy, query);
+        yield* this.#look(cx + ring, gy, query);
+      }
+    }
+    const best = query.best;
     // An island reaches at least the triangle it was made from.
     if (!best) throw new Error('navmesh island without triangles');
+    if (this.#nearestKept.size >= NEAREST_KEPT) {
+      const oldest = this.#nearestKept.keys().next();
+      if (oldest.done !== true) this.#nearestKept.delete(oldest.value);
+    }
+    this.#nearestKept.set(keyOfPoint, best);
     return best;
+  }
+
+  /** nearestSteps at once (made whole first, however long it takes). */
+  nearest(point: Vec3): IslandPoint {
+    const steps = this.nearestSteps(point, { allowance: Infinity, taken: 0 });
+    const step = steps.next();
+    if (step.done !== true) throw new Error('navmesh island: nearest point gave way unbounded');
+    return step.value;
   }
 }
 
 /** The islands made for a set (each triangle: the last one made that reaches it). */
 const ISLANDS = new WeakMap<NavmeshLookup, WeakMap<Navmesh, (NavmeshIsland | undefined)[]>>();
 
-/** The island a triangle of a set lies in (made once, kept while it holds). */
+/**
+ * The island a triangle of a set lies in (made once, kept while it holds). It may not be whole
+ * yet (`complete`; `grow` makes it on): one being made that has reached the triangle is the
+ * triangle's island, a search on it goes on making it.
+ */
 export function islandOf(set: NavmeshLookup, navmesh: Navmesh, triangle: number): NavmeshIsland {
   let byNavmesh = ISLANDS.get(set);
   if (!byNavmesh) {
     byNavmesh = new WeakMap();
     ISLANDS.set(set, byNavmesh);
   }
-  let slots = byNavmesh.get(navmesh);
-  if (!slots) {
-    slots = [];
-    byNavmesh.set(navmesh, slots);
-  }
-  const known = slots[triangle];
+  const known = byNavmesh.get(navmesh)?.[triangle];
   if (known?.current(set) && known.has(navmesh, triangle)) return known;
-  const island = new NavmeshIsland(set, navmesh, triangle);
   // Every triangle it reaches finds it next time (a later island reaching one takes its place).
-  for (const [mesh, marks] of island.navmeshes()) {
-    let own = byNavmesh.get(mesh);
-    if (!own) {
-      own = [];
-      byNavmesh.set(mesh, own);
-    }
-    for (let index = 0; index < marks.length; index++) if (marks[index] === 1) own[index] = island;
-  }
-  return island;
+  return new NavmeshIsland(set, navmesh, triangle, byNavmesh);
+}
+
+/** The island a triangle of a set lies in if one is made whole and holds, else undefined. */
+export function islandKnown(
+  set: NavmeshLookup,
+  navmesh: Navmesh,
+  triangle: number,
+): NavmeshIsland | undefined {
+  const known = ISLANDS.get(set)?.get(navmesh)?.[triangle];
+  return known?.complete === true && known.current(set) && known.has(navmesh, triangle)
+    ? known
+    : undefined;
 }
 
 /** The point of triangle abc nearest p (Ericson, Real-Time Collision Detection 5.1.5). */

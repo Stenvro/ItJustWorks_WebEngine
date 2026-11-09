@@ -14,7 +14,7 @@ import {
   triangleNeighbour,
   type Navmesh,
 } from '../world/navmesh.ts';
-import { islandOf } from './navmesh-islands.ts';
+import { islandKnown, islandOf } from './navmesh-islands.ts';
 import { insidePart, ObstacleIndex, partSpan, type NavmeshObstacle } from './navmesh-obstacles.ts';
 
 type Vec3 = readonly [number, number, number];
@@ -291,7 +291,9 @@ function enterCost(flags: number, length: number, options: PathOptions): number 
 /**
  * A path from `from` to `to` over the navmeshes, or undefined when neither point is on one.
  * Where the goal cannot be reached (another island, past the search limit) the path ends where
- * the search came nearest to it (`complete` false).
+ * the search came nearest to it (`complete` false). It searches at once, so it makes no island
+ * (a flood of all its triangles, past the search's own limit): a goal off the start's island is
+ * gone to by the island's nearest point once a search over frames (PathSearch) has made it.
  */
 export function findPath(
   set: NavmeshSet,
@@ -300,7 +302,7 @@ export function findPath(
   options: PathOptions,
 ): NavPath | undefined {
   const share: SearchShare = { allowance: Infinity, taken: 0 };
-  const step = searchSteps(set, from, to, options, true, share).next();
+  const step = searchSteps(set, from, to, options, true, share, 'known').next();
   pathSearchStats.taken += share.taken;
   return step.done === true ? step.value : undefined;
 }
@@ -324,7 +326,7 @@ export class PathSearch {
   #taken = 0;
 
   constructor(set: NavmeshSet, from: Vec3, to: Vec3, options: PathOptions) {
-    this.#steps = searchSteps(set, from, to, options, true, this.#share);
+    this.#steps = searchSteps(set, from, to, options, true, this.#share, 'make');
   }
 
   /** The nodes it has taken so far. */
@@ -375,7 +377,8 @@ export const pathSearchStats: {
 /**
  * findPath; `closeAvoided`: whether the triangles under the avoid nodes are closed. Gives way
  * once it has taken its share's allowance of nodes (counted in its `taken`). `islands`: whether a
- * goal off the start's island is taken for the island's point nearest it.
+ * goal off the start's island is taken for the island's point nearest it, the island made if it
+ * is not yet ('make') or only if it is ('known').
  */
 function* searchSteps(
   set: NavmeshSet,
@@ -384,7 +387,7 @@ function* searchSteps(
   options: PathOptions,
   closeAvoided: boolean,
   share: SearchShare,
-  islands = true,
+  islands: 'make' | 'known' | 'none',
 ): Generator<undefined, NavPath | undefined, undefined> {
   let avoidedClosed = false;
   const start = set.locate(from);
@@ -396,11 +399,19 @@ function* searchSteps(
   // triangles round Helgen, 10-25 ms) to end about as near. Inferred: the original's pathing
   // ends a way it cannot complete where it gets nearest. TODO(M13): how the engine picks that
   // point (ours: the island's point nearest the goal in a straight line).
-  if (islands) {
-    const island = islandOf(set, start.navmesh, start.triangle);
+  // Making the island (a flood of its triangles, once while its navmeshes stay loaded) and
+  // finding its nearest point take from the search's share like its nodes and give way with it.
+  const island =
+    islands === 'make'
+      ? islandOf(set, start.navmesh, start.triangle)
+      : islands === 'known'
+        ? islandKnown(set, start.navmesh, start.triangle)
+        : undefined;
+  if (island) {
+    while (!island.grow(share)) yield;
     if (!goal || !island.has(goal.navmesh, goal.triangle)) {
-      const near = island.nearest(to);
-      const path = yield* searchSteps(set, from, near.at, options, closeAvoided, share, false);
+      const near = yield* island.nearestSteps(to, share);
+      const path = yield* searchSteps(set, from, near.at, options, closeAvoided, share, 'none');
       return path && { ...path, complete: false };
     }
   }
@@ -590,7 +601,7 @@ function* searchSteps(
   if (reached) pathSearchStats.reached++;
   pathSearchStats.trace?.push({ from, to, nodes: searched, reached: reached !== undefined });
   if (!reached && avoidedClosed) {
-    return yield* searchSteps(set, from, to, options, false, share, false);
+    return yield* searchSteps(set, from, to, options, false, share, 'none');
   }
   const end = reached ?? best;
   const chain: Node[] = [];
