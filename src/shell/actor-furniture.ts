@@ -27,6 +27,7 @@ import {
 } from '../ai/idle-records.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
 import { idleLoopSeconds } from '../ai/ambient-idles.ts';
+import { MOVEMENT_ACTIONS } from '../ai/locomotion.ts';
 import { markerRank } from '../ai/furniture-markers.ts';
 import type { SandboxSpot } from '../ai/package-runtime.ts';
 import { parseNif } from '../formats/nif/nif.ts';
@@ -594,14 +595,19 @@ export class ActorFurniture {
   }
 
   /**
-   * Whether furniture keeps an actor from an action's idle: any use of it does, but its idle
-   * stops (ActionIdleStop) while it is only on its way there.
+   * Whether furniture keeps an actor from an action's idle: any use of it does, but while it is
+   * only on its way there its idle stops (ActionIdleStop) and its walk there is a walk: its
+   * movement's actions (MOVEMENT_ACTIONS: ActionMoveStart, the turns, ...) and its path's end turn
+   * into the entry (ActionPathEnd) play. Before, a walk to furniture got no moveStart and glided
+   * in the idle it stood in (Helgen's first prisoner to the chopping block). TODO(M13): inferred
+   * (the engine puts an actor in furniture as it enters it); whether other idles wait meanwhile
+   * is not read.
    */
   #takenBy(actor: number, action: string): boolean {
     if (action === 'ActionIdleStop') return this.holds(actor);
     const use = this.#uses.get(actor);
-    // Its walk to the furniture ends with its path's end turn into the entry (ActionPathEnd).
-    if (action === 'ActionPathEnd') return use !== undefined && use.phase !== 'approaching';
+    if (use?.phase === 'approaching')
+      return action !== 'ActionPathEnd' && !MOVEMENT_ACTIONS.has(action);
     return use !== undefined;
   }
 

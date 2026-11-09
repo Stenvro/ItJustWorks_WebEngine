@@ -220,7 +220,28 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
       // no key is pressed here.
       const inLine = sim.world.player.feet;
       const [fromX, fromY] = [inLine[0], inLine[1]];
-      expect(await sim.until(() => sim.stageDone(MQ101, 85), 200)).toBe(true);
+      // Meanwhile the first prisoner is called up and walks to the chopping block (his package
+      // uses it): he walks there, he does not glide in the idle he stood in. Found 2026-11-09:
+      // the block held him from his movement's idles on his way to it, so he never got his
+      // moveStart and slid the 400 units in MT_Idle.
+      let walking = 0;
+      let gliding = 0;
+      let last: Vec3 | undefined;
+      for (let t = 0; t < 200 && !sim.stageDone(MQ101, 85); t += 0.25) {
+        await sim.step(0.25);
+        const actor = sim.actor(prisoner);
+        const at = actor?.position;
+        const moved = at && last ? Math.hypot(at[0] - last[0], at[1] - last[1]) / 0.25 : 0;
+        last = at && [at[0], at[1], at[2]];
+        if (moved < 40) continue;
+        // Walking; or turning or entering the block in place (their clips' root motion moves him).
+        const clips = (actor?.placed.behavior?.playing() ?? []).map(({ animation }) => animation);
+        if (clips.some((clip) => /walk|run/i.test(clip))) walking++;
+        else if (!clips.some((clip) => /turn|enter/i.test(clip))) gliding++;
+      }
+      expect(sim.stageDone(MQ101, 85)).toBe(true);
+      expect(walking).toBeGreaterThan(8);
+      expect(gliding).toBeLessThanOrEqual(1);
       const walked = sim.packages(PLAYER_REF).filter((event) => event.type === 'start');
       expect(walked.map((event) => event.package)).toContain(PLAYER_TO_MARKER6);
       const [toX, toY] = sim.world.player.feet;

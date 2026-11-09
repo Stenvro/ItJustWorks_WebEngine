@@ -470,6 +470,29 @@ const TURNING_RATE = Math.PI / 180;
  * (a rider's graph gets no moveStart, SprintStart only neither sneaking nor blocking, the
  * slaughterfish turns by SwimLeft).
  */
+/**
+ * The actions an actor's movement performs through its idle tree (Locomotion: its graph data
+ * channels crossing their thresholds, its falls, landings, sneaking, sprinting and swimming).
+ */
+export const MOVEMENT_ACTIONS: ReadonlySet<string> = new Set([
+  'ActionMoveStart',
+  'ActionMoveStop',
+  'ActionTurnLeft',
+  'ActionTurnRight',
+  'ActionTurnStop',
+  'ActionMoveForward',
+  'ActionMoveBackward',
+  'ActionMoveLeft',
+  'ActionMoveRight',
+  'ActionLargeMovementDelta',
+  'ActionSprintStart',
+  'ActionSprintStop',
+  'ActionSneak',
+  'ActionSwimStateChange',
+  'ActionFall',
+  'ActionLand',
+]);
+
 const ACTION_EVENTS = {
   moveStart: 'moveStart',
   moveStop: 'moveStop',

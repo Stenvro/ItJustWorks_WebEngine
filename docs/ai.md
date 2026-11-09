@@ -114,7 +114,12 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   waited for the archers to kill him (measured in the browser: after IdleStop he ran his
   patrol). One on its way to furniture is not in it yet: its idle stops so too (furniture
   holds an actor only entering, in or leaving it; MQ101's Imperial, in a dialogue idle as his
-  package sent him to the keep's inner lever, stood there for ever and the gate stayed shut).
+  package sent him to the keep's inner lever, stood there for ever and the gate stayed shut),
+  and its walk there is a walk: its movement's actions (ActionMoveStart, the turns, the moves
+  and the rest Locomotion performs: `MOVEMENT_ACTIONS`) and its path's end turn (ActionPathEnd)
+  play their idles; other idles wait until it is done with the furniture. Held from them, MQ101's
+  first prisoner, called to the chopping block, got no moveStart and slid the 400 units there in
+  MT_Idle (inferred: the engine puts an actor in furniture as it enters it, TODO(M13)).
   An idle that is not animation-driven holds it as well where its graph does not leave
   the idle on moveStart (the human graph's NonOffsetIdles: MT_Idle_Nervous and the other idles
   a scene or package plays, which only IdleStop and IdleForceDefaultState end): its controller
