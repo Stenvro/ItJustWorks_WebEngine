@@ -46,6 +46,7 @@ import { Vfs } from '../../../src/vfs/vfs.ts';
 import { CastingSource } from '../../../src/scripting/runtime/casting-engine.ts';
 import { ActorValue } from '../../../src/world/actor-values.ts';
 import { INI_DEFAULTS } from '../../../src/world/ini-settings.ts';
+import { parseMagicItem } from '../../../src/world/magic-records.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
 import { CastType } from '../../../src/world/spell-records.ts';
 import { openGameFolder } from '../../../tools/gamedata-path.ts';
@@ -268,12 +269,6 @@ describe('a script’s Cast loop', () => {
     const gaps = fired.slice(1).map((at, i) => at - (fired[i] ?? 0));
     expect(new Set(gaps)).toEqual(new Set([3]));
   });
-
-  it.todo(
-    'MQ101: dunCGDragonVoiceStormCall’s magicProjectileStormScript casts a meteor at the ' +
-      'game’s rate, its OnUpdate’s natives a frame each plus fRecast (the opening in the sim; ' +
-      'docs/scripting.md)',
-  );
 });
 
 describe('an NPC’s ward', () => {
@@ -309,6 +304,45 @@ describe.skipIf(!hasGamedata())('casts in the sim', () => {
       await settle();
     }
   };
+
+  it('casts MQ101’s storm meteors at the game’s rate: its OnUpdate’s natives a frame each, then fRecast', async () => {
+    // Alduin's Storm Call (dunCGDragonVoiceStormCall, its self effect's
+    // magicProjectileStormScript: fRecast 0.1 s, MQ101's meteors, bMissOnPurpose) on an actor of
+    // the inn, at 60 frames a second. Each OnUpdate calls some fifteen natives that wait for the
+    // main thread (GetParentCell, RandomFloat, SetPosition, GetPosition*, GetDistance, the
+    // latent RemoteCast; docs/scripting.md), so a meteor comes about every 0.1 s + 15 frames;
+    // with every native at once it was every 0.12 s.
+    const { magic } = sim.runtime;
+    const storm = await sim.db.get(await sim.formId('SPEL', 'dunCGDragonVoiceStormCall'));
+    const item = storm && parseMagicItem(storm);
+    expect(item).toBeDefined();
+    if (!item) return;
+    const meteor = 729990;
+    const actor = sim.actors()[1]?.reference ?? 0;
+    const casts: number[] = [];
+    let clock = 0;
+    const cast = magic.cast.bind(magic);
+    magic.cast = (spell, ...rest) => {
+      if (spell === meteor) casts.push(clock);
+      return cast(spell, ...rest);
+    };
+    try {
+      expect(await magic.apply(item, actor, { caster: actor, effects: [0] })).toBe(1);
+      for (let frame = 0; frame < 6 * 60; frame++) {
+        clock += 1 / 60;
+        await sim.step(1 / 60, 1 / 60);
+      }
+    } finally {
+      magic.cast = cast;
+      for (const [key, entry] of magic.effectsOn(actor))
+        if (entry.item === item.formId) await magic.end(key);
+    }
+    expect(casts.length).toBeGreaterThan(5);
+    const gaps = casts.slice(1).map((at, i) => at - (casts[i] ?? 0));
+    const mean = gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length;
+    expect(mean).toBeGreaterThan(0.1 + 10 / 60);
+    expect(mean).toBeLessThan(0.1 + 25 / 60);
+  }, 180_000);
 
   it('begins a concentration spell on any magicka, a fire and forget one on its cost', async () => {
     const { casting, equipment, actors } = sim.runtime;
