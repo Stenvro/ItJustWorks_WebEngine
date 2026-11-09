@@ -57,7 +57,22 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   bones, a knife stuck in a table), which the solver pushes out the far side. Holding such a body
   where it was placed (its contact's way out pointing down, 0.02 Havok units deep or more) was
   tried: with it, 130 went through instead of 92 of today's audit, what lay on or in the held
-  ones among them (gems in a chest, tomatoes in a basket). Today's: 92 of 69,455, 712 rolled off.
+  ones among them (gems in a chest, tomatoes in a basket). Then: 92 of 69,455, 712 rolled off.
+- **Welded faces while settling** (`PhysicsWorld.#weld`; inferred from the files' one-sided
+  welding, TODO(M13): not observed): most of those 92 were placed deeper than half into a floor,
+  a table's top or a cave's ground (berries, notes, bones, a ruined book that a rubble pile's hull
+  pressed 27 units down into the floor), and the two-sided triangle put them out at its back. A
+  settling body that the step pushes to the back of a welded triangle it may rest on (facing up,
+  at most 60° steep) is put out at that triangle's front instead, unless another welded triangle
+  it lies in pushes the other way (a dagger through a table's top into its underside); ragdolls
+  meet the one-sided copies as before. With it, 54 of 69,455 (709 rolled off): 47 of the 92 stay
+  on what they lie on; 9 others leave it now (Fort Fellhammer's hand cart rolls down its ramp
+  with its ore once its wheels are out of the floor, a chaurus egg rolls off its mound, two books
+  on wall shelves are pushed out of the wall behind them and tip off). Open: books pushed out of a
+  cupboard's or shelf's back panel (horizontal faces are left as they were), objects over a
+  table's edge, overlaps with simulated or keyframed bodies (trapdoors, a chest's lid), and the
+  baskets on nothing at 154 units in the inns built of FarmIntInnEnd04 (Nightgate, Moorside,
+  Braidwood).
 - **Friction and restitution** combine as Havok's square root of the product (each collider
   gets the square root, Rapier multiplies).
 - **What is placed:** the collision of every enabled object in the loaded cells, the

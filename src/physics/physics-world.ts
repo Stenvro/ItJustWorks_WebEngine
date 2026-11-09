@@ -214,6 +214,120 @@ function contactIslands(
 const RAGDOLL_LAYERS: ReadonlySet<number> = new Set([Layer.biped, Layer.bipedNoCc, Layer.deadBip]);
 
 /**
+ * How deep (Havok units) a settling body must be in a welded triangle, pushed towards its back,
+ * before it is put out at the triangle's front instead (PhysicsWorld.#weld): below Rapier's
+ * allowed error, contacts are resting ones.
+ */
+const WELD_DEPTH = 0.005;
+/** How far in front of the triangle a body put out by #weld is left (Havok units). */
+const WELD_MARGIN = 0.001;
+/**
+ * How squarely the push must point to the triangle's back (the cosine of its angle to the
+ * back): a push off one of its edges or corners (a book on a table's top against the edge of
+ * its side) is not one through it.
+ */
+const WELD_FACING = 0.7;
+/**
+ * How far up a welded triangle's front must face (the cosine of its slope) for a body sunk
+ * into it to be put out on it (#weld): ground a body may rest on, at most 60° steep.
+ */
+const WELD_GROUND = 0.5;
+
+/**
+ * How far a collider reaches along a world direction (Havok units, from the world's origin):
+ * the largest `p · direction` over its shape. Undefined for shapes no simulated body has
+ * (meshes, heightfields).
+ */
+function colliderReach(collider: RAPIER.Collider, direction: RAPIER.Vector): number | undefined {
+  const at = collider.translation();
+  const q = collider.rotation();
+  // The direction in the collider's frame (the inverse rotation of a unit quaternion).
+  const local = rotateVector({ x: -q.x, y: -q.y, z: -q.z, w: q.w }, direction);
+  const base = at.x * direction.x + at.y * direction.y + at.z * direction.z;
+  const shape = collider.shape;
+  let reach: number;
+  switch (shape.type) {
+    case RAPIER.ShapeType.Ball:
+      reach = (shape as RAPIER.Ball).radius;
+      break;
+    case RAPIER.ShapeType.Cuboid:
+    case RAPIER.ShapeType.RoundCuboid: {
+      const box = shape as RAPIER.Cuboid | RAPIER.RoundCuboid;
+      const h = box.halfExtents;
+      reach = Math.abs(h.x * local.x) + Math.abs(h.y * local.y) + Math.abs(h.z * local.z);
+      if (box instanceof RAPIER.RoundCuboid) reach += box.borderRadius;
+      break;
+    }
+    case RAPIER.ShapeType.Capsule: {
+      const capsule = shape as RAPIER.Capsule;
+      reach = capsule.halfHeight * Math.abs(local.y) + capsule.radius;
+      break;
+    }
+    case RAPIER.ShapeType.Cylinder:
+    case RAPIER.ShapeType.RoundCylinder: {
+      const cylinder = shape as RAPIER.Cylinder | RAPIER.RoundCylinder;
+      reach =
+        cylinder.halfHeight * Math.abs(local.y) + cylinder.radius * Math.hypot(local.x, local.z);
+      if (cylinder instanceof RAPIER.RoundCylinder) reach += cylinder.borderRadius;
+      break;
+    }
+    case RAPIER.ShapeType.ConvexPolyhedron:
+    case RAPIER.ShapeType.RoundConvexPolyhedron: {
+      const convex = shape as RAPIER.ConvexPolyhedron | RAPIER.RoundConvexPolyhedron;
+      const v = convex.vertices;
+      reach = -Infinity;
+      for (let i = 0; i + 2 < v.length; i += 3) {
+        const d = (v[i] ?? 0) * local.x + (v[i + 1] ?? 0) * local.y + (v[i + 2] ?? 0) * local.z;
+        if (d > reach) reach = d;
+      }
+      if (convex instanceof RAPIER.RoundConvexPolyhedron) reach += convex.borderRadius;
+      break;
+    }
+    default:
+      return undefined;
+  }
+  return base + reach;
+}
+
+/**
+ * The front of a mesh collider's triangle in the world (unit; counter-clockwise, as the welded
+ * meshes' fronts are: collision-data.ts) and its plane's offset along it (Havok units), or
+ * undefined for a degenerate triangle.
+ */
+function triangleFront(
+  collider: RAPIER.Collider,
+  triangle: number,
+): { readonly normal: RAPIER.Vector; readonly offset: number } | undefined {
+  const shape = collider.shape;
+  if (shape.type !== RAPIER.ShapeType.TriMesh) return undefined;
+  const { vertices, indices } = shape as RAPIER.TriMesh;
+  const a = (indices[3 * triangle] ?? 0) * 3;
+  const b = (indices[3 * triangle + 1] ?? 0) * 3;
+  const c = (indices[3 * triangle + 2] ?? 0) * 3;
+  const ax = vertices[a] ?? 0;
+  const ay = vertices[a + 1] ?? 0;
+  const az = vertices[a + 2] ?? 0;
+  const ux = (vertices[b] ?? 0) - ax;
+  const uy = (vertices[b + 1] ?? 0) - ay;
+  const uz = (vertices[b + 2] ?? 0) - az;
+  const vx = (vertices[c] ?? 0) - ax;
+  const vy = (vertices[c + 1] ?? 0) - ay;
+  const vz = (vertices[c + 2] ?? 0) - az;
+  const nx = uy * vz - uz * vy;
+  const ny = uz * vx - ux * vz;
+  const nz = ux * vy - uy * vx;
+  const length = Math.hypot(nx, ny, nz);
+  if (!(length > 0)) return undefined;
+  const q = collider.rotation();
+  const at = collider.translation();
+  const normal = rotateVector(q, { x: nx / length, y: ny / length, z: nz / length });
+  const corner = rotateVector(q, { x: ax, y: ay, z: az });
+  const offset =
+    (corner.x + at.x) * normal.x + (corner.y + at.y) * normal.y + (corner.z + at.z) * normal.z;
+  return { normal, offset };
+}
+
+/**
  * Kinds of collider some queries want alone, as Rapier collision groups' memberships (bits):
  * the trigger volumes, the traps (L_TRAP, L_CLOUDTRAP) and the character controllers. Every
  * collider's group filter takes all of them, so contacts and the other queries are as without
@@ -2009,6 +2123,7 @@ export class PhysicsWorld {
       if (this.#breakable.size > 0) this.#solveBreakable();
       this.world.step(this.#events, this.#hooks);
       this.#changed = false;
+      if (this.#settling.size > 0 && this.#twoSided.size > 0) this.#weld();
       if (this.#limits.size > 0) this.#limitVelocities();
       this.#time += size;
       if (this.#depenetrating.size > 0) this.#depenetrate();
@@ -3330,6 +3445,89 @@ export class PhysicsWorld {
         body.setAngvel({ x: 0, y: 0, z: 0 }, false);
         body.sleep();
         still.delete(body.handle);
+      }
+    }
+  }
+
+  /**
+   * Havok's one-sided welding for the warm start: a settling body that the step pushed
+   * towards the back of a welded triangle it lies in (the meshes of statics and the landscape
+   * are two-sided here, #twoSided) is put out at that triangle's front instead, with no speed
+   * towards its back. The plugins place clutter sunk into what it lies on (berries into a
+   * table's top, a book into a floor under a rubble pile, a bone into a cave's floor); out of
+   * the deeper side, Rapier pushed it through to the far side (`tools/settle-audit.ts`: 92 of
+   * the 69,455 loose objects of the interiors). Of the welded triangles a body is pushed to the
+   * back of, the deepest one puts it out, each step. Ragdolls meet the one-sided copies instead.
+   * TODO(M13): inferred from the files' welding type (one-sided: objects are put out on the
+   * triangles' front); that Havok does so for a body placed deeper than half into a triangle
+   * was not observed, nor whether it also does so after the warm start (here only while the
+   * body settles).
+   */
+  #weld(): void {
+    const world = this.world;
+    for (const handle of this.#settling.keys()) {
+      const body = world.getRigidBody(handle) as RAPIER.RigidBody | null;
+      if (!body?.isDynamic() || body.isSleeping() || !body.isEnabled()) continue;
+      let deepest = -WELD_DEPTH;
+      let front: RAPIER.Vector | undefined;
+      let lift = 0;
+      // The welded triangles that push the body out at their front (a table's top, under a
+      // dagger lying in it): one that pushes against the way out of another (the same table's
+      // underside, which the dagger reaches into from above) is not gone through.
+      const fronts: RAPIER.Vector[] = [];
+      for (let i = 0; i < body.numColliders(); i++) {
+        const collider = body.collider(i);
+        if (RAGDOLL_LAYERS.has(this.layerOf(collider))) continue;
+        world.contactPairsWith(collider, (other) => {
+          if (!this.#twoSided.has(other.handle)) return;
+          world.contactPair(collider, other, (manifold, flipped) => {
+            const contacts = manifold.numContacts();
+            let depth = 0;
+            for (let c = 0; c < contacts; c++) depth = Math.min(depth, manifold.contactDist(c));
+            if (!(depth < -WELD_DEPTH)) return;
+            const triangle = flipped ? manifold.subshape1() : manifold.subshape2();
+            const face = triangleFront(other, triangle);
+            if (!face) return;
+            // The push on the body: away from the mesh, along the manifold's normal.
+            const n = manifold.normal();
+            const sign = flipped ? 1 : -1;
+            const along = sign * (n.x * face.normal.x + n.y * face.normal.y + n.z * face.normal.z);
+            if (along >= WELD_FACING) fronts.push(face.normal);
+            if (along > -WELD_FACING || !(depth < deepest)) return;
+            // Only what a body may rest on (a floor, a table's top, a slope it can lie on)
+            // puts it out at its front: a fork stuck up into a cairn's underside is not put
+            // out below the floor.
+            if (face.normal.z < WELD_GROUND) return;
+            const reach = colliderReach(collider, {
+              x: -face.normal.x,
+              y: -face.normal.y,
+              z: -face.normal.z,
+            });
+            if (reach === undefined) return;
+            // How far the body's deepest point lies behind the triangle's plane.
+            const behind = face.offset + reach;
+            if (!(behind > 0)) return;
+            deepest = depth;
+            front = face.normal;
+            lift = behind + WELD_MARGIN;
+          });
+        });
+      }
+      const out = front;
+      if (!out) continue;
+      if (fronts.some((f) => f.x * out.x + f.y * out.y + f.z * out.z < 0)) continue;
+      const at = body.translation();
+      body.setTranslation(
+        { x: at.x + out.x * lift, y: at.y + out.y * lift, z: at.z + out.z * lift },
+        true,
+      );
+      const v = body.linvel();
+      const towards = v.x * out.x + v.y * out.y + v.z * out.z;
+      if (towards < 0) {
+        body.setLinvel(
+          { x: v.x - out.x * towards, y: v.y - out.y * towards, z: v.z - out.z * towards },
+          true,
+        );
       }
     }
   }
