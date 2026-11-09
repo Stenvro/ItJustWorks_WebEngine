@@ -304,8 +304,8 @@ export class ProgressionEngine {
     const format = await runtime.gameSetting('sSkillIncreased');
     const playerLevel = await runtime.actors.playerLevel();
     for (const reached of result.reached) {
-      // Each level a skill gains is a Skill Increase (the stats).
-      runtime.incrementStat('Skill Increases');
+      // Each level a skill gains is told (SkillIncrease: Skill Increases, the stats).
+      runtime.events.emit('skillIncrease', { skill });
       const from = levelFraction(playerLevel, state.playerExperience, settings);
       state.playerExperience += characterExperience(reached, settings);
       const to = levelFraction(playerLevel, state.playerExperience, settings);
@@ -424,6 +424,8 @@ export class ProgressionEngine {
     runtime.perkPoints++;
     for (const { av } of VITALS) actors.restore(PLAYER_REF, av, Infinity);
     await this.#refreshLevelUps(false);
+    // LevelIncrease: the stats tell it as Level Increases (the level achievements' stat).
+    runtime.events.emit('levelIncrease', { level: level + 1 });
     // The story manager's Increase Level (OnStoryIncreaseLevel(aiNewLevel)): the Daedric quests.
     runtime.detach(
       runtime.storyManager.event({

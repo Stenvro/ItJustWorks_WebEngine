@@ -6,8 +6,9 @@
 // the one before: the actor, the old location and the new (none: the wilderness). The player's
 // current location is kept (GameState.playerLocation: none at a new game, so the first cell the
 // player is put in with a location tells it); an NPC's is where it stands. The story manager's
-// Change Location event (CLOC) is raised from the player's (story-events.ts).
-// Platform-independent.
+// Change Location event (CLOC) is raised from the player's (story-events.ts). The player's
+// cell changing is told as well (BGSActorCellEvent, the player its only source: the cell left,
+// then the one entered). Platform-independent.
 
 import { PLAYER_REF } from './forms.ts';
 import type { Vec3 } from './game-state.ts';
@@ -32,6 +33,8 @@ interface Tracked {
 export class ActorLocations {
   readonly #runtime: ScriptRuntime;
   readonly #tracked = new Map<number, Tracked>();
+  /** The cell the player is in as last told (its form). */
+  #playerCell: number | undefined;
 
   constructor(runtime: ScriptRuntime) {
     this.#runtime = runtime;
@@ -47,9 +50,11 @@ export class ActorLocations {
    * The world tells which cell an actor is in now (every frame: the player's from the view,
    * a staged actor's from the stage; `cell` any key that differs between cells). As it
    * changes, its location is read: a new one is told. An NPC seen for the first time only
-   * has its location noted; the player's is compared with the one kept.
+   * has its location noted; the player's is compared with the one kept. `form`: the cell's
+   * form, by which the player's cell changes are told (actorCell).
    */
-  inCell(actor: number, cell: string): void {
+  inCell(actor: number, cell: string, form?: number): void {
+    if (actor === PLAYER_REF && form !== undefined) this.#playerInCell(form);
     const tracked = this.#tracked.get(actor);
     if (tracked?.cell === cell) return;
     const first = tracked === undefined && actor !== PLAYER_REF;
@@ -96,6 +101,20 @@ export class ActorLocations {
       const now = await runtime.locationAt(await runtime.placement(reference, false));
       this.#changed(reference, entry, now);
     });
+  }
+
+  /**
+   * The player's cell (its form) as the world has them in it: another one than before is told,
+   * the cell left first, then the one entered (BGSActorCellEvent; the player is its source).
+   */
+  #playerInCell(cell: number): void {
+    const before = this.#playerCell;
+    if (before === cell) return;
+    this.#playerCell = cell;
+    const events = this.#runtime.events;
+    if (before !== undefined)
+      events.emit('actorCell', { actor: PLAYER_REF, cell: before, entered: false });
+    events.emit('actorCell', { actor: PLAYER_REF, cell, entered: true });
   }
 
   /** Forgets an actor (deleted): the next it is seen is a first sight. */

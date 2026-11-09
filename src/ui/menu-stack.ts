@@ -7,7 +7,8 @@
 // it; BookMode and WorldMapMode keep the messages and notices, JournalMode shows nothing), or
 // hides the HUD outright (the skills, the race menu, lockpicking).
 //
-// Menus opening and closing are told to the stack's listeners (MenuOpenCloseEvent), and a mod
+// Menus opening and closing are told to the stack's listeners (MenuOpenCloseEvent), the game
+// going into menu mode and out of it to its mode listeners (MenuModeChangeEvent), and a mod
 // registers its own menus by name with their flags (UI::Register), so scripts may ask for them
 // (SKSE's UI.IsMenuOpen). Platform-independent. Notes: docs/ui.md.
 
@@ -253,6 +254,12 @@ export interface MenuOpenClose {
   readonly kind: MenuKind;
 }
 
+/** The game went into menu mode (`displayed`) or out of it, by a menu (MenuModeChangeEvent). */
+export interface MenuModeChange {
+  readonly name: string;
+  readonly displayed: boolean;
+}
+
 interface OpenMenu {
   readonly name: string;
   readonly kind: MenuKind;
@@ -265,6 +272,15 @@ export class MenuStack {
   readonly #open: OpenMenu[] = [];
   /** Told as each menu opens and closes, after the stack changed. */
   readonly listeners = new Set<(event: MenuOpenClose) => void>();
+  /**
+   * Told as the game goes into menu mode (`displayed`: the first menu that pauses it opened)
+   * and out of it (the last one closed), after the menu's own MenuOpenCloseEvent
+   * (MenuModeChangeEvent). TODO(M13): that menu mode is the menus that pause the game being
+   * open is inferred (Utility.IsInMenuMode reads the same).
+   */
+  readonly modeListeners = new Set<(event: MenuModeChange) => void>();
+  /** Whether the game was in menu mode as last told. */
+  #menuMode = false;
 
   constructor() {
     for (const [name, kind] of Object.entries(VANILLA_MENUS)) this.register(name, kind);
@@ -383,6 +399,11 @@ export class MenuStack {
 
   #tell(event: MenuOpenClose): void {
     for (const listener of [...this.listeners]) listener(event);
+    const menuMode = this.pausesGame;
+    if (menuMode === this.#menuMode) return;
+    this.#menuMode = menuMode;
+    const change: MenuModeChange = { name: event.name, displayed: menuMode };
+    for (const listener of [...this.modeListeners]) listener(change);
   }
 }
 

@@ -73,6 +73,12 @@ export interface MusicSettings {
   readonly finaleFadeOut: number;
 }
 
+/** The music's track changed (BSMusicEvent): the type playing and its track (none: silence). */
+export interface MusicChange {
+  readonly type: number | undefined;
+  readonly track: number | undefined;
+}
+
 /** What is playing (development tools show it). */
 export interface MusicState {
   readonly location: number | undefined;
@@ -124,6 +130,13 @@ export class Music {
   #leaving: TypeRun[] = [];
   /** Ducked types coming back up once the music that ducked them has fallen silent. */
   #unducking: { readonly run: TypeRun; readonly after: TypeRun; readonly seconds: number }[] = [];
+  /**
+   * Told as the music changes track (BSMusicEvent): the type now playing and its track (none:
+   * silence: between its tracks, or no type in play), after the frame's update made the change.
+   */
+  readonly listeners = new Set<(change: MusicChange) => void>();
+  /** The type and track last told. */
+  #told: MusicChange = { type: undefined, track: undefined };
 
   constructor(output: MusicOutput, settings: MusicSettings, random: () => number = Math.random) {
     this.#output = output;
@@ -222,6 +235,16 @@ export class Music {
         this.remove(current.type.formId);
       }
     }
+    this.#tellChange();
+  }
+
+  /** A track other than the one last told plays now (or none does): the listeners hear it. */
+  #tellChange(): void {
+    const type = this.#current?.type.formId;
+    const track = this.#current?.track?.track.formId;
+    if (type === this.#told.type && track === this.#told.track) return;
+    this.#told = { type, track };
+    for (const listener of [...this.listeners]) listener(this.#told);
   }
 
   /** Stops all music at once (leaving the game). */
@@ -236,6 +259,7 @@ export class Music {
     this.#unducking = [];
     this.#added = [];
     this.#location = undefined;
+    this.#tellChange();
   }
 
   /** The type that should play: the most important in play (types still loading wait). */

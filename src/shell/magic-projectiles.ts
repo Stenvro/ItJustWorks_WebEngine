@@ -71,6 +71,7 @@ import { CastType } from '../world/spell-records.ts';
 import {
   ExplosionFlag,
   ProjectileFlag,
+  ProjectileType,
   type ExplosionRecord,
   type ProjectileRecord,
 } from '../world/projectile-data.ts';
@@ -738,6 +739,15 @@ export class MagicProjectiles {
     this.#options.triggers?.end(shot);
     // The beam from the hand to what it met (its model stretched to it, and its light).
     this.#beams.show(projectile, origin, aim, range * (hit ? hit.t : 1), options.follow);
+    // A beam that met something tells it (BeamProjectileImpactEvent), before its impact acts.
+    if (hit && (projectile.type & ProjectileType.beam) !== 0) {
+      runtime.events.emit('beamImpact', {
+        projectile: projectile.formId,
+        caster: delivered.caster,
+        target: hit.actor?.reference ?? hit.reference,
+        position: [point[0], point[1], point[2]],
+      });
+    }
     await this.#impact(runtime, delivered, projectile, effect, point, aim, hit, seconds);
   }
 

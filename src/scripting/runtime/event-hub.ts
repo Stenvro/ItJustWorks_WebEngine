@@ -21,6 +21,13 @@ export interface GameEvents {
     readonly applied: boolean;
   };
   /**
+   * The player entered (`entered`) or left a cell (BGSActorCellEvent: the player is its only
+   * source, as they walk, are moved or go through a door).
+   */
+  actorCell: { readonly actor: number; readonly cell: number; readonly entered: boolean };
+  /** The player died (BGSActorDeathEvent: the player is its only source), with the killer. */
+  actorDeath: { readonly actor: number; readonly killer: number | undefined };
+  /**
    * An actor entered another location (TESActorLocationChangeEvent): the player and NPCs alike;
    * `undefined` is no location (the wilderness).
    */
@@ -28,6 +35,17 @@ export interface GameEvents {
     readonly actor: number;
     readonly from: number | undefined;
     readonly to: number | undefined;
+  };
+  /**
+   * A beam projectile (Sparks, Lightning Bolt, a staff's or a trap's bolt) struck something
+   * (BeamProjectileImpactEvent): the projectile's base, who cast it, the reference it met (none:
+   * a surface without one) and where.
+   */
+  beamImpact: {
+    readonly projectile: number;
+    readonly caster: number | undefined;
+    readonly target: number | undefined;
+    readonly position: readonly [number, number, number];
   };
   /**
    * A book was read (TESBookReadEvent): the book (its base) and, when it was one, the reference
@@ -115,6 +133,22 @@ export interface GameEvents {
     readonly bashAttack: boolean;
     readonly blocked: boolean;
   };
+  /**
+   * The player made an item (ItemCrafted): `craft` says how: made at a workbench (a forge, a
+   * smelter, a tanning rack, a cooking pot: its recipe, COBJ), improved
+   * at a grindstone or workbench, enchanted, or mixed at an alchemy lab; `count` how many came.
+   */
+  itemCrafted: {
+    readonly item: number;
+    readonly count: number;
+    readonly craft: 'constructed' | 'improving' | 'enchanting' | 'alchemy';
+  };
+  /** A harvester picked a flora's produce (ItemHarvested): the produce, who picked it. */
+  itemHarvested: { readonly item: number; readonly harvester: number };
+  /** The player picked a pocket (ItemsPickpocketed): the item and how many of it. */
+  itemsPickpocketed: { readonly item: number; readonly count: number };
+  /** The player reached a new level (LevelIncrease): the level now. */
+  levelIncrease: { readonly level: number };
   /** A saved game finished loading (TESLoadGameEvent). */
   loadGame: Record<string, never>;
   /**
@@ -122,8 +156,15 @@ export interface GameEvents {
    * src/scripting/runtime/location-clearing.ts).
    */
   locationCleared: { readonly location: number };
+  /**
+   * The player discovered a map marker's location (LocationDiscovery): the marker's reference
+   * and the worldspace it is in (none: an interior's).
+   */
+  locationDiscovery: { readonly marker: number; readonly world: number | undefined };
   /** A lock's state changed (TESLockChangedEvent). */
   lockChanged: { readonly reference: number };
+  /** The player picked a lock (LocksPicked): the reference whose lock it was. */
+  locksPicked: { readonly reference: number };
   /** A magic effect is applied to a target (TESMagicEffectApplyEvent). */
   magicEffectApply: {
     readonly caster: number | undefined;
@@ -137,10 +178,33 @@ export interface GameEvents {
     readonly spell: number;
     readonly status: 0 | 1 | 2;
   };
+  /**
+   * The game went into menu mode (`displayed`: the menu that took it there) or out of it (the
+   * menu that closed last) (MenuModeChangeEvent).
+   */
+  menuModeChange: { readonly menu: string; readonly displayed: boolean };
+  /** A menu opened or closed (MenuOpenCloseEvent), by its name (Dialogue Menu, ...). */
+  menuOpenClose: { readonly menu: string; readonly opening: boolean };
   /** A reference's 3D attached to or detached from a cell (TESMoveAttachDetachEvent). */
   moveAttachDetach: { readonly reference: number; readonly attached: boolean };
+  /**
+   * The music system's track changed (BSMusicEvent): the music type playing and its track now
+   * (none: silence, between tracks or with no music in play).
+   */
+  music: { readonly type: number | undefined; readonly track: number | undefined };
   /** A reference's 3D loaded or unloaded (TESObjectLoadedEvent). */
   objectLoaded: { readonly reference: number; readonly loaded: boolean };
+  /**
+   * A quest objective's state changed (ObjectiveState): the quest, the objective's index, its
+   * old and new state (QUEST_OBJECTIVE_STATE: 0 dormant, 1 displayed, 2 completed, 3 completed
+   * and displayed, 4 failed, 5 failed and displayed).
+   */
+  objectiveState: {
+    readonly quest: number;
+    readonly objective: number;
+    readonly old: number;
+    readonly new: number;
+  };
   /**
    * A reference's translation (TranslateTo) failed (0), completed (1) or is almost complete (2:
    * past fRefTranslationAlmostDonePercent of its way) (TESObjectREFRTranslationEvent).
@@ -172,12 +236,19 @@ export interface GameEvents {
     readonly power: number;
     readonly sunGazing: boolean;
   };
+  /**
+   * The player is put somewhere (PositionPlayerEvent: the player is its only source): `pre` as
+   * the move begins, `post` once they stand at the place, `finish` once the move is done.
+   */
+  positionPlayer: { readonly type: 'pre' | 'post' | 'finish' };
   /** An actor put a poison on its weapon (PoisonedWeapon). */
   poisonedWeapon: { readonly actor: number; readonly poison: number };
   /** A quest's scripts were initialised (TESQuestInitEvent). */
   questInit: { readonly quest: number };
   /** A quest's stage was set (TESQuestStageEvent). */
   questStage: { readonly quest: number; readonly stage: number };
+  /** A quest was completed (QuestStatus: `completed`), or a completed quest reset (not). */
+  questStatus: { readonly quest: number; readonly completed: boolean };
   /** A quest started or stopped (TESQuestStartStopEvent). */
   questStartStop: { readonly quest: number; readonly started: boolean };
   /** A reference was reset with its cell (TESResetEvent). */
@@ -210,12 +281,18 @@ export interface GameEvents {
     readonly start?: number;
     readonly end?: number;
   };
+  /** The player's skill went up a level (SkillIncrease): the skill's actor value. */
+  skillIncrease: { readonly skill: number };
   /** A spell, power, scroll or shout was cast (TESSpellCastEvent). */
   spellCast: { readonly caster: number; readonly spell: number };
   /** An actor let out a shout, whatever its words (ShoutAttack). */
   shoutAttack: { readonly actor: number; readonly shout: number };
   /** An actor recharged a weapon with a soul gem (SoulGemsUsed); enchanting is not told. */
   soulGemsUsed: { readonly actor: number; readonly gem: number };
+  /** A soul was caught in a soul gem (SoulsTrapped): who trapped it, whose soul it was. */
+  soulsTrapped: { readonly trapper: number; readonly target: number };
+  /** The player learned a spell (SpellsLearned). */
+  spellsLearned: { readonly spell: number };
   /** An actor's race switch ended (TESSwitchRaceCompleteEvent). */
   switchRaceComplete: { readonly actor: number };
   /** A topic info's line began or ended (TESTopicInfoEvent). */

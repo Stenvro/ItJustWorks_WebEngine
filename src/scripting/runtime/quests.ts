@@ -12,7 +12,6 @@ import { LogEntryFlag, QuestFlag, StageFlag, type QuestRecord } from '../../worl
 import { ObjectHandle, type Value } from '../values.ts';
 import { AliasFiller } from './alias-fill.ts';
 import type { ScriptRuntime } from './runtime.ts';
-import { countQuestStatus } from './stat-events.ts';
 import type { StoryEventData } from './story-manager.ts';
 
 export class QuestEngine {
@@ -244,7 +243,7 @@ export class QuestEngine {
     const state = this.#runtime.state.quest(quest);
     if (!state.completed) {
       this.#runtime.questUpdated(quest, 'completed');
-      this.#runtime.detach(countQuestStatus(this.#runtime, quest, 1));
+      this.#runtime.events.emit('questStatus', { quest, completed: true });
     }
     state.completed = true;
   }
@@ -268,7 +267,7 @@ export class QuestEngine {
     state.objectives.clear();
     state.log.length = 0;
     // A completed quest reset is taken back from the stats (QuestStatus's reset).
-    if (state.completed) runtime.detach(countQuestStatus(runtime, quest, -1));
+    if (state.completed) runtime.events.emit('questStatus', { quest, completed: false });
     state.completed = false;
     state.failed = false;
     await this.#resetScripts(record);
