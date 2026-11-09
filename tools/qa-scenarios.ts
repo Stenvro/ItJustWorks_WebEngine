@@ -266,21 +266,34 @@ var QA_RIDE_NAV = engineDev.world.#navmeshes;
  */
 export const FOLLOW_BOT = `
 var QA_NAV = engineDev.world.#navmeshes;
-var QA_PLAY = engineDev.world.#play;
+var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
 (async () => {
   if (window.__qaBot) return 'running';
   const compass = await import('/src/shell/compass.ts');
   const paths = await import('/src/ai/pathfinding.ts');
   const { Layer } = await import('/src/physics/collision-layers.ts');
-  const W = engineDev.world;
-  const nav = QA_NAV;
+  // Interiors play in the model viewer, the world outside in the world viewer (as the monitors
+  // pick it): the player, the stage, the navmeshes and the physics of the one playing now.
+  const viewer = () => (engineDev.world.play ? engineDev.world : engineDev.viewer);
+  const W = {
+    get player() { return viewer().player; },
+    get actorStage() { return viewer().actorStage; },
+    get loading() { return viewer().loading; },
+  };
+  const nav = new Proxy({}, {
+    get: (_, key) => {
+      const set = engineDev.world.play ? QA_NAV : QA_NAV_INSIDE;
+      const value = set[key];
+      return typeof value === 'function' ? value.bind(set) : value;
+    },
+  });
   // A way to where the floor gives way (150 units or more down), found on a grid of 32 units
   // round the player (physics rays: the floor under each cell, steps of up to 32, nothing at
   // chest height between neighbours): of the drops, the one landing nearest the goal that lands
   // on navmesh with a way on to it (the inn's upper floor has holes nearer down into a room that
   // rubble shuts), else the one landing nearest.
   const findDrop = (feet, goal) => {
-    const physics = QA_PLAY?.physics;
+    const physics = viewer().play?.physics;
     if (!physics) return undefined;
     const ray = (from, dir, length) => physics.raycast(from, dir, length, Layer.charController, undefined, 0x14);
     const CELL = 32; const SPAN = 40;

@@ -84,7 +84,10 @@ have settled, then watch for 3 minutes.
 The follow bot (in the page, `FOLLOW_BOT` in `tools/qa-scenarios.ts`) reads the targets of the running
 quests' shown objectives as the compass does (`questTargets`, but also for a quest the journal
 has not made the active one: MQ101 is not), finds a navmesh path (`findPath`) to the nearest and
-steers the player by `Player.yaw` and the Forward control. It waits when the guide is within 220
+steers the player by `Player.yaw` and the Forward control. It drives the viewer that plays now, as
+the monitors pick it: the world viewer outside, the model viewer in an interior (its player, actor
+stage, navmeshes and physics). Before, it read only the world viewer and stood still from the
+keep's door on. It waits when the guide is within 220
 units (after 8 s it closes in to 90: a trigger may be by them; after 15 s of a guide standing
 still it walks on 160 units past them, into the room they lead to: Ralof in Helgen's tower, the
 stage-25 strip beyond him), uses the load door toward a target in another space
