@@ -338,6 +338,20 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
       await sim.step(7);
       const feet = sim.world.player.feet;
       expect(sim.world.player.eye[2] - feet[2]).toBeLessThan(70);
+      // Looking is off on the block (stage 95's DisablePlayerControls has abLooking): the view
+      // goes where the clips turn the first-person camera, from the block up to the headsman and
+      // the tower behind him, about 27 degrees up as Alduin comes (stage 100: the chop ends in
+      // AOExecutioneeIdleOnBlockPlayer). Found 2026-11-09: it stayed level the way the player had
+      // walked in, and Alduin never came into view.
+      expect(await sim.until(() => sim.stageDone(MQ101, 100), 120)).toBe(true);
+      const onBlock = (): boolean =>
+        avatar?.firstPerson?.behavior
+          ?.playing()
+          .some(({ animation }) => /AOExecutioneeIdleOnBlockPlayer/i.test(animation)) === true;
+      expect(await sim.until(onBlock, 30)).toBe(true);
+      await sim.step(1);
+      const [, , up] = sim.world.player.forward;
+      expect(Math.asin(up), 'the view turned up by the camera node').toBeGreaterThan(0.3);
       expect(await sim.until(() => sim.stageDone(MQ101, 160), 300)).toBe(true);
       // The first prisoner beheaded, the player to the block (95), Alduin's arrival (100).
       for (const stage of [85, 90, 95, 100, 120, 130, 150])

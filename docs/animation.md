@@ -1326,7 +1326,14 @@ do too.
 Two graphs run: the race's (`defaultmale.hkx`) on the body and the first-person one
 (`_1stperson\firstperson.hkx`) on the first-person skeleton (`_1stperson\skeleton.nif` with
 `skeletonfirst.hkx`, 99 bones), whose **Camera1st [Cam1]** bone is the first-person camera:
-120.5 units up at rest, 86.4 in SneakMTIdle (times the race's height). The player's movement
+120.5 units up at rest, 86.4 in SneakMTIdle (times the race's height). Its rotation is the
+identity at rest (its +y the body's forward) and nearly so walking; the scripts' first-person
+clips turn it: on Helgen's block (`AOExecutioneeIdleOnBlockPlayer`) its +y is (-0.88, -0.07,
+0.46) in the body's frame, to the body's left and 27 degrees up, at the headsman and the tower
+behind him. While looking is switched off (DisablePlayerControls' abLooking: MQ101 stage 95) the
+view goes there and follows it (`Player.#followCameraNode`, at π radians a second: inferred from
+the engine's fFirstPersonDisablePOVLerpDPS, whose value is not read, TODO(M13)); otherwise the
+view is the player's heading and pitch and the node only places the eye. The player's movement
 drives both, as the engine drives every actor's graph ([Driving the graphs](#driving-the-graphs)):
 Speed (the controls' wish, the controller's horizontal velocity, game units per second),
 Direction, TurnDelta, IsSprinting, IsSneaking; the movement actions (moveStart / moveStop at

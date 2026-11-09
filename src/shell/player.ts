@@ -428,6 +428,11 @@ const ARRIVAL_FLOOR_BELOW = 96;
 const FOOTPRINT_RAYS = 8;
 /** Pitch limit of the cameras (radians). */
 const MAX_PITCH = (85 * Math.PI) / 180;
+/**
+ * How fast the first-person view turns to the camera node's while looking is off (radians a
+ * second; #followCameraNode). TODO(M13): inferred (fFirstPersonDisablePOVLerpDPS's value).
+ */
+const DISABLED_LOOK_RATE = Math.PI;
 /** fMountedMaxLookingDown where no plugin sets it (Update.esm's value). */
 const MOUNTED_MAX_LOOKING_DOWN = 30;
 /** Looking further down than this while swimming forward dives. */
@@ -548,6 +553,13 @@ export class Player implements Camera {
    * up), as the animated Camera1st node has it; undefined: the skeleton's rest height.
    */
   cameraOffset: (() => Vec3 | undefined) | undefined;
+  /**
+   * Where the animated Camera1st node looks (its +y) in the world's axes; undefined: no
+   * first-person skeleton.
+   */
+  cameraForward: (() => Vec3 | undefined) | undefined;
+  /** The first-person view where the camera node turns it (#followCameraNode). */
+  #nodeView: { yaw: number; pitch: number } | undefined;
   /**
    * How far the body is from where it stands on its feet (game units, the world's axes): a
    * seated body's (a cart's rider sits 200 units behind and 139 above its root). The
@@ -852,15 +864,23 @@ export class Player implements Camera {
     );
   }
 
+  /** Where the player looks: their heading and pitch, or the camera node's (#followCameraNode). */
   get forward(): Vec3 {
-    const c = Math.cos(this.pitch);
-    return [Math.sin(this.yaw) * c, Math.cos(this.yaw) * c, Math.sin(this.pitch)];
+    const { yaw, pitch } = this.#nodeView ?? this;
+    const c = Math.cos(pitch);
+    return [Math.sin(yaw) * c, Math.cos(yaw) * c, Math.sin(pitch)];
   }
 
   /** The camera's heading: the player's, or the vanity camera's about them. */
   #viewYaw(): number {
     if (this.#dragonView) return this.#dragonView[0];
+    if (this.#nodeView) return this.#nodeView.yaw;
     return this.vanity.active ? this.vanity.yaw : this.yaw;
+  }
+
+  /** The camera's pitch: the player's, or the camera node's (#followCameraNode). */
+  #viewPitch(): number {
+    return this.#nodeView?.pitch ?? this.pitch;
   }
 
   /** Where the camera looks (the vanity camera: at the player, from its heading). */
@@ -1005,6 +1025,7 @@ export class Player implements Camera {
     if (Math.abs(this.#bowZoom - zoom) < 1e-3) this.#bowZoom = zoom;
     this.#stepCameraState(deltaSeconds);
     this.#moveShoulder(deltaSeconds);
+    this.#followCameraNode(deltaSeconds);
     this.#placeCamera(physics.alpha, deltaSeconds);
     this.shake.step(deltaSeconds);
     if (this.#animated) this.#animated.since += deltaSeconds;
@@ -1612,6 +1633,43 @@ export class Player implements Camera {
     this.pitch = 0;
   }
 
+  /**
+   * Looking switched off (Game.DisablePlayerControls' abLooking) in first person, the view is
+   * brought to where the animated Camera1st node looks, at DISABLED_LOOK_RATE, and follows it
+   * there: the scripts' animations look for the player. On Helgen's block (MQ101 stage 95 switches
+   * looking off) the executionee's first-person clips turn the camera from the block up to the
+   * headsman and the tower Alduin comes to; the view stayed level the way the player had walked
+   * in, and they never saw him come. Looking back on, the player looks on from there. Observed in
+   * the original: the engine brings the view back at fFirstPersonDisablePOVLerpDPS while a control
+   * flag of the player is off. TODO(M13): inferred that the flag is looking's and that the view
+   * goes to the camera node's; fFirstPersonDisablePOVLerpDPS's built-in value is not read.
+   */
+  #followCameraNode(seconds: number): void {
+    const look =
+      this.pov === 'first' && !this.vanity.active && !this.allows('Look')
+        ? this.cameraForward?.()
+        : undefined;
+    const length = look ? Math.hypot(look[0], look[1], look[2]) : 0;
+    if (!look || length < 1e-6) {
+      const view = this.#nodeView;
+      if (view) {
+        this.#nodeView = undefined;
+        this.yaw = view.yaw;
+        this.pitch = Math.max(this.#pitchFloor(), Math.min(MAX_PITCH, view.pitch));
+      }
+      return;
+    }
+    const yaw = Math.atan2(look[0], look[1]);
+    const pitch = Math.asin(Math.max(-1, Math.min(1, look[2] / length)));
+    const from = this.#nodeView ?? { yaw: this.yaw, pitch: this.pitch };
+    const most = DISABLED_LOOK_RATE * seconds;
+    const turn = Math.atan2(Math.sin(yaw - from.yaw), Math.cos(yaw - from.yaw));
+    this.#nodeView = {
+      yaw: from.yaw + Math.max(-most, Math.min(most, turn)),
+      pitch: from.pitch + Math.max(-most, Math.min(most, pitch - from.pitch)),
+    };
+  }
+
   /** The animated camera rides its node (third person; first person keeps the eye). */
   #animateCamera(): void {
     const animated = this.#animated;
@@ -1656,7 +1714,7 @@ export class Player implements Camera {
     }
     let forward = this.#viewForward();
     let yaw = this.#viewYaw();
-    let pitch = this.pitch;
+    let pitch = this.#viewPitch();
     if (this.tween.active) {
       const added = this.tween.sample(performance.now());
       yaw += added.yaw;

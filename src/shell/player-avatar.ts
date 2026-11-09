@@ -161,6 +161,7 @@ export class PlayerAvatar {
       void this.#actions?.perform('ActionWaterwalkStart').catch(() => undefined);
     };
     player.cameraOffset = () => this.#cameraOffset();
+    player.cameraForward = () => this.#cameraForward();
     player.taggedMovement = () => this.#taggedMovement();
     player.animationMotion = () => this.#animationMotion();
     void session.db
@@ -764,10 +765,22 @@ export class PlayerAvatar {
     return [x * cos - y * sin, x * sin + y * cos, z];
   }
 
+  /**
+   * Where the animated Camera1st node looks in the world's axes: its +y (at rest the body's
+   * forward), turned with the body. TODO(M13): the axis is inferred, as for the animated
+   * third-person camera's node.
+   */
+  #cameraForward(): Vec3 | undefined {
+    const node = this.#firstPerson?.pose.world(CAMERA_NODE);
+    if (!node) return undefined;
+    return this.#toWorld([node[4] ?? 0, node[5] ?? 0, node[6] ?? 0]);
+  }
+
   destroy(): void {
     this.#destroyed = true;
     this.#player.jumpTrigger = undefined;
     this.#player.cameraOffset = undefined;
+    this.#player.cameraForward = undefined;
     this.#player.taggedMovement = undefined;
     this.#made.scene?.destroy();
     this.#firstPerson?.destroy();
