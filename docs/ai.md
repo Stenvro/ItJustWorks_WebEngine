@@ -640,12 +640,12 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   while less than fCombatInventoryShoutMaxRecoveryTime (5 s) of recovery is left, and only a
   shout whose word's spell has a hostile effect, as with its staffs (`shoutAttacks`; inferred,
   TODO(M13)). The delivery does not decide it: Storm Call's words and Alduin's Firestorm
-  (AlduinFirestormShout: DragonVoiceStormCall, in the spell lists of MQ106Alduin, MQ206Alduin,
-  MQ206AncientAlduin and MQ304Alduin) are self spells with a hostile area, and DragonVoiceStormCall
-  carries VoiceStormCallEmptyAIScriptEffect ("Script Effect for AI use of Storm Call"); Clear
-  Skies' words (VoiceClearSkiesSelf1-3) have none, so Sovngarde's heroes, Clear Skies in their
-  voices from MQ305's mist, do not shout it at Alduin instead of fighting him
-  (`tests/conformance/combat/inventory.int.test.ts`). The package
+  (AlduinFirestormShout: DragonVoiceStormCall, in the spell lists of AlduinBase, MQ106Alduin,
+  MQ206Alduin, MQ206AncientAlduin and MQ304Alduin) are self spells with a hostile area, and
+  DragonVoiceStormCall carries VoiceStormCallEmptyAIScriptEffect ("Script Effect for AI use of
+  Storm Call"); Clear Skies' words (VoiceClearSkiesSelf1-3) have none, so Sovngarde's heroes,
+  Clear Skies in their voices from MQ305's mist, do not shout it at Alduin instead of fighting
+  him (`tests/conformance/combat/inventory.int.test.ts`). The package
   Shout procedure does not wait for it: it turns to its target until within
   fAIShoutToleranceDegrees (5°; with its aim bool, holding the aim fAIShoutMinAimSeconds, 2 s),
   checks that no one stands in the way (within fAIAimBlockedToleranceDegrees, 10°), puts the
