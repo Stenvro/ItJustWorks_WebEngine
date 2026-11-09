@@ -475,7 +475,9 @@ worldspaces on screen:
   exterior cells round its place (6,369 of the 6,527), and a persistent parent's wherever they
   stand (the other 158, every one of whose parents is persistent: Fort Neugrad's commander's
   door wakes the bandit boss in Tamriel's persistent cell, its barracks doors the ambush
-  outside). TODO(M13): inferred (the engine keeps a parent's children on it as they load; a
+  outside); the load order's list of those is read in the background as a game starts or loads
+  (`warmActivateChildren`, every placed reference: about 1.3 s in Node), and the children round
+  a parent never wait for it. TODO(M13): inferred (the engine keeps a parent's children on it as they load; a
   persistent parent is always there); whether a child whose cell is not in memory is left out
   in the original is not read.
   Bleak Falls Barrow's frostbite spider drops from its ceiling hole so as the player walks into
@@ -698,7 +700,9 @@ stats go to every object registered for them. What each kind becomes:
   whose parent cell changes between an attached cell and a detached one. Ours: a move to
   another cell (MoveTo, an actor walking away or back) between the attached area (the
   player's interior cell, or the uGridsToLoad cells round the player's outside, where the
-  player is going if a script just moved them, else where the world has them) and the rest:
+  player is going if a script just moved them, until the world tells it has them in that cell
+  or in another than the one they were sent from: `playerInCell`, every frame; else where the
+  world has them) and the rest:
   a ledger MoveTo'd to another cell and back, an innkeeper out through her door and in again. The player is always attached.
   A cell attaching or detaching with its references is OnCellAttach / OnCellDetach instead.
 - **Translations** (`ScriptRuntime.translate`): failed at once for a reference without its 3D,
@@ -797,7 +801,9 @@ times are whole game hours, 0 for never):
   buffered (they take no room there): a cell goes into its buffer as the viewer lets it go
   (`cellLeft`), after the cell gone into is taken up, so the inn left three houses ago is
   still there. An exterior cell is made again when a persistent reference of its worldspace
-  came into it meanwhile (its persistent ones are part of its data). A buffered cell is
+  came into it meanwhile (its persistent ones are part of its data). A far cell only looked
+  into (its large references round the camera) uses held or buffered data as it is, else is
+  read for the look alone: it takes no room from the cells left. A buffered cell is
   detached like any other (OnCellDetach as it left, its reset clock running); the game's
   changes to it live in GameState either way. TODO(M13): the original's own handling of the
   buffers is not read; the order they let cells go in is inferred.
