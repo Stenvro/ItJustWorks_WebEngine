@@ -3,6 +3,7 @@ import {
   chooseLookActor,
   HeadTracker,
   LookRequests,
+  lookParty,
   noticesPlayer,
   pathLookAhead,
   pathLookPoint,
@@ -63,6 +64,36 @@ describe('head tracking', () => {
       inFurniture: true,
     };
     expect(chooseLookActor(head, 0, [player], 400, undefined, true)?.reference).toBe(0x14);
+  });
+
+  it('who goes with it: its commander, its commanded, the player’s teammates (inferred)', () => {
+    // A thrall (commanded by the player) and a follower (teammate): one party.
+    const thrall = { reference: 1, commander: 0x14 };
+    const follower = { reference: 2, teammate: true };
+    const stranger = { reference: 3 };
+    expect(lookParty(thrall, follower)).toBe(true);
+    expect(lookParty(follower, thrall)).toBe(true);
+    expect(lookParty(follower, stranger)).toBe(false);
+    expect(lookParty(stranger, follower)).toBe(false);
+    // A necromancer and its skeletons; another necromancer's skeleton is not of it.
+    const necromancer = { reference: 10 };
+    const skeleton = { reference: 11, commander: 10 };
+    const other = { reference: 12, commander: 20 };
+    expect(lookParty(necromancer, skeleton)).toBe(true);
+    expect(lookParty(skeleton, necromancer)).toBe(true);
+    expect(lookParty(skeleton, other)).toBe(false);
+    expect(lookParty(necromancer, other)).toBe(false);
+  });
+
+  it('one of its party is chosen as the player is: within 100, and between two in furniture', () => {
+    const head = [0, 0, 100] as const;
+    const close = { reference: 1, head: [0, 60, 100] as const, party: true };
+    expect(chooseLookActor(head, 0, [close], 400)?.reference).toBe(1);
+    const seated = { reference: 1, head: [0, 200, 100] as const, inFurniture: true, party: true };
+    expect(chooseLookActor(head, 0, [seated], 400, undefined, true)?.reference).toBe(1);
+    // Still not behind it, nor beyond reach.
+    const behind = { reference: 1, head: [0, -200, 100] as const, party: true };
+    expect(chooseLookActor(head, 0, [behind], 400)).toBeUndefined();
   });
 
   it('looks along its path as far as its speed takes it in fPathLookAtPointTime', () => {

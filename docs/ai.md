@@ -880,8 +880,14 @@ Actors use furniture as the engine's furniture handling does, as far as the data
   it, on the floor it came from; one leaving stands when its exit raises the event, its exit's
   root motion having taken it out. TODO(M13): the engine waits for the graph alone; ours
   stands 1.5 s after an exit's root motion at the latest, for graphs whose exits our runtime
-  does not play to their end. The enter still ends by its root motion's time (the tween to the
-  marker), not on idleChairSitting.
+  does not play to their end. The enter ends the same way (observed in the original: the
+  handlers set the sit state): idleChairSitting (ChairEnterHandler; the human graphs raise it as
+  a chair's, a counter's or a wall's lean enter reaches its state, tools/behavior-run.ts) or
+  idleBedSleeping (BedEnterHandler) puts the use in its furniture, its scripts hear OnSit then.
+  Its enter's root motion and the tween take it to its marker, where it waits for that event
+  (src/ai/furniture-markers.ts `enterStep`). TODO(M13): the engine waits for the graph alone;
+  ours puts it in 1.5 s after the root motion at the latest (ENTER_GRACE, inferred as the
+  exit's), for graphs whose enters our runtime does not play to the event.
 - **Idle markers** (IDLM, not drawn; with the furniture markers they are the cells' markers:
   `CellData.markers`): the actor goes to it, faces its way and plays its idles (IDLA), in order or
   one picked each time (IDLF 0x1), once through if so set (0x4), one each time its timer (IDLT)
@@ -963,9 +969,18 @@ Actors use furniture as the engine's furniture handling does, as far as the data
   coffin, Solstheim's Tentacle Word burn): the crosshair shows nothing on it, so the player does
   not use it (activation-prompt.ts). TODO(M13): the flag's plain reading; the original's
   furniture activation and its prompt text do not read it, where it does is not found.
-- **IDLM Loose Only** (IDLF bit 3, 72 of 89 markers): still open. Looked for in the original
-  and not found: its Use Idle Marker procedure and exec state, the walk onto a marker and the
-  sandbox's search for markers read no such bit of the marker's flags. TODO(M13): what reads it.
+- **IDLM Loose Only** (IDLF bit 3, 72 of 89 markers; the same field of packages' idles, on
+  109): not read at run time. Looked for in the original and not found: its Use Idle Marker
+  procedure and exec state, the walk onto a marker and the sandbox's search for markers read no
+  such bit of the marker's flags. The data says what it is (`node tools/idle-info.ts
+--loose-only`): every package with it lists only loose idles (those with no parent in the idle
+  tree, 109 of 109) and the one package without it lists an idle of the tree (CR01VictimPackage);
+  67 of the 72 markers with it list only loose idles. So it is the Creation Kit's choice of which
+  idles to pick from (the loose ones only), kept with the collection: what the actor plays is its
+  list either way. Ours reads it nowhere (inert), as the original. TODO(M13): inferred, the
+  editor's reading is not documented; the five markers flagged with idles of the tree
+  (PatrolIdleMarker, CowEatingIdleMarker, ChoppingIdleMarker, DA08NelkirPatrolIdleMarker,
+  FlowersIdleMarker) play their lists as the others.
 - **Navmesh triangle flag Found** (0x800, 3.15 million triangles, nearly all): still open. The
   original's path search set-up and its step's cost (which reads Water and Preferred) read no
   such bit. TODO(M13): whether other navmesh code reads it.
@@ -1160,7 +1175,13 @@ Actors follow the player, ride horses and carts (`src/ai/followers.ts`, `mounts.
   fHorseClampAngle, 10°, of straight back), backs up facing on, one that moves otherwise is
   reined in and stops. They are carried on the saddle in the physics steps (their shape out of
   the world, and no one for their horse to go round), so their camera rides with the horse.
-  TODO(M13): how the engine turns the horse to the camera (its rate; fHorseMaxAngleBeforeTurn),
+  The horse turns to the camera at its movement type's rate; while it moves, the view keeps its
+  heading in the world, and once it is more than [Camera] fHorseMaxAngleBeforeTurn (the
+  engine's built-in 90°) from the horse's heading the horse's turns take it along at that angle;
+  a standing horse leaves the view free (src/shell/camera-states.ts `horseViewYaw`).
+  TODO(M13): that rule is inferred, the dragon camera's for a horse-like mount (observed in the
+  original, docs/rendering.md "Cameras") with the horse's own setting; [Controls]
+  fHorseHeadingMovementMult (1) and fHorseControlsDampenTime (1), built-in values, are not read;
   the path tweener to the mount place, mounting from the right.
 - **Actors riding:** a procedure that lets an actor ride ("Ride Horse If Possible": Travel,
   Patrol, Follow, ...) mounts its horse (its ACHR's XHOR: General Tullius' MQ101TulliusHorse)

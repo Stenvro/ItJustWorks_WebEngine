@@ -6,13 +6,18 @@
 //   node tools/idle-info.ts --tree ActionDraw [0_master] an action's (or idle's) subtree per
 //                                                        behavior graph (matching the filter)
 //   node tools/idle-info.ts --idlm                      idle markers with their idles
+//   node tools/idle-info.ts --loose-only                IDLF Loose Only (0x8) on idle markers and
+//                                                        packages against their idles' kinds
+//                                                        (all loose, all in the tree, mixed)
 //   node tools/idle-info.ts --furn                      the furniture's AI data: distinct values
 //   node tools/idle-info.ts --cameras                   the kill cameras' tree (CPTH) with its
 //                                                        shots (CAMS): conditions, times, models
 
 import {
   behaviorGraphKey,
+  IdleCollectionFlag,
   IdleFlag,
+  parseIdleCollection,
   parseIdleMarker,
   readIdleTree,
   type IdleRecord,
@@ -366,6 +371,49 @@ async function showMarkers(): Promise<void> {
   );
 }
 
+/**
+ * IDLF Loose Only against the idles each collection lists (docs/ai.md, "Marker keywords,
+ * Disables Activation, Loose Only, Found"): idle markers and packages, flagged or not, by whether
+ * their idles are all loose (no parent), all in the idle tree, or mixed; the collections with
+ * idles in the tree are named.
+ */
+async function showLooseOnly(): Promise<void> {
+  const tree = await readIdleTree(db);
+  const table = new Map<string, number>();
+  for (const type of ['IDLM', 'PACK'] as const) {
+    for (const formId of db.formIdsOfType(type)) {
+      const record = await db.get(formId);
+      if (!record || record.deleted) continue;
+      const collection = type === 'IDLM' ? parseIdleMarker(record) : parseIdleCollection(record);
+      if (!collection) continue;
+      let loose = 0;
+      let inTree = 0;
+      for (const id of collection.idles) {
+        const idle = tree.idles.get(id);
+        if (!idle) continue;
+        if (idle.parent === undefined) loose++;
+        else inTree++;
+      }
+      const flagged = (collection.flags & IdleCollectionFlag.looseOnly) !== 0;
+      const kind =
+        loose + inTree === 0
+          ? 'none'
+          : inTree === 0
+            ? 'all loose'
+            : loose === 0
+              ? 'all in the tree'
+              : 'mixed';
+      add(table, `${type} ${flagged ? 'Loose Only' : 'not flagged'}: ${kind}`);
+      if (inTree > 0) {
+        console.log(
+          `${type} ${record.editorId ?? hex(formId)} flags 0x${collection.flags.toString(16)}: ${String(loose)} loose, ${String(inTree)} in the tree`,
+        );
+      }
+    }
+  }
+  for (const [key, count] of [...table].sort()) console.log(`${key}  ${String(count)}`);
+}
+
 async function showFurniture(): Promise<void> {
   const counts = {
     records: 0,
@@ -486,8 +534,9 @@ if (args[0] === '--parse') await parseAll();
 else if (args[0] === '--cameras') await showCameras();
 else if (args[0] === '--tree') await showTree(args[1] ?? 'ActionIdle', args[2] ?? '');
 else if (args[0] === '--idlm') await showMarkers();
+else if (args[0] === '--loose-only') await showLooseOnly();
 else if (args[0] === '--furn') await showFurniture();
 else
   console.log(
-    'usage: node tools/idle-info.ts --parse | --tree <action or idle> [graph] | --idlm | --furn | --cameras',
+    'usage: node tools/idle-info.ts --parse | --tree <action or idle> [graph] | --idlm | --loose-only | --furn | --cameras',
   );

@@ -129,8 +129,10 @@ export interface RiddenMotion {
  * does not walk sideways); sprinting it gallops. Without a key it stands. The back key (observed
  * in the original: the player's movement input on a mount) drops the side keys: a
  * horse that stands, or already backs up, backs up, facing on; one that moves otherwise stops
- * (it is reined in, not turned round). TODO(M13): how the engine turns the horse to the camera
- * (its turn rate, fHorseMaxAngleBeforeTurn) is not read yet: it turns at its movement type's.
+ * (it is reined in, not turned round). It turns at its movement type's rate; the view turned
+ * farther than fHorseMaxAngleBeforeTurn from a moving horse is taken along by its turns
+ * (src/shell/camera-states.ts horseViewYaw). TODO(M13): [Controls] fHorseHeadingMovementMult (1)
+ * and fHorseControlsDampenTime (1), the engine's built-in values, are not read.
  */
 export function riddenRequest(
   input: RiderInput,

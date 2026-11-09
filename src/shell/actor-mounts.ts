@@ -381,6 +381,19 @@ export class ActorMounts {
     };
   }
 
+  /**
+   * The ridden horse as the horse's camera follows it (src/shell/camera-states.ts horseViewYaw):
+   * its heading and whether it moves; undefined riding none (or a dragon), or not in the saddle.
+   */
+  horseView(rider: number): { readonly heading: number; readonly moving: boolean } | undefined {
+    const ride = this.#rides.get(rider);
+    if (!ride || ride.kind === 'dragon' || ride.phase !== 'riding') return undefined;
+    const horse = this.#options.get(ride.horse);
+    if (!horse) return undefined;
+    const [vx, vy] = this.#options.movers.state(ride.horse)?.velocity ?? [0, 0];
+    return { heading: horse.heading, moving: Math.hypot(vx, vy) > RIDDEN_MOVING_SPEED };
+  }
+
   flyingMount(
     actor: number,
   ): { readonly patrol: boolean; readonly travelling: boolean } | undefined {

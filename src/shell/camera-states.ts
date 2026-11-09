@@ -231,6 +231,28 @@ const wrapAngle = (a: number): number => {
 };
 
 /**
+ * The horse's camera state's view (HorseCameraState): the player's view (compass radians) as a
+ * ridden horse turns beneath it. While the horse moves the view keeps its heading in the world,
+ * and the horse steers to it (src/ai/mounts.ts riddenRequest); turned farther than
+ * fHorseMaxAngleBeforeTurn (`maxAngle`, radians; 90°) from the horse's heading, the horse's
+ * turns take the view along at that angle. A standing horse leaves the view free (the player
+ * looks round it). TODO(M13): inferred, the dragon camera's rule for a horse-like mount
+ * (fDragonMaxAngleBeforeTurn, observed in the original) applied to the horse's own setting.
+ */
+export function horseViewYaw(
+  yaw: number,
+  heading: number,
+  moving: boolean,
+  maxAngle: number,
+): number {
+  if (!moving) return yaw;
+  const offset = wrapAngle(yaw - heading);
+  if (Math.abs(offset) <= maxAngle) return yaw;
+  // The view goes back to the limit (its own winding kept: the yaw is not wrapped).
+  return yaw - offset + Math.sign(offset) * maxAngle;
+}
+
+/**
  * The dragon's camera state: the player's view turning with the dragon (or held against its
  * turns while it moves), the lock on a target and the ease between them.
  */

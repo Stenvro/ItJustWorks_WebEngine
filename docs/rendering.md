@@ -1256,7 +1256,10 @@ src/shell/camera-states.ts), worked out each frame by precedence: a kill camera 
 killmove and ranged kill cameras, src/shell/killmove-camera.ts), the free camera, the tween
 menu's, an animated camera (StartAnimatedCamera), bleedout, furniture, auto vanity, a dragon's
 back, then first person, or third person, or a mount's. Riding a horse the third-person camera
-takes `fOverShoulderHorse{PosX,AddY,PosZ}` (the engine's 0, -300, 0); on a dragon it is
+takes `fOverShoulderHorse{PosX,AddY,PosZ}` (the engine's 0, -300, 0), and while the horse moves
+its turns take the view along once it is more than `[Camera] fHorseMaxAngleBeforeTurn` (the
+engine's 90°) from the horse's heading (`horseViewYaw`; TODO(M13): inferred, the dragon camera's
+rule for a horse-like mount below with the horse's setting); on a dragon it is
 always third person, zoomed between `fVanityModeMinDistFly` and `fVanityModeMaxDist` ×
 `fVanityModeMaxDistFlyMult`.
 

@@ -27,7 +27,7 @@ import {
 } from '../ai/idle-records.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
 import { idleLoopSeconds } from '../ai/ambient-idles.ts';
-import { markerRank } from '../ai/furniture-markers.ts';
+import { enterStep, markerRank } from '../ai/furniture-markers.ts';
 import type { SandboxSpot } from '../ai/package-runtime.ts';
 import { parseNif } from '../formats/nif/nif.ts';
 import type { Vec3 } from '../render/math.ts';
@@ -302,8 +302,9 @@ export class ActorFurniture {
    * PlayerChairEnterHandler; idleBedSleeping: BedEnterHandler, PlayerBedEnterHandler). Observed
    * in the original: unless the actor is already getting up (or waking), its sit
    * state becomes "sitting" (a bed's "sleeping") as its graph reaches the furniture's state.
-   * Here an entering use is in its furniture then (at its marker, its scripts hear OnSit),
-   * else once its enter's root motion has played. TODO(M13): the player's handlers also switch
+   * Here an entering use is in its furniture then (at its marker, its scripts hear OnSit), not
+   * when its enter's root motion has played: it waits at its marker for the graph's word,
+   * ENTER_GRACE at most (enterStep). TODO(M13): the player's handlers also switch
    * the camera to the furniture's and set the controls (not reproduced).
    */
   graphEntered(user: FurnitureUser): void {
@@ -949,9 +950,11 @@ export class ActorFurniture {
       y += (marker.position[1] - y) * share;
       heading += angle(heading, marker.heading) * share;
     }
-    if (use.left <= 0) {
+    const step = enterStep(use.left);
+    if (step !== 'moving') {
+      // At its marker: in once its graph says so (graphEntered), at the latest ENTER_GRACE on.
       user.moveTo(marker.position, marker.heading);
-      this.#in(user, use);
+      if (step === 'in') this.#in(user, use);
       return;
     }
     user.moveTo([x, y, z], heading);

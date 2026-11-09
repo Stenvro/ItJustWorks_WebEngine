@@ -19,7 +19,9 @@
 //   bAllowCharacterBumper 1, fGoodPosCheckDepth 0.1; fJumpHeightMin 64 (Skyrim.esm 76),
 //   fJumpFallVelocityMin 600 (Skyrim.esm 700).
 // - Inferred (TODO(M13) in src/physics/character.ts): the warp's two places, the bump's share by
-//   the masses, the Jumping Bonus as a percent, a dismount giving way to the horse's other side.
+//   the masses, the Jumping Bonus as a percent, a dismount giving way to the horse's other side;
+//   (TODO(M13) in src/shell/actor-graph-events.ts) an NPC's human graph's JumpUp, which the
+//   response files give no handler, jumping its controller as the player's push-off does.
 //   These cases keep those readings from changing unnoticed; they do not say the original's
 //   numbers are these.
 
@@ -661,7 +663,7 @@ describe.skipIf(!hasGamedata())('an NPC’s controller (headless simulation)', (
     return found;
   };
 
-  it('answers its graph’s jump: its JumpBegin jumps its controller fJumpHeightMin (76) high', async () => {
+  it('answers its graph’s jump: its JumpUp (a human graph raises no JumpBegin) jumps its controller fJumpHeightMin (76) high', async () => {
     const start = staged().position[2];
     const stage = sim.world.stage;
     expect(await stage.furniture.playAction(stage.userOf(staged()), 'ActionJump')).toBe(true);

@@ -462,8 +462,11 @@ through the edges' middles, a player walks around it); and a few steps higher th
 - **Jump:** GMST fJumpHeightMin (Skyrim.esm 76, built in 64) is the height, times the actor's
   scale, fJumpSwimmingMult out of the water, and its Jumping Bonus's share (`jumpHeight`;
   TODO(M13): the bonus as a percent is inferred; no vanilla effect sets it); with constant gravity
-  the take-off speed is √(2 g h). An NPC's graph's jump (JumpBegin, the human clips' JumpUp) jumps
-  its controller as the player's does (`ActorMovers.jump`). No jumping while sprinting (vanilla blocks it). A
+  the take-off speed is √(2 g h). An actor's graph's JumpBegin (the horse's jumpBegin as its jump
+  starts) jumps its controller as the player's does (`ActorMovers.jump`); the human clips' JumpUp
+  has no handler in the actors' response file, but jumps an NPC's controller as it pushes the
+  player off (the dispatch's listener; TODO(M13): inferred, what in the original answers it is not
+  known). No jumping while sprinting (vanilla blocks it). A
   sprint goes on in the air (a jump, a step down) until the fall is faster than
   fJumpFallVelocityMin (Skyrim.esm 700 units a second; the engine's sprint, observed in the original).
   The jump is asked for on the ground (the input) and pushes off when its animation raises

@@ -1440,6 +1440,8 @@ export class WorldViewer {
     };
     // The ridden dragon its camera follows (DragonCameraState: src/shell/camera-states.ts).
     player.dragonRide = () => this.#stage?.mounts.dragonView(PLAYER_REF);
+    // The ridden horse its camera follows (HorseCameraState: src/shell/camera-states.ts).
+    player.horseRide = () => this.#stage?.mounts.horseView(PLAYER_REF);
     player.pressTaken = (name) => this.#stage?.mounts.takesPress(name) === true;
     // The vanity camera waits while a menu is open or the player fights.
     player.vanityAllowed = () => {

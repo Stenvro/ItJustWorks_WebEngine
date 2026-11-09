@@ -218,6 +218,11 @@ export class ActorGraphEvents {
           for (const event of events) world.animationEvent(furniture, event.name);
         }
       }
+      // An NPC's human graph raises JumpUp, not JumpBegin (its jump clips' annotation; the
+      // horse's graph raises jumpBegin). The response files give JumpUp no handler; the player's
+      // push-off goes by it all the same (src/shell/player-avatar.ts). TODO(M13): inferred, an
+      // NPC's controller jumps by it as the player's does (an NPC sent a jump leaves the
+      // ground); what in the original, outside the response files, answers it is not known.
       if (!source.player && events.some((event) => event.name.toLowerCase() === 'jumpup')) {
         stage.movers.jump(source.reference);
       }
@@ -360,9 +365,11 @@ export class ActorGraphEvents {
       const camera = source.player ? this.#camera() : undefined;
       if (camera) camera.graphBowZoom = false;
     });
-    // JumpBegin: the actor's controller jumps (the player's jump: src/shell/player-avatar.ts
-    // hears it, as it asked for the jump). Its JumpUp too where a graph raises no JumpBegin
-    // (below): the human graphs' jump clips raise JumpUp.
+    // JumpBegin: the actor's controller jumps (the horse's graph raises jumpBegin as its jump
+    // starts; the player's jump: src/shell/player-avatar.ts hears it, as it asked for the jump,
+    // and there also the JumpUp the human graphs' jump clips raise instead). The response files
+    // name no handler for JumpUp; an NPC's human graph jumps its controller by it in the
+    // dispatch's listener above (inferred, TODO(M13)).
     d.handle('JumpAnimEventHandler', (source) => {
       if (!source.player) this.#options.stage.movers.jump(source.reference);
     });

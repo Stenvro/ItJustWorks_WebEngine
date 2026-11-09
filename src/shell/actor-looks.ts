@@ -13,17 +13,20 @@ import {
   HEAD_TRACK_KINDS,
   HEAD_TRACK_SETTINGS,
   HeadTracker,
+  lookParty,
   pathLookAhead,
   pathLookPoint,
   raceHeadTracks,
   VANILLA_HEAD_TRACK,
   type HeadTrackKind,
   type LookCandidate,
+  type LookSide,
   type HeadTrackSettings,
   type LookTarget,
   type Vec3,
 } from '../ai/head-tracking.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
+import { commanderOf } from '../ai/combat-profile.ts';
 import { RaceSize } from '../ai/race-combat-records.ts';
 import type { BehaviorRuntime } from '../animation/behavior-runtime.ts';
 import { Layer } from '../physics/collision-layers.ts';
@@ -295,6 +298,14 @@ export class ActorLooks {
       if (eye && detects?.(reference, PLAYER_REF) !== false) {
         candidates.push({ reference: PLAYER_REF, head: eye, player: true });
       }
+      // Who goes with whom (its commander, the player's teammates: lookParty, inferred).
+      const scripts = this.#options.session.scriptsReady;
+      const side = (actor: number): LookSide => ({
+        reference: actor,
+        commander: scripts && commanderOf(scripts, actor),
+        teammate: scripts?.state.actors.get(actor)?.playerTeammate === true,
+      });
+      const own = side(reference);
       for (const other of all) {
         if (other === staged || other.dead || other.visibility.hidden) continue;
         if (detects?.(reference, other.reference) === false) continue;
@@ -302,6 +313,7 @@ export class ActorLooks {
           reference: other.reference,
           head: headPosition(other.placed),
           inFurniture: furniture?.(other.reference),
+          party: lookParty(own, side(other.reference)),
         });
       }
       const mayStay = chooseLookActor(

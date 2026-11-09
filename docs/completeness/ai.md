@@ -100,6 +100,8 @@ Round 4b (2026-11-03; docs/ai.md, "Marker keywords, Disables Activation, Loose O
 - Still open: IDLM Loose Only (the original's Use Idle Marker procedure, the walk onto a marker
   and the sandbox's marker search read no such bit) and the navmesh flag Found (its path search
   set-up and step cost, which reads Water and Preferred, read no such bit).
+- 2026-11-09: IDLM Loose Only settled by the data as the editor's pick from loose idles, inert at
+  run time (Idle markers and furniture, below).
 
 ## Packages
 
@@ -151,8 +153,13 @@ Round 4b (2026-11-03; docs/ai.md, "Marker keywords, Disables Activation, Loose O
 ## Idle markers and furniture
 
 - [x] IDLM: idles, timer, Run In Sequence, Do Once, Ignored By Sandbox, children can use.
-- [ ] IDLM flag Loose Only (72 markers): open; its meaning is not documented, and the code
-      looked at in the original does not read it (round 4b, above).
+- [x] IDLM flag Loose Only (72 markers, 109 packages): inert, read nowhere at run time. The data
+      makes it the editor's pick from loose idles only (every flagged package lists only loose
+      idles, the one unflagged lists a tree idle; 67 of 72 flagged markers: idle-info.ts
+      --loose-only); TODO(M13): that reading inferred (docs/ai.md).
+- [x] Entering furniture ends on the graph's idleChairSitting / idleBedSleeping
+      (ChairEnterHandler, BedEnterHandler), not on the enter's root motion
+      (src/ai/furniture-markers.ts enterStep; the 1.5 s grace inferred).
 - [x] FURN: marker types (sit, sleep, lean), entry points (front, behind, left, right, up),
       disabled entries, the can-sit / sleep / lean bits, perch, Ignored By Sandbox, children can
       use (src/shell/actor-furniture.ts, actor-flight.ts).
@@ -275,8 +282,11 @@ the readers ask for by name.
       (fMin/fMaxPathLookAtPointDist, fPathLookAtPointTime) only with no one to look at.
 - [ ] A package target's look: read (only Use Weapon, Use Magic and Shout ask the Procedure look;
       actor-practice.ts asks it so), no test has it.
-- [ ] Head tracking: which fields a commanded actor's and a teammate's exceptions read; what
-      ends a look that may no longer be chosen (ours: at the next look).
+- [x] Head tracking's exceptions for a commanded actor and a teammate: one's commander, its
+      commanded and those following the same leader are chosen as the player is (lookParty;
+      inferred, TODO(M13): the fields were not identified).
+- [ ] Head tracking: the mount's check; what ends a look that may no longer be chosen (ours: at
+      the next look).
 - [x] Furniture use: entry, exit, idle markers (actor-furniture.ts).
 - [x] Process levels and their budget (process-levels.ts).
 - [ ] Process levels: the high-process distance ours; actors away keep a schedule (ours). Not read
@@ -286,7 +296,7 @@ the readers ask for by name.
 
 1. Avoidance: the velocity obstacles' steering, and what the path manager does with a way
    reported blocked by actors.
-2. IDLM Loose Only (72 markers) and the navmesh flag Found: where the original reads them
-   (round 4b ruled out the idle marker procedure, the sandbox's search and the path cost).
+2. The navmesh flag Found: where the original reads it (round 4b ruled out the path search's
+   set-up and its step cost). IDLM Loose Only is the editor's (above).
 3. The mechanics left by hand (Continue If PC Near's reach, sandbox radii, the light's sum, NPC
    crimes, the follow offset).
