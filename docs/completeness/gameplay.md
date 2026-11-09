@@ -25,7 +25,7 @@ part is kept by hand against docs/gameplay.md and the conformance suites.
 | Part                               | Items | Done | Open | Open, unused |
 | ---------------------------------- | ----: | ---: | ---: | -----------: |
 | Perks (entry points, functions)    |   116 |  107 |    9 |            9 |
-| Magic effects (archetypes, flags)  |   104 |  102 |    2 |            2 |
+| Magic effects (archetypes, flags)  |   104 |  103 |    1 |            1 |
 | Spells, enchantments, potions      |    43 |   42 |    1 |            1 |
 | Shouts, skills (SHOU, WOOP, AVIF)  |    16 |   16 |    0 |            0 |
 | Crafting (FURN, COBJ)              |    26 |   25 |    1 |            1 |
@@ -33,7 +33,7 @@ part is kept by hand against docs/gameplay.md and the conformance suites.
 | Equipment (EQUP, ARMO, WEAP, AMMO) |    43 |   38 |    5 |            5 |
 | Game settings                      |   172 |  172 |    0 |            0 |
 | Mechanics (by hand)                |    20 |   20 |    0 |            0 |
-| Total                              |   580 |  562 |   18 |           18 |
+| Total                              |   580 |  563 |   17 |           17 |
 
 Round 1 wrote the sweep and this list, and built down Weapons Unequipped (the package takes the
 weapons from the actor's hands and does not give them back as the flag goes; observed in the
@@ -45,8 +45,15 @@ Round 2 built down:
 
 - Painless (MGEF 0x4000000, 228 effects): a hostile spell that takes hold makes its target cry
   out (its Hit line) unless every hostile effect of it is Painless (magic-engine.ts painful,
-  actor-combat.ts spellHit; tests/conformance/magic/projectiles-explosions.test.ts). TODO(M13):
-  the player's hit blur and ouch sound, which no hit has yet.
+  actor-combat.ts spellHit; tests/conformance/magic/projectiles-explosions.test.ts); on the
+  player a painful hit gives the hit blur (Skyrim.esm IMAD 0x00000162 GetHit, a 0.25 s radial
+  blur), their Hit line (the generic Hit topic's grunts, the only infos of it the player may
+  say) and the pain rumble (src/gameplay/player-pain.ts, actor-combat.ts #hurtPlayer;
+  TODO(M13): inferred that every painful hit gives all three, spaced by fPainDelay; the
+  player's voice is the chosen race's default voice for the chosen sex, RACE VTCK, after the
+  race menu: ScriptRuntime.voiceType); an arrow
+  in the player sounds its impact's player sound (WPNImpactArrowVsFleshPLAYER, IPCT NAM1:
+  src/audio/impacts.ts blowSound; TODO(M13): inferred from the editor ids).
 - Snap To Navmesh (MGEF 0x8, 92: every summon, the frost walls): the summon's place and a wall's
   hazard go onto the navmesh (magic-engine.ts #summon, magic-projectiles.ts #burst). Gory Visuals
   (19): not used by the game (Creation Kit "Magic Effect").
@@ -131,7 +138,7 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 
 ## Next biggest open items
 
-1. Unused by the load order (mods only, 18): 8 perk entry points, trait, disguise,
+1. Unused by the load order (mods only, 17): 8 perk entry points, trait,
    enchant visuals, medicine, the workbench type None, two EQUP flags, three weapon flags 2.
 
 ## Mechanics (by hand)
@@ -219,7 +226,7 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 - [x] ranks (DATA: above 1) (27): src/scripting/runtime/perk-engine.ts: no vanilla entry belongs to a rank past the first (PRKE rank 0 in all), and a tree's ranks are its NNAM chain (Novice Locks: DATA 5, one record; the original's menu shows one rank); the count is the Creation Kit's
 - [ ] trait (0): unused by the load order (mods only)
 
-### Magic effect archetypes (46 of 47)
+### Magic effect archetypes (47 of 47)
 
 - [x] valueModifier (446), absorb (58), dualValueModifier (134), calm (22), demoralize (27), frenzy (13), disarm (6), commandSummoned (1), invisibility (13), darkness (0), nightEye (0), boundWeapon (9), summonCreature (81), detectLife (19), telekinesis (1), paralysis (29), reanimate (14), turnUndead (13), valueAndParts (0), accumulateMagnitude (3), peakValueModifier (332), rally (8), enhanceWeapon (4), banish (4), grabActor (1): src/gameplay/magic/effect-rules.ts
 - [x] script (351): src/scripting/runtime/magic-engine.ts: a Script effect does nothing but run its scripts (OnEffectStart, OnEffectFinish) and its actor value, as every effect does
@@ -227,7 +234,7 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 - [x] light (8): src/gameplay/magic/projectile-flight.ts
 - [x] guide (1): src/shell/actor-stage.ts
 - [x] concussion (0): src/scripting/runtime/magic-engine.ts: observed in the original, its effect adds nothing to what every effect does (its scripts, visuals and sounds); fConcussionTimer is registered and never read
-- [ ] disguise (0): unused by the load order (mods only)
+- [x] disguise (0): src/scripting/runtime/magic-engine.ts, src/gameplay/magic/disguise.ts: its own state (Initiate, Waiting while its actor is detected, Normal: not attacked on sight but by the frenzied, Fail: inactive for good once its conditions fail, tests/conformance/magic/active-effects.test.ts); its start keeps its actor as the player's disguise while it lasts (playerDisguise; in the original); TODO(M13): the states' rule and what the player's disguise does are inferred from CommonLibSSE DisguiseEffect
 
 ### Magic effect flags (18 of 18)
 

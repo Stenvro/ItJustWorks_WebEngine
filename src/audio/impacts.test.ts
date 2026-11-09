@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Vec3 } from '../render/math.ts';
 import type { Impact, ImpactDataSet } from '../world/impact-records.ts';
 import type { MaterialType } from '../world/material-type.ts';
-import { ImpactSounds, type ImpactHit, type ImpactRecords } from './impacts.ts';
+import { blowSound, ImpactSounds, type ImpactHit, type ImpactRecords } from './impacts.ts';
 
 const material = (
   formId: number,
@@ -117,5 +117,19 @@ describe('impact sounds', () => {
     await impacts.hit(hit({}), 0.1);
     await impacts.hit(hit({}), 0.2);
     expect(played).toHaveLength(2);
+  });
+});
+
+describe('a blow’s impact sound', () => {
+  // WPNArrowVsFleshImpact: SNAM WPNImpactArrowVsFleshSD, NAM1 WPNImpactArrowVsFleshPLAYER.
+  const arrowVsFlesh = impact(0x193b2, 0x3c849, 0xea9f8);
+
+  it('plays the player’s sound (NAM1) for a hit on the player, the first (SNAM) on others', () => {
+    expect(blowSound(arrowVsFlesh, false, true)).toBe(0xea9f8);
+    expect(blowSound(arrowVsFlesh, false, false)).toBe(0x3c849);
+    // A power attack's heavy sound, as before.
+    expect(blowSound(arrowVsFlesh, true, false)).toBe(0xea9f8);
+    // An impact without a second sound plays its first on the player.
+    expect(blowSound(impact(1, 0x10), false, true)).toBe(0x10);
   });
 });

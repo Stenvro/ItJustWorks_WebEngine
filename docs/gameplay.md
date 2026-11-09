@@ -489,7 +489,29 @@ the player in a runtime on the game data, `--audit` reads every record).
   blow's does) unless every hostile effect of it is Painless (MGEF 0x4000000, 228 effects: the
   traps' fire and gas, Frenzy and Fury, the Nightingale's Subterfuge, the creatures' poisoning
   bites; Creation Kit "Magic Effect": the target does not cry out; on the player it also leaves
-  out the hit blur and the ouch sound, which the engine has for no hit yet: TODO(M13)).
+  out the hit blur and the ouch sound). On the player a painful hit (a blow, or a spell not all
+  Painless) is their pain (src/gameplay/player-pain.ts), at most once every fPainDelay (1.5 s).
+  Its hit blur is the image-space modifier GetHit (Skyrim.esm IMAD 0x00000162, among the forms
+  below 0x800 the engine refers to by id: a radial blur from 0.4 to none over 0.25 s;
+  `node tools/imad-info.ts GetHit`) at full strength. Its cry is the player's Hit line (the Hit
+  topic subtype, as an NPC hit has; the combat's talk.bark): the generic Hit topic (DIAL
+  0x13EBB) begins with six grunts ("Agh!", "Oof!", "Nargh!", "Argh!", "Weergh!", "Yeagh!", each
+  at GetRandomPercent <= 30), the only infos of it not barred from the player (the rest name
+  GetIsID Player == 0 or another speaker), voiced for every playable race's default voice types
+  (MaleEvenToned and the rest). The player speaks in the Player base's voice type
+  (MaleEvenToned) until the race menu has chosen, then in the chosen race's default voice for
+  the chosen sex (RACE VTCK: the male's, then the female's; ScriptRuntime.voiceType;
+  TODO(M13): inferred).
+  Its rumble is the gamepad's, fRumblePainStrength (0.75) on both motors for fRumblePainTime
+  (0.5 s), with the Vibration setting on (none of the three settings a GMST of the load order:
+  the engine's built-in defaults). TODO(M13): inferred that every painful hit gives all three
+  and that fPainDelay spaces all of them (the settings' names say only "pain"). The blow's own
+  impact sound on the player is the impact's second sound (IPCT NAM1, src/audio/impacts.ts
+  blowSound): an arrow's on flesh is WPNImpactArrowVsFleshPLAYER (SNDR 0x000EA9F8, in
+  WPNArrowVsFleshImpact, WPNArrowVsFleshDraugrImpact and BloodSprayImpactArrowInsect), where
+  others hear WPNImpactArrowVsFleshSD; an impact without a second sound plays its first.
+  TODO(M13): inferred from the editor ids (the load order's second sounds are the physics
+  impacts' heavy sounds and the footsteps' and arrows' player sounds).
 - Snap To Navmesh (MGEF 0x8, 92 effects: every summon, the frost walls): the target point moves
   onto the navmesh (Creation Kit "Magic Effect"): a summon's place (summonPlace) and the hazard a
   wall's burst leaves. Gory Visuals (19) is not used by the game (Creation Kit).
@@ -552,7 +574,15 @@ the player in a runtime on the game data, `--audit` reads every record).
   meanwhile has it no more); out of combat a summon (and a raised corpse) follows its commander,
   coming up from beyond fSummonedCreatureMaxFollowDist (400) to fSummonedCreatureMinFollowDist
   (250) from it (the engine package Follow Commander: src/ai/engine-packages.ts; TODO(M13): the
-  band's use is inferred); Reanimate raises a corpse (it falls again as it
+  band's use is inferred); in combat it takes up every fight its commander is in (its commander
+  attacked, or attacking, a neutral as well) without weighing whether it dares (combat-ai.ts
+  helpsUnweighed), and attacks its commander's enemies on sight, never the neutral
+  (fightingAggression); a fight of its commander's allies that its commander is not in it
+  weighs as anyone does (daresHelp; its assistance is at least Helps Allies), unless it is
+  fighting already; every fight near it it could take up is looked at, its commander's first
+  (combat-ai.ts assistCase), so an ally's fight it does not dare join never hides its
+  commander's (TODO(M13): inferred that no confidence check stands between a summon and
+  its summoner's own fights, and the usual one stands before its allies'); Reanimate raises a corpse (it falls again as it
   ends); Banish ends a summoning; Bound Weapon puts its weapon in the hand; Spawn Hazard and
   Spawn Scripted Ref place their form; Disarm takes the weapons out of the hands
   (sPlayerDisarmedMessage), not a bound one nor a Can't Drop one (WEAP DNAM 0x8); Soul Trap and Actor.TrapSoul put a dead actor's soul (by level:
@@ -575,7 +605,10 @@ the player in a runtime on the game data, `--audit` reads every record).
   unless that is within fSummonDistanceCheckThreshold (750) and nearer than the place ahead.
   The engine then looks for the navmesh near that place, the way to it clear: the summon stands
   as far toward it as it could walk straight on the navmeshes (src/ai/pathfinding.ts
-  summonPlace; TODO(M13): the engine's search elsewhere when the way is blocked);
+  summonPlace); with that way blocked (it would stand less than half as far) it looks at the
+  same distance in other directions, 45° at a time either way round to behind the summoner, and
+  stands in the first clear one, else where it got farthest (TODO(M13): the order of the
+  engine's search is inferred);
   fMagicSummonMaxAppearTime (4 s: the summon appears at the latest
   then, whatever its placement art does) is not used.
 - Slow Time (src/shell/time-flow.ts): its magnitude on the player (the slowest) is the world's
@@ -625,7 +658,8 @@ the player in a runtime on the game data, `--audit` reads every record).
   (EFSH) and hit art (ARTO) on the target as the effect takes hold (with FX Persist while it
   lasts, else their own time once), the light of a Light effect over its shoulder (Candlelight;
   Magelight's projectile that strikes a surface stays there, its model and its effect's light,
-  for the effect's duration as cast: projectile-flight.ts sticksAsLight, TODO(M13) how many stay;
+  for the effect's duration as cast: projectile-flight.ts sticksAsLight; one of a caster's at a
+  time, the next that strikes ending the last: lightsGivingWay, UESP "Skyrim:Magelight";
   on a moving body (dynamic or keyframed) it is carried where it struck the body, turning with
   it (stuckOnBody; TODO(M13): inferred from a stuck arrow; a save keeps where it is, not the body);
   TODO(M13): where the engine floats it; fMagicLightForwardOffset, SideOffset and HeightOffset
@@ -676,9 +710,22 @@ the player in a runtime on the game data, `--audit` reads every record).
   strength besides (InstanceFade.refraction), bending the scene behind as refraction shapes do.
   TODO(M13): not yet looked at in the browser; the engine's fade in and out.
 - Concussion (no vanilla effect; observed in the original): its effect adds nothing to every
-  effect's part (its scripts, visuals, sounds); fConcussionTimer is never read. TODO(M13):
-  Disguise (no vanilla effect) is not run yet: in the original it keeps the actor as the
-  player's disguise while it lasts and has its own detection check, not yet read.
+  effect's part (its scripts, visuals, sounds); fConcussionTimer is never read.
+- Disguise (no vanilla effect; src/gameplay/magic/disguise.ts): its effect has a state of its
+  own (CommonLibSSE DisguiseEffect: Initiate, Waiting, Normal, Fail, kept in a save), its own
+  condition evaluation and a detection checker of its own, looked at with the conditions
+  (fActiveEffectConditionUpdateInterval). In the original its start keeps the actor it is on as
+  the player's disguise while it lasts (recorded with Concussion's reading): the engine keeps
+  the actor of the last started Disguise effect still on as the player's disguise
+  (magic-engine.ts playerDisguise). TODO(M13): the rule between the states is inferred: at its
+  first look a disguise put on while another actor detects its actor waits until no one does;
+  then it holds (Normal): those who would attack its actor on sight do not, only the frenzied
+  (combat-ai.ts attacksOnSightOf; fights already begun go on), and while the player's disguise
+  holds the player is not attacked on sight either, whichever actor it is on; its conditions
+  failing break it for good (Fail): it goes inactive and stays so until it ends, though they
+  hold again (no OnEffectStart again, no visuals, no actor value), unlike other effects, which
+  act again once their conditions hold (tests/conformance/magic/active-effects.test.ts). What
+  else the player's disguise changes (whom the player passes for) is not read.
 - Art objects (ARTO) hang on the actor's skeleton: the art model's nodes follow the bones of
   their names each frame, its skinned shapes with them.
 - Detect Life shows its hit shader (LifeDetected's particles, through walls) on the living

@@ -28,10 +28,12 @@ import {
   type CombatZone,
   aggroResponse,
   Assistance,
+  assistCase,
   assists,
   attackDps,
-  attacksOnSight,
+  attacksOnSightOf,
   daresHelp,
+  helpsUnweighed,
   drawConfidenceModifier,
   mayBoostConfidence,
   maySwitchTarget,
@@ -45,6 +47,7 @@ import {
   turnsOnAttacker,
   yieldOver,
   yields,
+  type AssistCase,
   type CombatAiSettings,
   type TargetCandidate,
 } from '../ai/combat-ai.ts';
@@ -851,8 +854,13 @@ export class ActorCombatAi {
     return (
       reaction !== undefined &&
       mind.profile !== undefined &&
-      attacksOnSight(mind.profile.aggression, reaction)
+      attacksOnSightOf(mind.profile.aggression, reaction, this.#disguised(target))
     );
+  }
+
+  /** Whether a Disguise effect on an actor took hold (magic-engine.ts aiState). */
+  #disguised(reference: number): boolean {
+    return this.#options.session.scriptsReady?.magic.aiState(reference).disguised === true;
   }
 
   /**
@@ -1567,7 +1575,7 @@ export class ActorCombatAi {
     // A package that ignores combat (PKDT Ignore Combat) keeps it out of fights it would pick.
     const running = this.#options.ai?.()?.current(mind.reference);
     if (running && (running.flags & PackageFlag.ignoreCombat) !== 0) return false;
-    if (attacksOnSight(profile.aggression, reaction)) {
+    if (attacksOnSightOf(profile.aggression, reaction, this.#disguised(reference))) {
       if (mind.mode !== 'idle' || !profile.aggroRadius || !detected) return true;
       // Its aggro radius, where its package has the behaviour.
       if (running && (running.interrupts & InterruptFlag.aggroRadiusBehavior) === 0) return true;
@@ -1594,10 +1602,12 @@ export class ActorCombatAi {
     if (reference === PLAYER_REF && this.#playerHeldOff() >= this.#settings.acceptYieldTime) {
       return false;
     }
-    // Helping: one it helps fights `other`, or `other` fights one it helps.
+    // Helping: one it helps fights `other`, or `other` fights one it helps. Every such fight is
+    // looked at (assistCase), so one it does not dare join does not hide another it would.
     const assistance = profile.teammate
       ? Math.max(profile.assistance, Assistance.helpsFriendsAndAllies)
       : profile.assistance;
+    const cases: AssistCase[] = [];
     for (const fighter of views.values()) {
       if (fighter.reference === mind.reference) continue;
       const target = this.#fightTarget(fighter, views);
@@ -1607,20 +1617,26 @@ export class ActorCombatAi {
         // itself, its bounty and the guards' arrest: src/shell/actor-crime.ts).
         const victim = this.#reaction(mind.reference, target);
         if (victim !== undefined && assists(assistance, victim)) {
-          return this.#helps(mind, profile, other) && this.#join(mind, reference);
-        }
-        if (profile.guard && victim !== FightReaction.enemy && this.#innocent(target, reference)) {
-          return this.#join(mind, reference);
+          cases.push({ helped: target });
+        } else if (
+          profile.guard &&
+          victim !== FightReaction.enemy &&
+          this.#innocent(target, reference)
+        ) {
+          cases.push({ helped: target, unweighed: true });
         }
       } else if (target === reference) {
         // `fighter` fights `other`: help it.
         const ally = this.#reaction(mind.reference, fighter.reference);
         if (ally !== undefined && assists(assistance, ally)) {
-          return this.#helps(mind, profile, other) && this.#join(mind, reference);
+          cases.push({ helped: fighter.reference });
         }
       }
     }
-    return false;
+    const taken = assistCase(cases, profile.commander, (helped) =>
+      this.#helps(mind, profile, other, helped),
+    );
+    return taken !== undefined && this.#join(mind, reference);
   }
 
   /**
@@ -1670,13 +1686,15 @@ export class ActorCombatAi {
   /** It takes up another's fight: it remembers `enemy` as its own. */
   /**
    * Whether one its assistance would have help dares take on `foe` (daresHelp: its confidence,
-   * the levels, the strengths). The player's teammates always do. One that does not dare keeps
-   * out of the fight and runs from it (as a cowardly spectator does): a street of townsfolk
-   * does not crowd a criminal, only the brave of them and the guards. Until both levels are
-   * read it waits.
+   * the levels, the strengths); `helped` is the one it would help against `foe`. The player's
+   * teammates always do, and a commanded actor when `helped` is its commander (a summon in its
+   * summoner's fight: helpsUnweighed); in another ally's fight it weighs as anyone does. One
+   * that does not dare keeps out of the fight and runs from it (as a cowardly spectator does): a
+   * street of townsfolk does not crowd a criminal, only the brave of them and the guards. Until
+   * both levels are read it waits.
    */
-  #helps(mind: Mind, profile: Profile, foe: FighterView): boolean {
-    if (profile.teammate || mind.mode !== 'idle') return true;
+  #helps(mind: Mind, profile: Profile, foe: FighterView, helped: number): boolean {
+    if (helpsUnweighed(profile, mind.mode !== 'idle', helped)) return true;
     const own = this.#levels.get(mind.reference);
     const theirs = this.#levels.get(foe.reference);
     if (own === undefined || theirs === undefined) return false;
@@ -1715,7 +1733,10 @@ export class ActorCombatAi {
   #onSight(mind: Mind, profile: Profile, magic: MagicAiState, other: number): boolean {
     if (magic.frenzied) return true;
     const reaction = this.#reaction(mind.reference, other);
-    return reaction !== undefined && attacksOnSight(profile.aggression, reaction);
+    return (
+      reaction !== undefined &&
+      attacksOnSightOf(profile.aggression, reaction, this.#disguised(other))
+    );
   }
 
   /**

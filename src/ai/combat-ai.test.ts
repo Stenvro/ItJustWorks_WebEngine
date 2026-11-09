@@ -7,12 +7,15 @@ import {
   Assistance,
   assists,
   attacksOnSight,
+  attacksOnSightOf,
   COMBAT_AI_DEFAULTS,
   Confidence,
   daresHelp,
   drawConfidenceModifier,
   fightingAggression,
   fleeRatio,
+  assistCase,
+  helpsUnweighed,
   readCombatAiSettings,
   selectTarget,
   shouldFlee,
@@ -52,6 +55,14 @@ describe('combat AI: entering combat', () => {
     ).toEqual([true, true, true, true]);
   });
 
+  it('attacks a disguised actor on sight only frenzied (Disguise, inferred)', () => {
+    const { enemy, neutral } = FightReaction;
+    expect(attacksOnSightOf(Aggression.aggressive, enemy, false)).toBe(true);
+    expect(attacksOnSightOf(Aggression.aggressive, enemy, true)).toBe(false);
+    expect(attacksOnSightOf(Aggression.veryAggressive, neutral, true)).toBe(false);
+    expect(attacksOnSightOf(Aggression.frenzied, enemy, true)).toBe(true);
+  });
+
   it('fights a commanded actor by its commander’s side: their enemies, never the neutral', () => {
     const { enemy, neutral } = FightReaction;
     for (const own of [
@@ -65,6 +76,66 @@ describe('combat AI: entering combat', () => {
       expect(attacksOnSight(aggression, neutral)).toBe(false);
       expect(fightingAggression(own, false)).toBe(own);
     }
+  });
+
+  it('takes up its commander’s fight unweighed: a summon helps whatever its confidence', () => {
+    // A cowardly summon would never dare by its confidence; commanded, it takes the fight up.
+    const own = { level: 1, strength: 1 };
+    const foe = { level: 50, strength: 100 };
+    expect(daresHelp(Confidence.cowardly, own, foe)).toBe(false);
+    const summoner = 0x14;
+    const summon = { teammate: false, commanded: true, commander: summoner };
+    expect(helpsUnweighed(summon, false, summoner)).toBe(true);
+    expect(
+      helpsUnweighed({ teammate: true, commanded: false, commander: undefined }, false, 9),
+    ).toBe(true);
+    expect(
+      helpsUnweighed({ teammate: false, commanded: false, commander: undefined }, true, 9),
+    ).toBe(true);
+    // Neither commanded nor a teammate nor fighting: its daring decides.
+    expect(
+      helpsUnweighed({ teammate: false, commanded: false, commander: undefined }, false, 9),
+    ).toBe(false);
+  });
+
+  it('weighs an ally’s fight its commander is not in: an idle conjurer’s atronach dares as anyone', () => {
+    // A fellow bandit (an ally of the conjurer, so of its summon) is attacked while the conjurer
+    // stands idle: the summon helps only if it dares (daresHelp), as the bandit's other allies.
+    const conjurer = 0x100;
+    const bandit = 0x101;
+    const summon = { teammate: false, commanded: true, commander: conjurer };
+    expect(helpsUnweighed(summon, false, bandit)).toBe(false);
+    // Once it fights, it takes up the next fight unweighed, as anyone already fighting.
+    expect(helpsUnweighed(summon, true, bandit)).toBe(true);
+  });
+
+  it('takes up its commander’s fight whatever order the fighters come in', () => {
+    // A cowardly summon (it dares nothing weighed) near its commander C, who fights the bandit
+    // B, while B also fights the ally N: N's case (weighed: false) must not hide C's.
+    const commander = 0x100;
+    const ally = 0x101;
+    const summon = { teammate: false, commanded: true, commander };
+    const asked: number[] = [];
+    const helps = (helped: number): boolean => {
+      asked.push(helped);
+      return helpsUnweighed(summon, false, helped);
+    };
+    for (const cases of [
+      [{ helped: ally }, { helped: commander }],
+      [{ helped: commander }, { helped: ally }],
+    ]) {
+      asked.length = 0;
+      expect(assistCase(cases, commander, helps)).toEqual({ helped: commander });
+      // The commander's case is asked first: the ally's foe does not scare it off meanwhile.
+      expect(asked).toEqual([commander]);
+    }
+    // Only N's fight: it weighs, and a coward stays out.
+    expect(assistCase([{ helped: ally }], commander, helps)).toBeUndefined();
+    // A guard's defence of an innocent needs no weighing, wherever it comes.
+    asked.length = 0;
+    const guard = { helped: ally, unweighed: true };
+    expect(assistCase([{ helped: 0x102 }, guard], undefined, helps)).toBe(guard);
+    expect(asked).toEqual([]);
   });
 
   it('helps allies, or friends and allies, by assistance', () => {

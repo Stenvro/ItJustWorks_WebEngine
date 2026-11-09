@@ -456,6 +456,20 @@ export function attacksOnSight(aggression: number, reaction: number): boolean {
 }
 
 /**
+ * attacksOnSight against one who may be disguised (a Disguise effect that took hold on it:
+ * src/gameplay/magic/disguise.ts): a disguised actor is attacked on sight by the frenzied only.
+ * TODO(M13): inferred, what the original's disguise hides is not read.
+ */
+export function attacksOnSightOf(
+  aggression: number,
+  reaction: number,
+  disguised: boolean,
+): boolean {
+  if (disguised) return aggression >= Aggression.frenzied;
+  return attacksOnSight(aggression, reaction);
+}
+
+/**
  * The aggression an actor fights by: its own (actor value 0), but a commanded one's (a summon,
  * a raised corpse, a commanded creature: the magic system's commander) is its commander's side
  * whatever its base's. It attacks on sight those its commander regards as enemies (its
@@ -486,7 +500,11 @@ export async function shouldAttack(
     (await runtime.actors.value(actor, ActorValue.aggression)).current,
     commander !== undefined && commander !== actor,
   );
-  return attacksOnSight(aggression, await reactionOf(runtime, actor, other));
+  return attacksOnSightOf(
+    aggression,
+    await reactionOf(runtime, actor, other),
+    runtime.magic.aiState(other).disguised,
+  );
 }
 
 /**
@@ -866,6 +884,60 @@ export function daresHelp(confidence: number, own: Measure, foe: Measure): boole
     default:
       return confidence >= Confidence.foolhardy;
   }
+}
+
+/**
+ * Whether one takes up a fight its assistance would have it help in without weighing whether
+ * it dares (daresHelp): the player's teammates, one already fighting, and a commanded actor (a
+ * summon, a raised corpse, a commanded creature) when the one it would help (`helped`: the
+ * victim it would defend, or the fighter it would join) is its commander: it fights for its
+ * commander whoever the foe, a neutral its commander attacked as well; a cowardly or weaker
+ * summon does not stand aside from its summoner's fight. Another ally's fight its commander is
+ * not in it weighs as anyone does (its assistance is at least Helps Allies: combat-profile.ts).
+ * TODO(M13): inferred that the original puts no confidence check between a commanded actor and
+ * its commander's fights, and keeps the usual one for its commander's allies' fights.
+ */
+export function helpsUnweighed(
+  profile: {
+    readonly teammate: boolean;
+    readonly commanded: boolean;
+    readonly commander: number | undefined;
+  },
+  fighting: boolean,
+  helped: number,
+): boolean {
+  if (profile.teammate || fighting) return true;
+  return profile.commanded && profile.commander === helped;
+}
+
+/**
+ * A fight one could take up for another (the fighters near, each that `other` attacks or that
+ * attacks `other`): `helped` is the one it would help (its assistance reaches it, weighed by
+ * daresHelp unless helpsUnweighed); a guard's defence of an innocent (`unweighed`) needs no
+ * weighing.
+ */
+export interface AssistCase {
+  readonly helped: number;
+  readonly unweighed?: boolean;
+}
+
+/**
+ * Whether one takes up a fight against another for any of the fighters it would help: every
+ * case is looked at, not only the first, so one ally whose fight it does not dare join does not
+ * hide another it would join (a cowardly summon whose commander fights stays out only if no case
+ * holds, whatever order the fighters come in). The commander's case comes first, and a case that
+ * needs no weighing before those that do, so `helps` (which may scare it from the foe it does not
+ * dare) is not asked of a fight it takes up anyway. Returns the case it takes up the fight for.
+ */
+export function assistCase(
+  cases: Iterable<AssistCase>,
+  commander: number | undefined,
+  helps: (helped: number) => boolean,
+): AssistCase | undefined {
+  const rank = (entry: AssistCase): number =>
+    entry.unweighed ? 0 : commander !== undefined && entry.helped === commander ? 1 : 2;
+  const ordered = [...cases].sort((a, b) => rank(a) - rank(b));
+  return ordered.find((entry) => entry.unweighed === true || helps(entry.helped));
 }
 
 export interface FleeInput {

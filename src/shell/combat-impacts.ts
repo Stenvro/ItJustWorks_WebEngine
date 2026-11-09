@@ -1,15 +1,15 @@
 // What a hit leaves where it lands (docs/ai.md, "Combat"): the attacker's weapon names an impact
 // data set (WEAP INAM; fists: the race's NAM5; a block or bash: WEAP BIDS), which gives for the
 // material struck (an actor: its race's NAM4, MaterialSkin's blood; the world: the shape's
-// material) an impact (IPCT): its sound (SNAM, NAM1 for a heavy hit: a power attack) at the hit,
-// and its decal (DODT with the texture set DNAM: blood) on the surface behind the target (the
+// material) an impact (IPCT): its sound (SNAM; NAM1 for a heavy hit, a power attack, or a hit on
+// the player: blowSound) at the hit, and its decal (DODT with the texture set DNAM: blood) on the surface behind the target (the
 // environment blood, #splatter; docs/rendering.md, "Decals"). A decal lasts [Display]
 // fDecalLifetime seconds, then fades out over one more (DECAL_FADE_SECONDS); at most [Decals]
 // uMaxDecals are kept, the oldest going first (observed in the original: each dynamic decal is
 // made with the lifetime, the count capped by the setting). Its effect model (MODL: the blood
 // spray, the sparks) shows at the hit.
 
-import { impactAgainst } from '../audio/impacts.ts';
+import { blowSound, impactAgainst } from '../audio/impacts.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import type { GpuDecals } from '../render/decals.ts';
@@ -150,6 +150,8 @@ export interface HitImpact {
   /** Which way the blow went (a unit vector). */
   readonly direction: Vec3;
   readonly heavy: boolean;
+  /** It struck the player: the impact's player sound (blowSound: IPCT NAM1). */
+  readonly onPlayer?: boolean;
   /**
    * Whether the impact may be placed here (a spell's: not within its placement radius of a
    * living one: src/shell/magic-projectiles.ts); not: only its sound, no decal.
@@ -504,7 +506,7 @@ export class CombatImpacts {
           : undefined;
     const impact = await impactAgainst(records, set, material);
     if (!impact) return undefined;
-    const sound = hit.heavy ? (impact.heavySound ?? impact.sound) : impact.sound;
+    const sound = blowSound(impact, hit.heavy, hit.onPlayer === true);
     if (sound !== undefined) void sounds.play(sound, hit.position);
     if (hit.placeable && !hit.placeable(impact)) return impact;
     // Its effect model (the blood's spray, the sparks off metal) where the blow landed.
