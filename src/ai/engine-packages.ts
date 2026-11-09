@@ -185,23 +185,66 @@ export const getUpFromChairBed: EngineRunner = async (run) => {
 
 /**
  * The engine packages an actor may take in its furniture (it looks from its seat); the others
- * get it up first, as Get Up From Chair Or Bed does. The engine puts a created package with a
- * flag allowing it from furniture (Actor::PutCreatedPackage's allowFromFurniture, CommonLibSSE);
- * TODO(M13): which packages it allows was not read, nor what makes the Get Up package itself (no
- * maker of it was found among the package factory's callers: the engine's packages leave
- * furniture as they start, as ours do).
+ * get it up first. The engine puts a created package with a flag allowing it from furniture
+ * (Actor::PutCreatedPackage's allowFromFurniture, CommonLibSSE).
+ * TODO(M13): which packages it allows was not read.
  */
 const FROM_FURNITURE: ReadonlySet<EnginePackage> = new Set([
   'reactToDestroyedObject',
   'getUpFromChairBed',
 ]);
 
-/** An engine package's procedure, the actor got up from its furniture first where it must. */
-export function upFirst(kind: EnginePackage, runner: EngineRunner): EngineRunner {
-  if (FROM_FURNITURE.has(kind)) return runner;
+/**
+ * The Get Up package's maker: whether putting an engine package on an actor in furniture puts
+ * Get Up From Chair Or Bed in front of it first (the package asked for runs once it stands, as
+ * an engine package of its own). Inferred, TODO(M13): no other maker of the Get Up package was
+ * found among the package factory's callers (observed in the original), so it is taken to be
+ * made where a created package not allowed from furniture is put on a seated actor; the actor's
+ * own packages leave furniture as their procedures start, and combat as it starts to fight.
+ */
+export function getsUpFirst(kind: EnginePackage): boolean {
+  return !FROM_FURNITURE.has(kind);
+}
+
+// --- Feeding: Vampire Feed and Cannibal ------------------------------------------------------------
+
+/** The feeding packages (CommonLibSSE PACKAGE_TYPE kVampireFeed, kCannibal). */
+export type FeedingPackage = 'vampireFeed' | 'cannibal';
+
+/** What a feeding procedure does to the game: its start, whether it lasts, its end. */
+export interface Feeding {
+  /** It feeds now: GetVampireFeed (GetCannibal) holds, the feeding idle plays on the target. */
+  begin(): void;
+  /** Whether it still feeds (its graph's end, or its longest, ends it). */
+  feeding(): boolean;
+  /** It feeds no more (the package ended or was left). */
+  end(): void;
+}
+
+/** A feeding asks this often whether it is over (real seconds; ours). */
+const FEED_STEP = 0.1;
+
+/**
+ * Vampire Feed and Cannibal: the packages Actor.StartVampireFeed and Actor.StartCannibal make
+ * and put in front of the feeder's own (CommonLibSSE PACKAGE_TYPE kVampireFeed and kCannibal:
+ * created packages, as Avoid Player). The feeder gets up first (no feeding from furniture),
+ * turns to its target and feeds: the feeding idle plays on the target, and the package runs
+ * as long as the feeding lasts, ending with it. Inferred, TODO(M13): the procedures' own steps
+ * (turning to the target; no walk to it: the perks offer the feed within activation reach) and
+ * when the original ends them (ours: the feeder's clip's NPCVampireFeedEnd, else the longest
+ * feeding: natives/actor.ts).
+ */
+export function feedOn(feeding: Feeding): EngineRunner {
   return async (run) => {
-    await getUpFromChairBed(run);
-    if (!run.stopped()) await runner(run);
+    const here = run.body.position();
+    const there = run.target === undefined ? undefined : run.mind.livePosition?.(run.target);
+    if (here && there) run.body.face(headingTo(here, there));
+    feeding.begin();
+    try {
+      while (!run.stopped() && feeding.feeding()) await run.wait(FEED_STEP);
+    } finally {
+      feeding.end();
+    }
   };
 }
 

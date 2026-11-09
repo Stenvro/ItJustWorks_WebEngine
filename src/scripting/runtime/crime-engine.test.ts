@@ -355,6 +355,23 @@ describe('crimes of NPCs beyond assault', () => {
   });
 });
 
+describe('trespass', () => {
+  it('in a place a faction owns: its victim is the first witness of that faction (inferred)', async () => {
+    const { crime, events } = engine();
+    // The chest's place is Whiterun's: the citizen saw it first, the guard (of Whiterun's
+    // faction) too.
+    const reported = await crime.trespass(PLAYER_REF, CHEST, [CITIZEN, GUARD]);
+    expect(reported?.victim).toBe(GUARD);
+    const told = events.find((event) => event.type === 'TRES');
+    expect(told?.forms.get('R1')).toBe(GUARD);
+    expect(told?.args[0]).toEqual(new ObjectHandle(GUARD, 'objectreference'));
+    // Seen by none of the faction: no victim.
+    const { crime: other, events: otherEvents } = engine();
+    await other.trespass(PLAYER_REF, CHEST, [CITIZEN]);
+    expect(otherEvents.find((event) => event.type === 'TRES')?.forms.has('R1')).toBe(false);
+  });
+});
+
 describe('stolen items', () => {
   it('leave a container last and stay stolen where they go', () => {
     const { crime } = engine();

@@ -410,10 +410,10 @@ export class ActorGraphEvents {
     // A vampire's feeding ended (the feeder's clip's NPCVampireFeedEnd, the only VampireFeedEnd
     // in the vanilla behaviors: src/animation/behavior-runtime.ts #ownEvent). Observed in the
     // original, an actor running a vampire feeding package procedure is done with it here.
-    // TODO(M11): our AI runs no feeding procedure. Ours ends the feeder's feeding
-    // (StartVampireFeed: GetVampireFeed) here, before its clip ends (Paired_VampFeedFront_Player
-    // raises it 1.07 s before its end): inferred, TODO(M13): when the engine clears the feeding
-    // state is not read.
+    // Ours ends the feeder's feeding (StartVampireFeed: GetVampireFeed) here, and with it its
+    // Vampire Feed package (src/ai/engine-packages.ts feedOn), before its clip ends
+    // (Paired_VampFeedFront_Player raises it 1.07 s before its end): inferred, TODO(M13): when
+    // the engine clears the feeding state is not read.
     d.handle('VampireFeedEndHandler', (source) => {
       this.#options.session.scriptsReady?.feedingDone(source.reference);
     });

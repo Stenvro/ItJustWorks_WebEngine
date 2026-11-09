@@ -5,6 +5,7 @@
 // Platform-independent. Notes: docs/scripting.md ("Actors").
 
 import { hostileTo } from '../../../ai/combat-ai.ts';
+import { feedOn, type Feeding } from '../../../ai/engine-packages.ts';
 import { keepOffsetOf } from '../../../ai/movement-overrides.ts';
 import { NpcFlag } from '../../../world/actor-records.ts';
 import { ActorValue } from '../../../world/actor-values.ts';
@@ -673,23 +674,47 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   act('sendvampirismstatechanged', (actor, call) =>
     runtime.sendEvent(actor, 'OnVampirismStateChanged', [bool(call.args[0])]),
   );
-  // Feeding on a target (a vampire's bite, Namira's cannibalism): while it lasts GetVampireFeed
-  // (GetCannibal) holds, and the action's idle tree gives the feeding's idle (IdleVampireFeed:
-  // the paired bite, standing or at the bed; IdleCannibalFeed); a crime where it is seen
-  // (crime-engine.ts vampireFeed). The vampire's scripts hear OnVampireFeed.
+  // Feeding on a target (a vampire's bite, Namira's cannibalism): the native makes the Vampire
+  // Feed (Cannibal) package and puts it in front of the feeder's own (src/ai/engine-packages.ts
+  // feedOn); while it feeds GetVampireFeed (GetCannibal) holds, and the action's idle tree gives
+  // the feeding's idle (IdleVampireFeed: the paired bite, standing or at the bed;
+  // IdleCannibalFeed); a crime where it is seen (crime-engine.ts vampireFeed). The vampire's
+  // scripts hear OnVampireFeed. A feeder that runs no AI here (the player while not AI-driven:
+  // every vanilla caller feeds the player) feeds at once. TODO(M13): the original's player runs
+  // created packages too; ours runs the player's packages only while AI-driven.
+  const feed = (actor: number, target: number, kind: 'vampire' | 'cannibal'): void => {
+    const feeding: Feeding = {
+      begin: () => {
+        state.actor(actor).feeding = { kind, until: state.realTime + FEEDING_SECONDS };
+        world.playIdle?.(
+          actor,
+          kind === 'vampire' ? IDLE_VAMPIRE_FEED : IDLE_CANNIBAL_FEED,
+          target,
+        );
+      },
+      feeding: () => {
+        const now = state.actors.get(actor)?.feeding;
+        return now?.kind === kind && now.until > state.realTime;
+      },
+      end: () => {
+        const now = state.actors.get(actor);
+        if (now?.feeding?.kind === kind) now.feeding = undefined;
+      },
+    };
+    const kindOf = kind === 'vampire' ? 'vampireFeed' : 'cannibal';
+    if (world.putCreatedPackage?.(actor, kindOf, feedOn(feeding), target) !== true) feeding.begin();
+  };
   act('startvampirefeed', async (actor, call) => {
     const target = ref(call.args[0]);
     if (target === undefined) return;
-    state.actor(actor).feeding = { kind: 'vampire', until: state.realTime + FEEDING_SECONDS };
-    world.playIdle?.(actor, IDLE_VAMPIRE_FEED, target);
+    feed(actor, target, 'vampire');
     await runtime.crime.vampireFeed(actor, target);
     runtime.detach(runtime.sendEvent(actor, 'OnVampireFeed', [runtime.actorHandle(target)]));
   });
   act('startcannibal', async (actor, call) => {
     const target = ref(call.args[0]);
     if (target === undefined) return;
-    state.actor(actor).feeding = { kind: 'cannibal', until: state.realTime + FEEDING_SECONDS };
-    world.playIdle?.(actor, IDLE_CANNIBAL_FEED, target);
+    feed(actor, target, 'cannibal');
     // The corpse is eaten (HasBeenEaten: it is not fed on again).
     state.actor(target).eaten = true;
     await runtime.crime.vampireFeed(actor, target);

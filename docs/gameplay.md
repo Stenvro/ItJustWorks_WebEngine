@@ -1278,6 +1278,10 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
   line) every fAITrespassWarningTimer (5 s), iGuardWarnings (2) times (GetTrespassWarningLevel);
   staying, it is the trespass crime. No waiting or sleeping meanwhile (sNoWaitTrespass,
   sNoSleepTrespass); nor sleeping in an owned bed (sNoSleepInOwnedBed).
+- The crime's victim (and the Trespass story event's R1): the owning NPC's reference for a
+  place an NPC owns; for a place a faction owns, the first who saw it that is of that faction
+  (any rank), none if none of them is. Inferred, TODO(M13): which actor the original takes for a
+  faction's ownership was not read (`CrimeEngine.trespass`).
 
 ### Guards, fines and jail
 

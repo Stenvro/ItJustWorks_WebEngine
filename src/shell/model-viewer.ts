@@ -607,6 +607,8 @@ export class ModelViewer {
     evaluatePackage: (reference, restart) => {
       this.#stage?.evaluatePackage(reference, restart);
     },
+    putCreatedPackage: (reference, kind, runner, target) =>
+      this.#stage?.ai.pushEngine(reference, kind, runner, target) ?? false,
     combat: () => this.#stage?.combat,
     launchSpell: (spell, source, target, blame) =>
       this.#stage?.launchSpell(spell, source, target, blame) ?? false,

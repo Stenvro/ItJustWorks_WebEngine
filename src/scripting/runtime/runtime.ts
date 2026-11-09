@@ -17,6 +17,8 @@ import { TrapHits } from './trap-hits.ts';
 import { RecordFlag } from '../../formats/esm/record.ts';
 import type { SavedMusicTrack } from '../../audio/music.ts';
 import type { HeadTrackKind } from '../../ai/head-tracking.ts';
+import type { FeedingPackage } from '../../ai/engine-packages.ts';
+import type { EngineRunner } from '../../ai/package-runtime.ts';
 import { view } from '../../formats/esm/fields.ts';
 import { LeveledFlag, parseLeveledList, type LeveledList } from '../../world/actor-records.ts';
 import { pickLeveled, seededRandom } from '../../world/actors.ts';
@@ -290,6 +292,17 @@ export interface WorldBridge {
    * it ran it already and it completed.
    */
   evaluatePackage?(actor: number, restart?: boolean): void;
+  /**
+   * A created package put in front of the actor's own (Actor::PutCreatedPackage: Vampire Feed,
+   * Cannibal; src/ai/engine-packages.ts feedOn), its procedure `runner`, on `target`. False: the
+   * actor runs no AI here (not on the stage, the player while not AI-driven) or runs another.
+   */
+  putCreatedPackage?(
+    actor: number,
+    kind: FeedingPackage,
+    runner: EngineRunner,
+    target: number | undefined,
+  ): boolean;
   /**
    * ObjectReference.ForceAddRagdollToWorld: a dead actor's ragdoll is in the physics world at
    * once (not waiting for the ground under it); resolves once it is.

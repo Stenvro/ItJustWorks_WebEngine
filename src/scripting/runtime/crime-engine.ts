@@ -985,7 +985,9 @@ export class CrimeEngine {
   ): Promise<Crime | undefined> {
     const runtime = this.#runtime;
     const owner = await this.ownerOf(place);
-    const victim = await this.#ownerReference(owner.actor);
+    const victim =
+      (await this.#ownerReference(owner.actor)) ??
+      (await this.#factionVictim(owner.faction, trespasser, witnesses));
     const faction = await this.crimeFactionFor({ victim, owner, place });
     const crime = await this.commit(CrimeType.trespass, trespasser, {
       act: 'trespass',
@@ -1011,6 +1013,27 @@ export class CrimeEngine {
       ),
     );
     return crime;
+  }
+
+  /**
+   * The victim of a trespass in a place a faction owns (the crime's victim, the Trespass story
+   * event's R1): the first who saw it (in the order the stage found them) that is of that
+   * faction, at any rank: one who belongs there and found them in it, as an owning NPC is the
+   * victim of a trespass in its house. None of them of it: none. Inferred, TODO(M13): which
+   * actor the original takes for a faction's ownership was not read.
+   */
+  async #factionVictim(
+    faction: number | undefined,
+    trespasser: number,
+    witnesses: readonly number[] | undefined,
+  ): Promise<number | undefined> {
+    if (faction === undefined) return undefined;
+    for (const witness of witnesses ?? []) {
+      if (witness === trespasser) continue;
+      if (((await this.#runtime.actors.factionsOf(witness)).get(faction) ?? -1) >= 0)
+        return witness;
+    }
+    return undefined;
   }
 
   /**
