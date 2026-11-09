@@ -93,7 +93,7 @@ import type { IniSettings } from '../world/ini-settings.ts';
 import { RaceFlag } from '../world/actor-records.ts';
 import { ActorValue, actorValueIndex } from '../world/actor-values.ts';
 import { referenceMatrix } from '../world/cell-loader.ts';
-import { HUMAN_BOUND, skeletonInfo } from '../world/player-body.ts';
+import { boundTop, HUMAN_BOUND, skeletonInfo } from '../world/player-body.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ActorMotion } from '../scripting/runtime/runtime.ts';
 import type { StagedActor } from './actor-stage.ts';
@@ -1471,17 +1471,8 @@ export class ActorMovers {
    * until the bound is read (asking starts the read).
    */
   controllerShapeOf(staged: StagedActor): CharacterShape | undefined {
-    const skeleton = staged.placed.look.skeleton;
-    if (skeleton === undefined) return undefined;
-    let bound = this.#boundsRead.get(skeleton);
-    if (bound === undefined) {
-      this.#boundsRead.set(skeleton, null);
-      void this.#bound(skeleton).then((read) => {
-        this.#boundsRead.set(skeleton, read ?? HUMAN_BOUND);
-      });
-      return undefined;
-    }
-    if (bound === null) return undefined;
+    let bound = this.#boundRead(staged);
+    if (!bound) return undefined;
     const scale = staged.placed.look.scale * staged.placed.actor.scale;
     bound = {
       center: [bound.center[0] * scale, bound.center[1] * scale, bound.center[2] * scale],
@@ -1492,6 +1483,31 @@ export class ActorMovers {
       ],
     };
     return controllerShape(bound);
+  }
+
+  /**
+   * The top of an actor's loaded 3D's bound above its feet: its skeleton's "BBX" at its size (the
+   * floating quest marker stands over it: src/shell/compass.ts); undefined until the bound is
+   * read (asking starts the read).
+   */
+  boundTopOf(staged: StagedActor): number | undefined {
+    const bound = this.#boundRead(staged);
+    return bound && boundTop(bound, staged.placed.look.scale * staged.placed.actor.scale);
+  }
+
+  /** An actor's skeleton's bound "BBX", unscaled, once read (asking starts the read). */
+  #boundRead(staged: StagedActor): { center: Vec3; halfExtents: Vec3 } | undefined {
+    const skeleton = staged.placed.look.skeleton;
+    if (skeleton === undefined) return undefined;
+    const bound = this.#boundsRead.get(skeleton);
+    if (bound === undefined) {
+      this.#boundsRead.set(skeleton, null);
+      void this.#bound(skeleton).then((read) => {
+        this.#boundsRead.set(skeleton, read ?? HUMAN_BOUND);
+      });
+      return undefined;
+    }
+    return bound ?? undefined;
   }
 
   /** The height of a moved actor's controller (its eyes: src/shell/actor-senses.ts). */

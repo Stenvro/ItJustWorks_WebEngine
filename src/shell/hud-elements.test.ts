@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { boundTop } from '../world/player-body.ts';
 import {
   floatingMarker,
+  floatingTop,
   HudModes,
   METER_KEEP_MS,
   MeterFade,
@@ -90,6 +92,25 @@ describe('floating quest marker', () => {
     floatingMarker([[500, 0, 10, 60]], [0, 0, 0], up);
     floatingMarker([[500, 0, 10]], [0, 0, 0], up);
     expect(heights).toEqual([10 + 60 + 20, 10 + 128 + 20]);
+  });
+
+  it('takes an actor’s loaded 3D’s bound over its base’s, the base’s until it has one', async () => {
+    // A tall skeleton's BBX (a centre at 135, half height 135) at a size of 1.1.
+    const giant = boundTop({ center: [0, 0, 135], halfExtents: [70, 50, 135] }, 1.1);
+    expect(giant).toBeCloseTo(297);
+    const loaded = new Map([[0x1234, giant]]);
+    const asked: number[] = [];
+    const base = (reference: number): Promise<number | undefined> => {
+      asked.push(reference);
+      return Promise.resolve(reference === 0x1234 ? 128 : 40);
+    };
+    const look = (reference: number): number | undefined => loaded.get(reference);
+    expect(await floatingTop(0x1234, look, base)).toBeCloseTo(297);
+    expect(asked).toEqual([]);
+    // Not staged (a chest), or its skeleton not read yet: the base's OBND top.
+    expect(await floatingTop(0x5678, look, base)).toBe(40);
+    expect(await floatingTop(0x1234, undefined, base)).toBe(128);
+    expect(asked).toEqual([0x5678, 0x1234]);
   });
 
   it('shows nothing for a target behind the camera or off the screen', () => {

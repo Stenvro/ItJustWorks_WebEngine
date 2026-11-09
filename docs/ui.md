@@ -214,6 +214,37 @@ the start menu then shows the mouse version of its buttons, and `ShowDeleteButto
 hides the delete-save hint while there is no save. PRESS ANY BUTTON (property 3) is not shown:
 the menu opens on its list.
 
+## Rumble
+
+The gamepad's two motors (`src/shell/controller-rumble.ts`; the Gamepad API's `dual-rumble`
+effect on the connected pad's `vibrationActuator`, `src/shell/gamepad-input.ts`) run while the
+Vibration setting ([Controls] bGamePadRumble, the journal's sRumble) is on. What rumbles them:
+
+- The player's own sounds ([audio.md](audio.md#rumble)): each sound descriptor's rumble send
+  through the player's output models. In the data these are the bow's pull (WPNBowPullLPMSD,
+  0x44) and release (WPNBowFireSD, 0x46), the blows' impacts (WPNImpact\*: 0x4 to 0x63) and
+  blocks (WPNBlock\*, WPNBashBowSD), a few spell releases (0x1): 113 descriptors in all. So the
+  bow's draw and release rumble by their sounds.
+- Blows, by the engine's built-in game settings (none is in the plugins): one the player lands
+  fRumbleHitStrength for fRumbleHitTime (0.5, 0.3 s), one of theirs the target blocks (or
+  deflects) fRumbleHitBlocked\* (1, 0.3 s), one the player blocks fRumbleBlock\* (0.5, 0.3 s), one
+  that strikes them fRumbleStruck\* (0.75, 0.3 s), a hostile spell that hurts them (not Painless:
+  the hit that turns its victim on its caster, at most once a second for a held spell)
+  fRumblePain\* (0.75, 0.5 s); one strength runs both motors.
+- The camera's shake ([animation.md](animation.md), `src/shell/camera-shake.ts`: a stomp,
+  Game.ShakeCamera, an explosion, a shout): its strength as the camera feels it, with its reach
+  times fRumbleShakeRadiusMult and its length times fRumbleShakeTimeMult (1, 1), on both motors.
+- Game.ShakeController (the small motor, the big one, a length) and the player's shouts
+  (fShoutRumble\*V<n>, [gameplay.md](gameplay.md)).
+
+Each motor runs at the strongest cause in effect; as the first of them ends the motors go on at
+what is left, and stop when nothing is. TODO(M13): inferred: which happenings each fRumble\* pair
+answers is read from the settings' names, a single strength on both motors, the shake's two
+settings as scales of its reach and length, and the strongest cause winning. WEAP DNAM's rumble
+fields (left and right motor strength, duration) are read by no code of ours: every weapon of the
+data that has its own DNAM holds the same 0.5, 1, 0.33 s, and whether the engine reads them is
+not known (TODO(M13)).
+
 ## The mouse
 
 Ruffle takes the mouse itself and picks as Flash does: a clip with mouse handlers (`onPress`,
@@ -702,10 +733,12 @@ stamina that has filled is faded at once (`FadeOutStamina`). A drawn bow or cros
 ammo (`ShowArrowCount(count, hide, name)`: the movie writes "name (count)"). The floating quest
 marker (`FloatingQuestMarkerInstance`) stands over the nearest quest target (or the load door
 toward it) within fFloatQuestMarkerMaxDistance (2000), fully shown up to
-fFloatQuestMarkerMinDistance (1000), fFloatQuestMarkerFloatHeight above the top of its bound (the
-base's OBND top at the reference's scale: over an actor's head, not its feet; a human's height,
-128, for an NPC whose template gives its bounds; TODO(M13): the engine reads the loaded 3D's
-bound), while [GamePlay]
+fFloatQuestMarkerMinDistance (1000), fFloatQuestMarkerFloatHeight above the top of its bound: an
+actor's loaded 3D's while it is on the actor stage (its skeleton's "BBX" box, centre plus half
+height, at the actor's size: over a giant's head as over a child's; `ActorMovers.boundTopOf`),
+else the base's OBND top at the reference's scale (a chest's lid; an actor not staged, or whose
+skeleton is still being read), else a human's height, 128 (`hud-elements.ts floatingTop`),
+while [GamePlay]
 bShowFloatingQuestMarkers is on. A word of power learned (Game.TeachWord, the hub's
 `wordLearned`) is `ShowNotification`'s `SHOUT_UPDATE` (3): sShoutAdded with the word in the
 dragon letters (`aDragonText`); a dragon soul absorbed (the player's DragonSouls rising) shows
@@ -872,7 +905,11 @@ its arguments (quotes keep spaces), optionally after a reference and a dot ("pla
 found.`. Built: help, coc, additem, removeitem, setstage, getstage, startquest, stopquest,
 completequest, set ... to, getav, setav, modav, forceav, advlevel, tm, fw, epc, dpc, tgm (god
 mode: "God Mode -- ON"; the player takes no damage and cannot die), kill (as Actor.Kill;
-`player.kill` shows the player's death: [ai.md](ai.md#combat)), showracemenu, qqq. coc (`src/shell/cell-placement.ts`) puts the player in an interior cell at
+`player.kill` shows the player's death: [ai.md](ai.md#combat)), showracemenu, qqq; the
+renderer's switches tg (grass), tll (distant land and trees), tws (water) and tt (ToggleTrees:
+every tree, the near TREE references with their shadows and harvested looks as well as the
+distant tree LOD; their collision and their part in the game stay, a disabled tree stays hidden:
+`src/render/switched-visibility.ts`). coc (`src/shell/cell-placement.ts`) puts the player in an interior cell at
 its entrance, in an exterior cell at its COC marker (COCMarkerHeading), else at its middle on
 the ground. TODO(M13): the rest of the game's commands, selecting references by clicking.
 

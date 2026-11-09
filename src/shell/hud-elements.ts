@@ -166,11 +166,24 @@ export const FLOATING_MARKER: FloatingMarkerSettings = {
 
 /**
  * The height of a target the marker floats over when its bound gives none (a target's fourth
- * number: its base's OBND top at its scale, compass.ts boundTop; an NPC_ whose template gives
- * its bounds has none of its own): a human's height. TODO(M13): the engine reads the target's
- * loaded 3D's bound; the base's bounds stand in for it.
+ * number: floatingTop): a human's height.
  */
 const TARGET_HEIGHT = 128;
+
+/**
+ * The top of the bound a quest target's floating marker stands over, above its origin: an actor's
+ * loaded 3D's (its skeleton's "BBX" at its size: a giant's head, a child's) while it has one,
+ * else its base's OBND top at its scale (compass.ts boundTop: a chest's lid; an actor not staged,
+ * or whose skeleton is still loading); undefined: neither (TARGET_HEIGHT).
+ */
+export async function floatingTop(
+  reference: number,
+  loaded: ((reference: number) => number | undefined) | undefined,
+  base: (reference: number) => Promise<number | undefined>,
+): Promise<number | undefined> {
+  const top = loaded?.(reference);
+  return top !== undefined && top > 0 ? top : base(reference);
+}
 
 /** Where the floating marker shows: on the screen (0..1 from the top left), and its alpha. */
 export interface FloatingMarker {

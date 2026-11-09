@@ -50,6 +50,17 @@ export function skeletonInfo(file: NifFile): {
   return { bound, nodes };
 }
 
+/**
+ * The top of a skeleton's bound above the actor's feet (its root) at a scale: the box's centre
+ * plus its half height (a human's BBX: 128 at scale 1).
+ */
+export function boundTop(
+  bound: { readonly center: Vec3; readonly halfExtents: Vec3 },
+  scale: number,
+): number {
+  return (bound.center[2] + bound.halfExtents[2]) * scale;
+}
+
 /** The bound of the vanilla human skeleton, if a skeleton has none. */
 export const HUMAN_BOUND = { center: [0, 0, 64] as Vec3, halfExtents: [22, 14, 64] as Vec3 };
 

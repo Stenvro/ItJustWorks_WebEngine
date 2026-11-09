@@ -42,7 +42,7 @@ import { SkyMode, type SkySave, type SkyWeather } from '../world/sky-weather.ts'
 import type { Terminal } from './terminal.ts';
 import type { HudSignals } from './hud-signals.ts';
 import type { Talking } from './world-lines.ts';
-import { rumbleGamepad } from './gamepad-input.ts';
+import type { Rumble } from './controller-rumble.ts';
 import { inputPlatform, Platform } from '../ui/input-platform.ts';
 import { LookRequests, type HeadTrackKind } from '../ai/head-tracking.ts';
 import { bodyOfNode, type PhysicsWorld, type PlacedCollision } from '../physics/physics-world.ts';
@@ -382,8 +382,11 @@ export class ScriptWorld implements WorldBridge {
   /** A response of a scene's line (src/shell/scene-lines.ts answers). */
   sceneLine: ((speech: SceneSpeech) => Promise<void> | undefined) | undefined;
 
-  /** Whether the gamepad may rumble (the Vibration setting: [Controls] bGamePadRumble). */
-  gamepadRumble: () => boolean = () => true;
+  /**
+   * The controller's rumble (the session's src/shell/controller-rumble.ts, which minds the
+   * Vibration setting); unset: none.
+   */
+  rumble: ((rumble: Rumble) => void) | undefined;
 
   constructor(terminal: Terminal, hud: HudSignals) {
     this.#terminal = terminal;
@@ -833,9 +836,9 @@ export class ScriptWorld implements WorldBridge {
     return inputPlatform() === Platform.pcGamepad;
   }
 
-  /** Game.ShakeController: the player's gamepad rumbles (src/shell/gamepad-input.ts). */
+  /** Game.ShakeController: the player's gamepad rumbles (src/shell/controller-rumble.ts). */
   shakeController(small: number, big: number, seconds: number): void {
-    if (this.gamepadRumble()) rumbleGamepad(small, big, seconds);
+    this.rumble?.({ small, big, seconds });
   }
 
   playIdle(actor: number, idle: number, target: number | undefined): boolean {
