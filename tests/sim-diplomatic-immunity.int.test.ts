@@ -499,26 +499,22 @@ describe.skipIf(!hasGamedata())('MQ201 Diplomatic Immunity', () => {
       expect(sim.stageDone(MQ201, 185)).toBe(false);
       expect(await walkFighting(sim, SOLAR_BEDROOM, 40, 40)).toBe(true);
       // Up there until the talk has ended (185) and both have gone on their ways: Gissur out to
-      // the courtyard, Rulindil out of the solar or at the end of his way within it (TODO(M13):
-      // the Sit package's way to a chair in another cell does not take him through a load door
-      // yet; he stops at the end of the floor nearest it).
+      // the courtyard, Rulindil down to the interrogation chamber (his Sit,
+      // MQ201RulindilToInterrogationChamber, is on its chair in the dungeon: his way leads
+      // through the solar's door to it, ThalmorEmbassyGuardsToDungeonDoor).
       const gissur = quest.aliases.get(GISSUR) ?? 0;
       const rulindil = quest.aliases.get(RULINDIL) ?? 0;
       const inSolar = async (actor: number): Promise<boolean> =>
         (await sim.runtime.placement(actor))?.cell === SOLAR;
-      let last: readonly [number, number, number] | undefined;
-      let still = 0;
       for (let second = 0; second < 300; second++) {
         await sim.step(1);
         await fendOff(sim);
-        const at = sim.actor(rulindil)?.position;
-        still = at && last && Math.hypot(at[0] - last[0], at[1] - last[1]) < 1 ? still + 1 : 0;
-        last = at && [at[0], at[1], at[2]];
-        const settled = !(await inSolar(rulindil)) || still >= 3;
-        if (sim.stageDone(MQ201, 185) && !(await inSolar(gissur)) && settled) break;
+        const gone = !(await inSolar(gissur)) && !(await inSolar(rulindil));
+        if (sim.stageDone(MQ201, 185) && gone) break;
       }
       expect(sim.stageDone(MQ201, 185)).toBe(true);
       expect(await inSolar(gissur)).toBe(false);
+      expect((await sim.runtime.placement(rulindil))?.cell).toBe(DUNGEON);
       const chest = quest.aliases.get(OFFICE_CHEST) ?? 0;
       const at = await sim.position(chest);
       expect(at && (await walkFighting(sim, at, 60, 90))).toBe(true);

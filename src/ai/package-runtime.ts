@@ -106,6 +106,8 @@ export interface IdleMarkerPlace extends IdleCollection {
   readonly reference: number;
   readonly position: Vec3;
   readonly heading: number;
+  /** The cell or worldspace it is in (undefined: the actor's own). */
+  readonly space?: Space | undefined;
 }
 
 /**
@@ -300,7 +302,8 @@ export interface PackageBody {
   /**
    * Uses a furniture (sits, sleeps, leans): goes to it, enters by its idle; resolves whether it
    * is in it. `types`: only its markers of these animation types (bits: 1 sit, 2 sleep,
-   * 4 lean).
+   * 4 lean). Furniture in another cell or worldspace is not walked to from here (false): the
+   * procedure's own travel takes the actor there through the load doors.
    */
   useFurniture(furniture: number, types?: number): Promise<boolean>;
   /** Gets up from the furniture it uses (none: at once). */
