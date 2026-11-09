@@ -2838,7 +2838,11 @@ attacks it could not even play), so every attack was a power attack until stamin
 stagger locked the player out of their swings, and the race's dual wielder's power attack and
 fists were played for want of the player's own idles. A chained attack is not ended by the attack
 before it, whose clip still blends out and raises its attackStop (every second swing of the
-player's struck nothing). A power attack is chosen no sooner than fPowerAttackCoolDownTime
+player's struck nothing). In the running game the stage's bridge to the combat AI dropped the
+node's choice until 2026-11-09 (only the tests' hosts had it): every NPC swing went to its
+graph as the action's idle, unchecked, from up to 450 units (its farthest lunge, a forward
+power attack's, past its reach), and fell on whoever stood in its cone (Helgen Keep's
+Imperials on each other, Ralof on the player). A power attack is chosen no sooner than fPowerAttackCoolDownTime
 (Skyrim.esm 0) after the last (by the setting's name, TODO(M13)); one without attack data of its
 own (a paired kill move's) deals 1 + fPowerAttackDefaultBonus (1) times the damage.
 Creatures fight so: their idle trees hold no attack for ActionRightAttack, or one that is no

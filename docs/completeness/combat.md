@@ -271,11 +271,11 @@ and 290 built-in ones the readers ask for by name.
    reads; the timed bash's reaction (TODO(M13), docs/ai.md "Staggers").
 2. The rates' unit (acceleration, deceleration) and what the advanced avoidance adds.
 3. The cases left in the conformance list (round 5, above).
-4. Melee swings that start beyond reach (seen 2026-11-09 in Helgen Keep's first fight,
-   `tests/sim-helgen-keep-fight.int.test.ts`): Ralof and the two Imperials often strike from
-   150 to 230 units, their attack chosen by its predicted lunge while their controllers stand
-   them still through the windup, so the blow reaches no one; a swing that misses its target
-   falls on whoever stands in its cone instead (Ralof's on the player beside him: 6 of his 13
-   blows in the browser run). Whether the attacker's own run carries it on through a plain
-   attack's windup, and the strike angle's reading (half-width or whole), are to be read from
-   the original.
+4. A swing that misses its target falls on whoever stands in its cone (strikeTargets: the
+   aimed target first where the strike reaches it, else the nearest). Ralof's dual-wield power
+   attacks still fall on the player beside him in Helgen Keep's first fight (8 of his 25 blows
+   in `tests/sim-helgen-keep-fight.int.test.ts`, about 15 health each). Whether the engine's
+   strike leaves out those who are no enemies of the attacker, and the strike angle's reading
+   (half-width or whole), are to be read from the original. (The swings from 190 to 450 units
+   seen there before were the stage's bridge dropping the AI's attack choice: fixed, every NPC
+   melee attack now goes through attackReaches.)

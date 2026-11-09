@@ -4037,7 +4037,7 @@ export class ActorCombat implements CombatBridge {
       },
       draw: (reference) => this.draw(reference),
       sheathe: (reference) => this.sheathe(reference),
-      attack: (reference, action) => this.attack(reference, action),
+      attack: (reference, action, melee) => this.attack(reference, action, melee),
       release: (reference, action) => this.release(reference, action),
       block: (reference, on) => this.block(reference, on),
       anticipateBlow: (reference, blow) => this.anticipateBlow(reference, blow),

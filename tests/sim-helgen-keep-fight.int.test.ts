@@ -101,6 +101,13 @@ describe.skipIf(!hasGamedata())('MQ101’s first fight in Helgen Keep, by real i
       // Each soldier fights its own enemies: its blows at the one it aims at land on it, not on
       // its fellow at its side (before: the officer's blows at the player fell on the soldier).
       expect(on(officer, [PLAYER_REF, ralof])).toBeGreaterThan(on(officer, [soldier]));
+      // An NPC swings when its attack will reach its target at the hit frame (the melee attack
+      // node's attackReaches): the combat AI's own attack choice reaches the actor's graph. Found
+      // 2026-11-09: the stage's bridge to the AI dropped the choice, every NPC swing went to its
+      // graph unchecked, from up to 450 units, and its blow fell on whoever stood in its cone:
+      // 6 of the Imperials' 20 blows on each other, 14 of Ralof's 26 on the player.
+      expect(on(officer, [soldier]) + on(soldier, [officer])).toBe(0);
+      expect(on(ralof, [officer, soldier])).toBeGreaterThan(on(ralof, [PLAYER_REF]));
       expect(await dead(officer)).toBe(true);
       expect(await dead(soldier)).toBe(true);
     } finally {
