@@ -89,6 +89,14 @@ describe('reactions', () => {
     expect(watch.update(3, { over: true })).toBe(false);
   });
 
+  it('spectating: watch until the last blow is fAISpectatorRememberThreatTimer old', () => {
+    const watch = new Reaction('spectator', [0, 0, 0], 3, body([300, 0, 0]), settings, () => 0);
+    expect(watch.update(0.1, { since: 0 })).toBe(true);
+    // The blows stopped a while ago: counted from the last one, not from when it was told.
+    expect(watch.update(0.1, { over: true, since: 4.9 })).toBe(true);
+    expect(watch.update(0.1, { over: true, since: 5 })).toBe(false);
+  });
+
   it('warning: go to the one warned and face them until lifted', async () => {
     const actor = body([0, 0, 0]);
     const warn = new Reaction('warn', [600, 0, 0], 4, actor, settings, () => 0);
