@@ -9,7 +9,12 @@
 // scroll) casts instead: its button goes to the player's casting (src/shell/player-casting.ts).
 
 import { POWER_ATTACK_TIMING } from '../gameplay/combat/combat-settings.ts';
-import { AttackState, attacking, WeaponState } from '../gameplay/combat/combat-state.ts';
+import {
+  AttackState,
+  attacking,
+  WeaponState,
+  type CombatState,
+} from '../gameplay/combat/combat-state.ts';
 import { WeaponType } from '../world/item-records.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ActorCombat } from './actor-combat.ts';
@@ -44,6 +49,8 @@ export class PlayerCombat {
   #blocking = false;
   /** A block asked of the graph and not answered yet. */
   #raising = false;
+  /** The state (blockState) a block held was refused in: asked again once it changes. */
+  #refused: string | undefined;
 
   /** The player's casting, if any. */
   readonly #casting: () => CastingButtons | undefined;
@@ -117,6 +124,7 @@ export class PlayerCombat {
     if (leftPressed) {
       if (blocks) {
         this.#blocking = true;
+        this.#refused = undefined;
         if (bow) void combat.block(PLAYER_REF, true);
       } else {
         this.#left = { since: this.#clock, power: false };
@@ -125,22 +133,29 @@ export class PlayerCombat {
     // A block held goes up once no attack is under way: pressed in the middle of a swing, it
     // waits for the swing's end (the graph takes no block then, and the press was lost: the
     // player stood with the button held and no guard up). TODO(M13): inferred; the original
-    // raises a block held through a swing as the swing ends.
-    if (
-      !bow &&
-      this.#blocking &&
-      player.isHeld(LEFT) &&
-      !state.blocking &&
-      !attacking(state) &&
-      !this.#raising
-    ) {
-      this.#raising = true;
-      void combat.block(PLAYER_REF, true).finally(() => {
-        this.#raising = false;
-      });
+    // raises a block held through a swing as the swing ends. A block the graph refused (a
+    // stagger, a left hand whose tree has no blockStart) is asked again only once what refused
+    // it changed (blockState), not every frame.
+    if (!bow && this.#blocking && player.isHeld(LEFT) && !state.blocking && !attacking(state)) {
+      const asked = blockState(state, hands);
+      if (!this.#raising && asked !== this.#refused) {
+        this.#raising = true;
+        void combat
+          .block(PLAYER_REF, true)
+          .then((taken) => {
+            this.#refused = taken ? undefined : asked;
+          })
+          .catch(() => {
+            this.#refused = asked;
+          })
+          .finally(() => {
+            this.#raising = false;
+          });
+      }
     }
     if (this.#blocking && !player.isHeld(LEFT)) {
       this.#blocking = false;
+      this.#refused = undefined;
       void combat.block(PLAYER_REF, false);
     }
     if (rightPressed) {
@@ -215,4 +230,32 @@ export class PlayerCombat {
       done();
     }
   }
+}
+
+/**
+ * What decides whether the graph takes a block held now: the attack under way, a stagger, a
+ * recoil, a fall, a paired animation, life, and the hands. A block refused in one state is asked
+ * again only once this changes (the attack ended, the stagger ended, the gear changed).
+ */
+export function blockState(
+  state: CombatState,
+  hands: {
+    readonly right: number | undefined;
+    readonly left: number | undefined;
+    readonly shield: boolean;
+  },
+): string {
+  return [
+    state.weapon,
+    state.attack,
+    attacking(state),
+    state.staggered,
+    state.recoiling,
+    state.knock,
+    state.paired ?? '',
+    state.life,
+    hands.right ?? '',
+    hands.left ?? '',
+    hands.shield,
+  ].join(':');
 }

@@ -1272,10 +1272,14 @@ export class ActorCombat implements CombatBridge {
     return (await this.#act(fighter, 'ActionBlockAnticipate')) !== undefined;
   }
 
-  /** Blocks (true) or stops (false): the left hand's attack when it holds a shield or nothing. */
-  async block(reference: number, on: boolean): Promise<void> {
-    if (on) await this.attack(reference, 'ActionLeftAttack');
-    else await this.release(reference, 'ActionLeftRelease');
+  /**
+   * Blocks (true) or stops (false): the left hand's attack when it holds a shield or nothing.
+   * Whether the graph took a block asked for (false: it can take none now).
+   */
+  async block(reference: number, on: boolean): Promise<boolean> {
+    if (on) return this.attack(reference, 'ActionLeftAttack');
+    await this.release(reference, 'ActionLeftRelease');
+    return true;
   }
 
   /** Whether an actor fights (its target), for its AI (its packages wait meanwhile). */
@@ -4039,7 +4043,9 @@ export class ActorCombat implements CombatBridge {
       sheathe: (reference) => this.sheathe(reference),
       attack: (reference, action, melee) => this.attack(reference, action, melee),
       release: (reference, action) => this.release(reference, action),
-      block: (reference, on) => this.block(reference, on),
+      block: async (reference, on) => {
+        await this.block(reference, on);
+      },
       anticipateBlow: (reference, blow) => this.anticipateBlow(reference, blow),
       act: (reference, action, target) => {
         const fighter = this.#fighters.get(reference);
