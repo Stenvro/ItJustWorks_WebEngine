@@ -828,10 +828,11 @@ the original: a volume tells one enter per reference, GetTriggerObjectCount is 0
 OnCellLoad goes to every reference of a fully loaded cell, so nothing there makes the first step
 fire. TODO(M13): whether the original's first step on these plates fires is not known (UESP has a
 wrong plate launch a fireball, without saying on which step). A hanging mace (TrapMace01, on its
-tripwire) swings as MaceTrap.fireTrap's pushes break the pin that holds it up (a breakable
+tripwire) swings as MaceTrap.fireTrap's first push breaks the pin that holds it up (a breakable
 constraint: docs/physics.md, "Breakable"); PhysicsTrapHit hurts what it meets, pushes it back
 (trapPushBack 500) and staggers it (staggerAmount 0.2: ProcessTrapHit's afStagger, as a Stagger
-effect of that magnitude; TODO(M13): inferred from the argument's name). Observed in the original: no code reads fLockTrapGoOffBase or
+effect of that magnitude, from the hit's position the call carries; TODO(M13): inferred from the
+arguments' names). Observed in the original: no code reads fLockTrapGoOffBase or
 fLockTrapGoOffMult, so a failed pick sets no trap off. fProjectileKnockMultTrap and
 fGameplayImpulseMultTrap are the pushed body's: what is on L_TRAP takes less of a blow.
 

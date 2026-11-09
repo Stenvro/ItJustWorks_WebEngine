@@ -824,26 +824,40 @@ documented. It runs in two places (`ActorBodies`):
   follow the pose as the living's do. TODO(M13): whether the original then lets them go limp,
   and whether it draws the driven bones from their bodies (here the graph's pose is drawn).
 
-Malleable strength and a chain's damping (0.6 in every chain) are not applied; a chain's tau
-(1) and constraint force mixing (float epsilon) are Rapier's stiff joints'. A joint is in the world only while one of its two bodies is simulated: between
+A chain's tau (1), damping (0.6 in every chain) and constraint force mixing (float epsilon), and
+a malleable constraint's strength (Havok's virtual mass factor: each of its rows takes that share
+of its impulse in an iteration), are applied where the engine solves as Havok does: a breakable
+joint's group (below) and, for a malleable ragdoll or limited hinge, its friction, motor and
+cone rows. Rapier's own joints stay stiff: four iterations of damping 0.6 leave 2.6% of a
+step's speed error, unseen; TODO(M13): a malleable joint's pivot and limits (Rapier has no
+per-joint softness; no vanilla model has a malleable constraint). A joint is in the world only while one of its two bodies is simulated: between
 two keyframed or held bodies (a living actor's ragdoll keyframed to its pose, an object placed
 to wait) it is left out and made again from its constraint as a body is let go (a death, a
 knock-down, a touch). Rapier solves a joint between two kinematic bodies in every substep all
 the same: Helgen's opening spent 3.5 of its 4.8 ms a physics step on the 400 joints of 23
 living actors' ragdolls, at three steps a frame. **Breakable** constraints break when the impulse on them in a step exceeds
 their threshold: the beehive's 20 holds its 10 kg (1.6 per step at 60 Hz), the mace trap's pin
-(30) its mace and the pull of the chain the mace hangs by (17 a step). Rapier does not expose
-its joints' impulses. A breakable point joint (a ball and socket) is solved before each step
-with every point joint reached through simulated bodies (src/physics/joint-impulses.ts: the
-pivots kept together exactly, as Havok solves a constraint chain as one), from what moved the
-bodies since the last step (gravity's speed of the step, a script's push): Rapier's chains drift
-apart a little every step, and that is no load. Besides, as for the other breakables, the change
-of momentum of its simulated body that gravity does not explain counts: the mace's own measured
-only the sum of what holds it, the chain's pull cancelled out of it, and the pin never broke.
-TODO(M13): inferred; Havok's solver iterates with tau's position correction, and contacts on
-the body count too. The mace (TrapMace01, MaceTrap): simulated (SetMotionType 1) it hangs on its
-pin; fireTrap's pushes (ApplyHavokImpulse 15, then 50) break the pin, and the mace swings down
-past its base (the push of 15 already breaks it here: the links' share pulls the chain taut).
+(30) its mace and the pull of the chain the mace hangs by (17 to 19 a step). Havok's measure
+(hkpBreakableConstraintData) is the solver results of the constraint it wraps: the impulses its
+rows took over the step's solver iterations, the root of the sum of their squares weighed
+against the threshold (a hinge's two angular rows count with its three linear ones). Rapier
+does not expose its joints' impulses, so a breakable ball and socket or hinge is solved before
+each step as Havok's solver would solve it (src/physics/joint-impulses.ts) with every point
+joint reached through simulated bodies: the world solver's iterations (four), tau (0.6) and
+damping (1); a chain's links as one block with the chain's own tau, damping and constraint
+force mixing; a hinge's angular rows; a malleable constraint's strength. The velocities solved
+are what moved the bodies since the last step (gravity's speed of the step, a script's push),
+and the error tau corrects is what the solve itself left over the steps (clipped to a chain's
+maxErrorDistance): Rapier's chains drift apart a little every step, and that is no load. A
+body's own change of momentum measured only the sum of what holds it: the chain's pull
+cancelled out of the mace's, and the pin never broke. The stiff springs (the beehives) still
+take their body's change of momentum. TODO(M13): inferred from Havok's documented solver;
+contacts on the bodies are not in the solve. The mace (TrapMace01, MaceTrap): simulated
+(SetMotionType 1) it hangs on its pin; fireTrap's first push (ApplyHavokImpulse 15: 3.2 on each
+link, on L_PROPS, 4.8 on the mace, on L_TRAP) pulls the chain taut and the pin takes 48 in
+that step (a rigid solve of the group gave 69; with damping 1 for the chain, 58): it breaks
+there, and the second (50) pushes the mace already let go down past its base. A push of 6 or
+more breaks it.
 
 Models whose bodies move their nodes one by one (`isArticulated`: constraints, or several
 simulated bodies) are drawn on a pose of their own nodes rather than moved as one: every

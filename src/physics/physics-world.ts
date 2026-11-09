@@ -33,7 +33,12 @@ import {
   type SolverJoint,
   type SolverSettings,
 } from './constraint-solver.ts';
-import { jointImpulses, type ImpulseBody, type PointJoint } from './joint-impulses.ts';
+import {
+  groupImpulses,
+  solverResultSize,
+  type GroupJoint,
+  type ImpulseBody,
+} from './joint-impulses.ts';
 
 export type Rapier = typeof RAPIER;
 
@@ -467,9 +472,37 @@ function linkPivots(data: ConstraintData): readonly [Vec3, Vec3, number] | undef
       return [data.pivotA, data.pivotB, data.length];
     case 'hinge':
       return [data.a.pivot, data.b.pivot, 0];
+    case 'malleable':
+      return linkPivots(data.inner);
     default:
       return undefined;
   }
+}
+
+/** A joint's error as Havok's solver would leave it (linear; about a hinge's two axes). */
+interface GroupError {
+  readonly linear: Vec3;
+  readonly angular: readonly number[];
+}
+
+/**
+ * A joint's error after a step of `step` seconds whose solve left its rows `left` of their
+ * speed, its linear part at most `most` (Havok corrects at most a chain's maxErrorDistance).
+ */
+function openError(
+  was: GroupError | undefined,
+  left: GroupError,
+  step: number,
+  most: number,
+): GroupError {
+  const at = (i: 0 | 1 | 2): number => (was?.linear[i] ?? 0) + left.linear[i] * step;
+  const linear: Vec3 = [at(0), at(1), at(2)];
+  const size = Math.hypot(...linear);
+  const k = size > most && size > 0 ? most / size : 1;
+  return {
+    linear: [linear[0] * k, linear[1] * k, linear[2] * k],
+    angular: left.angular.map((x, i) => (was?.angular[i] ?? 0) + x * step),
+  };
 }
 
 /** A keyframed body pulling a placed body by a joint (PhysicsWorld.addHitch). */
@@ -824,18 +857,21 @@ const EASED_CHANGE = 1e-3;
 function articulated(
   data: ConstraintData,
 ): Extract<ConstraintData, { type: 'ragdoll' | 'limited-hinge' }> | undefined {
-  // TODO(M13): the malleable constraint's strength (softness) is not applied.
   if (data.type === 'malleable') return articulated(data.inner);
   return data.type === 'ragdoll' || data.type === 'limited-hinge' ? data : undefined;
 }
 
 /**
  * What the constraint solver (constraint-solver.ts) keeps of a ragdoll or limited hinge
- * constraint (its friction), its frames scaled by `toLocal`; undefined for the other kinds.
+ * constraint (its friction), its frames scaled by `toLocal`; undefined for the other kinds. A
+ * malleable one's strength softens its rows (Havok's virtual mass factor). TODO(M13): Rapier's
+ * joint that keeps its pivot and limits stays stiff (Rapier has no per-joint softness); no
+ * vanilla model has a malleable constraint.
  */
 function solverConstraint(data: ConstraintData, toLocal: number): SolverConstraint | undefined {
   const inner = articulated(data);
   if (!inner) return undefined;
+  const strength = data.type === 'malleable' ? data.strength : undefined;
   const frame = (f: ConstraintFrame) => ({
     pivot: [f.pivot[0] * toLocal, f.pivot[1] * toLocal, f.pivot[2] * toLocal] as Vec3,
     axes: [f.axes[0], f.axes[1]] as const,
@@ -846,6 +882,7 @@ function solverConstraint(data: ConstraintData, toLocal: number): SolverConstrai
     b: frame(inner.b),
     maxFriction: inner.maxFriction,
     ...(inner.type === 'ragdoll' && { cone: Math.abs(inner.coneMaxAngle) }),
+    ...(strength !== undefined && { strength }),
   };
 }
 
@@ -1015,8 +1052,23 @@ export class PhysicsWorld {
   readonly #spins = new Map<number, RAPIER.Vector>();
   /** Joints that break under too much force, while they hold. */
   readonly #breakable = new Set<PlacedJoint>();
-  /** The impulse each breakable point joint takes in the step under way (#solveBreakable). */
+  /**
+   * The solver results of each breakable joint solved with its group in the step under way
+   * (#solveBreakable): what it weighs against its threshold.
+   */
   readonly #breakableLoads = new Map<PlacedJoint, number>();
+  /**
+   * The error of each joint of those groups as Havok's solver would leave it (#solveBreakable):
+   * what its iterations left of the pivots' speed, over the steps (linear: Havok units; angular:
+   * radians about a hinge's axes across its axle). Rapier's own joints drift apart a little every
+   * step, which Havok's do not: that is no load.
+   */
+  readonly #groupErrors = new Map<PlacedJoint, GroupError>();
+  /** The last solver results of each breakable joint solved with its group (breakableLoad). */
+  readonly #lastLoads = new WeakMap<PlacedJoint, number>();
+  /** The order joints were made in: Havok solves an island's constraints so. */
+  readonly #jointOrder = new WeakMap<PlacedJoint, number>();
+  #nextJoint = 0;
   /**
    * The velocities the bodies of those joints' groups had after the last step (linear, then
    * angular): what moved them since (a push, gravity) is what their joints take.
@@ -1511,6 +1563,7 @@ export class PhysicsWorld {
       if (!a || !b || a.body === b.body) continue;
       const placed: PlacedJoint = { joint: undefined, a, b, constraint };
       joints.push(placed);
+      this.#jointOrder.set(placed, this.#nextJoint++);
       this.#jointScales.set(placed, scale / HAVOK_SCALE);
       const solved = solverConstraint(constraint.data, scale / HAVOK_SCALE);
       if (solved) this.#solverJoints.set(placed, { a: a.body, b: b.body, constraint: solved });
@@ -1728,6 +1781,7 @@ export class PhysicsWorld {
   /** A joint is gone for good (broken, or its bodies removed). */
   #forgetJoint(placed: PlacedJoint): void {
     this.#breakable.delete(placed);
+    this.#groupErrors.delete(placed);
     this.#jointScales.delete(placed);
     this.#easing.delete(placed);
     this.#clipped.delete(placed);
@@ -1743,11 +1797,21 @@ export class PhysicsWorld {
   }
 
   /**
-   * Before the step: the impulse each breakable point joint (a ball and socket, a hinge's pivot)
-   * takes in it, solved with every point joint that holds the bodies it reaches through simulated
-   * bodies (src/physics/joint-impulses.ts): the mace trap's pin holds its mace against the
-   * mace's weight and the pull of the chain it hangs by. Rapier does not expose its joints'
-   * impulses.
+   * What a breakable joint weighed against its threshold in the last step it was solved with its
+   * group (Havok's solver results: #solveBreakable), also in the step it broke; undefined for one
+   * never solved so.
+   */
+  breakableLoad(joint: PlacedJoint): number | undefined {
+    return this.#lastLoads.get(joint);
+  }
+
+  /**
+   * Before the step: the solver results each breakable joint (a ball and socket, a hinge) takes
+   * in it, solved as Havok solves it with every point joint that holds the bodies it reaches
+   * through simulated bodies (src/physics/joint-impulses.ts: the step's iterations, the world's
+   * tau and damping, a chain's own, a hinge's angular rows): the mace trap's pin holds its mace
+   * against the mace's weight and the pull of the chain it hangs by. Rapier does not expose its
+   * joints' impulses.
    */
   #solveBreakable(): void {
     this.#breakableLoads.clear();
@@ -1824,35 +1888,99 @@ export class PhysicsWorld {
         index.set(body.handle, bodies.length - 1);
         return bodies.length - 1;
       };
-      const fromCom = (body: RAPIER.RigidBody, pivot: Vec3): Vec3 => {
-        const t = body.translation();
-        const p = rotateVector(body.rotation(), { x: pivot[0], y: pivot[1], z: pivot[2] });
-        const c = body.worldCom();
-        return [t.x + p.x - c.x, t.y + p.y - c.y, t.z + p.z - c.z];
-      };
-      const joints: PointJoint[] = [];
+      // Havok solves the island's constraints in the order they were added.
+      group.sort((x, y) => (this.#jointOrder.get(x) ?? 0) - (this.#jointOrder.get(y) ?? 0));
+      const joints: GroupJoint[] = [];
       for (const joint of group) {
         const link = this.#linksClipped.get(joint);
-        if (!link) continue;
-        joints.push({
-          a: indexOf(joint.a),
-          b: indexOf(joint.b),
-          ra: fromCom(joint.a.body, link.pivotA),
-          rb: fromCom(joint.b.body, link.pivotB),
-        });
+        if (link) joints.push(this.#groupJoint(joint, link, indexOf(joint.a), indexOf(joint.b)));
       }
-      const [own] = jointImpulses(bodies, joints);
-      if (own) this.#breakableLoads.set(placed, Math.hypot(own[0], own[1], own[2]));
+      const results = groupImpulses(bodies, joints, {
+        step: this.#size,
+        iterations: this.solver.iterations,
+      });
+      const own = results[group.indexOf(placed)];
+      if (own) {
+        this.#breakableLoads.set(placed, solverResultSize(own));
+        this.#lastLoads.set(placed, solverResultSize(own));
+      }
+      // What the iterations left of the pivots' speed opens their error over the step.
+      group.forEach((joint, i) => {
+        const left = results[i]?.left;
+        const most = this.#linksClipped.get(joint)?.most ?? MAX_CONSTRAINT_VIOLATION;
+        if (left)
+          this.#groupErrors.set(
+            joint,
+            openError(this.#groupErrors.get(joint), left, this.#size, most),
+          );
+      });
     }
   }
 
   /**
+   * A joint of a breakable joint's group as Havok's solver takes it (joint-impulses.ts): its
+   * pivots from its bodies' centres of mass and their error, a hinge's two angular rows across
+   * its axle with their error; a chain's link with its chain's tau, damping and constraint force
+   * mixing (solved as one block), the others with the world solver's tau and damping; a
+   * malleable constraint's strength as its virtual mass factor.
+   */
+  #groupJoint(
+    joint: PlacedJoint,
+    link: { readonly pivotA: Vec3; readonly pivotB: Vec3; readonly most: number },
+    a: number,
+    b: number,
+  ): GroupJoint {
+    const bodyA = joint.a.body;
+    const bodyB = joint.b.body;
+    const world = (body: RAPIER.RigidBody, pivot: Vec3): RAPIER.Vector => {
+      const t = body.translation();
+      const p = rotateVector(body.rotation(), { x: pivot[0], y: pivot[1], z: pivot[2] });
+      return { x: t.x + p.x, y: t.y + p.y, z: t.z + p.z };
+    };
+    const fromCom = (body: RAPIER.RigidBody, point: RAPIER.Vector): Vec3 => {
+      const c = body.worldCom();
+      return [point.x - c.x, point.y - c.y, point.z - c.z];
+    };
+    const pa = world(bodyA, link.pivotA);
+    const pb = world(bodyB, link.pivotB);
+    const error = this.#groupErrors.get(joint);
+    const { chain, data } = joint.constraint;
+    const strength = data.type === 'malleable' ? Math.max(0, data.strength) : 1;
+    const inner = data.type === 'malleable' ? data.inner : data;
+    let angular: [Vec3, number][] | undefined;
+    if (inner.type === 'hinge') {
+      const axis = (body: RAPIER.RigidBody, v: Vec3): Vec3 => {
+        const r = rotateVector(body.rotation(), { x: v[0], y: v[1], z: v[2] });
+        return [r.x, r.y, r.z];
+      };
+      // About the two axes across its axle (as body A holds it), each with its error.
+      const [axle, across] = inner.a.axes;
+      angular = [across, cross(axle, across)].map((v, i) => [
+        axis(bodyA, v),
+        error?.angular[i] ?? 0,
+      ]);
+    }
+    return {
+      a,
+      b,
+      ra: fromCom(bodyA, pa),
+      rb: fromCom(bodyB, pb),
+      ...(error && { error: error.linear }),
+      ...(angular && { angular }),
+      tau: chain ? chain.tau : this.solver.tau,
+      damping: chain ? chain.damping : this.solver.damping,
+      ...(chain && { softness: chain.constraintForceMixing, block: chain.index }),
+      ...(strength !== 1 && { strength }),
+    };
+  }
+
+  /**
    * Breakable constraints break when the impulse on them in a step exceeds their threshold
-   * (Havok's units: kg·m/s, the beehive's 20 holding its 10 kg, a step taking 1.6). A point joint
-   * takes what the step's solve of its group gave it (#solveBreakable); besides, as for the
-   * others, the change of momentum of its simulated body that gravity does not explain counts
-   * (it tells a blow on the body within the step; TODO(M13): contacts on the body count as
-   * well).
+   * (Havok's units: kg·m/s, the beehive's 20 holding its 10 kg, a step taking 1.6). A ball and
+   * socket or hinge takes its solver results in the step's solve of its group (#solveBreakable:
+   * the root of the sum of their squares, Havok's hkpBreakableConstraintData measure); the others
+   * (stiff springs: the beehives) the change of momentum of their simulated body that gravity
+   * does not explain. TODO(M13): inferred; contacts on the bodies count as well.
    */
   #breakJoints(): void {
     const gravity = this.world.gravity;
@@ -1871,23 +1999,24 @@ export class PhysicsWorld {
         this.#forgetJoint(placed);
         continue;
       }
-      let impulse = 0;
-      for (const { body, data } of [placed.a, placed.b]) {
-        const before = this.#velocities.get(body.handle);
-        if (!before || !body.isDynamic()) continue;
-        const after = body.linvel();
-        const g = data.gravityFactor * this.#size;
-        impulse = Math.max(
-          impulse,
-          body.mass() *
-            Math.hypot(
-              after.x - before.x - gravity.x * g,
-              after.y - before.y - gravity.y * g,
-              after.z - before.z - gravity.z * g,
-            ),
-        );
-      }
-      impulse = Math.max(impulse, this.#breakableLoads.get(placed) ?? 0);
+      // Solved with its group: its solver results (#solveBreakable).
+      let impulse = this.#breakableLoads.get(placed) ?? 0;
+      if (!this.#breakableLoads.has(placed))
+        for (const { body, data } of [placed.a, placed.b]) {
+          const before = this.#velocities.get(body.handle);
+          if (!before || !body.isDynamic()) continue;
+          const after = body.linvel();
+          const g = data.gravityFactor * this.#size;
+          impulse = Math.max(
+            impulse,
+            body.mass() *
+              Math.hypot(
+                after.x - before.x - gravity.x * g,
+                after.y - before.y - gravity.y * g,
+                after.z - before.z - gravity.z * g,
+              ),
+          );
+        }
       if (impulse > threshold) {
         this.world.removeImpulseJoint(joint, true);
         placed.joint = undefined;
@@ -3169,7 +3298,8 @@ export class PhysicsWorld {
   /**
    * The traps an actor's collider touches: bodies on L_TRAP and L_CLOUDTRAP (the layers the
    * engine's trap listener takes as traps, observed in the original) within `margin` game units of it, by
-   * their owners' references, with where it touches and how the trap's body moves.
+   * their owners' references, with where it touches (the contact point on the trap, as a Havok
+   * contact point event tells it) and how the trap's body moves.
    */
   trapsTouching(collider: RAPIER.Collider, margin: number): Map<number, TrapTouch> {
     const found = new Map<number, TrapTouch>();
@@ -3191,8 +3321,11 @@ export class PhysicsWorld {
         if (reference === undefined || reference === 0 || found.has(reference)) return true;
         const body = other.parent();
         const velocity = body?.linvel() ?? { x: 0, y: 0, z: 0 };
+        // Where it touches: the contact's point on the trap (the actor's centre when none).
+        const contact = other.contactShape(reach, at, collider.rotation(), 0);
+        const point = contact?.point1 ?? at;
         found.set(reference, {
-          position: [at.x * HAVOK_SCALE, at.y * HAVOK_SCALE, at.z * HAVOK_SCALE],
+          position: [point.x * HAVOK_SCALE, point.y * HAVOK_SCALE, point.z * HAVOK_SCALE],
           velocity: [velocity.x * HAVOK_SCALE, velocity.y * HAVOK_SCALE, velocity.z * HAVOK_SCALE],
           motionType:
             !body || body.isFixed()
