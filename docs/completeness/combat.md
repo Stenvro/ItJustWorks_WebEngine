@@ -274,8 +274,11 @@ and 290 built-in ones the readers ask for by name.
 4. A swing that misses its target falls on whoever stands in its cone (strikeTargets: the
    aimed target first where the strike reaches it, else the nearest). Ralof's dual-wield power
    attacks still fall on the player beside him in Helgen Keep's first fight (8 of his 25 blows
-   in `tests/sim-helgen-keep-fight.int.test.ts`, about 15 health each). Whether the engine's
-   strike leaves out those who are no enemies of the attacker, and the strike angle's reading
-   (half-width or whole), are to be read from the original. (The swings from 190 to 450 units
+   in `tests/sim-helgen-keep-fight.int.test.ts`, about 15 health each; 2 to 3 in the browser).
+   Allies are kept in the strike: the game settings count the blows an ally or a friend deals
+   before it turns (iAllyHitCombatAllowed 1000, iFriendHitCombatAllowed 3: src/ai/combat-ai.ts),
+   which only means something if a blow lands on the one's allies in a fight; ours counts them
+   the same way (src/ai/combat-ai.ts, the hit tolerance). The strike angle's reading (half-width or
+   whole) is still to be read from the original (TODO(M13)). (The swings from 190 to 450 units
    seen there before were the stage's bridge dropping the AI's attack choice: fixed, every NPC
    melee attack now goes through attackReaches.)
