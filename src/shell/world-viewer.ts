@@ -136,7 +136,7 @@ import { WorldSky, type SkyElements } from './world-sky.ts';
 import { sunInView } from '../world/sky-state.ts';
 import type { Rgb } from '../world/cell-records.ts';
 import type { Terminal } from './terminal.ts';
-import { configurePhysics, Player } from './player.ts';
+import { configurePhysics, Player, type PlayerStance } from './player.ts';
 import type { LocalMapContent } from './local-map.ts';
 import { SkyMode } from '../world/sky-weather.ts';
 import { SUN_GAZE_DEFAULTS, type SunGazeSettings } from '../gameplay/sun-gaze.ts';
@@ -1296,13 +1296,19 @@ export class WorldViewer {
   /**
    * Opens a worldspace. The player arrives at `arrival` (a load door's destination), or as
    * the game would bring them in near `cell` (default: the busiest cell): in front of the
-   * nearest load door, else at the nearest map marker.
+   * nearest load door, else at the nearest map marker. `stance`: the player's as they come
+   * through a load door (Player.keepStance).
    */
-  async open(formId: number, cell?: readonly [number, number], arrival?: Arrival): Promise<void> {
+  async open(
+    formId: number,
+    cell?: readonly [number, number],
+    arrival?: Arrival,
+    stance?: PlayerStance,
+  ): Promise<void> {
     const info = this.#worlds.find((world) => world.formId === formId);
     try {
       const name = info ? (info.name !== '' ? info.name : info.editorId) : 'worldspace';
-      await this.#open(formId, cell, arrival, name);
+      await this.#open(formId, cell, arrival, name, stance);
     } catch (error) {
       this.#opening = undefined;
       throw error;
@@ -1314,6 +1320,7 @@ export class WorldViewer {
     cell: readonly [number, number] | undefined,
     arrival: Arrival | undefined,
     name: string,
+    stance: PlayerStance | undefined,
   ): Promise<void> {
     const db = this.#db;
     if (!db) return;
@@ -1400,6 +1407,7 @@ export class WorldViewer {
       feet,
       comeIn?.heading ?? 0,
     );
+    if (stance) player.keepStance(stance);
     // Game.DisablePlayerControls' abCamSwitch keeps the camera as it is, as does an animation
     // object the player holds; the controls the scripts switch off do nothing meanwhile.
     player.povSwitchAllowed = () => {

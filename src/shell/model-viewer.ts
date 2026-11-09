@@ -14,7 +14,7 @@ import type { Renderer } from '../render/renderer.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
 import type { ActorPose } from '../animation/skeleton.ts';
 import { GRAVITY, initPhysics, PhysicsWorld } from '../physics/physics-world.ts';
-import { configurePhysics, Player } from './player.ts';
+import { configurePhysics, Player, type PlayerStance } from './player.ts';
 import {
   collisionGroup,
   objectActivation,
@@ -905,6 +905,8 @@ export class ModelViewer {
     yaw: number,
     /** The player arrives through a door: on the floor at its feet. */
     onFloor: boolean,
+    /** The player's stance as they come through a load door (Player.keepStance). */
+    stance?: PlayerStance,
   ): Promise<void> {
     const session = this.#session;
     if (!session) return;
@@ -928,6 +930,7 @@ export class ModelViewer {
       feet,
       yaw,
     );
+    if (stance) player.keepStance(stance);
     // Game.DisablePlayerControls' abCamSwitch keeps the camera as it is.
     player.povSwitchAllowed = () => {
       const runtime = this.#session?.scriptsReady;
@@ -1237,20 +1240,25 @@ export class ModelViewer {
 
   /**
    * Loads an interior cell with all its objects and lights. The player arrives at `arrival`
-   * (a load door's destination), else as through the cell's own door.
+   * (a load door's destination), else as through the cell's own door. `stance`: the player's as
+   * they come through a load door (Player.keepStance).
    */
-  async showCell(formId: number, arrival?: Arrival): Promise<void> {
+  async showCell(formId: number, arrival?: Arrival, stance?: PlayerStance): Promise<void> {
     const info = this.#cells.find((cell) => cell.formId === formId);
     this.#loading = info ? (info.name !== '' ? info.name : info.editorId) : 'interior';
     try {
-      await this.#showCell(formId, arrival);
+      await this.#showCell(formId, arrival, stance);
     } catch (error) {
       this.#loading = undefined;
       throw error;
     }
   }
 
-  async #showCell(formId: number, arrival: Arrival | undefined): Promise<void> {
+  async #showCell(
+    formId: number,
+    arrival: Arrival | undefined,
+    stance: PlayerStance | undefined,
+  ): Promise<void> {
     const db = this.#db;
     if (!db) return;
     const token = ++this.#loadToken;
@@ -1383,7 +1391,12 @@ export class ModelViewer {
     );
     const count = Math.max(1, data.objects.length);
     this.#fly.lookAtPoint([centre[0] / count, centre[1] / count, z + EYE_HEIGHT]);
-    await this.#startPlay([x, y, z], comeIn ? comeIn.heading : this.#fly.yaw, comeIn !== undefined);
+    await this.#startPlay(
+      [x, y, z],
+      comeIn ? comeIn.heading : this.#fly.yaw,
+      comeIn !== undefined,
+      stance,
+    );
     if (token !== this.#loadToken) return;
 
     this.#renderUpgrades();

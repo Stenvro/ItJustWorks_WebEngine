@@ -466,6 +466,11 @@ export interface AnimatedCameraRequest {
   readonly transition: number;
 }
 
+/** The player's stance that goes with them into the next place (Player.keepStance). */
+export interface PlayerStance {
+  readonly sneaking: boolean;
+}
+
 export class Player implements Camera {
   readonly character: CharacterBody;
   readonly #setup: PlayerSetup;
@@ -1432,6 +1437,21 @@ export class Player implements Camera {
     }
     this.#collided = undefined;
     return [...at];
+  }
+
+  /** What of the player's stance goes with them through a load door (keepStance there). */
+  get stance(): PlayerStance {
+    return { sneaking: this.sneaking };
+  }
+
+  /**
+   * The player comes out of a load door as they went in: each place builds its own Player, and
+   * the one who sneaked in sneaks on (swimming ends it at the next step, as anywhere). Before,
+   * every door stood the player up. TODO(M13): inferred, not observed in the original: the
+   * player's actor keeps its movement state as it moves to another cell, as a save keeps it.
+   */
+  keepStance(stance: PlayerStance): void {
+    this.sneaking = stance.sneaking;
   }
 
   /** First or third person (third: zoomed out at least to the shoulder). */
