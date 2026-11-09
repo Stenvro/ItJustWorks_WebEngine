@@ -25,8 +25,8 @@ against docs/ai.md and the conformance suites (tests/conformance/ai/).
 | Idle markers, furniture |    25 |   24 |    1 |
 | Navmeshes (data)        |    12 |   11 |    1 |
 | Game settings           |   190 |  190 |    0 |
-| Mechanics (by hand)     |    37 |   26 |   11 |
-| Total                   |   469 |  456 |   13 |
+| Mechanics (by hand)     |    39 |   27 |   12 |
+| Total                   |   471 |  457 |   14 |
 
 Round 1 wrote the sweep and this list; Can Pickup Items (RACE DATA) became read: only a race that
 can pick up items runs the combat tree's Acquire Weapon.
@@ -235,10 +235,15 @@ the readers ask for by name.
 - [x] Crime settings never read by the original (registered only; the sweep's INERT):
       fCrimeAlarmRespMult, fCrimeSoundBase / Mult, iCrimeGoldMinValue, the fCrimeDisp*, fCrimeRegardMult,
       fCrimePersonalRegardMult, fCrimeWitnessRegardMult, iCrimeRegardBaseValue.
-- [ ] Crime: the NPC criminal not fighting flees the guard that answers (observed; the stage starts
-      no flee from here); the answering guard attacks at once (inferred; the original's Alarm
-      package); a guard of another faction taking the crime over; which witnesses of an NPC's crime
-      report it (inferred).
+- [x] Crime: the NPC criminal not fighting flees the guard that answers (observed; the engine's Flee
+      package: beyond fFleeDoneDistance* until fFleeIsSafeTimer, inferred); who reports an NPC's
+      crime by the player's rules (the faction's Ignore flags, Do Not Report Crimes Against
+      Members, overlooking; inferred). src/ai/engine-packages.ts fleeFrom; crime-engine.ts
+      #noticed; tests/conformance/ai/crime.test.ts.
+- [ ] Crime: the answering guard's Alarm package. Built (alarmPackage: it runs to the criminal and
+      fights it once it detects it), but in the headless Bannered Mare it did not find the fleeing
+      criminal in 20 s, so the guard still fights at once (the combat AI's search).
+- [ ] Crime: a guard of another faction taking an NPC's crime over.
 - [x] fCrimeFavorMult, iCrimeFavorBaseValue: the favor check, a favor's price (the base value plus
       the cost × the mult) within the favor points of the relationship rank (factions.ts doesFavor,
       inferred in form); a commanded follower refuses a reference whose favor cost (XFVC) is beyond

@@ -740,6 +740,23 @@ had ended falls out again). One at a time (TODO(M13): which may replace which).
   plus a second, it is given Surface, unless it runs that already (`Breath`; ours asks every
   physics step, `ActorMovers` with its run's speed). Only the player drowns. TODO(M13): its
   breath refills at once with its head out (the engine sets it elsewhere).
+- **Alarm** (`alarmPackage`; built, not yet given: TODO(M13), the answering guard fights at
+  once, docs/gameplay.md "Crimes and witnesses"): aimed at the criminal, once it detects it it
+  starts combat with it and the package ends; until then it runs to where the criminal is now,
+  heading anew as the criminal gets 256 units from the spot it heads for; it gives up once the
+  criminal is dead, in another cell or worldspace, gone, or not found in 60 s. Inferred,
+  TODO(M13): the procedure (its way, its reach of 128 units, the 60 s).
+- **Flee** (`fleeFrom`): the criminal of an actor's crime, fighting no one, is given it aimed at
+  the first guard that answers (observed in the original: the criminal flees that guard). It
+  runs from the guard, counting as fleeing (IsFleeing), until it has been beyond
+  fFleeDoneDistanceExterior (inside: Interior) of it for fFleeIsSafeTimer, the Flee procedure's
+  rule (`fleeSafe`); it runs off again whenever the guard comes nearer (eight times at most),
+  to the guard's far side, the done distance from it (turned up to 60° where the straight one
+  is not walkable); the guard dead or in another space, it is over. Inferred, TODO(M13): the
+  spot, and that it flees as the guard answers rather than once it sees it.
+- An actor on either takes up no search reaction meanwhile (`ActorSenses`: it knows what it is
+  after or away from; inferred, TODO(M13)). TODO(M13): the swimming rule's Alarm package
+  (race-ai-flags.ts swimsNow) does not yet see this engine package.
 - The player standing in a mover's way: [Movement](#movement) (its ActorCollidewithActor line
   before it goes round them).
 
@@ -1393,7 +1410,9 @@ location's lists.
   through it, and its trip goes on from the door's arrival point. It walks to the navmesh
   triangle the navmesh marks in front of the door (else the navmesh point nearest the door), not
   to the door's own place, which sits in its frame off the walkable floor (HelgenHomestead's
-  door is a hundred units from Torolf's porch).
+  door is a hundred units from Torolf's porch). Stopped on its way (its package left, an engine
+  package put in front: a guard's Alarm as it reached its sandbox's door), it does not go
+  through (`ActorAi.#across`).
 - Actors coming out of one load door while those before them still stand at its arrival point
   (the game state keeps an actor away at the point until its next door or its place) are put one
   on from another along the arrival's facing, 64 units apart (`doorArrivalSpot`): the Greybeards

@@ -22,10 +22,18 @@ const GUARD = 0x205;
 const OTHER_GUARD = 0x206;
 /** A chest Whiterun owns. */
 const CHEST = 0x400;
+/**
+ * A crime faction that ignores murders, and one that does not report crimes against its members
+ * (a Dark Brotherhood contract's sets both), each sharing the holds' crimes; an actor of each.
+ */
+const IGNORES_MURDER = 0x2a000;
+const SPARES_MEMBERS = 0x2a001;
+const MARK = 0x207;
+const MEMBER = 0x208;
 
-const hold = (formId: number): FactionRecord => ({
+const hold = (formId: number, flags = 0x9040): FactionRecord => ({
   formId,
-  flags: 0x9040,
+  flags,
   reactions: [],
   ranks: [],
   crime: {
@@ -59,6 +67,8 @@ function engine(): { crime: CrimeEngine; state: GameState; events: StoryEventDat
     [RIFTEN_CITIZEN, RIFT],
     [GUARD, WHITERUN],
     [OTHER_GUARD, WHITERUN],
+    [MARK, IGNORES_MURDER],
+    [MEMBER, SPARES_MEMBERS],
   ]);
   const events: StoryEventData[] = [];
   const stats = new Map<string, number>();
@@ -76,7 +86,15 @@ function engine(): { crime: CrimeEngine; state: GameState; events: StoryEventDat
       relationshipRank: (actor: number) => Promise.resolve(actor === FRIEND ? 1 : 0),
       isDead: (actor: number) => Promise.resolve(state.actors.get(actor)?.dead === true),
       faction: (formId: number) =>
-        Promise.resolve(formId === WHITERUN || formId === RIFT ? hold(formId) : undefined),
+        Promise.resolve(
+          formId === WHITERUN || formId === RIFT
+            ? hold(formId)
+            : formId === IGNORES_MURDER
+              ? hold(formId, 0x40 | 0x80)
+              : formId === SPARES_MEMBERS
+                ? hold(formId, 0x40 | 0x800)
+                : undefined,
+        ),
       factionsOf: (actor: number) =>
         Promise.resolve(
           new Map<number, number>(actor === GUARD || actor === OTHER_GUARD ? [[WHITERUN, 0]] : []),
@@ -84,7 +102,8 @@ function engine(): { crime: CrimeEngine; state: GameState; events: StoryEventDat
       factionReaction: () => Promise.resolve(undefined),
       value: () => Promise.resolve({ base: 0, max: 0, current: 0 }),
       info: () => Promise.resolve(undefined),
-      factionRank: () => Promise.resolve(-2),
+      factionRank: (actor: number, faction: number) =>
+        Promise.resolve(actor === MEMBER && faction === SPARES_MEMBERS ? 0 : -2),
       isActor: (reference: number) => Promise.resolve(reference < CHEST),
     },
     // The chest is Whiterun's (its owning faction tracks crime): only its own may take from it.
@@ -178,6 +197,41 @@ describe('crimes and their witnesses', () => {
         group: expect.any(Array) as unknown,
       },
     ]);
+  });
+
+  it('of an NPC: none where the faction ignores it, spares its members or the victim overlooks it', async () => {
+    const { crime } = engine();
+    const told: CrimeEvent[] = [];
+    crime.listen((event) => told.push(event));
+    // Whiterun's citizen sees each; the crime's faction shares the holds' crimes, so it cares.
+    await crime.commit(CrimeType.murder, BANDIT, {
+      act: 'murder',
+      victim: MARK,
+      faction: IGNORES_MURDER,
+      witnesses: [CITIZEN],
+    });
+    await crime.commit(CrimeType.attack, BANDIT, {
+      act: 'attack',
+      victim: MEMBER,
+      faction: SPARES_MEMBERS,
+      witnesses: [MEMBER, CITIZEN],
+    });
+    // A friend of the thief lets its pockets go; so does every witness then.
+    await crime.commit(CrimeType.pickpocket, BANDIT, {
+      act: 'pickpocket',
+      victim: FRIEND,
+      faction: WHITERUN,
+      witnesses: [FRIEND, CITIZEN],
+    });
+    expect(told).toEqual([]);
+    // The same faction's other crimes, and its non-members, are reported.
+    await crime.commit(CrimeType.attack, BANDIT, {
+      act: 'attack',
+      victim: MARK,
+      faction: IGNORES_MURDER,
+      witnesses: [CITIZEN],
+    });
+    expect(told).toMatchObject([{ kind: 'npcCrime', victim: MARK, witnesses: [CITIZEN] }]);
   });
 
   it('another actor’s blow on one not hostile to it: reported once a pair, to those who see it', async () => {

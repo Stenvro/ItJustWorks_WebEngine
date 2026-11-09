@@ -1211,8 +1211,27 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
   (no bounty: an alarm, the guards among its witnesses fight the attacker) goes unreported by
   the witnesses that regard the attacker as an ally (`reaction`: a shared faction, an allied
   one), the one hit too, as an ally overlooks the player's assault: a guard's stray arrow on
-  another guard as the dragon they shot at falls raises no fight between them (TODO(M13): the
-  engine's own rule for who reports an actor's crime).
+  another guard as the dragon they shot at falls raises no fight between them.
+- Who reports an actor's crime (`CrimeEngine.#noticed`, then each witness): the player's rules.
+  Nobody where the crime's faction ignores its type (Ignore Crimes: Murder, Assault, ...: the
+  Dark Brotherhood contracts' factions ignore all), where the faction does not report crimes
+  against its members and the victim is one, or where the victim overlooks it (a friend of the
+  criminal: minor crimes; an ally: an assault; murder no one); else the victim, and the
+  witnesses whose crime faction is the crime's or in its crime group and who do not overlook it
+  themselves. Inferred, TODO(M13): the original's own rule for NPCs' crimes was not followed.
+- The guards that answer an actor's crime (`src/shell/actor-crime.ts`): those among its
+  witnesses, else the first guard of the crime's group to hear the alarm (observed in the
+  original), iNumberGuardsCrimeResponse at most. Each fights the criminal at once (the combat
+  AI's search takes one that only heard it to where the criminal is). TODO(M13): the engine's
+  Alarm package in between. Ours is built (`alarmPackage`, docs/ai.md "The engine's own
+  packages": it runs to the criminal and fights it once it detects it) but not given: in the
+  headless Bannered Mare the guard did not find the fleeing criminal in 20 s, while the combat
+  AI's search does. The criminal, fighting no one, flees the first of them (observed
+  in the original) with the engine's Flee package (`fleeFrom`): it runs from the guard,
+  counting as fleeing, until it has been beyond fFleeDoneDistanceExterior (2500; inside
+  fFleeDoneDistanceInterior, 600) of it for fFleeIsSafeTimer (30 s); caught, the combat AI has
+  it. It takes up no search reaction meanwhile. Inferred, TODO(M13): the flight's spot, and
+  that it flees as the guard answers rather than once it sees it.
 - An actor's other crimes, alarms as its assault: a murder, the kill that ends its own assault
   (not one struck back, not a scripted kill without a blow); a theft, a package's Acquire taking
   what it may not take (Allow Stealing; `crime.npcTook`), and pickpocketing, taking from a living
@@ -1324,7 +1343,8 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
 
 TODO(M12): crime's state in the save. The perks' pickpocket, lockpicking and speech effects:
 "Perks". NPCs' Acquire with Allow Pickpocketing takes from the pockets of the actor that holds
-what it wants (docs/ai.md, "Packages"; TODO(M13): whether those who see it report it).
+what it wants (docs/ai.md, "Packages"); those who see it report it as the pickpocket crime
+(crime.npcTook; "Who reports an actor's crime" above).
 
 ## Crafting
 

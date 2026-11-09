@@ -201,6 +201,11 @@ export class ActorAi {
   readonly #ridden = new Set<number>();
   /** The actors whose Flee procedure counts as fleeing now (IsFleeing). */
   readonly #fleeing = new Set<number>();
+  /**
+   * How often each actor's body was stopped (its package left, an engine package put in front):
+   * a way through a load door begun before then is not taken (#across).
+   */
+  readonly #stops = new Map<number, number>();
   /** A food for meals made up (Eat's Create Fake Food): the first in the load order. */
   #fakeFood: Promise<number | undefined> | undefined;
   readonly #actors = new Map<number, { packages: ActorPackages; staged: StagedActor }>();
@@ -368,6 +373,11 @@ export class ActorAi {
     return this.#actors.get(reference)?.packages.push(kind, runner, target) ?? false;
   }
 
+  /** The engine package an actor runs now in front of its own, if any. */
+  engineOf(reference: number): EnginePackage | undefined {
+    return this.#actors.get(reference)?.packages.engine();
+  }
+
   /** The actor's package goes on (chosen again). */
   releaseFromTalk(reference: number): void {
     this.#talkHeld.delete(reference);
@@ -453,6 +463,7 @@ export class ActorAi {
     this.#joined.delete(reference);
     this.#ridden.delete(reference);
     this.#fleeing.delete(reference);
+    this.#stops.delete(reference);
     const entry = this.#actors.get(reference);
     if (!entry) return;
     entry.packages.stop();
@@ -654,6 +665,7 @@ export class ActorAi {
         return movers.travel(going, to, gait, arrive, options);
       },
       stop: () => {
+        this.#stops.set(reference, (this.#stops.get(reference) ?? 0) + 1);
         movers.stop(mover());
       },
       face,
@@ -921,6 +933,10 @@ export class ActorAi {
     const runtime = session.scriptsReady;
     const at = await runtime?.placement(staged.reference);
     if (!runtime || !at) return false;
+    // Stopped meanwhile (its package left, an engine package in front: a guard's Alarm as it
+    // walked to its sandbox's door), it does not go through.
+    const stops = this.#stops.get(staged.reference) ?? 0;
+    const stopped = (): boolean => (this.#stops.get(staged.reference) ?? 0) !== stops;
     const routes = await session.routeMap();
     const here = spaceOf(at);
     const start =
@@ -943,9 +959,10 @@ export class ActorAi {
       gait,
       DOOR_REACH,
     );
-    if (!arrived) return false;
+    if (!arrived || stopped()) return false;
     // The door swings open with its sound; it is through a moment later.
     await this.#doors?.through(door.door, staged.reference);
+    if (stopped()) return false;
     await this.#leaveThrough(staged, door, destination);
     return false;
   }

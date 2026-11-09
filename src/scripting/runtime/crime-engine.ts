@@ -340,23 +340,8 @@ export class CrimeEngine {
       options.faction ?? (await this.crimeFactionFor({ victim, place: victim ?? criminal }));
     const seen = options.witnesses ?? this.world?.witnesses(criminal, options.act, victim) ?? [];
     const violent = isViolent(type);
-    if (victim !== undefined && victim !== PLAYER_REF) {
-      const rank = await runtime.actors.relationshipRank(victim, criminal);
-      if (overlooksCrime(rank, violent, type === CrimeType.murder)) return undefined;
-    }
+    if (!(await this.#noticed(type, criminal, victim, faction))) return undefined;
     const values = faction === undefined ? undefined : await this.values(faction);
-    // A faction that ignores the crime, or one against its own members it does not report
-    // (Do Not Report Crimes Against Members), takes no notice.
-    if (values && ignoresCrime(values, type)) return undefined;
-    if (
-      values &&
-      faction !== undefined &&
-      victim !== undefined &&
-      (values.flags & CrimeFlag.doNotReportAgainstMembers) !== 0 &&
-      (await runtime.actors.factionRank(victim, faction)) >= 0
-    ) {
-      return undefined;
-    }
     const group = faction === undefined ? [] : await this.crimeGroup(faction);
     const witnesses: number[] = [];
     for (const witness of seen) {
@@ -407,12 +392,18 @@ export class CrimeEngine {
   }
 
   /**
-   * A crime by an actor other than the player: the witnesses who care (the victim, those of
-   * the crime's faction or its crime group, not the criminal's friends) report it as an alarm
-   * (no bounty: only the player has bounties); guards answer it by fighting the criminal
-   * (actor-crime.ts). NPCs' crimes: assault, murder (murder), theft and pickpocketing (npcTook);
-   * trespass is the player's alone (the warnings, the off-limits doors), NPCs go where their
-   * packages send them. TODO(M13): whether the engine records an NPC's crimes.
+   * A crime by an actor other than the player: the witnesses who care report it as an alarm (no
+   * bounty: only the player has bounties); guards answer it (actor-crime.ts: the Alarm package,
+   * the criminal's flight). Who reports it goes by the player's rules (#noticed, then each
+   * witness): nobody where the crime's faction ignores the type, where it does not report crimes
+   * against its members and the victim is one, or where the victim overlooks it (a friend of the
+   * criminal: minor crimes; an ally: assault too); else the victim, and those whose crime faction
+   * is the crime's or in its crime group and who do not overlook it themselves; an ally of the
+   * criminal (`reaction`) overlooks its assault. NPCs' crimes: assault, murder (murder), theft
+   * and pickpocketing (npcTook); trespass is the player's alone (the warnings, the off-limits
+   * doors), NPCs go where their packages send them. Inferred, TODO(M13): the original's rule for
+   * who reports an NPC's crime was not followed (ours applies the player's), nor whether it
+   * records an NPC's crimes.
    */
   async #npcCrime(
     type: CrimeType,
@@ -428,6 +419,7 @@ export class CrimeEngine {
     const { victim } = options;
     const faction =
       options.faction ?? (await this.crimeFactionFor({ victim, place: victim ?? criminal }));
+    if (!(await this.#noticed(type, criminal, victim, faction))) return;
     const seen = options.witnesses ?? this.world?.witnesses(criminal, options.act, victim) ?? [];
     const group = faction === undefined ? [] : await this.crimeGroup(faction);
     const witnesses: number[] = [];
@@ -436,8 +428,7 @@ export class CrimeEngine {
       if (await runtime.actors.isDead(witness)) continue;
       // An ally of the criminal overlooks an assault, as an ally by relationship overlooks the
       // player's (overlooksCrime): the victim too, so a guard's stray arrow on a fellow guard (both
-      // of the hold's guard factions) is no alarm between them. TODO(M13): the engine's own rule
-      // for which witnesses of an NPC's crime report it.
+      // of the hold's guard factions) is no alarm between them.
       if (options.act === 'attack' && (await this.reaction(witness, criminal)) === 'ally') {
         continue;
       }
@@ -450,6 +441,34 @@ export class CrimeEngine {
     }
     if (witnesses.length === 0) return;
     this.#emit({ kind: 'npcCrime', criminal, victim, witnesses, act: options.act, group });
+  }
+
+  /**
+   * Whether a crime is noticed at all, whoever committed it: not where its faction ignores the
+   * type (Ignore Crimes: Murder, Assault, Stealing, Trespass, Pickpocket, Werewolf), where the
+   * faction does not report crimes against its members (Do Not Report Crimes Against Members:
+   * the Dark Brotherhood's contracts) and the victim is one, nor where the victim lets it pass (a
+   * friend of the criminal overlooks minor crimes, an ally an assault; murder no one).
+   */
+  async #noticed(
+    type: CrimeType,
+    criminal: number,
+    victim: number | undefined,
+    faction: number | undefined,
+  ): Promise<boolean> {
+    const runtime = this.#runtime;
+    if (victim !== undefined && victim !== PLAYER_REF) {
+      const rank = await runtime.actors.relationshipRank(victim, criminal);
+      if (overlooksCrime(rank, isViolent(type), type === CrimeType.murder)) return false;
+    }
+    if (faction === undefined) return true;
+    const values = await this.values(faction);
+    if (ignoresCrime(values, type)) return false;
+    return !(
+      victim !== undefined &&
+      (values.flags & CrimeFlag.doNotReportAgainstMembers) !== 0 &&
+      (await runtime.actors.factionRank(victim, faction)) >= 0
+    );
   }
 
   /** A witness overlooks the crime: a friend of the criminal (minor crimes; allies assault). */

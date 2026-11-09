@@ -489,7 +489,8 @@ export type ProcedureRunner = (run: ProcedureRun) => Promise<ProcedureResult>;
 /**
  * The engine's own packages, those no record holds (CommonLibSSE PACKAGE_TYPE: kAvoidPlayer,
  * kReactToDestroyedObject, kStealWarning, kPickPocketWarning, kGetUpFromChairBed, kSurface,
- * kMovementBlocked; a summon's following of its commander: followCommander): the engine creates one and puts it in front of the actor's own package
+ * kMovementBlocked, kAlarm, kFlee; a summon's following of its commander: followCommander): the
+ * engine creates one and puts it in front of the actor's own package
  * (Actor::PutCreatedPackage); as it ends, the actor's packages are chosen again.
  */
 export type EnginePackage =
@@ -500,7 +501,9 @@ export type EnginePackage =
   | 'getUpFromChairBed'
   | 'surface'
   | 'movementBlocked'
-  | 'followCommander';
+  | 'followCommander'
+  | 'alarm'
+  | 'flee';
 
 /** What an engine package's procedure is given: the actor, what it reacts to, its clock. */
 export interface EngineRun {
