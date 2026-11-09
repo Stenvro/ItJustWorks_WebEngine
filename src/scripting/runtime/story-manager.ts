@@ -222,6 +222,10 @@ export class StoryManager {
       try {
         const started = await this.#run(event);
         this.onProcessed?.(event, started);
+        // The engine tells it (BGSEventProcessedEvent), as its turn in the queue ends.
+        // TODO(M13): what the event carries is not known; inferred as the event's type and the
+        // quests it started.
+        this.#runtime.events.emit('eventProcessed', { type: event.type, started: [...started] });
         return started;
       } finally {
         this.#processing--;

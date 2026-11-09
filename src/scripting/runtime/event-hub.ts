@@ -40,6 +40,11 @@ export interface GameEvents {
     /** The first time the reader read that book (the stats count no other). */
     readonly first?: boolean;
   };
+  /**
+   * The player read a book the first time (BooksRead::Event, the stats' source): the book, and
+   * whether it teaches a skill (Skill Books Read, else Books Read).
+   */
+  booksRead: { readonly book: number; readonly skillBook: boolean };
   /** A reference's cell attached or detached (TESCellAttachDetachEvent). */
   cellAttachDetach: { readonly reference: number; readonly attached: boolean };
   /**
@@ -47,6 +52,16 @@ export interface GameEvents {
    * if known, and its references whose 3D is in.
    */
   cellFullyLoaded: { readonly cell: number | undefined; readonly references: readonly number[] };
+  /**
+   * A cell's 3D is in and decals may be placed on it (TESCellReadyToApplyDecalsEvent): told as
+   * the cell attaches, before it is told fully loaded; the cell, if known.
+   */
+  cellReadyToApplyDecals: { readonly cell: number | undefined };
+  /**
+   * The player took the first item from a container that is no actor in one opening of it
+   * (ChestsLooted::Event, the stats' source: it carries nothing).
+   */
+  chestsLooted: Record<string, never>;
   /** An actor's combat state changed: 0 not in combat, 1 in combat, 2 searching (TESCombatEvent). */
   combat: {
     readonly actor: number;
@@ -79,6 +94,11 @@ export interface GameEvents {
   disarmed: { readonly source: number | undefined; readonly target: number };
   /** The player's dragon souls rose by `souls` (DragonSoulGained). */
   dragonSoulGained: { readonly souls: number };
+  /**
+   * The story manager processed an event (BGSEventProcessedEvent): its type (SMEN ENAM) and the
+   * quests it started (none: no quest node answered it).
+   */
+  eventProcessed: { readonly type: string; readonly started: readonly number[] };
   /** A destructible object went to another stage (TESDestructionStageChangedEvent). */
   destructionStageChanged: {
     readonly reference: number;
@@ -99,6 +119,11 @@ export interface GameEvents {
    * (TESFurnitureEvent: enter, exit), the player too.
    */
   furniture: { readonly actor: number; readonly furniture: number; readonly entered: boolean };
+  /**
+   * A form was deleted (TESFormDeleteEvent): a created reference that left the game, whatever
+   * removed it (ScriptRuntime.removeFromGame).
+   */
+  formDelete: { readonly form: number };
   /** The player's fast travel ended (TESFastTravelEndEvent): game hours it took. */
   fastTravelEnd: { readonly hours: number };
   /** The player grabbed or released an object (TESGrabReleaseEvent). */
@@ -115,6 +140,11 @@ export interface GameEvents {
     readonly bashAttack: boolean;
     readonly blocked: boolean;
   };
+  /**
+   * A reference's scripts are initialised (TESInitScriptEvent): told before their OnInit
+   * starts, which the VM runs as it hears this.
+   */
+  initScript: { readonly reference: number };
   /** A saved game finished loading (TESLoadGameEvent). */
   loadGame: Record<string, never>;
   /**
@@ -178,10 +208,23 @@ export interface GameEvents {
   questInit: { readonly quest: number };
   /** A quest's stage was set (TESQuestStageEvent). */
   questStage: { readonly quest: number; readonly stage: number };
+  /**
+   * One of a quest stage's log entries (stage items) is done (TESQuestStageItemDoneEvent): its
+   * conditions held and its fragment, if it has one, has run; `entry` its index in the stage.
+   */
+  questStageItemDone: { readonly quest: number; readonly stage: number; readonly entry: number };
   /** A quest started or stopped (TESQuestStartStopEvent). */
   questStartStop: { readonly quest: number; readonly started: boolean };
   /** A reference was reset with its cell (TESResetEvent). */
   reset: { readonly reference: number };
+  /**
+   * An NPC's templates were resolved (TESResolveNPCTemplatesEvent): the NPC_ with a template
+   * whose parts came from its templates, the first time an actor of it was made.
+   * TODO(M13): inferred: the original's payload is one form id (CommonLibSSE: templateID);
+   * that it names the NPC_ that uses the templates (a leveled list's pick), not one of its
+   * templates, is not read.
+   */
+  resolveNpcTemplates: { readonly npc: number };
   /** A scene's action or phase changed, or the scene started or ended (TESScene*Event). */
   scene: {
     readonly scene: number;
@@ -247,6 +290,20 @@ export interface GameEvents {
     readonly trigger: number;
     readonly reference: number;
     readonly entered: boolean;
+  };
+  /**
+   * An item's unique id changed (TESUniqueIDChangeEvent): an item with a reference of its own
+   * got a new id as it went into another inventory (the original's ExtraUniqueID). The item's
+   * base, the holders before and after (undefined: none, the world) and the ids (0: none).
+   * TODO(M13): inferred (unique-ids.ts): an id per inventory, the payload's objectID as the
+   * item's base and its two base ids as the holders.
+   */
+  uniqueIdChange: {
+    readonly item: number;
+    readonly oldHolder: number | undefined;
+    readonly newHolder: number | undefined;
+    readonly oldId: number;
+    readonly newId: number;
   };
   /** The player's wait started or stopped (TESWaitStartEvent, TESWaitStopEvent). */
   wait: { readonly started: boolean; readonly interrupted: boolean };

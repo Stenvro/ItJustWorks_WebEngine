@@ -530,8 +530,7 @@ export class CombatProjectiles {
     while (this.#stuck.length > MAX_STUCK_ARROWS) {
       const oldest = this.#stuck.shift();
       if (oldest === undefined) break;
-      runtime.state.reference(oldest).deleted = true;
-      runtime.world.enableChanged?.(oldest, false);
+      if (runtime.removeFromGame(oldest)) runtime.world.enableChanged?.(oldest, false);
     }
   }
 

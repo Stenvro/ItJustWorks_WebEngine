@@ -174,11 +174,7 @@ export class HazardEngine {
   remove(reference: number): void {
     if (!this.#placed.delete(reference)) return;
     const runtime = this.#runtime;
-    const state = runtime.state.reference(reference);
-    if (state.deleted !== true) {
-      state.deleted = true;
-      runtime.world.enableChanged?.(reference, false);
-    }
+    if (runtime.removeFromGame(reference)) runtime.world.enableChanged?.(reference, false);
     this.onRemoved?.(reference);
   }
 

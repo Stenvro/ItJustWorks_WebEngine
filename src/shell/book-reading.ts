@@ -1,7 +1,8 @@
 // What reading a book does in the game, apart from showing it (the book menu, book-menu.ts, as
 // it opens a book; the headless simulation's book menu, which shows nothing): the book is read
-// (TESBookReadEvent: the reference's, or a scripted base's, OnRead), and a skill book read the
-// first time raises its skill (UESP, "Skill Books"; the reader's perks may add levels).
+// (TESBookReadEvent: the reference's, or a scripted base's, OnRead), the first read of a book
+// is told to the stats (the BooksRead source), and a skill book read the first time raises its
+// skill (UESP, "Skill Books"; the reader's perks may add levels).
 
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -34,7 +35,11 @@ export async function bookRead(
     reference: read.reference,
     first,
   });
-  if (!first || (book.flags & BookFlag.teachesSkill) === 0 || book.teaches < 0) return;
+  if (!first) return;
+  // The first read is the stats' too (the BooksRead source: Books Read, Skill Books Read).
+  const skillBook = (book.flags & BookFlag.teachesSkill) !== 0;
+  await runtime.events.emitted('booksRead', { book: read.book, skillBook });
+  if (!skillBook || book.teaches < 0) return;
   // The experience the skill lacks to its next level (UESP "Skill Books"); the HUD announces
   // it (sSkillIncreased); the reader's perks may add levels (Adjust Book Skill Points:
   // Scholar's Insight's second).

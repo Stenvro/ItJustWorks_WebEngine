@@ -47,7 +47,10 @@ describe('stat events', () => {
     const runtime = fakeRuntime({ 0x13e07: 'SHOU', 0x12fcd: 'SPEL' }, gold);
     const stop = relayStatEvents(runtime as unknown as ScriptRuntime);
     const { events } = runtime;
+    // The player's first read is told as BooksRead (src/shell/book-reading.ts), which the stats
+    // count; the book read itself counts nothing more.
     await events.emitted('bookRead', { book: 0x1, reader: PLAYER_REF, reference: undefined });
+    await events.emitted('booksRead', { book: 0x1, skillBook: false });
     await events.emitted('bookRead', { book: 0x1, reader: 0x1234, reference: undefined });
     await events.emitted('shoutAttack', { actor: PLAYER_REF, shout: 0x13e07 });
     await events.emitted('shoutAttack', { actor: 0x1234, shout: 0x13e07 });

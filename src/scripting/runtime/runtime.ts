@@ -8,6 +8,7 @@
 import { EventHub } from './event-hub.ts';
 import { relayScriptEvents } from './script-events.ts';
 import { countDaysPassed, relayStatEvents } from './stat-events.ts';
+import { relayUniqueIds } from './unique-ids.ts';
 import { TriggerVolumes } from './trigger-volumes.ts';
 import { ActivatorKeywords } from './activator-keywords.ts';
 import { CellResets } from './cell-reset.ts';
@@ -1135,9 +1136,11 @@ export class ScriptRuntime implements VmHost {
     this.sceneHost = new RuntimeSceneHost(this);
     this.scenes = new SceneDirector(this.sceneHost);
     registerNatives(this.#natives, this);
-    // The scripts hear the hub's events (script-events.ts), and so do the stats (stat-events.ts).
+    // The scripts hear the hub's events (script-events.ts), and so do the stats (stat-events.ts)
+    // and the items' unique ids (unique-ids.ts).
     relayScriptEvents(this);
     relayStatEvents(this);
+    relayUniqueIds(this);
   }
 
   // --- VmHost --------------------------------------------------------------------------------
@@ -1394,7 +1397,7 @@ export class ScriptRuntime implements VmHost {
   async cellAttached(
     references: readonly number[],
     loaded: (reference: number) => boolean,
-    /** The cell (its form id), told with its full load. */
+    /** The cell (CELL form id), when the caller knows it. */
     cell?: number,
   ): Promise<number[]> {
     const scripted: number[] = [];
@@ -1409,7 +1412,7 @@ export class ScriptRuntime implements VmHost {
     for (const reference of scripted) {
       if (this.#initialized.has(reference)) continue;
       this.#initialized.add(reference);
-      await this.vm.startInitialize(this.referenceHandle(reference));
+      await this.#initializeReference(reference);
     }
     // The hub tells every reference of the cell that it attached (TESCellAttachDetachEvent,
     // observed in the original: with scripts or not, for every consumer of the event); the
@@ -1432,8 +1435,24 @@ export class ScriptRuntime implements VmHost {
     // load reach every reference too; ours those whose scripts hear them.
     const shown = hearing.filter((reference) => loaded(reference));
     for (const reference of shown) this.events.emit('objectLoaded', { reference, loaded: true });
+    // Its 3D is in: decals may be placed (TESCellReadyToApplyDecalsEvent), then it is fully
+    // loaded. TODO(M13): inferred from the events' names that the decals' comes first; the
+    // view places a cell's own decals as it builds the cell, before either.
+    this.events.emit('cellReadyToApplyDecals', { cell });
     this.events.emit('cellFullyLoaded', { cell, references: shown });
     return scripted;
+  }
+
+  /**
+   * Starts a reference's scripts (OnInit), as it comes into existence. The engine tells it
+   * (TESInitScriptEvent) and the VM, a sink of that source (CommonLibSSE: SkyrimVM is a
+   * BSTEventSink<TESInitScriptEvent>), runs OnInit as it hears it: told first, before OnInit
+   * starts. TODO(M13): inferred that it is told only for a reference with scripts.
+   */
+  async #initializeReference(reference: number): Promise<void> {
+    await this.vm.startInitialize(this.referenceHandle(reference), () => {
+      this.events.emit('initScript', { reference });
+    });
   }
 
   /**
@@ -1669,8 +1688,29 @@ export class ScriptRuntime implements VmHost {
 
   /** ObjectReference.Delete: the reference leaves the world. */
   deleteReference(reference: number): void {
-    this.state.reference(reference).deleted = true;
+    this.removeFromGame(reference);
     this.world.enableChanged?.(reference, false);
+  }
+
+  /**
+   * A reference leaves the game for good, whatever removes it (a script's Delete, a cell's
+   * reset of what was dropped there or of what a respawning container or actor held, a restock,
+   * ObjectReference.Reset or a RemoveItem with nowhere to go, a summon's
+   * end, a hazard's, the oldest stuck arrow): it takes the deleted flag and no longer holds an
+   * inventory's unique id (unique-ids.ts). A created reference's form goes with it
+   * (TESFormDeleteEvent); a plugin's reference only takes the flag, its form stays. Whether it
+   * was not deleted before (the caller then hides it from the view). TODO(M13): inferred: the
+   * original deletes the form once nothing holds it any more (no script's variable or
+   * property), and its VM then lets go of the form's script instances; ours tells it as the
+   * reference goes and keeps them.
+   */
+  removeFromGame(reference: number): boolean {
+    const state = this.state.reference(reference);
+    if (state.deleted === true) return false;
+    state.deleted = true;
+    delete state.uniqueId;
+    if (this.state.created.has(reference)) this.events.emit('formDelete', { form: reference });
+    return true;
   }
 
   /** Whether an alias holds a reference (the alias's scripts hear its events). */
@@ -2907,7 +2947,7 @@ export class ScriptRuntime implements VmHost {
       reference.world = placement.world;
     }
     this.#initialized.add(formId);
-    await this.vm.startInitialize(this.referenceHandle(formId));
+    await this.#initializeReference(formId);
     this.#createdInWorld(formId);
     return formId;
   }
@@ -2924,16 +2964,18 @@ export class ScriptRuntime implements VmHost {
       reference.world = placement.world;
     }
     this.#initialized.add(formId);
-    await this.vm.startInitialize(this.referenceHandle(formId));
+    await this.#initializeReference(formId);
     this.#createdInWorld(formId);
     return formId;
   }
 
+  /**
+   * ObjectReference.Reset: the reference is as its records make it again, what it held with it
+   * (#emptyHolder: the item references in it leave the game as a cell reset's do).
+   */
   async resetReference(reference: number, target: number | undefined): Promise<void> {
     this.state.references.delete(reference);
-    this.state.inventories.delete(reference);
-    this.crafting.clear(reference);
-    this.#seeded.delete(reference);
+    this.#emptyHolder(reference);
     this.vm.reset(this.referenceHandle(reference));
     if (target !== undefined) {
       const at = await this.placement(target);
@@ -3289,7 +3331,7 @@ export class ScriptRuntime implements VmHost {
       if (to === undefined) {
         // Removed from the game with the items (RemoveItem without a container to go to).
         delete state.container;
-        state.deleted = true;
+        this.removeFromGame(reference);
       } else state.container = { holder: to, base, count };
       left.push({ reference, count });
     }
@@ -3348,14 +3390,28 @@ export class ScriptRuntime implements VmHost {
     this.actors.forget(reference);
   }
 
-  /** What a container holds goes: its items are its records' again as it is next read. */
+  /**
+   * What a container holds goes: its items are its records' again as it is next read. The item
+   * references it holds leave the game (removeFromGame: a created one is told deleted, its unique
+   * id goes), but one a quest's alias holds stays in it with its count, as a cell reset keeps a
+   * created reference an alias holds (cell-reset.ts). TODO(M13): inferred that an alias-held
+   * item outlives its holder's reset or restock; not observed in the original.
+   */
   #emptyHolder(container: number): void {
-    for (const state of this.state.references.values()) {
-      if (state.container?.holder !== container) continue;
+    const kept = new Map<number, number>();
+    for (const [reference, state] of this.state.references) {
+      const held = state.container;
+      if (held?.holder !== container) continue;
+      if (state.deleted !== true && this.aliasesHolding(reference).length > 0) {
+        kept.set(held.base, (kept.get(held.base) ?? 0) + held.count);
+        continue;
+      }
       delete state.container;
-      state.deleted = true;
+      this.removeFromGame(reference);
     }
     this.state.inventories.delete(container);
+    // Its own items are seeded on top of these as it is next read (inventory).
+    if (kept.size > 0) this.state.inventories.set(container, kept);
     this.crafting.clear(container);
     this.crime.clearStolen(container);
     this.#seeded.delete(container);
@@ -4050,9 +4106,7 @@ export class ScriptRuntime implements VmHost {
     const persistent = index.all.filter((_, i) => scripted[i]);
     progress?.(`initializing ${String(persistent.length)} persistent references with scripts`);
     for (const formId of persistent) this.#initialized.add(formId);
-    await Promise.all(
-      persistent.map((formId) => this.vm.startInitialize(this.referenceHandle(formId))),
-    );
+    await Promise.all(persistent.map((formId) => this.#initializeReference(formId)));
     const starting: { formId: number; priority: number }[] = [];
     for (const quest of quests) {
       const record = await this.forms.quest(quest);

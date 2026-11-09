@@ -1658,8 +1658,7 @@ export class MagicEngine {
         // The summon fades out (its alpha to 0) and is gone after fSummonedCreatureFadeOutSeconds
         // (1.5); gone at once for the game (a save made meanwhile has it no more). TODO(M13):
         // the stage fades an alpha over fActorAlphaFadeSeconds, not this setting's time.
-        const state = runtime.state.reference(made);
-        state.deleted = true;
+        runtime.removeFromGame(made);
         const seconds = (await this.effectSettings()).summonFadeOut;
         if (seconds > 0 && (await runtime.actors.isActor(made))) {
           runtime.state.actor(made).alpha = 0;

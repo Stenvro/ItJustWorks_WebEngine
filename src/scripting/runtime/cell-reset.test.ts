@@ -74,6 +74,10 @@ async function comeBack(
     gameSetting: () => Promise.resolve(undefined),
     locationClearing: { revived: () => Promise.resolve() },
     aliasesHolding: () => [],
+    removeFromGame: (reference: number) => {
+      state.reference(reference).deleted = true;
+      return true;
+    },
     setEnabled: () => Promise.resolve(),
     resetHeld: (reference: number) => {
       state.held.push(reference);

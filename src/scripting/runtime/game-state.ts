@@ -64,6 +64,8 @@ export interface ReferenceState {
   deleteWhenAble?: boolean;
   /** Taken into a container (an actor's inventory) as its base's count: out of the world. */
   container?: { readonly holder: number; readonly base: number; readonly count: number };
+  /** Its id in the inventory it is in (the original's ExtraUniqueID: unique-ids.ts). */
+  uniqueId?: { readonly holder: number; readonly id: number };
   /** Destruction (destruction-engine.ts): IsDestroyed, the stages reached, the health left. */
   destroyed?: boolean;
   destructionStage?: number;

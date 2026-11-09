@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Fields } from '../../formats/esm/fields.ts';
 import type { Condition } from '../conditions.ts';
+import { EventHub } from './event-hub.ts';
 import type { ScriptRuntime } from './runtime.ts';
 import { ObjectHandle } from '../values.ts';
 import {
@@ -63,6 +64,7 @@ function stubRuntime(nodes: ReturnType<typeof record>[], questEvents = new Map<n
   const state = { gameDaysPassed: 0 };
   const runtime = {
     state,
+    events: new EventHub(),
     forms: {
       db: {
         formIdsOfType: (type: string) =>
