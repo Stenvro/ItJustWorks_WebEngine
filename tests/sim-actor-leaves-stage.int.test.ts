@@ -72,6 +72,17 @@ async function flyAway(sim: Sim): Promise<{ dragon: number; last: Vec3; feet: Ve
   return { dragon, last, feet: [feet[0], feet[1], feet[2]] };
 }
 
+/**
+ * A place in the air over the ground the player stood on before going away (off the stage by
+ * then): where a flier moved while away is sure to have the ground under it. Two cells on from
+ * where it left at the height it flew, its way off depending on where it was made, lay under
+ * the mountains south of Helgen once it was made on the ground beside the player rather than on
+ * the player's head.
+ */
+function overStart(feet: Vec3): Vec3 {
+  return [feet[0], feet[1], feet[2] + 500];
+}
+
 /** The player comes back near where an actor is in the game state; it is on the stage again. */
 async function comeBack(sim: Sim, actor: number, feet: Vec3): Promise<void> {
   const away = sim.runtime.state.references.get(actor)?.position ?? [0, 0, 0];
@@ -268,7 +279,7 @@ describe.skipIf(!hasGamedata())('an actor leaving the stage with its cell', () =
       expect(indoors.flight.state(dragon)).toBe(FlyingState.cruising);
       const at = sim.runtime.state.references.get(dragon)?.position ?? [0, 0, 0];
       const space = { kind: 'world', world: TAMRIEL } as const;
-      const place: Vec3 = [at[0], at[1] - 2 * CELL_SIZE, at[2]];
+      const place = overStart(feet);
       indoors.away.depart(
         dragon,
         { space, position: [at[0], at[1], at[2]] },
@@ -308,11 +319,11 @@ describe.skipIf(!hasGamedata())('an actor leaving the stage with its cell', () =
       const { dragon, feet } = await flyAway(sim);
       const flight = sim.world.stage.flight;
       expect(flight.state(dragon)).toBe(FlyingState.cruising);
-      const at = sim.runtime.state.references.get(dragon)?.position ?? [0, 0, 0];
+      const place = overStart(feet);
       await sim.native(new ObjectHandle(dragon, 'Actor'), 'ObjectReference', 'SetPosition', [
-        at[0],
-        at[1] - 2 * CELL_SIZE,
-        at[2],
+        place[0],
+        place[1],
+        place[2],
       ]);
       expect(flight.state(dragon)).toBe(FlyingState.none);
       expect(flight.isFlying(dragon)).toBe(false);

@@ -3311,6 +3311,19 @@ export class PhysicsWorld {
     return Math.min(1, Math.max(0, 1 + this.#accumulator / this.#size));
   }
 
+  /** A shape of an actor (its controller, its bodies): what rays for a floor leave out. */
+  isActor(collider: RAPIER.Collider): boolean {
+    return this.ownerOf(collider)?.kind === 'actor';
+  }
+
+  /**
+   * A living actor's character controller (the dead have none: their ragdoll's bodies are on
+   * L_DEADBIP): what the ray for an actor's ground leaves out (actorGround, src/shell/actors.ts).
+   */
+  isActorController(collider: RAPIER.Collider): boolean {
+    return this.layerOf(collider) === Layer.charController && this.isActor(collider);
+  }
+
   /**
    * The first collider along a ray (game units) that `layer` collides with; not `exclude`, nor
    * any of the actor `ignore` (a reference: its own bodies, as an actor's sight passes its own
@@ -3318,11 +3331,6 @@ export class PhysicsWorld {
    * nor any collider `skip` says to pass. Not `solid`, a ray that starts inside a shape meets it
    * only where it leaves it (as Havok's ray casts pass what they start inside).
    */
-  /** A shape of an actor (its controller, its bodies): what rays for a floor leave out. */
-  isActor(collider: RAPIER.Collider): boolean {
-    return this.ownerOf(collider)?.kind === 'actor';
-  }
-
   raycast(
     origin: Vec3,
     direction: Vec3,

@@ -96,6 +96,7 @@ import { HUMAN_BOUND, skeletonInfo } from '../world/player-body.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ActorMotion } from '../scripting/runtime/runtime.ts';
 import type { StagedActor } from './actor-stage.ts';
+import { actorGround } from './actors.ts';
 import type { GameSession } from './game-session.ts';
 import {
   controllerSettings,
@@ -1795,14 +1796,8 @@ export class ActorMovers {
     if (!physics?.queriesCurrent) return undefined;
     const [x, y, z] = point;
     const above = checkAbove(character.shape.height);
-    const hit = physics.raycast(
-      [x, y, z + above],
-      [0, 0, -1],
-      above + this.checkFallDistance(),
-      Layer.charController,
-      character.collider,
-    );
-    return hit?.point[2];
+    // No actor's controller (its own, nor one standing on the spot: actorGround).
+    return actorGround(physics, [x, y, z + above], above + this.checkFallDistance())?.point[2];
   }
 
   /** A moved actor's controller set on the floor its position check finds. */
@@ -2310,15 +2305,11 @@ export class ActorMovers {
       // the high process stood on its navmesh, which may lie up to 25 units under the floor
       // (looked for from 24 units above, a point of the navmesh under a Whiterun shop's porch
       // found the ground beneath it: the actor walked on the spot inside the porch).
+      // Another actor standing on the spot is no floor (actorGround).
       if (world.physics.queriesCurrent) {
         const [x, y, z] = staged.position;
         const above = checkAbove(sized.halfExtents[2] * 2 * scale);
-        const hit = world.physics.raycast(
-          [x, y, z + above],
-          [0, 0, -1],
-          above + this.checkFallDistance(),
-          Layer.charController,
-        );
+        const hit = actorGround(world.physics, [x, y, z + above], above + this.checkFallDistance());
         if (hit) staged.position = [x, y, hit.point[2]];
       }
       const character = new CharacterBody(
