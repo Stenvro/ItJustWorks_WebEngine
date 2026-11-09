@@ -657,6 +657,11 @@ export class ActorAi {
       },
       face,
       useFurniture: async (target, types) => {
+        // Furniture in another cell or worldspace: not from here. Its markers' coordinates are
+        // that cell's; walked to on this navmesh, the actor stood at the point of it nearest
+        // them (MQ201's Rulindil in Elenwen's solar, his chair in the dungeon below).
+        const there = await this.#session.scriptsReady?.placement(target);
+        if (there && !(await this.#inSpace(reference, spaceOf(there)))) return false;
         // A flier's furniture is its perch: it flies there and lands on it (MQ101AlduinPerch1,
         // a Sit on the Helgen tower's DragonPerchTower).
         const flight = this.#flight?.();

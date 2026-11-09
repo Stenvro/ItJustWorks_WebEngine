@@ -136,7 +136,13 @@ async function goTo(
   const reach = arrive ?? (await destinationRadius(run, place.reference, place.radius));
   // A flier in the air is not there by standing under it: it flies there, or lands there.
   const airborne = run.body.airborne?.() === true;
-  if (here && !airborne && horizontal(here, place.position) <= reach) return true;
+  if (
+    here &&
+    !airborne &&
+    horizontal(here, place.position) <= reach &&
+    (await inSpaceOf(run, place))
+  )
+    return true;
   const target = place.reference;
   return run.body.travel(
     place.position,
@@ -145,6 +151,17 @@ async function goTo(
     place.space,
     target === undefined ? options : { ...options, target },
   );
+}
+
+/**
+ * Whether the actor is in a place's cell or worldspace (a place without one: the actor's own).
+ * Interiors' coordinates overlap: one standing where furniture in another cell would be is not
+ * at it.
+ */
+async function inSpaceOf(run: ProcedureRun, place: PackagePlace): Promise<boolean> {
+  if (!place.space) return true;
+  const self = await run.mind.placement(run.actor);
+  return !self?.space || sameSpace(self.space, place.space);
 }
 
 /**
@@ -556,7 +573,7 @@ const wander: ProcedureRunner = async (run) => {
       continue;
     }
     last = point;
-    await run.body.travel(point, 'walk', WANDER_ARRIVE);
+    await run.body.travel(point, 'walk', WANDER_ARRIVE, place.space);
     // At least until the next update (a pause of 0 is no endless loop).
     await run.wait(wanderPause(run, energy));
   }
@@ -588,7 +605,7 @@ async function atIdleMarker(
     if (
       !(await goTo(
         run,
-        { position: at.position, radius: 0 },
+        { position: at.position, radius: 0, space: at.space },
         settingsOf(run).markerDestinationRadius,
       ))
     )
@@ -920,7 +937,7 @@ const sandboxing: ProcedureRunner = async (run) => {
             continue;
           }
           lastWalk = point;
-          await run.body.travel(point, 'walk', WANDER_ARRIVE);
+          await run.body.travel(point, 'walk', WANDER_ARRIVE, place.space);
           await waitFor(run, wanderPause(run, energy));
         }
         at = undefined;
@@ -987,12 +1004,15 @@ const useFurniture =
     const at = first === undefined ? undefined : await run.mind.placement(first);
     if (at) {
       // To the furniture itself (a flier lands on its perch: observed in the original, the
-      // Sit's way there is a travel to the furniture, landed on in the air).
+      // Sit's way there is a travel to the furniture, landed on in the air). Furniture in
+      // another cell or worldspace: its way leads through the load doors, as a Travel's
+      // (MQ201's Rulindil, from Elenwen's solar to the chair in the Embassy's dungeon).
       await goTo(
         run,
-        { position: at.position, radius: 0, reference: first },
+        { position: at.position, radius: 0, reference: first, space: at.space },
         settingsOf(run).furnitureDestinationRadius,
       );
+      if (run.stopped()) return 'failure';
       if (await sit()) return inIt();
       run.body.face(at.heading);
     }

@@ -8,6 +8,7 @@ import {
   type ProcedureBranch,
 } from './package-records.ts';
 import type { FlightRequest } from './flight.ts';
+import type { Space } from './package-start.ts';
 import type {
   FoundObject,
   MagicCast,
@@ -64,7 +65,8 @@ const STEAL: PackageInput = { id: 3, type: 'Bool', value: { kind: 'bool', value:
 function harness(
   found = new Map<number, readonly FoundObject[]>(),
   waits?: number,
-  travel: (to: readonly number[]) => Promise<boolean> = () => Promise.resolve(true),
+  /** Its travels (to where, in which cell or worldspace: undefined, its own). */
+  travel: (to: readonly number[], space?: Space) => Promise<boolean> = () => Promise.resolve(true),
   /** What its barrages answer, one each (then true): false, one that could not be made. */
   barrages: boolean[] = [],
   /** What its shouts answer, one each (then 'shouted'). */
@@ -79,7 +81,8 @@ function harness(
     reference: 1,
     position: () => [0, 0, 0],
     heading: () => 0,
-    travel: (to: readonly number[]) => travel(to),
+    travel: (to: readonly number[], _gait: unknown, _arrive: number, space?: Space) =>
+      travel(to, space),
     stop: () => undefined,
     face: () => undefined,
     useFurniture: (furniture: number) => {
@@ -280,6 +283,89 @@ describe('procedures', () => {
       'use 601',
       'use 602',
     ]);
+  });
+
+  describe('furniture in another cell (its way through the load doors)', () => {
+    // MQ201's Rulindil: his Sit (MQ201RulindilToInterrogationChamber) is on a chair in the
+    // Embassy's dungeon (ThalmorEmbassy03) while he stands in Elenwen's solar (ThalmorEmbassy02).
+    const SOLAR: Space = { kind: 'interior', cell: 0x7dcfc };
+    const DUNGEON: Space = { kind: 'interior', cell: 0x362d8 };
+    const CHAIR = 0x601;
+    const chair: PackageInput = {
+      id: 0,
+      type: 'SingleRef',
+      value: {
+        kind: 'singleRef',
+        target: { type: TargetType.specificReference, value: CHAIR, count: 0 },
+      },
+    };
+    /** The actor (1) in the solar at the origin; the chair in the dungeon at `at`. */
+    const placed = (at: readonly [number, number, number]): Partial<PackageMind> => ({
+      target: () => Promise.resolve(CHAIR),
+      placement: (reference) =>
+        Promise.resolve(
+          reference === CHAIR
+            ? { position: at, heading: 0, space: DUNGEON }
+            : { position: [0, 0, 0] as const, heading: 0, space: SOLAR },
+        ),
+    });
+
+    it("sit travels to the chair in the chair's cell", async () => {
+      const travels: string[] = [];
+      // The harness's body cannot use 0x601 (as furniture in another cell is not used from
+      // where the actor stands).
+      const { run, done } = harness(undefined, 1, (to, space) => {
+        travels.push(`${String(to[0])} in ${JSON.stringify(space)}`);
+        return Promise.resolve(true);
+      });
+      await run('Sit', [0], [chair], placed([500, 0, 0]));
+      expect(done).toEqual(['use 601', 'use 601', 'wait 1']);
+      expect(travels).toEqual([`500 in ${JSON.stringify(DUNGEON)}`]);
+    });
+
+    it('is not at the chair by standing where its coordinates would be in its own cell', async () => {
+      // Interiors' coordinates overlap: the chair's point is within reach in the solar.
+      const travels: string[] = [];
+      const { run } = harness(undefined, 1, (to, space) => {
+        travels.push(`${String(to[0])} in ${JSON.stringify(space)}`);
+        return Promise.resolve(true);
+      });
+      await run('Sit', [0], [chair], placed([10, 0, 0]));
+      expect(travels).toEqual([`10 in ${JSON.stringify(DUNGEON)}`]);
+    });
+
+    it("an idle marker's way leads to its cell too", async () => {
+      const travels: string[] = [];
+      const { run } = harness(undefined, 1, (to, space) => {
+        travels.push(`${String(to[0])} in ${JSON.stringify(space)}`);
+        return Promise.resolve(true);
+      });
+      const marker = { flags: 0, count: 0, timer: 0, idles: [], reference: CHAIR };
+      await run('UseIdleMarker', [0], [chair], {
+        ...placed([500, 0, 0]),
+        idleMarker: () =>
+          Promise.resolve({ ...marker, position: [500, 0, 0], heading: 0, space: DUNGEON }),
+      });
+      expect(travels[0]).toBe(`500 in ${JSON.stringify(DUNGEON)}`);
+    });
+
+    it('a wanderer walks into its place in its cell', async () => {
+      const travels: string[] = [];
+      const { run } = harness(undefined, 1, (to, space) => {
+        travels.push(`${String(to[0])} in ${JSON.stringify(space)}`);
+        return Promise.resolve(true);
+      });
+      await run('Wander', [0], [NEAR_HOME], {
+        place: (location) =>
+          Promise.resolve({
+            position: [5000, 0, 0] as const,
+            radius: location.radius,
+            reference: 0x500,
+            space: DUNGEON,
+          }),
+      });
+      expect(travels).toEqual([`5000 in ${JSON.stringify(DUNGEON)}`]);
+    });
   });
 
   it('find searches again while it finds nothing (furniture not there yet)', async () => {
