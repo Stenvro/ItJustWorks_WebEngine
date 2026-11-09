@@ -231,7 +231,7 @@ export class GameSession {
    * a cell the player just left loads again without reading its records. `persistent`: an
    * exterior cell's references kept in its world's persistent cell (those standing in it now:
    * one that came in meanwhile has it made again). Without `hold`, only looked into (a far
-   * cell's large references).
+   * cell's large references: kept nowhere, the buffers left as they are).
    */
   cellData(cell: number, persistent?: readonly number[], hold = true): Promise<CellData> {
     this.#cells ??= new CellStore(cellBufferSizes((section, key) => this.ini.lookup(section, key)));
@@ -1489,7 +1489,10 @@ export class GameSession {
     }
     // The cell the view has them in (an exterior's once the cell at their place has loaded).
     const cell = this.scriptWorld.livePlacement(PLAYER_REF)?.cell;
-    if (cell !== undefined) runtime.actorLocations.inCell(PLAYER_REF, String(cell));
+    if (cell === undefined) return;
+    runtime.actorLocations.inCell(PLAYER_REF, String(cell));
+    // Where a script sent them is where they are once the world has them (attached area).
+    runtime.playerInCell(cell);
   }
 
   /**

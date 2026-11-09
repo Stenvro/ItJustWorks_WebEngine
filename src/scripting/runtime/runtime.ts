@@ -1065,8 +1065,11 @@ export class ScriptRuntime implements VmHost {
     number,
     Promise<Map<number, { readonly child: number; readonly delay: number }[]>>
   >();
-  /** Where a script sent the player, until the world has them there (#playerArea). */
-  #playerBound: AreaPlace | undefined;
+  /**
+   * Where a script sent the player, until the world has them there (#playerArea), and the cell
+   * the world had them in as they were sent (playerInCell).
+   */
+  #playerBound: { readonly place: AreaPlace; readonly from: number | undefined } | undefined;
   /** References found without scripts of their own as their cell attached (quiet). */
   readonly #scriptless = new Set<number>();
   /** The load order's activate children by parent, wherever they stand (read once: XAPR). */
@@ -1387,8 +1390,12 @@ export class ScriptRuntime implements VmHost {
   ): Promise<number[]> {
     const scripted: number[] = [];
     for (const reference of references) {
-      if (await this.#hasScripts(reference)) scripted.push(reference);
-      else this.#scriptless.add(reference);
+      // Looked at again on every attach: an actor's leveled or template pick is known once it
+      // is resolved, and a reset may pick another.
+      if (await this.#hasScripts(reference)) {
+        scripted.push(reference);
+        this.#scriptless.delete(reference);
+      } else this.#scriptless.add(reference);
     }
     for (const reference of scripted) {
       if (this.#initialized.has(reference)) continue;
@@ -1557,15 +1564,23 @@ export class ScriptRuntime implements VmHost {
 
   /** A reference's activate children activated, by it, each after its delay. */
   async #activateChildrenOf(reference: number, through: ReadonlySet<number>): Promise<void> {
-    for (const { child, delay } of await this.activateChildren(reference)) {
-      if (through.has(child)) continue;
-      const go = (): void => {
-        this.activateRef(child, reference, { chain: through });
-      };
-      // Its delay in the game's real seconds (a menu holds it).
-      if (delay > 0) void this.vm.scheduler.waitReal(delay).then(go);
-      else go();
-    }
+    const done = new Set<number>();
+    const activate = (children: readonly { readonly child: number; readonly delay: number }[]) => {
+      for (const { child, delay } of children) {
+        if (through.has(child) || done.has(child)) continue;
+        done.add(child);
+        const go = (): void => {
+          this.activateRef(child, reference, { chain: through });
+        };
+        // Its delay in the game's real seconds (a menu holds it).
+        if (delay > 0) void this.vm.scheduler.waitReal(delay).then(go);
+        else go();
+      }
+    };
+    // Those round it at once; those far off once the load order's list is read (it is read in
+    // the background from the game's start: warmActivateChildren).
+    activate(await this.#nearActivateChildren(reference));
+    activate(await this.#farActivateChildrenOf(reference));
   }
 
   /**
@@ -2348,7 +2363,12 @@ export class ScriptRuntime implements VmHost {
       state.cell = cell;
       state.world = world;
       // The player on their way there (#playerArea) until the world has them there.
-      if (reference === PLAYER_REF) this.#playerBound = { position, cell, world };
+      if (reference === PLAYER_REF) {
+        this.#playerBound = {
+          place: { position, cell, world },
+          from: this.world.livePlacement?.(PLAYER_REF)?.cell,
+        };
+      }
     }
     this.world.moved?.(reference);
     const grid = (at: Vec3): string =>
@@ -2395,6 +2415,17 @@ export class ScriptRuntime implements VmHost {
   }
 
   /**
+   * The world tells which cell it has the player in (every frame: GameSession). Once that is
+   * the cell a script sent them to (they arrived), or another than the one they were in as they
+   * were sent (the world took them on: they arrived and walked out, or took a load door), the
+   * world's place is theirs again for the attached area (#playerArea).
+   */
+  playerInCell(cell: number): void {
+    const bound = this.#playerBound;
+    if (bound && (cell === bound.place.cell || cell !== bound.from)) this.#playerBound = undefined;
+  }
+
+  /**
    * Where the player is for the attached area: where a script just sent them while they are on
    * their way (the cell they arrive in attaches), else where the world has them (they walk
    * through doors and over cell borders without a script: their state keeps a script's last
@@ -2402,16 +2433,10 @@ export class ScriptRuntime implements VmHost {
    */
   async #playerArea(): Promise<AreaPlace | undefined> {
     const live = this.world.livePlacement?.(PLAYER_REF);
-    const bound = this.#playerBound;
-    const here: AreaPlace | undefined = live && {
-      position: live.position,
-      cell: live.cell,
-      world: live.world,
-    };
-    // Arrived (in the cell they were sent to): the world's place from now on.
-    if (bound && here && inAttachedArea(here, bound, 1)) this.#playerBound = undefined;
-    if (this.#playerBound) return this.#playerBound;
-    if (here) return here;
+    // As the world tells it every frame (playerInCell).
+    if (live?.cell !== undefined) this.playerInCell(live.cell);
+    if (this.#playerBound) return this.#playerBound.place;
+    if (live) return { position: live.position, cell: live.cell, world: live.world };
     const placed = await this.placement(PLAYER_REF, false);
     return placed && { position: placed.position, cell: placed.cell, world: placed.world };
   }
@@ -2716,6 +2741,20 @@ export class ScriptRuntime implements VmHost {
   async activateChildren(
     reference: number,
   ): Promise<readonly { readonly child: number; readonly delay: number }[]> {
+    const found = [...(await this.#nearActivateChildren(reference))];
+    for (const entry of await this.#farActivateChildrenOf(reference)) {
+      if (!found.some((other) => other.child === entry.child)) found.push(entry);
+    }
+    return found;
+  }
+
+  /**
+   * The activate children found round a parent (its own cell, its worldspace's persistent cell,
+   * the exterior cells round its place), read once per cell.
+   */
+  async #nearActivateChildren(
+    reference: number,
+  ): Promise<readonly { readonly child: number; readonly delay: number }[]> {
     const db = this.forms.db;
     const cells = new Set<number>();
     const own = db.cellOfReference(reference);
@@ -2761,20 +2800,38 @@ export class ScriptRuntime implements VmHost {
       }
       found.push(...((await index).get(reference) ?? []));
     }
-    // A persistent parent's children beyond those cells (158 of the 6,527 vanilla pairs, every
-    // one of whose parents is persistent: an interior's door waking an ambush outside, a marker
-    // in the persistent cell enabling books in a fort). The engine keeps a parent's children on
-    // it as they load, so a persistent parent, always there, knows them wherever they stand.
-    // TODO(M13): inferred; whether a child whose cell is not in memory (neither loaded nor
-    // buffered) is left out in the original is not read; here every one is activated.
-    const flags = this.indexedFlags(reference) ?? (await this.forms.record(reference))?.flags ?? 0;
-    if ((flags & RecordFlag.persistent) !== 0) {
-      const far = (await this.#farChildren()).get(reference) ?? [];
-      for (const entry of far) {
-        if (!found.some((other) => other.child === entry.child)) found.push(entry);
-      }
-    }
     return found;
+  }
+
+  /**
+   * A persistent parent's children wherever they stand (158 of the 6,527 vanilla pairs lie
+   * beyond the cells searched round it, and every parent of the 6,527 is persistent: an
+   * interior's door waking an ambush outside, a marker in the persistent cell enabling books in
+   * a fort). The engine keeps a parent's children on it as they load, so a persistent parent,
+   * always there, knows them wherever they stand. From the load order's list, read in the
+   * background as the game starts (warmActivateChildren): those near it never wait for it.
+   * TODO(M13): inferred; whether a child whose cell is not in memory (neither loaded nor
+   * buffered) is left out in the original is not read; here every one is activated.
+   */
+  async #farActivateChildrenOf(
+    reference: number,
+  ): Promise<readonly { readonly child: number; readonly delay: number }[]> {
+    const flags = this.indexedFlags(reference) ?? (await this.forms.record(reference))?.flags ?? 0;
+    if ((flags & RecordFlag.persistent) === 0) return [];
+    return (await this.#farChildren()).get(reference) ?? [];
+  }
+
+  /**
+   * Starts reading the load order's activate children by parent (XAPR) in the background, as a
+   * game starts or loads: by the time a persistent parent is first activated it is known, and
+   * the read (every placed reference of the load order) holds nothing up meanwhile.
+   */
+  warmActivateChildren(): void {
+    void this.#farChildren().catch((error: unknown) => {
+      this.#warn(`reading the activate children: ${String(error)}`);
+      // Read again when next asked.
+      this.#farActivateChildren = undefined;
+    });
   }
 
   /** Every activate child of the load order by its parent (XAPR), read once. */
@@ -3951,6 +4008,8 @@ export class ScriptRuntime implements VmHost {
     }
     // Persistent references with scripts (their own or their base's).
     const index = await this.persistentIndex();
+    // The load order's far activate children read meanwhile (in the background).
+    this.warmActivateChildren();
     // Their bases' attachments read side by side (one by one they took seconds in the browser).
     const scripted = await Promise.all(
       index.all.map(async (reference) => {
@@ -4090,6 +4149,7 @@ export class ScriptRuntime implements VmHost {
       },
     );
     await this.persistentIndex();
+    this.warmActivateChildren();
     progress?.('restoring the game state');
     restoreGameState(this.state, save.state);
     // The aliases hold their references again: their events (an alias script's OnDeath), the
