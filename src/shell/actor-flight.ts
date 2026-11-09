@@ -404,9 +404,19 @@ export class ActorFlight {
     return !this.#options.interior;
   }
 
-  /** GetFlyingState (FlyingState): 0 on the ground. */
+  /**
+   * GetFlyingState (FlyingState): 0 on the ground. A flier a loaded save had in the air is in
+   * the air from the moment it is placed: cruising, the state its first frame takes it on in
+   * (the save keeps only that it flew). Found 2026-11-09: until then it read as on the ground,
+   * so MQ204's Paarthurnax, saved coming in to land, had landed by GetFlyingState before he
+   * had flown a frame. TODO(M13): the original keeps the exact state (hovering, landing) in
+   * the actor's saved process (inferred).
+   */
   state(reference: number): FlyingStateValue {
-    return this.#fliers.get(reference)?.state ?? FlyingState.none;
+    const flier = this.#fliers.get(reference);
+    if (flier && flier.state !== FlyingState.none) return flier.state;
+    if (this.#savedAloft.has(reference) && flier?.checkedAir !== true) return FlyingState.cruising;
+    return FlyingState.none;
   }
 
   /** IsFlying: in the air (taking off, cruising, hovering, landing, an action). */
