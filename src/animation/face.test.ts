@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { LipFile } from '../formats/audio/lip.ts';
 import {
   creatureLipVariables,
+  EYE_MORPH_HEADING,
   EYE_MORPH_PITCH,
   FACE_MORPHS,
   FaceAnimation,
@@ -34,9 +35,9 @@ describe('faces', () => {
     const face = new FaceAnimation(() => 0.5, { ...blink, fTrackSpeed: 1 }, still);
     face.lookWith({ heading: 0.2, pitch: 0 });
     face.update(0.1); // 0.1 rad of 0.2
-    expect(face.weights[at('LookRight')]).toBeCloseTo(0.1 / ((29 * Math.PI) / 180), 3);
+    expect(face.weights[at('LookRight')]).toBeCloseTo(0.1 / EYE_MORPH_HEADING, 3);
     face.update(0.5);
-    expect(face.weights[at('LookRight')]).toBeCloseTo(0.2 / ((29 * Math.PI) / 180), 3);
+    expect(face.weights[at('LookRight')]).toBeCloseTo(0.2 / EYE_MORPH_HEADING, 3);
   });
 
   it('hold the next blink back while the eyes look down (fLookDownDisableBlinkingAmt)', () => {

@@ -7,11 +7,17 @@ import type { AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { BehaviorRuntime } from '../animation/behavior-runtime.ts';
 import {
   creatureLipVariables,
+  eyeOffsetSetting,
   FaceAnimation,
   lipLeadIn,
   EXPRESSION_DEFAULTS,
+  EYE_EMOTIONS,
+  EYE_TRACK_DEFAULTS,
   VANILLA_BLINK,
+  VANILLA_EYES,
   type BlinkSettings,
+  type EyeEmotion,
+  type EyeOffsets,
 } from '../animation/face.ts';
 import { ActorPose, ActorSkeleton, wearOnRig, type RigData } from '../animation/skeleton.ts';
 import { parseLip, type LipFile } from '../formats/audio/lip.ts';
@@ -566,6 +572,7 @@ export class ActorPlacer {
   readonly #textureSets = new Map<number, Promise<readonly string[] | undefined>>();
   readonly #furniture = new Map<number, Promise<FurniturePosition | undefined>>();
   #blink: Promise<BlinkSettings> | undefined;
+  #eyes: Promise<Record<EyeEmotion, EyeOffsets>> | undefined;
   /** Spoken lines by lower-case voice type (sound\voice\<plugin>\<voice type>\). */
   #voices: Map<string, string[]> | undefined;
 
@@ -756,8 +763,32 @@ export class ActorPlacer {
         settings.number('fLookDownDisableBlinkingAmt') ??
         EXPRESSION_DEFAULTS.fLookDownDisableBlinkingAmt,
       fTrackSpeed: settings.number('fTrackSpeed') ?? EXPRESSION_DEFAULTS.fTrackSpeed,
+      fTrackEyeXY: settings.number('fTrackEyeXY') ?? EYE_TRACK_DEFAULTS.fTrackEyeXY,
+      fTrackEyeZ: settings.number('fTrackEyeZ') ?? EYE_TRACK_DEFAULTS.fTrackEyeZ,
     }));
     return this.#blink;
+  }
+
+  /** The eyes' random offsets per emotion from the game settings, read once. */
+  #eyeSettings(): Promise<Record<EyeEmotion, EyeOffsets>> {
+    this.#eyes ??= this.#session.settings().then((settings) => {
+      const read = (emotion: EyeEmotion): EyeOffsets => {
+        const own = VANILLA_EYES[emotion];
+        const value = (axis: 'Heading' | 'Pitch', bound: 'Min' | 'Max', fallback: number) =>
+          settings.number(eyeOffsetSetting(emotion, axis, bound)) ?? fallback;
+        return {
+          headingMin: value('Heading', 'Min', own.headingMin),
+          headingMax: value('Heading', 'Max', own.headingMax),
+          pitchMin: value('Pitch', 'Min', own.pitchMin),
+          pitchMax: value('Pitch', 'Max', own.pitchMax),
+        };
+      };
+      return Object.fromEntries(EYE_EMOTIONS.map((emotion) => [emotion, read(emotion)])) as Record<
+        EyeEmotion,
+        EyeOffsets
+      >;
+    });
+    return this.#eyes;
   }
 
   /** An actor's animated face over its head parts' expression morphs (by shape name). */
@@ -778,7 +809,7 @@ export class ActorPlacer {
     const weights = new FaceAnimation(
       seededRandom(actor.reference ^ 0x5bd1e995),
       await this.#blinkSettings(),
-      undefined,
+      await this.#eyeSettings(),
       [
         ini.number('Audio', 'fDialogueHeadPitchExaggeration'),
         ini.number('Audio', 'fDialogueHeadRollExaggeration'),
