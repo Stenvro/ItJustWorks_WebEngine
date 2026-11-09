@@ -24,7 +24,7 @@
 //   Whiterun's jail, each reference named where it is used. Inferred there (TODO(M13) in
 //   src/scripting/runtime/cell-reset.ts): a dead persistent actor respawns at its editor place;
 //   a jailing forces its cell's reset past a zone and for a cell met the first time; the reset
-//   sets the enable state the plugins give, not one read from the engine.
+//   sets the enable state the plugins give, not one observed in the original.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
