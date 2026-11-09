@@ -343,13 +343,24 @@ export function comesAt(position: Vec3, velocity: Vec3, at: Vec3, reach: number)
   return way[0] * velocity[0] + way[1] * velocity[1] + way[2] * velocity[2] > 0;
 }
 
+/** fCombatMagicWardMagickaCastLimit's built-in default (the engine's; no plugin sets it). */
+export const WARD_MAGICKA_CAST_LIMIT = 0.25;
+
 /**
  * Whether an NPC holds its ward on: always until the combat AI's fCombatMagicWardMinCastTime
- * (1.5 s), then while something flies at it. TODO(M13): the combat AI's own rule past the minimum
- * (its ward behaviour's conditions) is not read; a spell or arrow coming is what a ward is for.
+ * (1.5 s), then while something flies at it and its magicka share is at least the ward caster's
+ * fCombatMagicWardMagickaCastLimit (0.25: what it needs to begin one, chooseCaster). TODO(M13):
+ * inferred: the combat AI's own rule past the minimum (its ward caster's checks) is not read; a
+ * spell or arrow coming is what a ward is for, and the cast limit the caster's own measure.
  */
-export function wardHeld(held: number, minimum: number, threatened: boolean): boolean {
-  return held < minimum || threatened;
+export function wardHeld(
+  held: number,
+  minimum: number,
+  threatened: boolean,
+  magicka = 1,
+  castLimit = WARD_MAGICKA_CAST_LIMIT,
+): boolean {
+  return held < minimum || (threatened && magicka >= castLimit);
 }
 
 /** An actor as projectiles meet it: an upright capsule from its feet. */

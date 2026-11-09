@@ -165,9 +165,54 @@ describe.skipIf(!hasGamedata())('what a cast trains (sim)', () => {
     expect(await run()).toBeGreaterThan(0);
   }, 120_000);
 
-  it.todo(
-    'a lasting effect that takes hold but does nothing on its first frame trains nothing (the test above passes with training at once too)',
-  );
+  it('trains a heal over time that takes hold on the hurt by its first frame, not as it takes hold', async () => {
+    // FastHealing's effect is No Duration (it heals at once: the test above trains by what that
+    // did). The Guardian Circle's heal (HazardGuardianCircleSpell's second effect, Restoration:
+    // 20 a second for 2 s) heals each second, and trains by its first frame. Taken hold while
+    // the player is hurt, whole again before that frame: the frame heals nothing, so it trains
+    // nothing (a training as it takes hold would see the hurt and train).
+    const { magic, actors } = sim.runtime;
+    const circle = await spell('HazardGuardianCircleSpell');
+    expect(circle.effects[1]?.duration).toBe(2);
+    const frames = async (): Promise<void> => {
+      for (let frame = 0; frame < 3; frame++) {
+        sim.runtime.update(0.05, 0);
+        await sim.world.settle();
+      }
+    };
+    const health = async (): Promise<number> =>
+      (await actors.value(PLAYER_REF, ActorValue.health)).current;
+    const ending = async (): Promise<void> => {
+      for (const [key, entry] of magic.effectsOn(PLAYER_REF))
+        if (entry.item === circle.formId) await magic.end(key);
+    };
+    try {
+      actors.restore(PLAYER_REF, ActorValue.health, 100_000);
+      await actors.damage(PLAYER_REF, ActorValue.health, 60);
+      const hurt = await health();
+      let before = experience(RESTORATION);
+      await magic.apply(circle, PLAYER_REF, { caster: PLAYER_REF, effects: [1], trains: true });
+      await sim.world.settle();
+      // It heals over time: nothing yet, nor any training.
+      expect(await health()).toBe(hurt);
+      expect(experience(RESTORATION)).toBe(before);
+      actors.restore(PLAYER_REF, ActorValue.health, 100_000);
+      await frames();
+      expect(experience(RESTORATION)).toBe(before);
+      // The same, left hurt: its first frame heals, and it trains.
+      await ending();
+      await actors.damage(PLAYER_REF, ActorValue.health, 60);
+      before = experience(RESTORATION);
+      await magic.apply(circle, PLAYER_REF, { caster: PLAYER_REF, effects: [1], trains: true });
+      await sim.world.settle();
+      await frames();
+      expect(await health()).toBeGreaterThan(hurt);
+      expect(experience(RESTORATION)).toBeGreaterThan(before);
+    } finally {
+      await ending();
+      actors.restore(PLAYER_REF, ActorValue.health, 100_000);
+    }
+  }, 120_000);
 
   it('trains nothing from a staff, however it is used (UESP "Skyrim:Staves")', async () => {
     const { casting, magic, equipment } = sim.runtime;

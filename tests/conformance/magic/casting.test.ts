@@ -429,6 +429,14 @@ describe('what a staff uses', () => {
   });
 });
 
-describe('what the original casts that we do not yet', () => {
-  it.todo('an NPC’s ward past fCombatMagicWardMinCastTime as the combat AI’s ward behaviour says');
+describe('an NPC’s ward past fCombatMagicWardMinCastTime (inferred: the ward caster’s limit)', () => {
+  it('lets it go once its magicka share is below fCombatMagicWardMagickaCastLimit (0.25)', () => {
+    // Before the minimum it holds whatever its magicka; past it, while something comes at it and
+    // it has the share it needs to begin one (chooseCaster's cast limit).
+    expect(wardHeld(1, 1.5, false, 0.1)).toBe(true);
+    expect(wardHeld(2, 1.5, true, 0.5)).toBe(true);
+    expect(wardHeld(2, 1.5, true, 0.25)).toBe(true);
+    expect(wardHeld(2, 1.5, true, 0.2)).toBe(false);
+    expect(wardHeld(2, 1.5, true, 0.2, 0.1)).toBe(true);
+  });
 });
