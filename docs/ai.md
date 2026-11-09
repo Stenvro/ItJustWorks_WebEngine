@@ -1651,7 +1651,8 @@ What the actors notice (`src/ai/detection.ts`, `src/ai/detection-states.ts`,
   (fCombatSearchLookTime), walks to within fCombatSearchLocationInvestigateDistance (256),
   looks round three times (fCombatSearchInvestigateTime 2.5 s); observing the dead: every
   fCheckDeadBodyTimer (20 s) it looks for one that died within iHoursToClearCorpses (24 game
-  hours) in its sight, walks to the body and looks at it for 5 s; spectating (`fight`, 5.2):
+  hours) in its sight and within fDeadReactionDistance (400; one seen farther is left to a later
+  look), walks to the body and looks at it for 5 s; spectating (`fight`, 5.2):
   it keeps fAIInteriorSpectatorDistance (200) / Exterior (450) from the fight, facing it, until
   its last blow is fAISpectatorRememberThreatTimer old; a guard's warning (`warn`: trespass) goes to
   the one warned and faces them. Their lines (NormalToAlert, AlertToNormal, NoticeCorpse, the

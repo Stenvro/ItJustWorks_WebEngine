@@ -147,6 +147,12 @@ export interface DetectionSettings {
   readonly spectatorRememberTimer: number;
   /** fCheckDeadBodyTimer: an actor looks for the dead this often (seconds). */
   readonly checkDeadBodyTimer: number;
+  /**
+   * fDeadReactionDistance: an actor not in combat reacts to a dead body only this near (units).
+   * No plugin stores it; 400 is the built-in value docs/scripting.md records for the Dead Body
+   * event. TODO(M13): the built-in value is not confirmed against the original here.
+   */
+  readonly deadReactionDistance: number;
   /** iHoursToClearCorpses: the dead are noticed this many game hours after they died. */
   readonly hoursToClearCorpses: number;
   /** fCombatSearchLocationInvestigateDistance: a searcher goes this near what it heard. */
@@ -234,6 +240,7 @@ const SETTINGS: readonly (readonly [
   ['spectatorShutdownDistance', 'fAISpectatorShutdownDistance', 1000],
   ['spectatorRememberTimer', 'fAISpectatorRememberThreatTimer', 20],
   ['checkDeadBodyTimer', 'fCheckDeadBodyTimer', 20],
+  ['deadReactionDistance', 'fDeadReactionDistance', 400],
   ['hoursToClearCorpses', 'iHoursToClearCorpses', 24],
   ['searchInvestigateDistance', 'fCombatSearchLocationInvestigateDistance', 256],
   ['searchLookTime', 'fCombatSearchLookTime', 1],
