@@ -54,7 +54,7 @@ import {
 } from '../shell/play-session.ts';
 import { worldSaveParts } from '../shell/world-save-parts.ts';
 import { noteMoved, placedAsMoved, type MovedFromExterior } from '../shell/moved-objects.ts';
-import { configurePhysics, Player } from '../shell/player.ts';
+import { configurePhysics, Player, type PlayerStance } from '../shell/player.ts';
 import { PlayerAvatar } from '../shell/player-avatar.ts';
 import { PlayerFurniture } from '../shell/player-furniture.ts';
 import type { PlayerView } from '../shell/race-menu.ts';
@@ -503,7 +503,8 @@ export class SimWorld {
     return this.#drive(() => this.#openInterior(formId, arrival));
   }
 
-  async #openInterior(formId: number, arrival?: Arrival): Promise<void> {
+  /** `stance`: the player's as they come through a load door (Player.keepStance). */
+  async #openInterior(formId: number, arrival?: Arrival, stance?: PlayerStance): Promise<void> {
     this.#close();
     const db = await this.session.db;
     this.#place = { kind: 'interior', cell: formId };
@@ -511,7 +512,7 @@ export class SimWorld {
     const cell = await this.#loadCell(formId, String(formId), undefined, undefined);
     const comeIn = arrival ?? (await cellArrival(db, cell.data));
     const feet = comeIn?.position ?? cell.data.entrance;
-    await this.#startPlay([...feet], comeIn?.heading ?? 0, comeIn !== undefined, 64);
+    await this.#startPlay([...feet], comeIn?.heading ?? 0, comeIn !== undefined, 64, stance);
     this.#addCollision(cell);
     this.#refreshCell(cell);
     this.session.sky.setPlace({ interior: true, cellFlags: cell.data.cell.flags });
@@ -542,6 +543,7 @@ export class SimWorld {
   async #openExterior(
     formId: number,
     at: { readonly cell: readonly [number, number] } | { readonly arrival: Arrival },
+    stance?: PlayerStance,
   ): Promise<void> {
     this.#close();
     const world = await this.session.worldspace(formId);
@@ -580,7 +582,13 @@ export class SimWorld {
       lightingTemplate: world.record.lightingTemplate !== undefined,
       noSky: (world.record.flags & WorldFlag.noSky) !== 0,
     });
-    await this.#startPlay(feet, comeIn?.heading ?? 0, comeIn !== undefined, comeIn ? 64 : 8192);
+    await this.#startPlay(
+      feet,
+      comeIn?.heading ?? 0,
+      comeIn !== undefined,
+      comeIn ? 64 : 8192,
+      stance,
+    );
     await this.#stream();
   }
 
@@ -605,8 +613,11 @@ export class SimWorld {
       },
       false,
     );
-    if (destination.world === undefined) await this.#openInterior(destination.cell, arrival);
-    else await this.#openExterior(destination.world, { arrival });
+    // The player goes through as they are: sneaking on (Play's load doors: main.ts).
+    const stance = this.#play?.player.stance;
+    if (destination.world === undefined) {
+      await this.#openInterior(destination.cell, arrival, stance);
+    } else await this.#openExterior(destination.world, { arrival }, stance);
   }
 
   // --- Stepping ---------------------------------------------------------------------------
@@ -1133,12 +1144,16 @@ export class SimWorld {
 
   // --- The player -------------------------------------------------------------------------
 
-  /** The player in a new physics world, standing at `feet` once the ground there is in. */
+  /**
+   * The player in a new physics world, standing at `feet` once the ground there is in, in the
+   * stance they came through a load door in.
+   */
   async #startPlay(
     feet: [number, number, number],
     yaw: number,
     onFloor: boolean,
     searchAbove: number,
+    stance?: PlayerStance,
   ): Promise<void> {
     const session = this.session;
     const [matrix, playerData] = await Promise.all([
@@ -1158,6 +1173,7 @@ export class SimWorld {
       feet,
       yaw,
     );
+    if (stance) player.keepStance(stance);
     player.povSwitchAllowed = () => povSwitchAllowed(this.runtime.controls);
     player.disabledControls = () => disabledControlFlags(this.runtime.controls);
     player.activationAllowed = () => this.runtime.controls.activate;

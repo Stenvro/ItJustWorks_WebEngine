@@ -60,6 +60,13 @@ const TRAPDOOR = 113;
 const KITCHEN_SCENE = 0x361f2;
 const OFFICE_SCENE = 0x39f28;
 const TORTURE_SCENE = 0x3a1d8;
+/** MQ201ElenwenOfficeScene's phase 7 line (Rulindil's): four lines are left after it. */
+const OFFICE_SCENE_LINE_7 = 11;
+/** MQ201's Rulindil and Gissur aliases. */
+const RULINDIL = 74;
+const GISSUR = 75;
+/** Elenwen's bedroom on the solar's upper floor, off the ways out of her office. */
+const SOLAR_BEDROOM: [number, number, number] = [-294, -598, 576];
 /** A point beyond MQ201SetStage160, the doorway out of the kitchen's side of the Embassy. */
 const KITCHEN_EXIT_BEYOND: [number, number, number] = [-864, -800, 0];
 /** Before the cabinet in Delphine's room at the inn (MQDelphineSecretDoor). */
@@ -455,6 +462,12 @@ describe.skipIf(!hasGamedata())('MQ201 Diplomatic Immunity', () => {
   // attacks yet, so the one fighting them is killed). The scene's end sets 185 (Rulindil to
   // the interrogation chamber, Gissur to the courtyard). Elenwen's chest holds her note (read:
   // 190) and the dungeon's key.
+  // Rulindil must not see the player, by the data: he is aggressive and helps allies, is
+  // neither essential nor protected, and the scene actors carry deathEnd, so one who sees the
+  // player fights and falls, and a dead Rulindil is not cast in MQ201TortureChamberScene (the
+  // next case). Out of the office both walk across the solar's floor, Gissur past the
+  // doorway to the courtyard: before their talk ends the player goes up to Elenwen's bedroom,
+  // out of their sight, and comes down to the chest once they have gone on their ways.
   it("has the player sneak to Elenwen's solar and overhear Rulindil and Gissur (180-190)", async () => {
     if (!afterKitchen) return;
     const sim = await loadSim(afterKitchen);
@@ -476,11 +489,36 @@ describe.skipIf(!hasGamedata())('MQ201 Diplomatic Immunity', () => {
       expect(listen && (await sim.walkPath(listen, 20, 30))).toBe(true);
       expect(await sim.until(() => sim.stageDone(MQ201, 180), 5)).toBe(true);
       expect(sim.runtime.scenes.isPlaying(OFFICE_SCENE)).toBe(true);
-      for (let second = 0; second < 300 && !sim.stageDone(MQ201, 185); second++) {
+      const heard = (): boolean =>
+        sim.runtime.scenes.actionComplete(OFFICE_SCENE, OFFICE_SCENE_LINE_7) ||
+        !sim.runtime.scenes.isPlaying(OFFICE_SCENE);
+      for (let second = 0; second < 300 && !heard(); second++) {
         await sim.step(1);
         await fendOff(sim);
       }
+      expect(sim.stageDone(MQ201, 185)).toBe(false);
+      expect(await walkFighting(sim, SOLAR_BEDROOM, 40, 40)).toBe(true);
+      // Up there until the talk has ended (185) and both have gone on their ways: Gissur out to
+      // the courtyard, Rulindil out of the solar or at the end of his way within it (TODO(M13):
+      // the Sit package's way to a chair in another cell does not take him through a load door
+      // yet; he stops at the end of the floor nearest it).
+      const gissur = quest.aliases.get(GISSUR) ?? 0;
+      const rulindil = quest.aliases.get(RULINDIL) ?? 0;
+      const inSolar = async (actor: number): Promise<boolean> =>
+        (await sim.runtime.placement(actor))?.cell === SOLAR;
+      let last: readonly [number, number, number] | undefined;
+      let still = 0;
+      for (let second = 0; second < 300; second++) {
+        await sim.step(1);
+        await fendOff(sim);
+        const at = sim.actor(rulindil)?.position;
+        still = at && last && Math.hypot(at[0] - last[0], at[1] - last[1]) < 1 ? still + 1 : 0;
+        last = at && [at[0], at[1], at[2]];
+        const settled = !(await inSolar(rulindil)) || still >= 3;
+        if (sim.stageDone(MQ201, 185) && !(await inSolar(gissur)) && settled) break;
+      }
       expect(sim.stageDone(MQ201, 185)).toBe(true);
+      expect(await inSolar(gissur)).toBe(false);
       const chest = quest.aliases.get(OFFICE_CHEST) ?? 0;
       const at = await sim.position(chest);
       expect(at && (await walkFighting(sim, at, 60, 90))).toBe(true);
@@ -492,6 +530,10 @@ describe.skipIf(!hasGamedata())('MQ201 Diplomatic Immunity', () => {
       expect(await sim.until(() => sim.stageDone(MQ201, 190), 5)).toBe(true);
       const key = await sim.formId('KEYM', 'MQ201InterrogationChamberKey');
       expect(await sim.runtime.itemCount(PLAYER_REF, key)).toBe(1);
+      // Unseen: Rulindil lives on for the interrogation.
+      expect(sim.actor(rulindil)?.dead ?? sim.runtime.state.actor(rulindil).dead ?? false).toBe(
+        false,
+      );
       afterSolar = await sim.save('MQ201 190');
     } finally {
       await sim.close();

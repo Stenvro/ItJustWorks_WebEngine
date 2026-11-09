@@ -570,14 +570,16 @@ async function main(): Promise<void> {
       false,
     );
     terminal.log('door', `to ${destination.name || hexId(destination.cell)}`);
+    // The player goes through as they are: sneaking on (Player.keepStance).
+    const stance = (worldViewer.playerView ?? modelViewer.playerView)?.play.player.stance;
     if (destination.world === undefined) {
-      await modelViewer.showCell(destination.cell, arrival);
+      await modelViewer.showCell(destination.cell, arrival, stance);
     } else {
       const cell: [number, number] = [
         Math.floor(teleport.position[0] / CELL_SIZE),
         Math.floor(teleport.position[1] / CELL_SIZE),
       ];
-      await worldViewer.open(destination.world, cell, arrival);
+      await worldViewer.open(destination.world, cell, arrival, stance);
     }
   };
   // A load door: its prompt stays on the HUD while the place loads (SetLoadDoorInfo).
