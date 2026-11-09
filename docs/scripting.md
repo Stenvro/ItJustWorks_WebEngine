@@ -476,14 +476,21 @@ worldspaces on screen:
   so tells its parent as the one who opened it (OnOpen). **Parent Activate Only** (XAPD, 1,037
   vanilla children): only its parents activate such a child; the crosshair offers it nothing and
   it is shut to actors walking by (Blind Cliff Cave's lever gate stayed open to every bandit
-  before). A script's Activate of one by an activator that is not one of its parents is
-  refused (no OnActivate, no default processing; Activate returns false). Inferred from the
-  data: every vanilla script that activates a Parent Activate Only reference names one of its
-  parents as the activator, often through a property kept for nothing else
-  (highGateRuinsLeverPuzzle's openMarker for a trap door with no scripts, bwcStatuePuzzle's
-  doorMarker, soljundMasterScript's portMarker, the pillar puzzles' puzzleDoorActivator, nine
-  scripts in all); none names another. TODO(M13): whether abDefaultProcessingOnly passes the
-  check (refused here too). `tests/conformance/scripting/script-events.test.ts`. The load
+  before). A script's Activate of one is taken whoever the activator is
+  (`ScriptRuntime.activate`, which the AI's, a follower's and the pilot's activations go through
+  too). The vanilla scripts that activate a Parent Activate Only reference name one of its
+  parents as the activator (highGateRuinsLeverPuzzle's openMarker for a trap door with no
+  scripts, bwcStatuePuzzle's doorMarker, soljundMasterScript's portMarker, the pillar puzzles'
+  puzzleDoorActivator) or the reference itself: DLC2ApoBook3SeekerDoorScript's CheckDead
+  (called from DLC2dunBook3SeekerScript's OnDeath) has three seeker gates of DLC2Book03Dungeon
+  [040142F3] (0403CF3F, 0403CF3E, 0403C34A, each with a parent of its own) open themselves
+  with `self.Activate(self)` once their room's seekers are dead, and TrapTriggerBase has
+  Parent Activate Only trap linkers (dunDustmansCairnEndController 0009AD96, 0002E98C under a
+  lever with 13 such children) activate themselves to set off their children. A rule that took
+  only a parent's Activate shut those gates for good. TODO(M13): inferred; whether the engine
+  refuses a script's Activate by one that is neither a parent nor the reference itself is not
+  known, so none is refused. `tests/conformance/scripting/script-events.test.ts` ("blocked and
+  taken activation"). The load
   order has 6,527 such pairs (5,691 children of 2,782 parents: 1,625 ambushes, 2,000-odd traps,
   default2StateActivator's doors and gates; `node tools/activate-children-audit.ts`); the
   runtime finds a parent's children in its own cell, its worldspace's persistent cell and the

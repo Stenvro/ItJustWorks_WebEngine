@@ -2782,32 +2782,27 @@ export class ScriptRuntime implements VmHost {
    * default processing only if asked. Returns true, as the game's does for an activation it
    * took.
    *
-   * A Parent Activate Only reference (XAPD bit 0) takes a script's Activate only from one of
-   * its activate parents (XAPR): any other activator is refused, without OnActivate or default
-   * processing, and Activate returns false. Inferred from the data: every vanilla script that
-   * activates such a reference names its parent as the activator, often through a property
-   * that exists for nothing else (highGateRuinsLeverPuzzle's openMarker on a door with no
-   * scripts, bwcStatuePuzzle's doorMarker, soljundMasterScript's portMarker,
-   * dunBluePalaceSkeeverGateSCRIPT's doorOpen, defaultPillarPuzzleLever's and
-   * dunSkuldafnPuzzleControlSCRIPT's puzzleDoorActivator, dunKarthspirePillarPuzzle's
-   * controllerScript, highGateRuinsIanusuSCRIPT's opener); none names another.
-   * TODO(M13): whether abDefaultProcessingOnly passes the check (refused here too).
+   * A Parent Activate Only reference (XAPD bit 0) takes a script's Activate by any activator,
+   * as any other reference does (the crosshair and actors walking by are kept from it
+   * elsewhere: play-session.ts, actor-doors.ts). The vanilla scripts that activate such a
+   * reference name one of its activate parents (the puzzles' openMarker, doorMarker,
+   * portMarker, puzzleDoorActivator) or the reference itself: DLC2ApoBook3SeekerDoorScript's
+   * CheckDead has Apocrypha's seeker gates in DLC2Book03Dungeon open themselves
+   * (self.Activate(self)) once their room's seekers are dead, and TrapTriggerBase has trap
+   * linkers with Parent Activate Only (Dustman's Cairn's end controller, a lever's linker with
+   * 13 such children) activate themselves to set off their children. So a rule that took only
+   * a parent's Activate would shut those gates for good. TODO(M13): inferred; whether the
+   * engine refuses one by an activator that is neither a parent nor the reference itself is
+   * not known, so none is refused. The AI's, a follower's and the pilot's activations come
+   * through here too.
    */
-  async activate(
+  activate(
     reference: number,
     activator: number | undefined,
     defaultOnly: boolean,
   ): Promise<boolean> {
-    if (!(await this.#scriptMayActivate(reference, activator))) return false;
     this.activateRef(reference, activator, { defaultOnly });
-    return true;
-  }
-
-  /** Whether a script's Activate of a reference by an activator is taken (Parent Activate Only). */
-  async #scriptMayActivate(reference: number, activator: number | undefined): Promise<boolean> {
-    const record = await this.forms.record(reference);
-    if (((record?.fields.first('XAPD')?.[0] ?? 0) & 1) === 0) return true;
-    return activator !== undefined && (await this.activateParents(reference)).includes(activator);
+    return Promise.resolve(true);
   }
 
   /**
