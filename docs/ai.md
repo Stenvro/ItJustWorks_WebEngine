@@ -2938,7 +2938,14 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   Selector with Boost Confidence last): down, its back to the enemy, weighing each half second:
   the enemy within fCombatHideFailedTargetDistance of it out of sight, or in sight
   fCombatHideFailedTargetLOSDistance fCombatAnticipateTime ahead, or a blow since it began ends the
-  hide, and Boost Confidence turns it to fight. TODO(M13): the Hide behaviour's own time limit.
+  hide, and Boost Confidence turns it to fight. Down, it sneaks: its enemies' detection weighs it
+  as sneaking, and an enemy group that loses it searches for it. Its enemy looking its way finds it
+  too: within its view cone (fDetectionViewCone) with nothing between, out to
+  fCombatHideCheckViewConeDistanceMax straight ahead, falling to fCombatHideCheckViewConeDistanceMin
+  at the cone's edge (`hideSpottedDistance`; inferred from the settings' names, TODO(M13): the
+  original's scale between the two). TODO(M13): the Hide behaviour's own time limit (ours: the hide
+  lasts until it is found, or until its fight ends as its group gives up an enemy it lost, after
+  fCombatDetectionFleeingLostRemoveTime while all of it flees).
   Else away (fFleeDistance\*), cowering where it can go no farther.
 - **Flanking Movement** (Stalk, then the Flank Selector: Flank, Chase, Flank Distant, Watch
   Target): far off the chase; else the maneuver (flank or stalk), out of range Flank Distant

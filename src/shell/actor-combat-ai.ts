@@ -3169,8 +3169,9 @@ export class ActorCombatAi {
   /**
    * The hide after Flee To Cover (Hide Parallel: Track Target, Turn Around, the Hide Selector with
    * Boost Confidence last; observed in the original): its back to its enemy it stays down until
-   * the enemy comes near or engages it (hideFails, weighed each half second); then Boost
-   * Confidence: it turns and fights.
+   * the enemy comes near, engages it or, looking its way, finds it (hideFails, weighed each half
+   * second); then Boost Confidence: it turns and fights. Down, it sneaks: its enemies' detection
+   * weighs it so.
    */
   #hide(f: CombatFrame): Status {
     const mind = f.mind;
@@ -3191,7 +3192,16 @@ export class ActorCombatAi {
       f.there[1] + target[1] * anticipate,
       f.there[2],
     ];
-    const sees = this.#options.senses?.()?.sees(mind.reference, f.there) ?? false;
+    const senses = this.#options.senses?.();
+    const sees = senses?.sees(mind.reference, f.there) ?? false;
+    // Its enemy's eyes: the way it faces against the way to the hider, and the line between.
+    const enemy = f.target.feet;
+    const watched = senses &&
+      enemy && {
+        offAngle: turnBetween(f.target.heading, headingTo(enemy, f.feet)),
+        halfCone: (senses.settings.viewCone * Math.PI) / 360,
+        clear: senses.sees(f.target.reference, f.feet),
+      };
     if (
       !hideFails(
         {
@@ -3200,6 +3210,7 @@ export class ActorCombatAi {
           radii: 2 * HIDE_RADIUS,
           sees,
           engagedSince: mind.engagedAt > mind.hideSince,
+          watched,
         },
         this.#subtrees,
       )
