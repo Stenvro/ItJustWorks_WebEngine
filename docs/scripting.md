@@ -826,6 +826,35 @@ what lets it go is not known. Observed in the original: no code reads fLockTrapG
 fLockTrapGoOffMult, so a failed pick sets no trap off. fProjectileKnockMultTrap and
 fGameplayImpulseMultTrap are the pushed body's: what is on L_TRAP takes less of a blow.
 
+### The sources no script hears
+
+Every source of ScriptEventSourceHolder (CommonLibSSE) has a hub kind; these have no Papyrus event
+and are told for the engine's own sinks (and a plugin's), each where it happens
+(`tests/conformance/scripting/event-sources.test.ts`). All but what CommonLibSSE gives (the
+payloads of TESInitScriptEvent, TESFormDeleteEvent, TESResolveNPCTemplatesEvent and
+TESUniqueIDChangeEvent) is inferred, TODO(M13):
+
+- `eventProcessed` (BGSEventProcessedEvent): the story manager's turn for an event ends; its type
+  and the quests it started.
+- `cellReadyToApplyDecals` (TESCellReadyToApplyDecalsEvent): as a cell attaches, after its
+  references' OnLoad and before `cellFullyLoaded`; both now name the cell (the view says which).
+- `initScript` (TESInitScriptEvent): a reference's scripts ran OnInit (as its cell first attaches,
+  as a script makes it, the persistent ones at the game's start); none for one without scripts.
+- `formDelete` (TESFormDeleteEvent): a created reference deleted, once; a plugin's reference only
+  takes the deleted flag. The original deletes the form once nothing holds it and its VM lets go of
+  the form's script instances; ours tells it at the Delete and keeps them.
+- `questStageItemDone` (TESQuestStageItemDoneEvent): each log entry of a stage set whose conditions
+  held, once its fragment has run (at once without one), after `questStage`.
+- `resolveNpcTemplates` (TESResolveNPCTemplatesEvent): the NPC_ placed for an actor takes a part
+  from a template; once per NPC_, the first time an actor of it is made.
+- `uniqueIdChange` (TESUniqueIDChangeEvent, `unique-ids.ts`): an item with a reference of its own
+  gets an id in each inventory it goes into (the original's ExtraUniqueID, per inventory with its
+  holder): the holders and ids before and after. Ours counts on from the holder's highest.
+
+The stats' singleton sources BooksRead (the player's first read of a book, told from
+`bookRead`) and ChestsLooted (the container menu's first take of an opening) are hub kinds too,
+`booksRead` and `chestsLooted`, which the stats' relay counts.
+
 ## Story manager
 
 `story-manager.ts`, after the Creation Kit's "Story Manager" and "SM Event Node" pages: an
