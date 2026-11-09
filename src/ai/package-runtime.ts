@@ -178,9 +178,16 @@ export interface PackageMind {
   linked(reference: number, keyword: number): Promise<number | undefined>;
   /**
    * The free furniture and idle markers within a radius of a point that the actor may use
-   * (those not ignored by sandboxing; a child's only where children may).
+   * (those not ignored by sandboxing; a child's only where children may). With `space`, only
+   * those in that cell or worldspace (interiors' coordinates overlap: furniture near the same
+   * point in another cell is not there).
    */
-  around(center: Vec3, radius: number, actor: number): Promise<readonly SandboxSpot[]>;
+  around(
+    center: Vec3,
+    radius: number,
+    actor: number,
+    space?: Space,
+  ): Promise<readonly SandboxSpot[]>;
   /** An idle marker's idles and place (undefined: no idle marker). */
   idleMarker(reference: number): Promise<IdleMarkerPlace | undefined>;
   /**

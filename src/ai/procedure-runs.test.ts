@@ -804,3 +804,73 @@ describe('a sandbox after a load', () => {
     expect(fresh[0]?.began).toBe(10.5);
   });
 });
+
+describe('a sandbox whose place is in another cell', () => {
+  // Interiors' coordinates overlap: the solar's chair (0x610) stands near the point of the
+  // sandbox's place in the dungeon, where its own chair (0x620) is.
+  const SOLAR: Space = { kind: 'interior', cell: 0x7dcfc };
+  const DUNGEON: Space = { kind: 'interior', cell: 0x362d8 };
+  const SOLAR_CHAIR = 0x610;
+  const DUNGEON_CHAIR = 0x620;
+  const name = (space: Space | undefined): string =>
+    space === undefined ? 'its own' : space === SOLAR ? 'the solar' : 'the dungeon';
+  /** Without wandering (slot 6): its only spot is a chair. */
+  const noWander: PackageInput = { id: 6, type: 'Bool', value: { kind: 'bool', value: false } };
+
+  /**
+   * A sandbox at [5000, 0, 0] in `placeSpace` for an actor that starts in the solar; its travels
+   * take it into the space they lead to. Its scans find the loaded area's chair: the one of the
+   * cell it stands in (none when it asks for another cell's). What it did, in order.
+   */
+  async function sandboxIn(placeSpace: Space): Promise<string[]> {
+    let here: Space = SOLAR;
+    const log: string[] = [];
+    const { run, done } = harness(undefined, 20, (to, space) => {
+      log.push(`travel ${String(to[0])} in ${name(space)}`);
+      if (space) here = space;
+      return Promise.resolve(true);
+    });
+    await run('Sandbox', [0, 255, 255, 255, 255, 255, 6], [NEAR_HOME, noWander], {
+      day: () => 0,
+      time: () => ({ hour: 10, dayOfWeek: 0, month: 0, date: 1 }),
+      placement: () => Promise.resolve({ position: [0, 0, 0] as const, heading: 0, space: here }),
+      place: (location) =>
+        Promise.resolve({
+          position: [5000, 0, 0] as const,
+          radius: location.radius,
+          reference: 0x500,
+          space: placeSpace,
+        }),
+      around: (_center, _radius, _actor, space) => {
+        log.push(`scan from ${name(here)} for ${name(space)}`);
+        if (space && space !== here) return Promise.resolve([]);
+        const chair = here === SOLAR ? SOLAR_CHAIR : DUNGEON_CHAIR;
+        return Promise.resolve([
+          { reference: chair, kind: 'sit' as const, position: [5100, 0, 0] as const },
+        ]);
+      },
+    });
+    return [...log, ...done.filter((entry) => entry.startsWith('use'))];
+  }
+
+  it("goes there first and takes its spots from its place's own cell", async () => {
+    const log = await sandboxIn(DUNGEON);
+    expect(log[0]).toBe('travel 5000 in the dungeon');
+    expect(log.filter((entry) => entry.startsWith('scan from the solar'))).toEqual([]);
+    expect(log).toContain('scan from the dungeon for the dungeon');
+    expect(log.filter((entry) => entry.startsWith('use'))).toEqual([
+      `use ${DUNGEON_CHAIR.toString(16)}`,
+    ]);
+  });
+
+  it('in its own cell it scans first, then goes into its place, as before', async () => {
+    const log = await sandboxIn(SOLAR);
+    // (Whether its scan names its cell or none, it is the cell it stands in.)
+    expect(log[0]?.startsWith('scan from the solar for')).toBe(true);
+    expect(log[0]).not.toBe('scan from the solar for the dungeon');
+    expect(log[1]).toBe('travel 5000 in the solar');
+    expect(log.filter((entry) => entry.startsWith('use'))).toEqual([
+      `use ${SOLAR_CHAIR.toString(16)}`,
+    ]);
+  });
+});
