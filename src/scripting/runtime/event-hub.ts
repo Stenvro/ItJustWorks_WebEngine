@@ -188,10 +188,15 @@ export interface GameEvents {
   /** A reference's 3D attached to or detached from a cell (TESMoveAttachDetachEvent). */
   moveAttachDetach: { readonly reference: number; readonly attached: boolean };
   /**
-   * The music system's track changed (BSMusicEvent): the music type playing and its track now
-   * (none: silence, between tracks or with no music in play).
+   * A message the music system took about a music type (BSMusicEvent: the type, the message:
+   * MUSIC_MESSAGE_TYPE add, remove, remove at once, pause, unpause). TODO(M13): inferred, the
+   * music system tells on the messages it took (Music.listeners); pause and unpause are not
+   * told yet, nothing here pauses the music.
    */
-  music: { readonly type: number | undefined; readonly track: number | undefined };
+  music: {
+    readonly type: number;
+    readonly message: 'add' | 'remove' | 'removeImmediate' | 'pause' | 'unpause';
+  };
   /** A reference's 3D loaded or unloaded (TESObjectLoadedEvent). */
   objectLoaded: { readonly reference: number; readonly loaded: boolean };
   /**
@@ -247,8 +252,13 @@ export interface GameEvents {
   questInit: { readonly quest: number };
   /** A quest's stage was set (TESQuestStageEvent). */
   questStage: { readonly quest: number; readonly stage: number };
-  /** A quest was completed (QuestStatus: `completed`), or a completed quest reset (not). */
-  questStatus: { readonly quest: number; readonly completed: boolean };
+  /**
+   * A quest's status (QuestStatus: kCompleted, kStarted, kReseted): completed (once, CompleteQuest
+   * or a log entry's flag), started (each time it starts running, beside questStartStop) or reset
+   * (Quest.Reset, told before its progress is cleared: a listener still sees whether it was
+   * completed). TODO(M13): when the original tells `started` and `reset` is inferred.
+   */
+  questStatus: { readonly quest: number; readonly status: 'completed' | 'started' | 'reset' };
   /** A quest started or stopped (TESQuestStartStopEvent). */
   questStartStop: { readonly quest: number; readonly started: boolean };
   /** A reference was reset with its cell (TESResetEvent). */

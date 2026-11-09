@@ -23,9 +23,10 @@
 // Its other handlers (observed in the original), counted here: the player's gold going up
 // (InventoryToMiscStat) adds the rise to Gold Found, whatever brings it (loot, a sale, a
 // reward); a quest completed (QuestStatus) counts in Quests Completed and in its type's stat
-// (questTypeStats), a completed quest reset takes both back, a miscellaneous quest (type 6)
-// counts in neither; a shown objective of a miscellaneous quest completed (ObjectiveState: to
-// completed-and-shown) counts in Misc Objectives Completed; each hour waited counts in Hours
+// (questTypeStats), a completed quest reset takes both back (TODO(M13): inferred, QuestStatus
+// also tells a reset of a quest never completed, and a start, which count nothing), a
+// miscellaneous quest (type 6) counts in neither; a shown objective of a miscellaneous quest
+// completed (ObjectiveState: to completed-and-shown) counts in Misc Objectives Completed; each hour waited counts in Hours
 // Waiting (HoursPassed, as each hour slept counts in Hours Slept); each day passing
 // (DaysPassed) counts in Days as a Vampire and Days as a Werewolf while the default objects'
 // globals PlayerIsVampire (PIVV) and PlayerIsWerewolf (PIWV) are not 0. Side quests (type 8)
@@ -375,9 +376,14 @@ export function relayStatEvents(runtime: ScriptRuntime): () => void {
     runtime.events.on('locksPicked', () => {
       runtime.incrementStat('Locks Picked');
     }),
-    runtime.events.on('questStatus', (event) =>
-      countQuestStatus(runtime, event.quest, event.completed ? 1 : -1),
-    ),
+    runtime.events.on('questStatus', (event) => {
+      // A start counts nothing. A reset is told before the quest's completion is cleared: only
+      // a completed quest's reset is taken back (TODO(M13): taking it back is inferred).
+      if (event.status === 'completed') return countQuestStatus(runtime, event.quest, 1);
+      if (event.status === 'reset' && runtime.state.quests.get(event.quest)?.completed === true)
+        return countQuestStatus(runtime, event.quest, -1);
+      return undefined;
+    }),
     runtime.events.on('skillIncrease', () => {
       runtime.incrementStat('Skill Increases');
     }),

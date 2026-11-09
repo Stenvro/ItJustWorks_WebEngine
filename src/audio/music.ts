@@ -73,10 +73,18 @@ export interface MusicSettings {
   readonly finaleFadeOut: number;
 }
 
-/** The music's track changed (BSMusicEvent): the type playing and its track (none: silence). */
-export interface MusicChange {
-  readonly type: number | undefined;
-  readonly track: number | undefined;
+/**
+ * What a music message asks of a music type (BSMusicEvent's MUSIC_MESSAGE_TYPE): add it to the
+ * types in play, remove it (it finishes as its fade and finale allow), remove it at once, pause
+ * it or go on with it.
+ */
+export type MusicMessage = 'add' | 'remove' | 'removeImmediate' | 'pause' | 'unpause';
+
+/** A message to the music system about one music type (BSMusicEvent: the type, the message). */
+export interface MusicEvent {
+  /** The music type (MUSC). */
+  readonly type: number;
+  readonly message: MusicMessage;
 }
 
 /** What is playing (development tools show it). */
@@ -131,12 +139,18 @@ export class Music {
   /** Ducked types coming back up once the music that ducked them has fallen silent. */
   #unducking: { readonly run: TypeRun; readonly after: TypeRun; readonly seconds: number }[] = [];
   /**
-   * Told as the music changes track (BSMusicEvent): the type now playing and its track (none:
-   * silence: between its tracks, or no type in play), after the frame's update made the change.
+   * Told each message the music system takes about a music type (BSMusicEvent), once it has
+   * acted on it: a type added (MusicType.Add, combat, a discovery, the level-up and skills
+   * menus) or the location's type coming into play, a type removed (MusicType.Remove, combat's
+   * end, a Plays One Selection type's track ending, the location's type left behind), every
+   * type in play removed at once as the music stops.
+   * TODO(M13): inferred. In the original the music manager is the event's sink and the messages
+   * are sent to it (the movie player's pause and unpause are the listed source); here the music
+   * system tells on the messages it took. Whether the location's music goes through the same
+   * messages is inferred, and pause and unpause are never told: nothing here pauses the music
+   * (the original's movie player plays no movie in game here).
    */
-  readonly listeners = new Set<(change: MusicChange) => void>();
-  /** The type and track last told. */
-  #told: MusicChange = { type: undefined, track: undefined };
+  readonly listeners = new Set<(event: MusicEvent) => void>();
 
   constructor(output: MusicOutput, settings: MusicSettings, random: () => number = Math.random) {
     this.#output = output;
@@ -147,7 +161,11 @@ export class Music {
   /** The location's music type (undefined: none). */
   setLocation(formId: number | undefined): void {
     if (formId !== undefined) this.#type(formId);
+    const left = this.#location;
     this.#location = formId;
+    if (left === formId) return;
+    if (left !== undefined) this.#tell(left, 'remove');
+    if (formId !== undefined) this.#tell(formId, 'add');
   }
 
   /** Adds a music type to those in play (MusicType.Add). */
@@ -155,11 +173,19 @@ export class Music {
     this.#added = this.#added.filter((id) => id !== formId);
     this.#added.push(formId);
     this.#type(formId);
+    this.#tell(formId, 'add');
   }
 
   /** Removes a music type (MusicType.Remove). */
   remove(formId: number): void {
     this.#added = this.#added.filter((id) => id !== formId);
+    this.#tell(formId, 'remove');
+  }
+
+  /** The listeners hear a message the music system took about a music type. */
+  #tell(type: number, message: MusicMessage): void {
+    const event: MusicEvent = { type, message };
+    for (const listener of [...this.listeners]) listener(event);
   }
 
   get state(): MusicState {
@@ -235,20 +261,13 @@ export class Music {
         this.remove(current.type.formId);
       }
     }
-    this.#tellChange();
-  }
-
-  /** A track other than the one last told plays now (or none does): the listeners hear it. */
-  #tellChange(): void {
-    const type = this.#current?.type.formId;
-    const track = this.#current?.track?.track.formId;
-    if (type === this.#told.type && track === this.#told.track) return;
-    this.#told = { type, track };
-    for (const listener of [...this.listeners]) listener(this.#told);
   }
 
   /** Stops all music at once (leaving the game). */
   stop(): void {
+    // Every type in play is removed at once (the location's, then those added, oldest first).
+    const inPlay = new Set(this.#location === undefined ? [] : [this.#location]);
+    for (const type of this.#added) inPlay.add(type);
     for (const run of [this.#current, ...this.#ducked, ...this.#leaving]) {
       run?.stopNow();
       run?.bus.dispose();
@@ -259,7 +278,7 @@ export class Music {
     this.#unducking = [];
     this.#added = [];
     this.#location = undefined;
-    this.#tellChange();
+    for (const type of inPlay) this.#tell(type, 'removeImmediate');
   }
 
   /** The type that should play: the most important in play (types still loading wait). */

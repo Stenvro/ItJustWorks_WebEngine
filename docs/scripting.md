@@ -766,8 +766,11 @@ QUEST_OBJECTIVE_STATE 0 to 5, the Quest natives; TODO(M13): the state is inferre
 flags, failed winning over completed and a hidden objective keeping its completion. Misc
 Objectives Completed is not counted from it but where SetObjectiveCompleted turns a shown
 objective's completion on, a failed one's too, so a completed objective hidden and shown again
-is not counted twice), `questStatus` (a quest completed, or a
-completed quest reset, `quests.ts`), `skillIncrease` (each skill level the player gains),
+is not counted twice), `questStatus` (QuestStatus: completed, started, reset: `quests.ts`; a quest's
+completion is told once, a start each time it starts running, a reset by every Quest.Reset
+before its progress is cleared; the stats count a completion and take a completed quest's
+reset back. TODO(M13): when the original tells started and reset, and the stats taking a reset
+back, are inferred; the reset a non-run-once quest makes as it starts tells no reset), `skillIncrease` (each skill level the player gains),
 `soulsTrapped` (any trapper's catch; the player's counts) and `spellsLearned` (the player's new
 spell, not a power or a shout's word); `dragonSoulGained`, `shoutAttack` and `locationCleared` as
 before. Nirnroots Found and Wings Plucked are the scripts' own counts (NirnrootACTIVATORScript,
@@ -782,8 +785,14 @@ it, `post` and `finish` once they stand on its ground: `PlaySession`; TODO(M13):
 two phases around the packages' update between them are not told, and what parts `post` from
 `finish` is inferred). Besides them `beamImpact` (BeamProjectileImpactEvent: a beam projectile,
 Sparks or Lightning Bolt, that met an actor or a surface, as its impact is about to act:
-`magic-projectiles.ts`) and `music` (BSMusicEvent: the music system's track changing, the type
-playing and its track, none for silence: `Music.listeners`, relayed by the session).
+`magic-projectiles.ts`) and `music` (BSMusicEvent: a music type and the message about it, add, remove, remove at
+once, pause or unpause: `Music.listeners`, relayed by the session; a type added or removed by
+MusicType.Add / Remove, combat, a discovery and the menus, a Plays One Selection type
+removing itself, the location's type coming into and out of play, every type in play removed
+at once as the music stops; a track change is no message. TODO(M13): inferred, the original's
+music manager is the event's sink and the movie player its listed source; here the music
+system tells on the messages it took, the location's music through them is inferred, and pause
+and unpause are not told: nothing here pauses the music).
 
 `tools/script-events.ts` lists each event's declarations in the base scripts and the scripts
 of the load order that handle it. `PapyrusVm.handled` (debugging) hears every handler that

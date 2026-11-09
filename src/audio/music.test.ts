@@ -386,6 +386,40 @@ describe('music', () => {
     expect(output.playing('next.wav')).toBeDefined();
   });
 
+  it('tells each message it takes about a music type (BSMusicEvent): the type and the message', async () => {
+    const output = new FakeOutput();
+    explore(output);
+    output.types.set(
+      0x50,
+      type(0x50, { priority: 3, flags: MusicTypeFlag.playsOneSelection, tracks: [8] }),
+    );
+    output.tracks.set(8, track(8, { file: 'discover.wav' }));
+    output.files.set('discover.wav', 4);
+    output.types.set(0x70, type(0x70, { tracks: [8] }));
+    const music = new Music(output, SETTINGS, () => 0.99);
+    const told: string[] = [];
+    music.listeners.add((event) => told.push(`${event.type.toString(16)} ${event.message}`));
+    // The location's type comes into play once, however often it is set.
+    music.setLocation(0x10);
+    music.setLocation(0x10);
+    await run(music, output, 1);
+    // A Plays One Selection type removes itself as its one track ends; no track change is told.
+    music.add(0x50);
+    await run(music, output, 8);
+    expect(told).toEqual(['10 add', '50 add', '50 remove']);
+    // Another location: the one left is removed. Stopping removes every type in play at once.
+    music.setLocation(0x70);
+    music.add(0x50);
+    music.stop();
+    expect(told.slice(3)).toEqual([
+      '10 remove',
+      '70 add',
+      '50 add',
+      '70 removeImmediate',
+      '50 removeImmediate',
+    ]);
+  });
+
   it('fades a type without a fade duration out over 4 s', async () => {
     const output = new FakeOutput();
     output.types.set(0x72, type(0x72, { tracks: [15] }));

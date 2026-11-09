@@ -1589,9 +1589,9 @@ export class GameSession {
       };
       sounds.powerAttacking = () =>
         this.scriptsReady?.world.combat?.(PLAYER_REF)?.powerAttacking === true;
-      // The music's track changes are told on the game's hub (BSMusicEvent).
-      sounds.music.listeners.add((change) => {
-        this.scriptsReady?.events.emit('music', change);
+      // The messages the music system takes are told on the game's hub (BSMusicEvent).
+      sounds.music.listeners.add((event) => {
+        this.scriptsReady?.events.emit('music', event);
       });
       this.soundSystem = sounds;
       return sounds;

@@ -22,7 +22,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   Music,
   type MusicBus,
-  type MusicChange,
+  type MusicEvent,
   type MusicOutput,
 } from '../../../src/audio/music.ts';
 import type { SoundConditionContext } from '../../../src/audio/sound-conditions.ts';
@@ -351,7 +351,7 @@ describe('the event sources and the hub', () => {
       // A quest completed is told once: Quests Completed and its type's stat.
       game.quests.complete(main);
       game.quests.complete(main);
-      expect(statuses).toEqual([{ quest: main, completed: true }]);
+      expect(statuses).toEqual([{ quest: main, status: 'completed' }]);
       await vi.waitFor(() => {
         expect(stat(game, 'Main Quests Completed')).toBe(1);
       });
@@ -396,13 +396,34 @@ describe('the event sources and the hub', () => {
       game.quests.complete(misc);
       await game.quests.reset(main);
       expect(statuses.slice(1)).toEqual([
-        { quest: misc, completed: true },
-        { quest: main, completed: false },
+        { quest: misc, status: 'completed' },
+        { quest: main, status: 'reset' },
       ]);
       await vi.waitFor(() => {
         expect(stat(game, 'Main Quests Completed')).toBe(0);
       });
       expect(stat(game, 'Quests Completed')).toBe(0);
+      // A quest never completed is reset too (QuestStatus kReseted), and takes nothing back; one
+      // that starts tells it started (kStarted; TODO(M13): told as it starts running, inferred).
+      game.quests.complete(main);
+      await vi.waitFor(() => {
+        expect(stat(game, 'Quests Completed')).toBe(1);
+      });
+      const other = await questOfType(game, 1, main);
+      await game.quests.reset(other);
+      expect(statuses.slice(3)).toEqual([
+        { quest: main, status: 'completed' },
+        { quest: other, status: 'reset' },
+      ]);
+      await game.forms.quest(other);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(stat(game, 'Quests Completed')).toBe(1);
+      expect(stat(game, 'Main Quests Completed')).toBe(1);
+      const plain = await startableQuest(game);
+      expect(await game.quests.start(plain)).toBe(true);
+      expect(statuses.filter((status) => status.quest === plain)).toEqual([
+        { quest: plain, status: 'started' },
+      ]);
     },
   );
   withGame('ShoutAttack: Times Shouted  [CommonLibSSE, UESP]', async (game) => {
@@ -557,21 +578,33 @@ describe('the event sources and the hub', () => {
       expect(tellsBeamImpact({ type: ProjectileType.beam })).toBe(true);
     },
   );
-  it('BSMusicEvent: the music system’s track changes  [original]', async () => {
-    const changes: MusicChange[] = [];
+  it('BSMusicEvent: a music type and the message about it  [CommonLibSSE]', async () => {
+    // BSMusicEvent is { musicType, msgType: add, remove, remove immediately, pause, unpause }.
+    // TODO(M13): the music system telling the messages it took is inferred (the original's music
+    // manager is the event's sink); pause and unpause are not told, nothing here pauses music.
     const music = syntheticMusic();
-    music.listeners.add((change) => changes.push(change));
+    const hub = new EventHub();
+    music.listeners.add((event) => {
+      hub.emit('music', event);
+    });
+    const told: GameEvents['music'][] = [];
+    hub.on('music', (event) => {
+      told.push(event);
+    });
     music.add(EXPLORE);
-    await playMusic(music, 0, 2);
-    // The type begins with its first track, then plays its second; dropped, nothing plays.
-    expect(changes).toEqual([{ type: EXPLORE, track: FIRST_TRACK }]);
-    await playMusic(music, 2, 12);
-    expect(changes.at(-1)).toEqual({ type: EXPLORE, track: SECOND_TRACK });
+    await playMusic(music, 0, 12);
+    // Its tracks change (the first, then the second) with no message: only the add was told.
+    expect(music.state.track).toBe(SECOND_TRACK);
+    expect(told).toEqual([{ type: EXPLORE, message: 'add' }]);
     music.remove(EXPLORE);
-    await playMusic(music, 12, 13);
-    expect(changes.at(-1)).toEqual({ type: undefined, track: undefined });
-    // A change is told once.
-    expect(changes).toHaveLength(3);
+    music.add(EXPLORE);
+    music.stop();
+    const expected: MusicEvent[] = [
+      { type: EXPLORE, message: 'remove' },
+      { type: EXPLORE, message: 'add' },
+      { type: EXPLORE, message: 'removeImmediate' },
+    ];
+    expect(told.slice(1)).toEqual(expected);
   }, 30_000);
   withGame(
     'MenuOpenCloseEvent, MenuModeChangeEvent: menus open and close  [CommonLibSSE]',
@@ -788,9 +821,20 @@ function stat(game: ScriptRuntime, name: string): number {
   return game.stats.get(name.toLowerCase()) ?? 0;
 }
 
-/** The first quest of a type (QUST DNAM) that may be reset (not run once). */
-async function questOfType(game: ScriptRuntime, type: number): Promise<number> {
+/** A quest a script may start: no story manager event, no aliases to fill, not running. */
+async function startableQuest(game: ScriptRuntime): Promise<number> {
   for (const formId of game.forms.db.formIdsOfType('QUST')) {
+    const quest = await game.forms.quest(formId);
+    if (!quest || quest.event !== undefined || quest.aliases.length > 0) continue;
+    if (!game.quests.isRunning(formId)) return formId;
+  }
+  throw new Error('no quest a script may start');
+}
+
+/** The first quest of a type (QUST DNAM) that may be reset (not run once), other than `not`. */
+async function questOfType(game: ScriptRuntime, type: number, not?: number): Promise<number> {
+  for (const formId of game.forms.db.formIdsOfType('QUST')) {
+    if (formId === not) continue;
     const quest = await game.forms.quest(formId);
     if (quest?.type === type && (quest.flags & QuestFlag.runOnce) === 0) return formId;
   }

@@ -915,7 +915,7 @@ sales, rewards); Chests Looted the first item taken from a container that is not
 opening of the container menu; Barters each buy or sale; Quests Completed every completed quest
 but a miscellaneous one (type 6), with its type's own stat (Main, College, Thieves' Guild, Dark
 Brotherhood, Companions, Daedric, Civil War, Dawnguard, Dragonborn; a completed quest reset takes
-them back); Misc Objectives Completed a shown objective of a miscellaneous quest completed; Hours
+them back, TODO(M13): inferred); Misc Objectives Completed a shown objective of a miscellaneous quest completed; Hours
 Waiting each hour waited; Days as a Vampire / Werewolf each day passing while the PlayerIsVampire /
 PlayerIsWerewolf globals (default objects PIVV, PIWV) are set; Bunnies Slaughtered a kill in the
 Bunny Faction (AWWW); Mauls a kill while Game.SetBeastForm's flag is set (the werewolf and the
