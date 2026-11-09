@@ -837,6 +837,12 @@ const JOINT_FRICTION_GAIN = 1000;
 const MAX_CONSTRAINT_VIOLATION = 0.05;
 /** A clipped pivot is moved again only when it moves by more than this (Havok units). */
 const CLIP_CHANGE = 1e-3;
+/**
+ * A chain link's anchor held at its chain's damped error (#dampChains) is moved again only when
+ * it moves by more than this (Havok units): a tenth of what a vanilla chain (damping 0.6) leaves
+ * a link at rest under gravity, so that what hangs still can sleep.
+ */
+const DAMP_CHANGE = 1e-5;
 
 /** `v` turned by the unit quaternion `q`. */
 function rotateVector(q: RAPIER.Rotation, v: RAPIER.Vector): RAPIER.Vector {
@@ -1104,6 +1110,16 @@ export class PhysicsWorld {
       readonly most: number;
       readonly rest: number;
     }
+  >();
+  /**
+   * The links of each placed chain (bhkBallSocketConstraintChain), by link: one array a placed
+   * chain, in its links' order (#dampChains).
+   */
+  readonly #chainLinks = new Map<PlacedJoint, PlacedJoint[]>();
+  /** A chain link's second anchor as #dampChains last set it, and the joint it was set on. */
+  readonly #damped = new Map<
+    PlacedJoint,
+    { readonly joint: RAPIER.ImpulseJoint; readonly anchor: RAPIER.Vector }
   >();
   /** The joints whose limits are eased back to them, with their bounds now (#easeLimits). */
   readonly #easing = new Map<PlacedJoint, readonly number[]>();
@@ -1585,6 +1601,16 @@ export class PhysicsWorld {
       }
       if (constraint.breakable) this.#breakable.add(placed);
     }
+    // A chain's links, solved as one (#dampChains).
+    const chains = new Map<NonNullable<CollisionConstraint['chain']>, PlacedJoint[]>();
+    for (const joint of joints) {
+      const chain = joint.constraint.chain;
+      if (!chain) continue;
+      let links = chains.get(chain);
+      if (!links) chains.set(chain, (links = []));
+      links.push(joint);
+      this.#chainLinks.set(joint, links);
+    }
     this.#changed = true;
     const placed = new PlacedCollision(owner, bodies, colliders, scale, [], joints);
     if (settle && isHung(placed)) this.#checkHung(placed);
@@ -1786,6 +1812,8 @@ export class PhysicsWorld {
     this.#easing.delete(placed);
     this.#clipped.delete(placed);
     this.#linksClipped.delete(placed);
+    this.#chainLinks.delete(placed);
+    this.#damped.delete(placed);
     this.#solverJoints.delete(placed);
     for (const { body } of [placed.a, placed.b]) {
       const list = this.#jointsOf.get(body.handle);
@@ -2332,6 +2360,7 @@ export class PhysicsWorld {
       this.#recordVelocities();
       if (this.#solverJoints.size > 0) this.#solveJoints();
       if (this.#linksClipped.size > 0) this.#clipLinks();
+      if (this.#chainLinks.size > 0) this.#dampChains();
       if (this.#breakable.size > 0) this.#solveBreakable();
       this.world.step(this.#events, this.#hooks);
       this.#changed = false;
@@ -2417,6 +2446,143 @@ export class PhysicsWorld {
         most,
         rest,
       );
+    }
+  }
+
+  /**
+   * A chain's damping (bhkBallSocketConstraintChain damping, 0.6 in every chain of the data):
+   * Havok solves a chain's links as one block, each iteration taking `damping` of the way from
+   * their pivots' relative velocity to the one that closes `tau` of their error, so the step's
+   * iterations leave (1 − damping)^iterations of it, and their pivots end the step that far apart
+   * (joint-impulses.ts, groupImpulses). Rapier's joints close all of it. Before the step, each
+   * link's error by the end of the step is solved as Havok's solver leaves it, from the bodies'
+   * velocities (gravity's of the step added) and the error the link has now, and the link's
+   * second anchor is moved by it, so that Rapier holds the pivots that far apart: a vanilla
+   * chain's links hanging still keep about 7e-5 Havok units (0.005 game units) between their
+   * pivots, more as it swings. A link past its maxErrorDistance is clipped instead
+   * (#clipViolation). TODO(M13): inferred from Havok's documented solver; the chain is solved
+   * on its own here, not with the other constraints of its island.
+   */
+  #dampChains(): void {
+    const gravity = this.world.gravity;
+    const done = new Set<PlacedJoint[]>();
+    const awake = (body: RAPIER.RigidBody): boolean => body.isDynamic() && !body.isSleeping();
+    for (const links of this.#chainLinks.values()) {
+      if (done.has(links)) continue;
+      done.add(links);
+      const live: PlacedJoint[] = [];
+      for (const link of links) {
+        if (!this.#chainLinks.has(link) || !link.joint?.isValid()) continue;
+        if (this.#clipped.has(link)) this.#damped.delete(link);
+        else live.push(link);
+      }
+      if (!live.some(({ a, b }) => awake(a.body) || awake(b.body))) continue;
+      // A body made a moment ago has no mass yet (Rapier computes it as it steps).
+      if (
+        live.some(({ a, b }) =>
+          [a, b].some(({ body }) => body.isDynamic() && !(body.invMass() > 0)),
+        )
+      )
+        continue;
+      const index = new Map<number, number>();
+      const bodies: ImpulseBody[] = [];
+      const indexOf = ({ body, data }: PlacedBody): number => {
+        const known = index.get(body.handle);
+        if (known !== undefined) return known;
+        const v = body.linvel();
+        const w = body.angvel();
+        if (body.isDynamic()) {
+          const m = body.effectiveWorldInvInertia();
+          const g = data.gravityFactor * this.#size;
+          bodies.push({
+            invMass: body.invMass(),
+            invInertia: [m.m11, m.m12, m.m13, m.m22, m.m23, m.m33],
+            linear: [v.x + gravity.x * g, v.y + gravity.y * g, v.z + gravity.z * g],
+            angular: [w.x, w.y, w.z],
+          });
+        } else {
+          bodies.push({
+            invMass: 0,
+            invInertia: [0, 0, 0, 0, 0, 0],
+            linear: [v.x, v.y, v.z],
+            angular: [w.x, w.y, w.z],
+          });
+        }
+        index.set(body.handle, bodies.length - 1);
+        return bodies.length - 1;
+      };
+      const world = (body: RAPIER.RigidBody, pivot: Vec3): RAPIER.Vector => {
+        const t = body.translation();
+        const p = rotateVector(body.rotation(), { x: pivot[0], y: pivot[1], z: pivot[2] });
+        return { x: t.x + p.x, y: t.y + p.y, z: t.z + p.z };
+      };
+      const fromCom = (body: RAPIER.RigidBody, point: RAPIER.Vector): Vec3 => {
+        const c = body.worldCom();
+        return [point.x - c.x, point.y - c.y, point.z - c.z];
+      };
+      const errors: Vec3[] = [];
+      const joints: GroupJoint[] = [];
+      const solved: PlacedJoint[] = [];
+      for (const link of live) {
+        const pivots = this.#linksClipped.get(link);
+        const chain = link.constraint.chain;
+        if (!pivots || !chain) continue;
+        const pa = world(link.a.body, pivots.pivotA);
+        const pb = world(link.b.body, pivots.pivotB);
+        const error: Vec3 = [pb.x - pa.x, pb.y - pa.y, pb.z - pa.z];
+        errors.push(error);
+        solved.push(link);
+        joints.push({
+          a: indexOf(link.a),
+          b: indexOf(link.b),
+          ra: fromCom(link.a.body, pa),
+          rb: fromCom(link.b.body, pb),
+          error,
+          tau: chain.tau,
+          damping: chain.damping,
+          softness: chain.constraintForceMixing,
+          block: 0,
+        });
+      }
+      const results = groupImpulses(bodies, joints, {
+        step: this.#size,
+        iterations: this.solver.iterations,
+      });
+      solved.forEach((link, i) => {
+        const left = results[i]?.left.linear;
+        const error = errors[i];
+        const pivots = this.#linksClipped.get(link);
+        const made = link.joint;
+        if (!left || !error || !pivots || !made) return;
+        // Where the step leaves the pivots: the error and what the iterations left of its speed.
+        const next = openError(
+          { linear: error, angular: [] },
+          { linear: left, angular: [] },
+          this.#size,
+          pivots.most,
+        ).linear;
+        // B's anchor where Rapier holds it to A's pivot: its true pivot less that error.
+        const q = link.b.body.rotation();
+        const local = rotateVector(
+          { x: -q.x, y: -q.y, z: -q.z, w: q.w },
+          { x: next[0], y: next[1], z: next[2] },
+        );
+        const anchor = {
+          x: pivots.pivotB[0] - local.x,
+          y: pivots.pivotB[1] - local.y,
+          z: pivots.pivotB[2] - local.z,
+        };
+        // Only a change is set (setting a joint wakes its bodies).
+        const last = this.#damped.get(link);
+        if (
+          last?.joint !== made ||
+          Math.hypot(last.anchor.x - anchor.x, last.anchor.y - anchor.y, last.anchor.z - anchor.z) >
+            DAMP_CHANGE
+        ) {
+          made.setAnchor2(anchor);
+          this.#damped.set(link, { joint: made, anchor });
+        }
+      });
     }
   }
 
