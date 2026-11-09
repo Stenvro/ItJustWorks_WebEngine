@@ -227,6 +227,24 @@ describe('the dying life state', () => {
     ]);
     expect(await actors.isDead(GUARD)).toBe(false);
   });
+
+  it('keeps a save made while it dies, so its OnDeath comes after the load', async () => {
+    // Saved within its dying: its OnDeath was still to come.
+    const { actors } = dyingEngine(false, () => new Promise<void>(() => undefined));
+    actors.setBase(GUARD, ActorValue.health, 50);
+    await actors.damage(GUARD, ActorValue.health, 80, 0x1234);
+    expect(actors.dying(GUARD)).toBe(true);
+    const saved = actors.dyingSaveData();
+    expect(saved).toEqual([[GUARD, 0x1234]]);
+    // Loaded (its game state dead, as the save restores it): it hears its OnDeath now, by its
+    // killer; one made alive again before the load ends hears none.
+    const loaded = dyingEngine();
+    const state = (loaded.log.runtime as unknown as { state: GameState }).state;
+    state.actor(GUARD).dead = true;
+    state.actor(GUARD).killer = 0x1234;
+    await loaded.actors.finishSavedDying([...saved, [0x5001, 0]]);
+    expect(loaded.log.calls).toEqual(['OnDeath 5000 (actor 1234)']);
+  });
 });
 
 describe('vendors', () => {

@@ -899,9 +899,12 @@ OnDeath. An actor not on a stage (not loaded) and the player are dead at once. T
 sinks of the death (its respawn clock, the kill stats, the location's clearing, crime and the
 story manager's Kill Actor event) hear it at the kill. Inferred, TODO(M13): that IsDead takes
 the dying with the dead, that fDyingTimer is an upper bound counted from the kill (what starts
-and stops the original's timer is not read), that the engine's sinks do not wait for the
-dying, and that a save keeps no dying (one saved while dying loads dead, its OnDeath not
-sent). Seen in the browser (Riverwood): a villager's DeathAnim,
+and stops the original's timer is not read), and that the engine's sinks do not wait for the
+dying. A save keeps the dying (`RuntimeSave.engines.dying`, `ActorEngine.dyingSaveData`; the
+original saves life state 1): one saved while dying loads dead and its scripts hear the OnDeath
+they waited for as the load ends (`finishSavedDying`), so an alias's OnDeath still sets its
+quest's stage; that its dying ends at the load instead of going on for what was left of it is
+inferred, TODO(M13). Seen in the browser (Riverwood): a villager's DeathAnim,
 AddRagdollToWorld 0.06 s in, AnimateToRagdoll with 18 bones keyframed, limp as FullyRagdoll
 began at 1.2 s; a cow and a dog took DeathAnimation and lay as ragdolls within 0.7 s (the dog's
 DeathAnimation goes to Fully Ragdoll at once: it drops from the pose it stood in).

@@ -457,7 +457,12 @@ animation, whether it is a killmove, the seconds in it and a victim's killer; th
 under way are kept by the actors' engine (`RuntimeSave.engines.deferredKills`). A killmove caught
 in a save plays on to its end, which kills its victim by its killer: neither partner is left
 half-way (before, the victim's deferral and the pair were lost, and it stood with no health,
-alive). Test: actor-engine.test.ts "a deferred kill across a save".
+alive). Test: actor-engine.test.ts "a deferred kill across a save". The dying (killed, their
+OnDeath still to come: docs/animation.md, "Dying, then dead") are kept too
+(`RuntimeSave.engines.dying`: [actor, killer, 0 for none]); the load sends their OnDeath as it
+ends (dead from the load: inferred, TODO(M13)), so a quest whose alias's OnDeath sets a stage
+does not stick on a save made in the 2 s after the kill. Test: actor-engine.test.ts "keeps a
+save made while it dies".
 
 An imported .ess keeps each graph by names instead (`ActorGraphState.named`, `SavedGraph.named`:
 `NamedGraphState`, src/animation/named-graph-state.ts; docs/formats/ess.md "Animation

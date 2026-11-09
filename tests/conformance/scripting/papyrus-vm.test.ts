@@ -30,6 +30,7 @@ import {
   type ScriptEventHost,
 } from '../../../src/scripting/runtime/script-events.ts';
 import { ObjectHandle } from '../../../src/scripting/values.ts';
+import { DYING_TIMER } from '../../../src/world/dying.ts';
 import { IniSettings } from '../../../src/world/ini-settings.ts';
 import { buildPex, float, id, int, type BuildScript } from '../../helpers/pex-builder.ts';
 import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
@@ -271,7 +272,11 @@ const SAMPLE_CELLS: readonly { readonly name: string; readonly cell: number }[] 
   { name: 'the Sleeping Giant Inn', cell: 0x133c6 },
   { name: 'Blind Cliff Cave', cell: 0x152b7 },
 ];
-/** Seconds a handler that waits for no clock may take (frames of 1/60 s: 180). */
+/**
+ * Seconds a handler that waits for no clock may take (frames of 1/60 s: 180), counted from its
+ * OnDeath. That comes as the dying ends: at the graph's deathStop, or fDyingTimer (DYING_TIMER;
+ * no vanilla plugin changes it) after the kill (src/world/dying.ts), so the sim steps both.
+ */
 const RETURN_WITHIN = 3;
 
 describe.skipIf(!hasGamedata())('the Papyrus VM: death handlers (headless simulation)', () => {
@@ -295,7 +300,7 @@ describe.skipIf(!hasGamedata())('the Papyrus VM: death handlers (headless simula
         .map((staged) => staged.reference)
         .filter((actor) => actor !== PLAYER_REF);
       for (const actor of actors) await sim.kill(actor);
-      await sim.step(RETURN_WITHIN);
+      await sim.step(DYING_TIMER + RETURN_WITHIN);
       const deaths = sim
         .scriptEvents({ event: 'OnDeath', since })
         .filter((event) => actors.includes(event.target)).length;

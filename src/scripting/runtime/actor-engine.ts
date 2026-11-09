@@ -511,6 +511,33 @@ export class ActorEngine {
     return [...this.#deferred].map(([actor, { due, killer }]) => [actor, due ? 1 : 0, killer ?? 0]);
   }
 
+  /**
+   * The dying a save holds (killed, their OnDeath still to come: src/world/dying.ts), each with
+   * its killer (0: none). The original saves the life state dying (1); the OnDeath its scripts
+   * wait for hangs on a clock this save does not keep, so the load sends it (finishSavedDying).
+   */
+  dyingSaveData(): readonly (readonly [number, number])[] {
+    return [...this.#dying.keys()].map((actor) => [
+      actor,
+      this.#runtime.state.actors.get(actor)?.killer ?? 0,
+    ]);
+  }
+
+  /**
+   * A save's dying (dyingSaveData): their dying ends as the load ends, so their scripts hear the
+   * OnDeath they were waiting for (an alias's OnDeath setting its quest's stage). That it ends
+   * at once rather than going on for what was left of it is inferred, TODO(M13). One no longer
+   * dead hears none.
+   */
+  async finishSavedDying(saved: readonly (readonly [number, number])[] | undefined): Promise<void> {
+    for (const [actor, killer] of saved ?? []) {
+      if (this.#runtime.state.actors.get(actor)?.dead !== true) continue;
+      await this.#runtime.sendEvent(actor, 'OnDeath', [
+        killer === 0 ? null : this.#runtime.actorHandle(killer),
+      ]);
+    }
+  }
+
   /** A save's deferred kills (saveData). */
   loadData(saved: readonly (readonly [number, number, number])[] | undefined): void {
     for (const [actor, due, killer] of saved ?? []) {

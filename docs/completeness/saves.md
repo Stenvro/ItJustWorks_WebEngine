@@ -410,6 +410,7 @@ loadData (RuntimeSave.engines; src/scripting/runtime/engine-save.test.ts):
 | Graph transitions' blends, modifiers' states, behavior refs      | done   | SavedGraphFile transitions, modifiers, cyclic           |
 | Projectiles' graphs (in flight, sprays' streams, stuck lights)   | done   | SavedProjectile.graph                                   |
 | Bleedout and paired animations' engine side                      | done   | SavedActor.down, deferred kills (engines)               |
+| The dying (OnDeath still to come)                                | done   | engines.dying, OnDeath sent as the load ends (inferred) |
 | Physics bodies in motion (loose objects knocked about)           | done   | WorldSave.motions, given back as each body settles      |
 | The sky's transition between weathers                            | done   | GameSave.sky (SkyWeather save, restore)                 |
 | The music playing (audio state)                                  | done   | GameSave.music, musicTrack: the track and its position  |

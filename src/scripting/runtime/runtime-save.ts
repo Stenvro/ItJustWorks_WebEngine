@@ -77,6 +77,11 @@ export interface RuntimeSave {
     readonly magic?: MagicSave;
     /** The deferred kills under way (ActorEngine.saveData: a killmove's victim's). */
     readonly deferredKills?: readonly (readonly [number, number, number])[];
+    /**
+     * The dying, [actor, killer (0: none)], whose OnDeath was still to come (ActorEngine.
+     * dyingSaveData); the load sends it.
+     */
+    readonly dying?: readonly (readonly [number, number])[];
   };
 }
 

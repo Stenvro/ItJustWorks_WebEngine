@@ -4327,6 +4327,7 @@ export class ScriptRuntime implements VmHost {
         trapHits: this.trapHits.saveData(),
         magic: this.magic.saveData(),
         deferredKills: this.actors.saveData(),
+        dying: this.actors.dyingSaveData(),
       },
     };
   }
@@ -4423,6 +4424,8 @@ export class ScriptRuntime implements VmHost {
     this.actors.loadData(engines?.deferredKills);
     // The player's abilities, diseases and worn enchantments act again (magic-engine.ts).
     await this.magic.prepare(PLAYER_REF);
+    // The dying caught in the save are dead as it loads: their scripts hear OnDeath now.
+    await this.actors.finishSavedDying(engines?.dying);
     await this.vm.idle();
     // The story manager's events that waited are told again (the original saves its queue).
     this.storyManager.resume();
