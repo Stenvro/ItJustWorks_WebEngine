@@ -54,7 +54,7 @@ import {
   RaceSize,
   type OverridePackageLists,
 } from '../ai/race-combat-records.ts';
-import { Reaction, type ReactionKind } from '../ai/reactions.ts';
+import { Reaction, type ReactionKind, type Situation } from '../ai/reactions.ts';
 import type { CharacterBody } from '../physics/character.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { Vec3 } from '../render/math.ts';
@@ -269,9 +269,15 @@ export class ActorSenses implements ScriptSenses {
   readonly #raceSizes = new Map<number, number>();
   readonly #armour = new Map<number, number>();
   readonly #questLists = new Map<number, Map<number, OverridePackageLists>>();
-  /** The reactions running (the engine's own), and the override lists running. */
+  /**
+   * The reactions running (the engine's own), and the override lists running (with what they
+   * answer: the fight's combatant a spectator watches, the one a guard warns).
+   */
   readonly #reactions = new Map<number, Reaction>();
-  readonly #overriding = new Map<number, { list: number; kind: ReactionKind; until: number }>();
+  readonly #overriding = new Map<
+    number,
+    { list: number; kind: ReactionKind; subject: number | undefined; until: number }
+  >();
   /** Fights for spectators: by a combatant, where and when the last blow fell. */
   readonly #fights = new Map<number, { at: Vec3; last: number }>();
   /** Guards warning: whom. */
@@ -1353,6 +1359,7 @@ export class ActorSenses implements ScriptSenses {
       this.#overriding.set(actor, {
         list,
         kind,
+        subject,
         until: this.#clock + this.#settings.stateExpireTime,
       });
       ai.evaluate(actor);
@@ -1405,10 +1412,13 @@ export class ActorSenses implements ScriptSenses {
       ai.hold(actor, false);
     }
     for (const [actor, overriding] of this.#overriding) {
+      // A spectator's list holds while the fight it watches is remembered (its combatant's,
+      // not the spectator's own: it is in no fight), as the engine's spectating. TODO(M13):
+      // inferred; how long the engine runs an override list is not documented.
       const over =
         overriding.until <= this.#clock ||
         (overriding.kind === 'warn' && !this.#warnings.has(actor)) ||
-        (overriding.kind === 'spectator' && !this.#fightGoesOn(actor));
+        (overriding.kind === 'spectator' && !this.#fightRemembered(overriding.subject));
       if (!over) continue;
       this.#overriding.delete(actor);
       ai.evaluate(actor);
@@ -1416,7 +1426,7 @@ export class ActorSenses implements ScriptSenses {
   }
 
   /** What a reaction answers now: the fight, the one warned, the one searched for. */
-  #situation(actor: number, reaction: Reaction): { at?: Vec3 | undefined; over?: boolean } {
+  #situation(actor: number, reaction: Reaction): Situation {
     const subject = reaction.subject;
     switch (reaction.kind) {
       case 'search': {
@@ -1430,7 +1440,11 @@ export class ActorSenses implements ScriptSenses {
       }
       case 'spectator': {
         const fight = subject === undefined ? undefined : this.#fights.get(subject);
-        return { at: fight?.at, over: !this.#fightGoesOn(subject) };
+        return {
+          at: fight?.at,
+          over: !this.#fightGoesOn(subject),
+          since: fight && this.#clock - fight.last,
+        };
       }
       case 'warn': {
         const at = subject === undefined ? undefined : this.#bodies().get(subject)?.feet;
@@ -1444,6 +1458,12 @@ export class ActorSenses implements ScriptSenses {
   #fightGoesOn(combatant: number | undefined): boolean {
     const fight = combatant === undefined ? undefined : this.#fights.get(combatant);
     return fight !== undefined && this.#clock - fight.last < FIGHT_SECONDS;
+  }
+
+  /** Whether a fight is still watched: its last blow is not fAISpectatorRememberThreatTimer old. */
+  #fightRemembered(combatant: number | undefined): boolean {
+    const fight = combatant === undefined ? undefined : this.#fights.get(combatant);
+    return fight !== undefined && this.#clock - fight.last < this.#settings.spectatorRememberTimer;
   }
 
   /**
