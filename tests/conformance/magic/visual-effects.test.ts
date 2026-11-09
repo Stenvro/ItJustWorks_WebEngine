@@ -10,6 +10,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { itemGlow } from '../../../src/gameplay/magic/enchantment-glow.ts';
 import { animatedFrame } from '../../../src/shell/surface-particles.ts';
+import type { SoundInstance } from '../../../src/audio/sound-instance.ts';
 import type { GpuScene } from '../../../src/render/scene-renderer.ts';
 import { PLAYER_REF } from '../../../src/scripting/runtime/forms.ts';
 import type { MagicEffectShown } from '../../../src/scripting/runtime/magic-engine.ts';
@@ -258,6 +259,45 @@ describe.skipIf(!hasGamedata())('the visuals in the sim', () => {
     expect(covers).toBeGreaterThan(0);
   }, 60_000);
 
+  it('plays a shader’s ambient sound at its target while it shows, and stops it with it', async () => {
+    const stage = sim.world.stage;
+    const session = sim.world.session;
+    let shader: EffectShaderRecord | undefined;
+    let sounding = 0;
+    for (const formId of sim.db.formIdsOfType('EFSH')) {
+      const record = await sim.db.get(formId);
+      const parsed = record && parseEffectShader(record);
+      if (parsed?.ambientSound === undefined) continue;
+      sounding++;
+      shader ??= parsed;
+    }
+    expect(sounding).toBe(92);
+    const actor = sim.actors()[0]?.reference;
+    if (!shader || actor === undefined) return;
+    const played: { descriptor: number; source: number | undefined }[] = [];
+    let stopped = 0;
+    const play = session.playSound.bind(session);
+    session.playSound = (descriptor, _place, _fadeIn, source) => {
+      played.push({ descriptor, source });
+      return Promise.resolve({
+        stop: () => {
+          stopped++;
+        },
+      } as unknown as SoundInstance);
+    };
+    try {
+      stage.effects.shader(shader.formId, actor, true, -1);
+      for (let t = 0; t < 1; t += 0.25) await sim.step(0.25);
+      expect(played).toContainEqual({ descriptor: shader.ambientSound, source: actor });
+      expect(stopped).toBe(0);
+      stage.effects.shader(shader.formId, actor, false, 0);
+      await sim.step(0.1);
+      expect(stopped).toBe(1);
+    } finally {
+      session.playSound = play;
+    }
+  }, 120_000);
+
   it('colours a shader’s fill by its colour keys over its age', async () => {
     const stage = sim.world.stage;
     const scene = sim.world.session.render.scene;
@@ -308,5 +348,7 @@ describe.skipIf(!hasGamedata())('the visuals in the sim', () => {
 });
 
 describe('what the original shows that we do not yet', () => {
-  it.todo('an effect shader’s holes (NAM7), addon models and ambient sound');
+  it.todo(
+    'an effect shader’s holes (NAM7: its target burnt away by the holes texture between its start and end values) and addon models (DEBR)',
+  );
 });
