@@ -199,6 +199,7 @@ export class ActorEngine {
       level,
       async (record) => (await runtime.leveledList(record.formId)) ?? parseLeveledList(record),
       runtime.state.actors.get(reference)?.leveledBase,
+      runtime.state.resets.get(reference) ?? 0,
     );
     if (!templates) return undefined;
     const part = async (flag: number): Promise<NpcStats | undefined> =>

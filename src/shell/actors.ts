@@ -609,6 +609,8 @@ export class ActorPlacer {
     this.#resolver = new ActorResolver(db);
     this.#resolver.leveledPick = (reference) =>
       this.#session.scriptsReady?.state.actors.get(reference)?.leveledBase;
+    this.#resolver.resets = (reference) =>
+      this.#session.scriptsReady?.state.resets.get(reference) ?? 0;
   }
 
   #cached<K, V>(

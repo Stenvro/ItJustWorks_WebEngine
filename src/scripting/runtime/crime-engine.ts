@@ -1408,6 +1408,9 @@ export class CrimeEngine {
     const marker = realJail ? await this.jailMarker(faction) : undefined;
     const cell = marker === undefined ? undefined : runtime.forms.db.cellOfReference(marker);
     runtime.state.crime.jail = { faction, violent, nonviolent, days, cell, inventoryTaken: taken };
+    // The jail's cell resets as the player is taken there: its doors locked again, its things
+    // where the plugins put them (cell-reset.ts force).
+    if (cell !== undefined) runtime.cellResets.force(cell);
     const entry = runtime.state.faction(faction);
     entry.crimeGold = 0;
     entry.crimeGoldViolent = 0;
