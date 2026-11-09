@@ -46,6 +46,8 @@ export interface CombatProfile {
   readonly teammate: boolean;
   /** Someone commands it (a summon, a raised corpse): it fights its commander's fights. */
   readonly commanded: boolean;
+  /** Whom it fights for (commanderOf: the head of its chain of commanders), if commanded. */
+  readonly commander: number | undefined;
   /** A child (its race's flag): it flees any fight, and teammates pass it over as a target. */
   readonly child: boolean;
   readonly options: readonly EquipOption[];
@@ -112,6 +114,7 @@ export class CombatProfiles {
       teammate:
         runtime.state.actors.get(actor)?.playerTeammate === true || commander === PLAYER_REF,
       commanded,
+      commander,
       child: await runtime.actors.isChild(actor),
       options: await weaponOptions(runtime, actor, held),
     };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { disguises, disguiseStep, type DisguiseState } from './disguise.ts';
+import { actsAgain, disguises, disguiseStep, type DisguiseState } from './disguise.ts';
 
 describe('the Disguise archetype’s own state', () => {
   it('takes hold at its first look unseen; seen, it waits until no one detects its actor', () => {
@@ -19,6 +19,14 @@ describe('the Disguise archetype’s own state', () => {
   it('does not take hold while its conditions fail before it began', () => {
     expect(disguiseStep('initiate', false, false)).toBe('initiate');
     expect(disguiseStep('waiting', false, false)).toBe('waiting');
+  });
+
+  it('does not act again once failed; every other effect (and state) does', () => {
+    expect(actsAgain(undefined)).toBe(true);
+    expect(actsAgain('initiate')).toBe(true);
+    expect(actsAgain('waiting')).toBe(true);
+    expect(actsAgain('normal')).toBe(true);
+    expect(actsAgain('fail')).toBe(false);
   });
 
   it('disguises its actor only while it holds', () => {

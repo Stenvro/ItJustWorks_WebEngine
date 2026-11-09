@@ -559,10 +559,13 @@ the player in a runtime on the game data, `--audit` reads every record).
   meanwhile has it no more); out of combat a summon (and a raised corpse) follows its commander,
   coming up from beyond fSummonedCreatureMaxFollowDist (400) to fSummonedCreatureMinFollowDist
   (250) from it (the engine package Follow Commander: src/ai/engine-packages.ts; TODO(M13): the
-  band's use is inferred); in combat it takes up every fight its commander is in, a neutral its
-  commander attacked as well, without weighing whether it dares (combat-ai.ts helpsUnweighed),
-  and attacks its commander's enemies on sight, never the neutral (fightingAggression; TODO(M13):
-  inferred that no confidence check stands between a summon and its summoner's fights); Reanimate raises a corpse (it falls again as it
+  band's use is inferred); in combat it takes up every fight its commander is in (its commander
+  attacked, or attacking, a neutral as well) without weighing whether it dares (combat-ai.ts
+  helpsUnweighed), and attacks its commander's enemies on sight, never the neutral
+  (fightingAggression); a fight of its commander's allies that its commander is not in it
+  weighs as anyone does (daresHelp; its assistance is at least Helps Allies), unless it is
+  fighting already (TODO(M13): inferred that no confidence check stands between a summon and
+  its summoner's own fights, and the usual one stands before its allies'); Reanimate raises a corpse (it falls again as it
   ends); Banish ends a summoning; Bound Weapon puts its weapon in the hand; Spawn Hazard and
   Spawn Scripted Ref place their form; Disarm takes the weapons out of the hands
   (sPlayerDisarmedMessage), not a bound one nor a Can't Drop one (WEAP DNAM 0x8); Soul Trap and Actor.TrapSoul put a dead actor's soul (by level:
@@ -680,11 +683,18 @@ the player in a runtime on the game data, `--audit` reads every record).
 - Disguise (no vanilla effect; src/gameplay/magic/disguise.ts): its effect has a state of its
   own (CommonLibSSE DisguiseEffect: Initiate, Waiting, Normal, Fail, kept in a save), its own
   condition evaluation and a detection checker of its own, looked at with the conditions
-  (fActiveEffectConditionUpdateInterval). TODO(M13): the rule between the states is inferred:
-  at its first look a disguise put on while another actor detects its actor waits until no one
-  does; then it holds (Normal): those who would attack its actor on sight do not, only the
-  frenzied (combat-ai.ts attacksOnSightOf; fights already begun go on); its conditions failing
-  break it for good (Fail), though they hold again.
+  (fActiveEffectConditionUpdateInterval). In the original its start keeps the actor it is on as
+  the player's disguise while it lasts (recorded with Concussion's reading): the engine keeps
+  the actor of the last started Disguise effect still on as the player's disguise
+  (magic-engine.ts playerDisguise). TODO(M13): the rule between the states is inferred: at its
+  first look a disguise put on while another actor detects its actor waits until no one does;
+  then it holds (Normal): those who would attack its actor on sight do not, only the frenzied
+  (combat-ai.ts attacksOnSightOf; fights already begun go on), and while the player's disguise
+  holds the player is not attacked on sight either, whichever actor it is on; its conditions
+  failing break it for good (Fail): it goes inactive and stays so until it ends, though they
+  hold again (no OnEffectStart again, no visuals, no actor value), unlike other effects, which
+  act again once their conditions hold (tests/conformance/magic/active-effects.test.ts). What
+  else the player's disguise changes (whom the player passes for) is not read.
 - Art objects (ARTO) hang on the actor's skeleton: the art model's nodes follow the bones of
   their names each frame, its skinned shapes with them.
 - Detect Life shows its hit shader (LifeDetected's particles, through walls) on the living

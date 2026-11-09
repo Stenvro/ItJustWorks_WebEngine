@@ -229,7 +229,7 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 - [x] light (8): src/gameplay/magic/projectile-flight.ts
 - [x] guide (1): src/shell/actor-stage.ts
 - [x] concussion (0): src/scripting/runtime/magic-engine.ts: observed in the original, its effect adds nothing to what every effect does (its scripts, visuals and sounds); fConcussionTimer is registered and never read
-- [x] disguise (0): src/scripting/runtime/magic-engine.ts, src/gameplay/magic/disguise.ts: its own state (Initiate, Waiting while its actor is detected, Normal: not attacked on sight but by the frenzied, Fail for good once its conditions fail; TODO(M13): inferred from CommonLibSSE DisguiseEffect)
+- [x] disguise (0): src/scripting/runtime/magic-engine.ts, src/gameplay/magic/disguise.ts: its own state (Initiate, Waiting while its actor is detected, Normal: not attacked on sight but by the frenzied, Fail: inactive for good once its conditions fail, tests/conformance/magic/active-effects.test.ts); its start keeps its actor as the player's disguise while it lasts (playerDisguise; in the original); TODO(M13): the states' rule and what the player's disguise does are inferred from CommonLibSSE DisguiseEffect
 
 ### Magic effect flags (18 of 18)
 

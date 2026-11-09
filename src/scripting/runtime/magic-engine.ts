@@ -52,7 +52,7 @@ import {
   type EffectSettings,
 } from '../../gameplay/magic/effect-rules.ts';
 import { effectItemCost } from '../../gameplay/magic/casting.ts';
-import { disguises, disguiseStep } from '../../gameplay/magic/disguise.ts';
+import { actsAgain, disguises, disguiseStep } from '../../gameplay/magic/disguise.ts';
 import {
   INVISIBILITY_DEFAULTS,
   INVISIBILITY_SETTING_NAMES,
@@ -164,8 +164,8 @@ export interface MagicAiState {
   readonly invisible: boolean;
   readonly ethereal: boolean;
   /**
-   * A Disguise effect on it has taken hold (gameplay/magic/disguise.ts): those who would attack
-   * it on sight do not.
+   * A Disguise effect on it has taken hold (gameplay/magic/disguise.ts), or, for the player, the
+   * player's disguise holds (playerDisguise): those who would attack it on sight do not.
    */
   readonly disguised: boolean;
 }
@@ -261,6 +261,8 @@ export class MagicEngine {
   /** Each effect's script work in order (finish, reset, start again). */
   readonly #scripts = new Map<string, Promise<void>>();
   readonly #ending = new Set<string>();
+  /** The player's disguise: the key of the last started Disguise effect still on (#pulse). */
+  #playerDisguise: string | undefined;
   /** The value changes of effects that act each second, in order. */
   #changes: Promise<void> = Promise.resolve();
   /** Seconds since conditions were last looked at (the first frame looks at once). */
@@ -518,6 +520,7 @@ export class MagicEngine {
       if (archetype !== undefined) archetypes.add(archetype);
       if (archetype === EffectArchetype.disguise && disguises(entry.disguise)) disguised = true;
     }
+    if (actor === PLAYER_REF && this.#playerDisguised()) disguised = true;
     const has = (archetype: number): boolean => archetypes.has(archetype);
     return {
       calmed: has(EffectArchetype.calm),
@@ -530,6 +533,24 @@ export class MagicEngine {
       ethereal: has(EffectArchetype.etherealize),
       disguised,
     };
+  }
+
+  /**
+   * The actor kept as the player's disguise: the one the last started Disguise effect still on
+   * is on (gameplay/magic/disguise.ts), as of the last look at the effects' conditions.
+   */
+  playerDisguise(): number | undefined {
+    const key = this.#playerDisguise;
+    if (key === undefined || this.#ending.has(key)) return undefined;
+    return this.#runtime.state.activeEffects.get(key)?.target;
+  }
+
+  /** Whether the player's disguise (playerDisguise) holds: its effect is in its Normal state. */
+  #playerDisguised(): boolean {
+    const key = this.#playerDisguise;
+    if (key === undefined || this.#ending.has(key)) return false;
+    const entry = this.#runtime.state.activeEffects.get(key);
+    return entry !== undefined && !entry.inactive && disguises(entry.disguise);
   }
 
   /** Who summoned, reanimated or commands an actor (IsCommandedActor), if anyone. */
@@ -2346,6 +2367,9 @@ export class MagicEngine {
   async #pulse(): Promise<void> {
     const runtime = this.#runtime;
     for (const actor of [...this.#prepared]) await this.syncLasting(actor);
+    // The last started Disguise effect still on (the effects are kept in the order they were
+    // first put on): the player's disguise (playerDisguise).
+    let lastDisguise: string | undefined;
     for (const [key, entry] of [...runtime.state.activeEffects]) {
       if (this.#ending.has(key) || !runtime.state.activeEffects.has(key)) continue;
       const effect = await this.effect(entry.effect);
@@ -2354,15 +2378,22 @@ export class MagicEngine {
       if (!runtime.state.activeEffects.has(key) || this.#ending.has(key)) continue;
       // A Disguise looks with its own detection checker too; failed, it stays failed though its
       // conditions hold again (gameplay/magic/disguise.ts).
-      if (effect.archetype === EffectArchetype.disguise)
+      if (effect.archetype === EffectArchetype.disguise) {
         entry.disguise = disguiseStep(
           entry.disguise ?? 'initiate',
           holds,
           this.#seen(entry.target),
         );
-      if (holds && entry.inactive) await this.#activate(key, entry, effect);
+        lastDisguise = key;
+      }
+      // A failed Disguise does nothing more until it ends: it stays inactive (no OnEffectStart
+      // again, no visuals, no actor value) though its conditions hold again.
+      if (!actsAgain(entry.disguise)) {
+        if (!entry.inactive) await this.#deactivate(key, entry, false);
+      } else if (holds && entry.inactive) await this.#activate(key, entry, effect);
       else if (!holds && !entry.inactive) await this.#deactivate(key, entry, false);
     }
+    this.#playerDisguise = lastDisguise;
   }
 
   /**

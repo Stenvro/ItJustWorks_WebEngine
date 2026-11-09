@@ -889,17 +889,25 @@ export function daresHelp(confidence: number, own: Measure, foe: Measure): boole
 /**
  * Whether one takes up a fight its assistance would have it help in without weighing whether
  * it dares (daresHelp): the player's teammates, one already fighting, and a commanded actor (a
- * summon, a raised corpse, a commanded creature): it fights for its commander whoever the foe,
- * a neutral its commander attacked as well; a cowardly or weaker
- * summon does not stand aside from its summoner's fight. TODO(M13): inferred that the original
- * puts no confidence check between a commanded actor and its commander's fights (its summons
- * join every fight their summoner is in, never one it is not).
+ * summon, a raised corpse, a commanded creature) when the one it would help (`helped`: the
+ * victim it would defend, or the fighter it would join) is its commander: it fights for its
+ * commander whoever the foe, a neutral its commander attacked as well; a cowardly or weaker
+ * summon does not stand aside from its summoner's fight. Another ally's fight its commander is
+ * not in it weighs as anyone does (its assistance is at least Helps Allies: combat-profile.ts).
+ * TODO(M13): inferred that the original puts no confidence check between a commanded actor and
+ * its commander's fights, and keeps the usual one for its commander's allies' fights.
  */
 export function helpsUnweighed(
-  profile: { readonly teammate: boolean; readonly commanded: boolean },
+  profile: {
+    readonly teammate: boolean;
+    readonly commanded: boolean;
+    readonly commander: number | undefined;
+  },
   fighting: boolean,
+  helped: number,
 ): boolean {
-  return profile.teammate || profile.commanded || fighting;
+  if (profile.teammate || fighting) return true;
+  return profile.commanded && profile.commander === helped;
 }
 
 export interface FleeInput {

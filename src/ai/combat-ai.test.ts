@@ -82,11 +82,30 @@ describe('combat AI: entering combat', () => {
     const own = { level: 1, strength: 1 };
     const foe = { level: 50, strength: 100 };
     expect(daresHelp(Confidence.cowardly, own, foe)).toBe(false);
-    expect(helpsUnweighed({ teammate: false, commanded: true }, false)).toBe(true);
-    expect(helpsUnweighed({ teammate: true, commanded: false }, false)).toBe(true);
-    expect(helpsUnweighed({ teammate: false, commanded: false }, true)).toBe(true);
+    const summoner = 0x14;
+    const summon = { teammate: false, commanded: true, commander: summoner };
+    expect(helpsUnweighed(summon, false, summoner)).toBe(true);
+    expect(
+      helpsUnweighed({ teammate: true, commanded: false, commander: undefined }, false, 9),
+    ).toBe(true);
+    expect(
+      helpsUnweighed({ teammate: false, commanded: false, commander: undefined }, true, 9),
+    ).toBe(true);
     // Neither commanded nor a teammate nor fighting: its daring decides.
-    expect(helpsUnweighed({ teammate: false, commanded: false }, false)).toBe(false);
+    expect(
+      helpsUnweighed({ teammate: false, commanded: false, commander: undefined }, false, 9),
+    ).toBe(false);
+  });
+
+  it('weighs an ally’s fight its commander is not in: an idle conjurer’s atronach dares as anyone', () => {
+    // A fellow bandit (an ally of the conjurer, so of its summon) is attacked while the conjurer
+    // stands idle: the summon helps only if it dares (daresHelp), as the bandit's other allies.
+    const conjurer = 0x100;
+    const bandit = 0x101;
+    const summon = { teammate: false, commanded: true, commander: conjurer };
+    expect(helpsUnweighed(summon, false, bandit)).toBe(false);
+    // Once it fights, it takes up the next fight unweighed, as anyone already fighting.
+    expect(helpsUnweighed(summon, true, bandit)).toBe(true);
   });
 
   it('helps allies, or friends and allies, by assistance', () => {

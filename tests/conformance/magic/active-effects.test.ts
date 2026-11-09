@@ -26,11 +26,12 @@ import {
   taperSeconds,
 } from '../../../src/gameplay/magic/effect-rules.ts';
 import { PLAYER_REF } from '../../../src/scripting/runtime/forms.ts';
+import type { ActiveEffectState } from '../../../src/scripting/runtime/game-state.ts';
 import { ScriptRuntime } from '../../../src/scripting/runtime/runtime.ts';
 import { ScriptLibrary } from '../../../src/scripting/script-library.ts';
 import { Vfs } from '../../../src/vfs/vfs.ts';
 import { ActorValue } from '../../../src/world/actor-values.ts';
-import { EffectFlag } from '../../../src/world/magic-effects.ts';
+import { EffectArchetype, EffectFlag } from '../../../src/world/magic-effects.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
 import { openGameFolder } from '../../../tools/gamedata-path.ts';
 import { magicCensus, type MagicCensus } from '../../../tools/magic-census.ts';
@@ -264,6 +265,64 @@ describe.skipIf(!hasGamedata())('the effects across the load order (data)', () =
     await runtime.magic.syncLasting(PLAYER_REF);
     runtime.state.globals.delete(toggle);
     settings.set('fActiveEffectConditionUpdateInterval', 1);
+  }, 60_000);
+
+  it('keeps a failed Disguise inactive though its conditions hold again (inferred)', async () => {
+    // No vanilla effect is a Disguise: Rested's first effect (its condition a global's value) is
+    // read as one here. Its looks go Initiate, Normal (no one detects the player: no world),
+    // then Fail as the condition fails; failed, it does not act again (gameplay/magic/disguise.ts).
+    const settle = async (): Promise<void> => {
+      await runtime.vm.idle();
+      for (let tick = 0; tick < 5; tick++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    const frames = async (count: number): Promise<void> => {
+      for (let frame = 0; frame < count; frame++) {
+        runtime.update(0.05, 0);
+        await settle();
+      }
+    };
+    const settings = await runtime.gameSettingTable();
+    settings.set('fActiveEffectConditionUpdateInterval', 0.2);
+    const rested = 0xfb981;
+    const item = await runtime.magic.item(rested);
+    const first = item?.effects[0];
+    const toggle = first?.conditions[0]?.form;
+    const effect = first && (await runtime.magic.effect(first.effect));
+    if (!item || toggle === undefined || !effect) throw new Error('Rested not read');
+    const archetype = effect.archetype;
+    (effect as { archetype: number }).archetype = EffectArchetype.disguise;
+    try {
+      runtime.state.globals.set(toggle, 0);
+      expect(await runtime.actors.addSpell(PLAYER_REF, rested)).toBe(true);
+      await runtime.magic.syncLasting(PLAYER_REF);
+      await frames(10);
+      const found = (): ActiveEffectState | undefined =>
+        runtime.magic
+          .effectsOn(PLAYER_REF)
+          .find(([, e]) => e.item === rested && e.index === 0)?.[1];
+      expect(found()?.disguise).toBe('normal');
+      expect(found()?.inactive ?? false).toBe(false);
+      expect(runtime.magic.aiState(PLAYER_REF).disguised).toBe(true);
+      expect(runtime.magic.playerDisguise()).toBe(PLAYER_REF);
+      // Its condition fails: it fails, and no longer disguises the player.
+      runtime.state.globals.set(toggle, 1);
+      await frames(10);
+      expect(found()?.disguise).toBe('fail');
+      expect(found()?.inactive).toBe(true);
+      expect(runtime.magic.aiState(PLAYER_REF).disguised).toBe(false);
+      // Its condition holds again: it stays failed and inactive, unlike other effects.
+      runtime.state.globals.set(toggle, 0);
+      await frames(10);
+      expect(found()?.disguise).toBe('fail');
+      expect(found()?.inactive).toBe(true);
+      expect(runtime.magic.aiState(PLAYER_REF).disguised).toBe(false);
+    } finally {
+      (effect as { archetype: number }).archetype = archetype;
+      await runtime.actors.removeSpell(PLAYER_REF, rested);
+      await runtime.magic.syncLasting(PLAYER_REF);
+      runtime.state.globals.delete(toggle);
+      settings.set('fActiveEffectConditionUpdateInterval', 1);
+    }
   }, 60_000);
 });
 

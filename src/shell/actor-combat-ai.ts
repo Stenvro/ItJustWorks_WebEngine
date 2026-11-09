@@ -1577,7 +1577,7 @@ export class ActorCombatAi {
         // itself, its bounty and the guards' arrest: src/shell/actor-crime.ts).
         const victim = this.#reaction(mind.reference, target);
         if (victim !== undefined && assists(assistance, victim)) {
-          return this.#helps(mind, profile, other) && this.#join(mind, reference);
+          return this.#helps(mind, profile, other, target) && this.#join(mind, reference);
         }
         if (profile.guard && victim !== FightReaction.enemy && this.#innocent(target, reference)) {
           return this.#join(mind, reference);
@@ -1586,7 +1586,9 @@ export class ActorCombatAi {
         // `fighter` fights `other`: help it.
         const ally = this.#reaction(mind.reference, fighter.reference);
         if (ally !== undefined && assists(assistance, ally)) {
-          return this.#helps(mind, profile, other) && this.#join(mind, reference);
+          return (
+            this.#helps(mind, profile, other, fighter.reference) && this.#join(mind, reference)
+          );
         }
       }
     }
@@ -1640,13 +1642,15 @@ export class ActorCombatAi {
   /** It takes up another's fight: it remembers `enemy` as its own. */
   /**
    * Whether one its assistance would have help dares take on `foe` (daresHelp: its confidence,
-   * the levels, the strengths). The player's teammates and the commanded (a summon in its
-   * summoner's fight) always do (helpsUnweighed). One that does not dare keeps out of the fight
-   * and runs from it (as a cowardly spectator does): a street of townsfolk does not crowd a
-   * criminal, only the brave of them and the guards. Until both levels are read it waits.
+   * the levels, the strengths); `helped` is the one it would help against `foe`. The player's
+   * teammates always do, and a commanded actor when `helped` is its commander (a summon in its
+   * summoner's fight: helpsUnweighed); in another ally's fight it weighs as anyone does. One
+   * that does not dare keeps out of the fight and runs from it (as a cowardly spectator does): a
+   * street of townsfolk does not crowd a criminal, only the brave of them and the guards. Until
+   * both levels are read it waits.
    */
-  #helps(mind: Mind, profile: Profile, foe: FighterView): boolean {
-    if (helpsUnweighed(profile, mind.mode !== 'idle')) return true;
+  #helps(mind: Mind, profile: Profile, foe: FighterView, helped: number): boolean {
+    if (helpsUnweighed(profile, mind.mode !== 'idle', helped)) return true;
     const own = this.#levels.get(mind.reference);
     const theirs = this.#levels.get(foe.reference);
     if (own === undefined || theirs === undefined) return false;
