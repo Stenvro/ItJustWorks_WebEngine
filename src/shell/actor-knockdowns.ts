@@ -21,10 +21,9 @@ import { TRANSFORM_FLOATS } from '../formats/hkx/animation.ts';
 import { invert } from '../render/frustum.ts';
 import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
 import { referenceMatrix } from '../world/cell-loader.ts';
-import { Layer } from '../physics/collision-layers.ts';
 import { matrixQuaternion, type PhysicsWorld } from '../physics/physics-world.ts';
 import type { ActorBodies, BodyHolder } from './actor-bodies.ts';
-import type { PlacedActor } from './actors.ts';
+import { actorGround, type PlacedActor } from './actors.ts';
 import type { Terminal } from './terminal.ts';
 
 /** Its ragdoll counts as at rest below this speed (units a second). TODO(M13). */
@@ -451,19 +450,26 @@ export class ActorKnockdowns {
     return [at[12] ?? 0, at[13] ?? 0, at[14] ?? 0];
   }
 
-  /** The floor under a point (what character controllers stand on), not the actor's own body. */
+  /** The floor under a point (knockdownGround). */
   #ground(from: Vec3, reference: number): number | undefined {
     const physics = this.#options.physics();
     if (!physics?.queriesCurrent) return undefined;
-    let origin: Vec3 = [from[0], from[1], from[2] + 32];
-    for (let i = 0; i < 4; i++) {
-      const hit = physics.raycast(origin, [0, 0, -1], GROUND_REACH, Layer.charController);
-      if (!hit) return undefined;
-      if (hit.owner?.reference !== reference) return hit.point[2];
-      origin = [hit.point[0], hit.point[1], hit.point[2] - 1];
-    }
-    return undefined;
+    return knockdownGround(physics, from, reference);
   }
+}
+
+/**
+ * The floor under a knocked-down actor's ragdoll root (`from`), where its get-up is matched
+ * from: what character controllers stand on, not its own bodies, nor another living actor's
+ * controller (actorGround: one knocked down at another's feet gets up on the ground, not on
+ * the other's shoulders).
+ */
+export function knockdownGround(
+  physics: PhysicsWorld,
+  from: Vec3,
+  reference: number,
+): number | undefined {
+  return actorGround(physics, [from[0], from[1], from[2] + 32], GROUND_REACH, reference)?.point[2];
 }
 
 /** Where a knocked-down actor's get-up is matched from: on the ground under its root. */

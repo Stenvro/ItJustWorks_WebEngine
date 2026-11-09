@@ -2,12 +2,14 @@
 // placed reference whose XAPR names activate parents (a trigger box that wakes an ambush, a
 // pressure plate that springs a trap), counted by the child's base type and scripts, and how
 // many of their parents the runtime finds them from (ScriptRuntime.activateChildren reads a
-// parent's cell and its worldspace's persistent cell).
+// parent's cell, its worldspace's persistent cell and the exterior cells round it; a persistent
+// parent's wherever they stand).
 //
 //   node tools/activate-children-audit.ts            counts
 //   node tools/activate-children-audit.ts --list N   also the first N pairs
 
 import { parseVmad } from '../src/formats/esm/vmad.ts';
+import { RecordFlag } from '../src/formats/esm/record.ts';
 import { view } from '../src/formats/esm/fields.ts';
 import { RecordDatabase, type GameRecord } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
@@ -48,6 +50,7 @@ const baseInfo = new Map<number, { type: string; scripts: string[] }>();
 let sameCell = 0;
 let found = 0;
 let nearby = 0;
+let farFromPersistent = 0;
 const missed: string[] = [];
 for (const pair of children) {
   let info = baseInfo.get(pair.base);
@@ -101,6 +104,12 @@ for (const pair of children) {
       continue;
     }
   }
+  // Else a persistent parent's: the runtime knows those wherever they stand.
+  if (((parentRecord?.flags ?? 0) & RecordFlag.persistent) !== 0) {
+    found++;
+    farFromPersistent++;
+    continue;
+  }
   if (missed.length < 10)
     missed.push(
       `${pair.parent.toString(16)}@${parentCell?.toString(16)} -> ${pair.child.toString(16)}@${childCell?.toString(16)}`,
@@ -108,6 +117,7 @@ for (const pair of children) {
 }
 console.log(`  missed (first): ${missed.join(', ')}`);
 console.log(`  found in a neighbouring exterior cell: ${String(nearby)}`);
+console.log(`  found beyond those cells, a persistent parent's: ${String(farFromPersistent)}`);
 const parents = new Set(children.map((pair) => pair.parent));
 console.log(
   `${String(new Set(children.map((pair) => pair.child)).size)} activate children, ${String(parents.size)} parents, ${String(children.length)} pairs`,

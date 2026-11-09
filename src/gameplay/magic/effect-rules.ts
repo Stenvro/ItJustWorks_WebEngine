@@ -61,6 +61,16 @@ const VALUE_ARCHETYPES: ReadonlySet<number> = new Set([
 ]);
 
 /**
+ * The alpha a Darkness effect draws its actor at (observed in the original): 1 - its actor
+ * value / 100, between 0 and 1, set as it starts and as it stops. Night Eye starts at magnitude
+ * 1 whatever its effect item's; fMagicNightEyeAmbient (0.75) is registered by the engine and
+ * never read, so Night Eye shows only its effect's image space.
+ */
+export function darknessAlpha(value: number): number {
+  return Math.min(1, Math.max(0, 1 - value * 0.01));
+}
+
+/**
  * Archetypes that move an AI value to a target (CommonLibSSE TargetValueModifierEffect: Calm,
  * Frenzy, Demoralize, Rally; Turn Undead and Banish derive Demoralize), by the value they set:
  * Calm: Aggression 0 (unaggressive), Frenzy: 3 (frenzied); Demoralize: Confidence 0 (cowardly),

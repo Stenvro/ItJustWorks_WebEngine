@@ -23,8 +23,24 @@ import {
   summonDistance,
   TARGET_VALUES,
 } from '../../../src/gameplay/magic/effect-rules.ts';
-import { invisibilityVeil } from '../../../src/gameplay/magic/invisibility.ts';
-import { sticksAsLight } from '../../../src/gameplay/magic/projectile-flight.ts';
+import {
+  invisibilityRefraction,
+  invisibilityVeil,
+} from '../../../src/gameplay/magic/invisibility.ts';
+import {
+  carriedByBody,
+  sticksAsLight,
+  stuckOnBody,
+  type BodyPose,
+} from '../../../src/gameplay/magic/projectile-flight.ts';
+import { Layer } from '../../../src/physics/collision-layers.ts';
+import type { PhysicsWorld } from '../../../src/physics/physics-world.ts';
+import type { Vec3 } from '../../../src/render/math.ts';
+import type { RenderPort } from '../../../src/render/render-port.ts';
+import type { GameSession } from '../../../src/shell/game-session.ts';
+import { MagicProjectiles } from '../../../src/shell/magic-projectiles.ts';
+import type { Terminal } from '../../../src/shell/terminal.ts';
+import { ProjectileType, type ProjectileRecord } from '../../../src/world/projectile-data.ts';
 import {
   telekinesisDamage,
   telekinesisDamageMult,
@@ -417,12 +433,220 @@ describe.skipIf(!hasGamedata())('Dispel and Light on actors (sim)', () => {
     expect(lit(second.reference)).toBeGreaterThan(0);
     expect(lit(first.reference)).toBe(0);
   }, 120_000);
+
+  it('Invisibility gives its actor a refraction from its value as it starts and stops', async () => {
+    // Observed in the original: min + (1 - value / 100) × (max - min); none at 0. Vanilla
+    // Invisibility (No Magnitude: the value 1) with Skyrim.esm's fInvisibilityMaxRefraction 0.5.
+    expect(invisibilityRefraction(0)).toBe(0);
+    expect(invisibilityRefraction(100)).toBeCloseTo(0.01, 9);
+    expect(invisibilityRefraction(150)).toBeCloseTo(0.01, 9);
+    expect(invisibilityRefraction(1, { minRefraction: 0.01, maxRefraction: 0.5 })).toBeCloseTo(
+      0.01 + 0.99 * 0.49,
+      9,
+    );
+    const { magic } = sim.runtime;
+    const spell = await magicItem('SPEL', 'Invisibility');
+    const victim = sim.actors().at(-2)?.reference ?? 0;
+    const refraction = (): number | undefined => sim.runtime.state.actors.get(victim)?.refraction;
+    expect(refraction()).toBeUndefined();
+    await magic.apply(spell, victim, { caster: victim });
+    expect(refraction()).toBeCloseTo(0.01 + 0.99 * 0.49, 6);
+    for (const [key, entry] of magic.effectsOn(victim))
+      if (entry.item === spell.formId) await magic.end(key);
+    expect(refraction()).toBeUndefined();
+  }, 120_000);
+
+  it('Night Eye starts at magnitude 1; Darkness draws its actor at 1 - its value / 100', async () => {
+    // Observed in the original; vanilla uses neither archetype (mods do).
+    const { magic, actors } = sim.runtime;
+    const oak = await magicItem('SPEL', 'Oakflesh');
+    const firstEffect = oak.effects[0];
+    const base = firstEffect && (await magic.effect(firstEffect.effect));
+    expect(base).toBeTruthy();
+    if (!firstEffect || !base) return;
+    const reader = magic.effect.bind(magic);
+    const NIGHT_EYE = invented + 0x40;
+    const DARKNESS = invented + 0x41;
+    magic.effect = (formId) =>
+      formId === NIGHT_EYE || formId === DARKNESS
+        ? Promise.resolve({
+            ...base,
+            formId,
+            archetype: formId === NIGHT_EYE ? EffectArchetype.nightEye : EffectArchetype.darkness,
+            // Recover: the value goes back as it ends.
+            flags: 0x2,
+            counterEffects: [],
+            // NightEye; Darkness on Invisibility, as a mod might.
+            actorValue: formId === NIGHT_EYE ? MagicValue.nightEye : MagicValue.invisibility,
+          })
+        : reader(formId);
+    const of = (effect: number, magnitude: number): MagicItemRecord => ({
+      ...oak,
+      formId: effect + 0x100,
+      effects: [{ ...firstEffect, effect, magnitude, duration: 60 }],
+    });
+    const victim = sim.actors().at(-1)?.reference ?? 0;
+    const value = async (av: number): Promise<number> => (await actors.value(victim, av)).current;
+    const keyOf = (item: number): string | undefined =>
+      magic.effectsOn(victim).find(([, entry]) => entry.item === item)?.[0];
+    try {
+      const sight = of(NIGHT_EYE, 50);
+      const before = await value(MagicValue.nightEye);
+      await magic.apply(sight, victim, { caster: PLAYER_REF });
+      expect(await value(MagicValue.nightEye)).toBe(before + 1);
+      const sightKey = keyOf(sight.formId);
+      if (sightKey) await magic.end(sightKey);
+      expect(await value(MagicValue.nightEye)).toBe(before);
+
+      const dark = of(DARKNESS, 40);
+      await magic.apply(dark, victim, { caster: PLAYER_REF });
+      expect(sim.runtime.state.actors.get(victim)?.alpha).toBeCloseTo(0.6, 6);
+      const darkKey = keyOf(dark.formId);
+      if (darkKey) await magic.end(darkKey);
+      expect(sim.runtime.state.actors.get(victim)?.alpha).toBe(1);
+    } finally {
+      magic.effect = reader;
+    }
+  }, 120_000);
+});
+
+describe('a Magelight on a moving body (inferred: carried as a stuck arrow is)', () => {
+  const CASTER = 0x1001;
+  const SPELL = 0x2001;
+  const LIGHT_EFFECT = 0x2002;
+  const MISSILE = {
+    formId: 0x3001,
+    editorId: 'MagelightProjectile',
+    flags: 0,
+    type: ProjectileType.missile,
+    gravity: 0,
+    speed: 1000,
+    range: 2000,
+    light: undefined,
+    muzzleFlashLight: undefined,
+    tracerChance: 0,
+    proximity: 0,
+    timer: 0,
+    explosion: undefined,
+    sound: undefined,
+    muzzleFlashDuration: 0,
+    fadeDuration: 0,
+    impactForce: 0,
+    countdownSound: undefined,
+    disableSound: undefined,
+    defaultWeaponSource: undefined,
+    coneSpread: 0,
+    collisionRadius: 10,
+    lifetime: 0,
+    relaunchInterval: 0,
+    decal: undefined,
+    collisionLayer: undefined,
+    model: undefined,
+    muzzleFlashModel: undefined,
+    soundLevel: 1,
+  } satisfies ProjectileRecord;
+
+  /** A Light effect's missile flying along Y and meeting a body 5 units ahead. */
+  async function struck(pose: () => BodyPose | undefined): Promise<MagicProjectiles> {
+    const item = {
+      formId: SPELL,
+      effects: [{ effect: LIGHT_EFFECT, magnitude: 0, duration: 60, area: 0, conditions: [] }],
+      delivery: 1,
+    };
+    const runtime = {
+      magic: { item: (formId: number) => Promise.resolve(formId === SPELL ? item : undefined) },
+      casting: {
+        projectile: () => Promise.resolve(MISSILE),
+        cost: () => Promise.resolve(0),
+        mainEffect: () =>
+          Promise.resolve({ formId: LIGHT_EFFECT, archetype: EffectArchetype.light, flags: 0 }),
+      },
+    };
+    const session = {
+      scriptsReady: runtime,
+      settings: () => new Promise(() => undefined),
+      model: () => Promise.resolve(undefined),
+    };
+    const collider = { parent: () => null };
+    const physics = {
+      matrix: { indexOf: () => Layer.spell },
+      raycast: (origin: Vec3, direction: Vec3, length: number) =>
+        length < 5
+          ? undefined
+          : {
+              distance: 5,
+              point: [
+                origin[0] + direction[0] * 5,
+                origin[1] + direction[1] * 5,
+                origin[2] + direction[2] * 5,
+              ],
+              normal: [0, -1, 0],
+              layer: Layer.clutter,
+              owner: { kind: 'object', reference: 0x5000 },
+              material: 0,
+              collider,
+            },
+      knock: () => false,
+      movingPose: (hit: unknown) => (hit === collider ? pose() : undefined),
+    };
+    const magic = new MagicProjectiles({
+      session: session as unknown as GameSession,
+      renderer: {} as RenderPort,
+      terminal: { log: () => undefined } as unknown as Terminal,
+      targets: () => [],
+    });
+    magic.attach(physics as unknown as PhysicsWorld);
+    await magic.restore([
+      {
+        projectile: MISSILE.formId,
+        item: SPELL,
+        via: 'spell',
+        caster: CASTER,
+        dual: false,
+        position: [0, 0, 0],
+        velocity: [0, 1000, 0],
+        traveled: 0,
+        age: 0,
+      },
+    ]);
+    magic.frame(0.05);
+    return magic;
+  }
+
+  it('is carried with the body where it struck it, turning as it turns', async () => {
+    let pose: BodyPose = { position: [0, 25, 0], rotation: [0, 0, 0, 1] };
+    const magic = await struck(() => pose);
+    expect(magic.save()).toMatchObject([{ kind: 'stuck', position: [0, 5, 0] }]);
+    // The body rolls a quarter turn about Z and slides 100 units along X.
+    pose = { position: [100, 25, 0], rotation: [0, 0, Math.SQRT1_2, Math.SQRT1_2] };
+    magic.frame(0.05);
+    const [stuck] = magic.save();
+    expect(stuck?.kind).toBe('stuck');
+    expect(stuck?.position[0]).toBeCloseTo(120, 6);
+    expect(stuck?.position[1]).toBeCloseTo(25, 6);
+    expect(stuck?.position[2]).toBeCloseTo(0, 6);
+  });
+
+  it('stays where it struck the fixed world', async () => {
+    const magic = await struck(() => undefined);
+    magic.frame(0.5);
+    expect(magic.save()).toMatchObject([{ kind: 'stuck', position: [0, 5, 0] }]);
+  });
+
+  it('keeps the point struck in the body’s own frame', () => {
+    const pose: BodyPose = { position: [10, 0, 0], rotation: [0, 0, Math.SQRT1_2, Math.SQRT1_2] };
+    const local = stuckOnBody(pose, [10, 30, 0]);
+    expect(local[0]).toBeCloseTo(30, 9);
+    expect(local[1]).toBeCloseTo(0, 9);
+    const back = carriedByBody(pose, local);
+    expect(back[0]).toBeCloseTo(10, 9);
+    expect(back[1]).toBeCloseTo(30, 9);
+  });
 });
 
 describe('what the original’s archetypes do that ours do not yet', () => {
-  it.todo('Light (Magelight): on a moving object it struck');
-  it.todo('Invisibility: the refraction shimmer through the actor (ours dithers it away)');
   // Summon Creature's search when its way is blocked: src/ai/pathfinding.test.ts (summonPlace).
-  it.todo('Darkness, Night Eye: the image space and fMagicNightEyeAmbient (0.75)');
-  it.todo('Disguise, Concussion: unused by vanilla, as the engine does them (no document says)');
+  it.todo(
+    'Disguise: unused by vanilla, as the engine does it (its start keeps the actor as the player’s disguise; its detection check is not read yet)',
+  );
 });

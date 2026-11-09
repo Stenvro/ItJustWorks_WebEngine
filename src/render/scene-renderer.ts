@@ -710,6 +710,12 @@ export interface InstanceFade {
    * invisible actor's (src/gameplay/magic/invisibility.ts).
    */
   veil?: number;
+  /**
+   * The refraction its shapes are drawn with besides (0: none): an invisible actor's shimmer
+   * (src/gameplay/magic/invisibility.ts). Its shapes then also go into the refraction buffer as
+   * SLSF1 Refraction shapes do, with this strength, bending the scene behind them.
+   */
+  refraction?: number;
 }
 
 export interface ModelInstance {
@@ -963,6 +969,8 @@ interface FadeGroup {
   seen: number;
   /** The instances' fade it stands for (its veil, whether distance counts). */
   readonly of?: InstanceFade;
+  /** The refraction its draws' uniforms hold (InstanceFade.refraction as last written). */
+  refraction: number;
   /** The fade settings its range (`start`, `end`: fadeRange) was worked out with. */
   rangeOf: FadeSettings | undefined;
   start: number;
@@ -1675,6 +1683,16 @@ function isRefraction(material: PartMaterial | undefined): boolean {
   return material?.kind === 'lighting' && (material.flags1 & SLSF1_REFRACTION) !== 0;
 }
 
+/**
+ * Whether a part of an instance drawn with refraction (InstanceFade.refraction: an invisible
+ * actor) also goes into the refraction buffer: its lit shapes, not those that refract anyway.
+ */
+function refractsAsInstance(gpu: GpuPart): boolean {
+  return (
+    gpu.part.material?.kind === 'lighting' && gpu.pass !== 'refraction' && gpu.pass !== 'water'
+  );
+}
+
 /** An instance's running behavior graph, if its model has sequences for it to play. */
 function graphDraw(instance: ModelInstance): GraphDraw | undefined {
   const sequences = instance.model.sequences;
@@ -1990,6 +2008,8 @@ export class SceneRenderer {
   /** Flow map without flow (alpha 1: strength 0). */
   readonly #stillFlow: GPUTexture;
   readonly #pipelines = new Map<string, GPURenderPipeline>();
+  /** Lit parts' pipelines into the refraction buffer, made as an invisible actor needs them. */
+  readonly #instanceRefractionPipelines = new WeakMap<GpuPart, GPURenderPipeline>();
   /** Second passes of multi-pass directional materials, per part and material. */
   readonly #passParts = new WeakMap<GpuPart, Map<GpuDirectionalMaterial, GpuPart>>();
   readonly #fadeBlendParts = new WeakMap<GpuPart, GpuPart>();
@@ -2746,6 +2766,7 @@ export class SceneRenderer {
             updated: -1,
             seen: -1,
             of: instance.fade,
+            refraction: 0,
             rangeOf: undefined,
             start: 0,
             end: 0,
@@ -4398,8 +4419,27 @@ export class SceneRenderer {
       if (scene.draws.some((draw) => draw.part.pass === 'refraction' && this.#visible(draw))) {
         return true;
       }
+      for (const draw of this.#refractingInstanceDraws(scene)) if (this.#visible(draw)) return true;
     }
     return false;
+  }
+
+  /** The lit draws of a scene's instances drawn with refraction besides (invisible actors). */
+  *#refractingInstanceDraws(scene: GpuScene): Iterable<Draw> {
+    for (const group of scene.fades) {
+      if (!(group.refraction > 0)) continue;
+      for (const draw of group.draws) if (refractsAsInstance(draw.part)) yield draw;
+    }
+  }
+
+  /** A lit part's pipeline into the refraction buffer (an instance drawn with refraction). */
+  #instanceRefractionPipeline(gpu: GpuPart): GPURenderPipeline {
+    let pipeline = this.#instanceRefractionPipelines.get(gpu);
+    if (!pipeline) {
+      pipeline = this.#pipeline(gpu.part, undefined, true);
+      this.#instanceRefractionPipelines.set(gpu, pipeline);
+    }
+    return pipeline;
   }
 
   /**
@@ -4413,18 +4453,33 @@ export class SceneRenderer {
   ): void {
     pass.setBindGroup(0, this.#frame.bindGroup);
     pass.setVertexBuffer(1, this.#fallbackVertices);
-    const shapes: { scene: GpuScene; draw: Draw; distance: number }[] = [];
+    const shapes: {
+      scene: GpuScene;
+      draw: Draw;
+      distance: number;
+      pipeline?: GPURenderPipeline;
+    }[] = [];
+    const distance = (draw: Draw): number => {
+      const dx = draw.center[0] - cameraPosition[0];
+      const dy = draw.center[1] - cameraPosition[1];
+      const dz = draw.center[2] - cameraPosition[2];
+      return dx * dx + dy * dy + dz * dz;
+    };
     for (const scene of scenes) {
       for (const draw of scene.draws) {
         if (draw.part.pass !== 'refraction' || !this.#visible(draw)) continue;
-        const dx = draw.center[0] - cameraPosition[0];
-        const dy = draw.center[1] - cameraPosition[1];
-        const dz = draw.center[2] - cameraPosition[2];
-        shapes.push({ scene, draw, distance: dx * dx + dy * dy + dz * dz });
+        shapes.push({ scene, draw, distance: distance(draw) });
+      }
+      // Invisible actors' shapes bend the scene behind them as refraction shapes do.
+      for (const draw of this.#refractingInstanceDraws(scene)) {
+        if (!this.#visible(draw)) continue;
+        const pipeline = this.#instanceRefractionPipeline(draw.part);
+        shapes.push({ scene, draw, distance: distance(draw), pipeline });
       }
     }
     shapes.sort((a, b) => b.distance - a.distance);
-    for (const { scene, draw } of shapes) this.#drawPart(pass, scene, draw);
+    for (const { scene, draw, pipeline } of shapes)
+      this.#drawPart(pass, scene, draw, passState(), pipeline);
     this.#flushLights(scenes);
   }
 
@@ -5069,6 +5124,18 @@ export class SceneRenderer {
         stepFade(group.state, value, Math.max(0, seconds - group.updated), seen, this.fadeTiming);
         group.updated = seconds;
       }
+      // Drawn with refraction besides (an invisible actor): its lit draws' emissive alpha holds
+      // the strength, as a refraction shape's does.
+      const refraction = Math.max(0, group.of?.refraction ?? 0);
+      if (refraction !== group.refraction) {
+        group.refraction = refraction;
+        const floats = new Float32Array(scene.uniformData);
+        for (const draw of group.draws) {
+          if (!refractsAsInstance(draw.part)) continue;
+          floats[draw.uniformOffset / 4 + 23] = refraction;
+          runs.add(draw.uniformOffset + 23 * 4, 4);
+        }
+      }
       const away = 1 - group.state.alpha;
       const level = Math.round(Math.max(away, Math.min(1, group.of?.veil ?? 0)) * 255);
       if (level === group.level) continue;
@@ -5383,10 +5450,11 @@ export class SceneRenderer {
     scene: GpuScene,
     draw: Draw,
     state: PassState = passState(),
+    pipeline: GPURenderPipeline = draw.part.pipeline,
   ): void {
     const { part } = draw;
     this.#chooseLights(scene, draw);
-    bindPart(pass, state, part.pipeline, part);
+    bindPart(pass, state, pipeline, part);
     bindAt(pass, 1, scene.drawBindGroup, draw.uniformOffset);
     this.#bindBones(pass, scene, draw);
     if (draw.ranges) {
@@ -5641,9 +5709,14 @@ export class SceneRenderer {
     return pipeline;
   }
 
-  #pipeline(part: ModelPart, blend: GPUBlendState | undefined): GPURenderPipeline {
+  #pipeline(
+    part: ModelPart,
+    blend: GPUBlendState | undefined,
+    asRefraction = false,
+  ): GPURenderPipeline {
     const material = part.material;
-    const refraction = isRefraction(material);
+    // Into the refraction buffer: a refraction shape, or an invisible actor's lit shape.
+    const refraction = asRefraction || isRefraction(material);
     const shader = refraction ? 'refraction' : material?.kind === 'effect' ? 'effect' : 'lighting';
     const flags1 = material?.flags1 ?? SLSF1_ZBUFFER_TEST;
     const flags2 = material?.flags2 ?? SLSF2_ZBUFFER_WRITE;

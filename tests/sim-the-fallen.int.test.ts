@@ -217,7 +217,10 @@ describe.skipIf(!hasGamedata())('MQ301 The Fallen', () => {
 
   // The Shout calls him (150, the attack's stage 2): he comes over the walls, takes a soldier in his
   // talons on the way in (the flight grab) and fights (3). Dragonrend, each time it reaches him,
-  // brings him down, and on the ground he comes for the player into the trap at the porch's end
+  // brings him down (the player shouts it at him as he comes near, aiming at him while the words
+  // are held: a shout aimed where he was two seconds before reached him only by chance, and
+  // whether the fight's turns brought him back there changed with any change to who goes where
+  // on the porch), and on the ground he comes for the player into the trap at the porch's end
   // (5: 180; "Now! Quickly!"): the trap holds him, and he speaks to the player (200).
   it('has the player call Odahviing and bring him down into the trap (150-200)', async () => {
     if (!onThePorch) return;
@@ -240,14 +243,9 @@ describe.skipIf(!hasGamedata())('MQ301 The Fallen', () => {
       expect(await attackStage(sim)).toBe(3);
       expect(said(37)).toBe(true);
       expect(await sim.equip(await sim.formId('SHOU', 'DragonrendShout'))).toBe(true);
-      for (let shouts = 0; shouts < 40 && (await attackStage(sim)) < 4; shouts++) {
-        const at = await sim.position(odahviing);
-        expect(at).toBeDefined();
-        if (!at) return;
-        sim.look(at);
-        await sim.step(0.2);
-        await shoutAll(sim);
-        await sim.step(3);
+      const down = async (): Promise<boolean> => (await attackStage(sim)) >= 4;
+      for (let shouts = 0; shouts < 10 && !(await down()); shouts++) {
+        if (!(await sim.shoutAt(odahviing, 60, down))) break;
       }
       expect(await attackStage(sim)).toBeGreaterThanOrEqual(4);
       expect(await sim.until(() => sim.stageDone(MQ301, 180), 120)).toBe(true);

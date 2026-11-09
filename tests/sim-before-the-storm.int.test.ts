@@ -23,6 +23,16 @@ const BY_ALVORS_DOOR: [number, number, number] = [-537, -231, 241];
 /** WhiterunWorld and Dragonsreach (WhiterunDragonsreach). */
 const WHITERUN = 0x1a26f;
 const DRAGONSREACH = 0x165a3;
+/** Tamriel; Whiterun's gate guard (GuardWhiterunImperialGate1REF) and his wait marker outside it. */
+const TAMRIEL = 0x3c;
+const GATE_GUARD = 0xdc9e4;
+const GATE_GUARD_MARKER = 0xd1986;
+/** DialogueWhiterunGuardGateStop, its branch topic ("Halt!") and WhiterunMainGateRef. */
+const GATE_STOP = 0xd1984;
+const GATE_STOP_TOPIC = 0xd197a;
+const WHITERUN_GATE = 0x1b1f1;
+/** The gate stop's topic for one Riverwood sent (DialogueWhiterunGuardGateStopNote). */
+const RIVERWOOD_CALLS = "Riverwood calls for the Jarl's aid.";
 /** Irileth (her force greet in MQ102DragonsreachScene). */
 const IRILETH = 0x1a67f;
 /** MQ103: Bleak Falls Barrow. */
@@ -252,18 +262,52 @@ describe.skipIf(!hasGamedata())('MQ102 Before the Storm (Hadvar’s route)', () 
     }
   }, 600_000);
 
-  // Still open (2026-10-28): Whiterun's gate guard (GuardWhiterunImperialGate1REF, 0xdc9e4) is a
-  // temporary actor of a WhiterunWorld cell (26748, 1606, the Cloud District), where
-  // WhiterunGateGuardTravel sits him. His WhiterunGateGuardForcegreet (while
-  // DialogueWhiterunGuardGateStop 10 is not done) waits at WhiterunGateGuard (0xd1986) in Tamriel,
-  // outside the gate, and greets the player in its 2,000-unit trigger. With the player outside
-  // the gate he never comes: his cell is not loaded and he is not persistent, so the actors away
-  // (src/shell/actors-away.ts) never ask where his package has him (the package start would now
-  // know: src/ai/package-start.ts). UESP has him outside the gate. Next: how the engine brings a
-  // temporary actor whose package lies in another worldspace there (original); then the case: "Halt!",
-  // "Riverwood calls for the Jarl's aid" (82, which sets MQ102 100), the gate unlocked.
+  // Whiterun's gate guard (GuardWhiterunImperialGate1REF) is a temporary actor of a WhiterunWorld
+  // cell (6,0, by the barracks); his WhiterunGateGuardForcegreet (while
+  // DialogueWhiterunGuardGateStop 10 is not done) waits at WhiterunGateGuard in Tamriel, outside
+  // the gate. WhiterunLocation lists him, so the actors away ask him as the player comes there
+  // (tests/sim-gate-guard.int.test.ts). Sent by Alvor, the player tells him "Riverwood calls for
+  // the Jarl's aid": its info sets DialogueWhiterunGuardGateStop 10, which unlocks the gate
+  // (WhiterunMainGateRef, defaultUnlockOnLoad) and stops that quest. MQ102 82 (whose fragment
+  // sets 100) is set by nothing in the load order's scripts, references, infos or scenes: the
+  // player's arrival is told to Irileth in Dragonsreach (above).
   // Ralof’s route (MQ102B) to Irileth: tests/sim-before-the-storm-ralof.int.test.ts.
-  it.todo('has the gate guard stop the player outside Whiterun (MQ102 82, 100)');
+  it('has the gate guard stop the player outside Whiterun; Riverwood’s call opens the gate', async () => {
+    expect(toWhiterun).toBeDefined();
+    if (!toWhiterun) return;
+    const sim = await loadSim(toWhiterun);
+    try {
+      // On the road up to the gate, some 3,500 units below it.
+      await sim.world.openExterior(TAMRIEL, {
+        arrival: { position: [16638, -9647, -4600], heading: 0 },
+      });
+      const away = sim.world.stage.away;
+      await sim.until(() => !away.scheduling.busy && away.scheduling.last !== undefined, 20);
+      await sim.step(1);
+      expect(sim.actor(GATE_GUARD)).toBeDefined();
+      expect(await sim.runtime.lock(WHITERUN_GATE)).toMatchObject({ locked: true });
+      // Into his forcegreet's trigger, on the road below the gate: he comes and stops them.
+      const marker = await sim.position(GATE_GUARD_MARKER);
+      if (!marker) throw new Error('no wait marker');
+      const near: [number, number, number] = [marker[0] - 700, marker[1] - 700, marker[2]];
+      const ground = sim.world.navmeshes.nearest?.(near, 1024);
+      await sim.moveTo(ground ? [ground[0], ground[1], ground[2]] : near);
+      const topics = await sim.listen(GATE_GUARD, 60);
+      const opened = sim.menus().filter((menu) => menu.menu === 'Dialogue Menu');
+      expect(opened.at(-1)).toMatchObject({ reference: GATE_GUARD, opening: GATE_STOP_TOPIC });
+      expect(topics).toContain(RIVERWOOD_CALLS);
+      await sim.choose(RIVERWOOD_CALLS);
+      sim.goodbye();
+      await sim.step(1);
+      expect(sim.stageDone(GATE_STOP, 10)).toBe(true);
+      expect(sim.isRunning(GATE_STOP)).toBe(false);
+      expect(await sim.runtime.lock(WHITERUN_GATE)).toMatchObject({ locked: false });
+      // MQ102 goes on to the Jarl: nothing here sets 82 or 100 (Irileth hears of Helgen).
+      expect(sim.stageDone(MQ102, 100)).toBe(false);
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
 
   it('tells the Jarl of Helgen, who sends the player to Farengar (MQ102 110, 150, 160, 200; MQ103 10)', async () => {
     expect(beforeTheJarl).toBeDefined();

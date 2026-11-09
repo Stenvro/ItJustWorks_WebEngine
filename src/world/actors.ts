@@ -343,6 +343,8 @@ export class ActorResolver {
    * leveledBase), set by whoever runs the game; none: drawn by the reference's seed.
    */
   leveledPick: (reference: number) => number | undefined = () => undefined;
+  /** The times a reference has reset with its cell (GameState.resets): its picks drawn anew. */
+  resets: (reference: number) => number = () => 0;
 
   constructor(db: RecordDatabase) {
     this.#db = db;
@@ -356,6 +358,7 @@ export class ActorResolver {
       level,
       undefined,
       this.leveledPick(reference),
+      this.resets(reference),
     );
   }
 

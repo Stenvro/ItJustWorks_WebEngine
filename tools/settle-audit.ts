@@ -1,18 +1,24 @@
 // Places cells' collision in a physics world as a loaded cell has it and lets their loose objects
 // settle (the engine's warm start, src/shell/play-session.ts): every simulated object placed to
 // settle should come to rest about where the plugin placed it, on what it was placed on, never
-// through it. Prints the objects that end lower than their placed spot by more than their own
-// size with something between their placed spot and where they ended (they fell through it),
-// per cell and in all.
+// through it, nor out on top of what it was placed under. Prints the objects that end lower than
+// their placed spot by more than their own size with something between their placed spot and
+// where they ended (they fell through it), and those that end higher than placed by more than a
+// few units (lifted), per cell and in all. An articulated object with a placed ragdoll pose
+// (XRGD: an open book, armour on the floor) is posed by it as the session poses it, and stays at
+// rest where the walk is complete.
 //
 //   node tools/settle-audit.ts                     every interior cell
 //   node tools/settle-audit.ts mistwatch           interior cells whose editor id contains it
 //   node tools/settle-audit.ts --seconds 8 dungeon
 
+import type { SkeletonNode } from '../src/animation/animated-skeleton.ts';
 import { parseNif } from '../src/formats/nif/nif.ts';
+import { articulatedPose } from '../src/physics/articulation.ts';
 import {
   buildCollision,
   HAVOK_SCALE,
+  isArticulated,
   settlesWhenPlaced,
   type CollisionData,
 } from '../src/physics/collision-data.ts';
@@ -21,9 +27,13 @@ import {
   readCollisionMatrix,
   type CollisionMatrix,
 } from '../src/physics/collision-layers.ts';
+import { landscapeMesh } from '../src/physics/landscape.ts';
 import { GRAVITY, initPhysics, PhysicsWorld } from '../src/physics/physics-world.ts';
 import { loadCellData } from '../src/world/cell-loader.ts';
 import { enabledReferences, findToggles, gameStartSelection } from '../src/world/cell-upgrades.ts';
+import { poseObjectRagdoll } from '../src/world/ragdoll-data.ts';
+import { buildModel } from '../src/render/model-data.ts';
+import type { LandData } from '../src/world/land.ts';
 import type { RecordDatabase } from '../src/world/record-db.ts';
 import type { Vfs } from '../src/vfs/vfs.ts';
 
@@ -36,10 +46,26 @@ export interface FallenObject {
   readonly drop: number;
 }
 
+/** An object that ended higher than its placed spot by more than LIFT_SLACK. */
+export interface LiftedObject {
+  readonly reference: number;
+  readonly editorId: string;
+  readonly model: string;
+  /** How far its body's origin ended above where it was placed (game units). */
+  readonly rise: number;
+}
+
 export interface CellSettling {
   /** Simulated objects placed to settle. */
   readonly settling: number;
   readonly fell: readonly FallenObject[];
+  /**
+   * Objects that ended higher than placed by more than LIFT_SLACK: put out on top of what they
+   * were placed under or in, or thrown.
+   */
+  readonly lifted: readonly LiftedObject[];
+  /** How far each watched object ended from where it was placed (x, y, z: game units). */
+  readonly moved: ReadonlyMap<number, readonly [number, number, number]>;
   /**
    * Objects that ended lower with nothing between: rolled or tipped off what they were on, or
    * placed over nothing (as at a cell's origin, for a script to move).
@@ -49,11 +75,17 @@ export interface CellSettling {
 
 /** How far an object may end lower than placed: tipping over, rolling off a shelf (game units). */
 const FALL_SLACK = 8;
+/**
+ * How far an object may end higher than placed (game units): put out of a floor or a table's
+ * top it was placed a little into, tipping up on an edge.
+ */
+export const LIFT_SLACK = 8;
 
-/** Reads collision once per model. */
+/** Reads collision (and an articulated model's nodes) once per model. */
 export class CollisionCache {
   readonly #vfs: Vfs;
   readonly #cache = new Map<string, CollisionData | undefined>();
+  readonly #nodes = new Map<string, readonly SkeletonNode[] | undefined>();
 
   constructor(vfs: Vfs) {
     this.#vfs = vfs;
@@ -72,11 +104,27 @@ export class CollisionCache {
     this.#cache.set(key, collision);
     return collision;
   }
+
+  /** An articulated model's nodes (its bodies move them one by one: isArticulated). */
+  async nodes(model: string): Promise<readonly SkeletonNode[] | undefined> {
+    const key = model.toLowerCase();
+    if (this.#nodes.has(key)) return this.#nodes.get(key);
+    let nodes: readonly SkeletonNode[] | undefined;
+    try {
+      const path = key.startsWith('meshes\\') || key.startsWith('meshes/') ? key : `meshes\\${key}`;
+      if (this.#vfs.has(path)) nodes = buildModel(parseNif(await this.#vfs.read(path))).nodes;
+    } catch {
+      nodes = undefined;
+    }
+    this.#nodes.set(key, nodes);
+    return nodes;
+  }
 }
 
 /**
  * Settles one cell's loose objects for `seconds` (physics only: no scripts, actors or graphs)
- * and reports those that fell through what they were placed on.
+ * and reports those that fell through what they were placed on. An exterior cell's objects
+ * settle on its landscape (`land`: its heights and grid position), as the session places it.
  */
 export async function settleCell(
   db: RecordDatabase,
@@ -84,6 +132,7 @@ export async function settleCell(
   matrix: CollisionMatrix,
   cell: number,
   seconds = 5,
+  land?: { readonly data: LandData; readonly x: number; readonly y: number },
 ): Promise<CellSettling> {
   await initPhysics();
   const data = await loadCellData(db, cell);
@@ -95,11 +144,17 @@ export async function settleCell(
     editorId: string;
     model: string;
     body: ReturnType<PhysicsWorld['addObject']>['bodies'][number]['body'];
+    x: number;
+    y: number;
     z: number;
     size: number;
   }[] = [];
   const settle: ReturnType<PhysicsWorld['addObject']>[] = [];
   try {
+    if (land) {
+      const { vertices, indices } = landscapeMesh(land.data, land.x, land.y);
+      physics.addMesh(vertices, indices, Layer.ground, { reference: 0, kind: 'landscape' }, true);
+    }
     for (const object of data.objects) {
       if (!enabled(object.reference) || !object.model) continue;
       const collision = await collisions.get(object.model);
@@ -110,7 +165,16 @@ export async function settleCell(
         { reference: object.reference, kind: 'object' },
         false,
       );
-      if (!settlesWhenPlaced(object) || !placed.dynamic) continue;
+      // An articulated object's placed ragdoll pose, as the session applies it (play-session.ts).
+      const articulated =
+        object.ragdoll && isArticulated(collision)
+          ? articulatedPose(await collisions.nodes(object.model), collision)
+          : undefined;
+      const posed = articulated
+        ? poseObjectRagdoll(physics, placed, articulated.pose, collision, object)
+        : undefined;
+      const settles = posed ? !posed.complete : settlesWhenPlaced(object);
+      if (!settles || !placed.dynamic) continue;
       settle.push(placed);
       const moving = placed.bodies.find(
         ({ data: body }) => body.motion === 'dynamic' && !body.phantom,
@@ -121,6 +185,8 @@ export async function settleCell(
         editorId: object.editorId,
         model: object.model,
         body: moving.body,
+        x: moving.body.translation().x,
+        y: moving.body.translation().y,
         z: moving.body.translation().z,
         size: extentOf(collision) * placed.scale,
       });
@@ -137,6 +203,8 @@ export async function settleCell(
     for (const placed of settle) physics.settle(placed);
     for (let t = 0; t < seconds; t += physics.stepSeconds) physics.step(physics.stepSeconds);
     const fell: FallenObject[] = [];
+    const lifted: LiftedObject[] = [];
+    const moved = new Map<number, readonly [number, number, number]>();
     let droppedOff = 0;
     // Only what does not move is a surface it may have gone through.
     const moving = (collider: { parent(): { isDynamic(): boolean } | null }): boolean =>
@@ -146,6 +214,15 @@ export async function settleCell(
       const [x, y, z] = [at.x * HAVOK_SCALE, at.y * HAVOK_SCALE, at.z * HAVOK_SCALE];
       const start = entry.z * HAVOK_SCALE;
       const drop = start - z;
+      moved.set(entry.reference, [x - entry.x * HAVOK_SCALE, y - entry.y * HAVOK_SCALE, -drop]);
+      if (-drop > LIFT_SLACK) {
+        lifted.push({
+          reference: entry.reference,
+          editorId: entry.editorId,
+          model: entry.model,
+          rise: -drop,
+        });
+      }
       if (!(drop > entry.size + FALL_SLACK)) continue;
       // Gone through something: where it ended, a surface lies between its placed height and it
       // (one that tipped off a table lies on the floor beside it; one placed over nothing, as at
@@ -165,7 +242,7 @@ export async function settleCell(
       }
       fell.push({ reference: entry.reference, editorId: entry.editorId, model: entry.model, drop });
     }
-    return { settling: watched.length, fell, droppedOff };
+    return { settling: watched.length, fell, lifted, droppedOff, moved };
   } finally {
     physics.world.free();
   }
@@ -229,6 +306,7 @@ if (import.meta.main) {
   );
   let settling = 0;
   let fell = 0;
+  let lifted = 0;
   let droppedOff = 0;
   let cellsWithFalls = 0;
   const start = performance.now();
@@ -236,19 +314,25 @@ if (import.meta.main) {
     const result = await settleCell(db, collisions, matrix, cell.formId, seconds);
     settling += result.settling;
     fell += result.fell.length;
+    lifted += result.lifted.length;
     droppedOff += result.droppedOff;
-    if (result.fell.length > 0) {
-      cellsWithFalls++;
+    if (result.fell.length > 0) cellsWithFalls++;
+    if (result.fell.length > 0 || result.lifted.length > 0) {
       console.log(`${cell.editorId} [${cell.formId.toString(16).toUpperCase()}]`);
       for (const object of result.fell) {
         console.log(
           `  ${object.reference.toString(16).toUpperCase().padStart(8, '0')} ${object.editorId} ${object.model} fell ${object.drop.toFixed(0)}`,
         );
       }
+      for (const object of result.lifted) {
+        console.log(
+          `  ${object.reference.toString(16).toUpperCase().padStart(8, '0')} ${object.editorId} ${object.model} lifted ${object.rise.toFixed(0)}`,
+        );
+      }
     }
   }
   console.log(
-    `${cells.length} cells, ${settling} objects settling, ${fell} fell through (in ${cellsWithFalls} cells), ${droppedOff} dropped off, ${((performance.now() - start) / 1000).toFixed(0)} s`,
+    `${cells.length} cells, ${settling} objects settling, ${fell} fell through (in ${cellsWithFalls} cells), ${lifted} lifted, ${droppedOff} dropped off, ${((performance.now() - start) / 1000).toFixed(0)} s`,
   );
   await db.close();
   await vfs.close();

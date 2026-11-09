@@ -182,6 +182,24 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
     expect(await runtime.vm.stateOf(script)).toBe('alive');
   });
 
+  it('runs the scripts of a template link that takes its template scripts and has its own', async () => {
+    // MQ304AlduinREF: MQ304Alduin uses his template's scripts (AlduinBase, which uses
+    // EncDragon01Fire's: DragonActorScript) and has FXAlduinScript of his own, the death that
+    // MQ305 waits for (its MQKillDragonFaction); he is in MQNoDragonAbsorb, which
+    // DragonActorScript's death sequence asks, so both run.
+    const ALDUIN = 0x0004e9bd;
+    const names = (await runtime.attachedScripts(runtime.referenceHandle(ALDUIN))).map((s) =>
+      s.name.toLowerCase(),
+    );
+    expect(names).toContain('fxalduinscript');
+    expect(names).toContain('dragonactorscript');
+    // A template link with no scripts of its own adds none (MQ104's dragon, above).
+    const dragon = (await runtime.attachedScripts(runtime.referenceHandle(0x0005a6ca))).map((s) =>
+      s.name.toLowerCase(),
+    );
+    expect(dragon).not.toContain('fxalduinscript');
+  });
+
   it("gives the player the race's starting attributes", async () => {
     const health = await runtime.actors.value(PLAYER, ActorValue.health);
     expect(health.max).toBeGreaterThan(0);

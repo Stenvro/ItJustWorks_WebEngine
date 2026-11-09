@@ -25,17 +25,21 @@
 
 import {
   bounceLobber,
+  carriedByBody,
   coneDone,
   flightKind,
   launchCone,
   lightsGivingWay,
   launchFlight,
   LOBBER_DEFAULTS,
+  MAX_PLAYER_RUNES,
   normalize,
   pathHitsActor,
   pointAt,
+  runesGivingWay,
   stepFlight,
   sticksAsLight,
+  stuckOnBody,
   sweepCone,
   withinProximity,
   type ActorShape,
@@ -152,6 +156,8 @@ interface Flying {
   readonly stream: FlameStream | undefined;
   readonly origin: Vec3;
   done: boolean;
+  /** A rune: when it came to rest (the projectiles' clock), the oldest giving way first. */
+  restedAt?: number;
   /** A loaded save's state of its model's graph, put back as its model loads. */
   savedGraph?: SavedGraph | undefined;
 }
@@ -210,11 +216,15 @@ export class MagicProjectiles {
   readonly #lobbers: { current: LobberSettings } = { current: LOBBER_DEFAULTS };
   /** The cones' waves sweeping out. */
   readonly #waves = new Set<Wave>();
-  /** Magelights stuck where they struck: their model, their effect's light, until when. */
+  /**
+   * Magelights stuck where they struck: their model, their effect's light, until when; on a
+   * moving body, the body's collider and where on it they struck (carried with it).
+   */
   readonly #stuck = new Set<{
     readonly flying: Flying;
     readonly until: number;
     light: LightRecord | undefined;
+    readonly carried?: { readonly collider: RayHit['collider']; readonly local: Vec3 };
   }>();
 
   constructor(options: MagicProjectilesOptions) {
@@ -411,6 +421,8 @@ export class MagicProjectiles {
       );
       if (flying.stream && entry.graph) this.#flames.restoreGraph(flying.stream, entry.graph);
       else flying.savedGraph = entry.graph;
+      // A rune at rest keeps its place among the caster's (the save's order is theirs).
+      if (flight.resting) flying.restedAt = this.#clock;
     }
   }
 
@@ -1012,7 +1024,10 @@ export class MagicProjectiles {
       this.#beams.frame(seconds);
       this.#flames.frame(seconds);
       for (const stuck of [...this.#stuck]) {
-        if (stuck.until > this.#clock) continue;
+        if (stuck.until > this.#clock) {
+          if (stuck.carried) this.#carry(stuck.flying, stuck.carried);
+          continue;
+        }
         stuck.flying.scene?.destroy();
         this.#stuck.delete(stuck);
       }
@@ -1064,6 +1079,13 @@ export class MagicProjectiles {
           flying.instance.world.set(placementOf(flying.flight));
           flying.motion.version++;
         }
+        if (flying.flight.resting && flying.restedAt === undefined) {
+          flying.restedAt = this.#clock;
+          if (flying.delivered.caster === PLAYER_REF)
+            void this.#limitRunes().catch((error: unknown) => {
+              this.#options.terminal.log('magic', `runes: ${describe(error)}`, 'warn');
+            });
+        }
         continue;
       }
       if (hit || near || flying.flight.spent) {
@@ -1071,7 +1093,7 @@ export class MagicProjectiles {
         flying.flight.position = point;
         this.#knock(flying.projectile, hit?.ray, normalize(flying.flight.velocity));
         if (hit && hit.kind !== 'actor' && sticksAsLight(flying.effect?.archetype, 'surface'))
-          this.#stick(flying);
+          this.#stick(flying, hit.ray);
         else this.#end(flying);
         // A flame reaches as far as its spray went (its full range when it met nothing).
         if (flying.stream) {
@@ -1416,7 +1438,7 @@ export class MagicProjectiles {
    * A Magelight stays where it struck (projectile-flight.ts sticksAsLight): its model there and
    * its effect's light (MGEF light) for the effect item's duration as cast (dual casting's power).
    */
-  #stick(flying: Flying): void {
+  #stick(flying: Flying, ray: RayHit | undefined): void {
     const effect = flying.effect;
     const entry = flying.delivered.item.effects.find((item) => item.effect === effect?.formId);
     flying.done = true;
@@ -1442,11 +1464,52 @@ export class MagicProjectiles {
       earlier.flying.scene?.destroy();
       this.#stuck.delete(earlier);
     }
-    const stuck = { flying, until: this.#clock + duration, light: flying.light };
+    // On a moving body it is carried where it struck the body (sticksAsLight).
+    const pose = ray && this.#physics?.movingPose(ray.collider);
+    const stuck = {
+      flying,
+      until: this.#clock + duration,
+      light: flying.light,
+      ...(ray &&
+        pose && {
+          carried: { collider: ray.collider, local: stuckOnBody(pose, flying.flight.position) },
+        }),
+    };
     this.#stuck.add(stuck);
     void this.#options.fx?.lightRecord(effect.associatedItem).then((light) => {
       if (light) stuck.light = light;
     });
+  }
+
+  /** A Magelight on a moving body goes where the body took the point it struck. */
+  #carry(
+    flying: Flying,
+    carried: { readonly collider: RayHit['collider']; readonly local: Vec3 },
+  ): void {
+    const pose = this.#physics?.movingPose(carried.collider);
+    if (!pose) return;
+    flying.flight.position = carriedByBody(pose, carried.local);
+    if (flying.instance) {
+      flying.instance.world.set(placementOf(flying.flight));
+      flying.motion.version++;
+    }
+  }
+
+  /**
+   * The player's runes at rest beyond iMaxPlayerRunes (as their Mod Max Placeable Mines leaves
+   * it) give way, the oldest first (projectile-flight.ts runesGivingWay).
+   */
+  async #limitRunes(): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) return;
+    const setting = await runtime.gameSetting('iMaxPlayerRunes');
+    const base = typeof setting === 'number' ? setting : MAX_PLAYER_RUNES;
+    const max = await runtime.perks.apply(EntryPoint.modMaxPlaceableMines, PLAYER_REF, base, []);
+    const runes: { readonly caster: number; readonly restedAt: number; flying: Flying }[] = [];
+    for (const flying of this.#flying)
+      if (!flying.done && flying.restedAt !== undefined)
+        runes.push({ caster: flying.delivered.caster, restedAt: flying.restedAt, flying });
+    for (const rune of runesGivingWay(runes, PLAYER_REF, max)) this.#end(rune.flying);
   }
 
   #end(flying: Flying): void {
