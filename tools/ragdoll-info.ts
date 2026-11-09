@@ -2,8 +2,9 @@
 // hinge constraints) on a flat floor and measures how it comes to rest: when every body sleeps,
 // how fast any body went, how often bodies flip their vertical velocity at the end (jitter), and
 // whether its joints held. With --pose, every placed ragdoll pose (XRGD) is checked against
-// the bodies of its model; with --limits, their joints' angles against the joints' limits; with
-// --ref <form id>, one placed dead's ragdoll is let go from its placed pose.
+// the bodies of its model; with --limits, their joints' angles against the joints' limits, and
+// by joint how many lie past them and by how much; with --ref <form id>, one placed dead's
+// ragdoll is let go from its placed pose.
 //
 //   node tools/ragdoll-info.ts                  every race skeleton, dropped from its rest pose
 //   node tools/ragdoll-info.ts wolf             the skeletons whose path contains "wolf"
@@ -361,6 +362,35 @@ async function auditLimits(): Promise<void> {
     if (angle >= min - slack && angle <= max + slack) entry.within++;
     if (-angle >= min - slack && -angle <= max + slack) entry.mirrored++;
   };
+  // How far each joint lies past its limits (mirrored), by its two bodies' nodes with the side
+  // left out (the left and right ankles together), past its lower and its upper limit (as the
+  // file gives them: an ankle's upper limit is its dorsiflexion's): the give of Havok's soft
+  // limits under a corpse's own weight.
+  interface Past {
+    all: number;
+    lower: [number, number];
+    upper: [number, number];
+    most: number;
+  }
+  const past = new Map<string, Past>();
+  const tallyPast = (key: string, angle: number, min: number, max: number): void => {
+    const entry = past.get(key) ?? { all: 0, lower: [0, 0], upper: [0, 0], most: 0 };
+    past.set(key, entry);
+    const degrees = 180 / Math.PI;
+    const lower = (min + angle) * degrees;
+    const upper = (-angle - max) * degrees;
+    entry.all++;
+    if (lower > 1) entry.lower[0]++;
+    if (lower > 5) entry.lower[1]++;
+    if (upper > 1) entry.upper[0]++;
+    if (upper > 5) entry.upper[1]++;
+    entry.most = Math.max(entry.most, lower, upper);
+  };
+  const sideless = (node: string | undefined): string =>
+    (node ?? '?')
+      .replace(/\[.*\]/, '')
+      .replace(/ [LR] /, ' ')
+      .trim();
   let poses = 0;
   for (const formId of db.formIdsOfType('ACHR')) {
     const record = await db.get(formId);
@@ -395,11 +425,15 @@ async function auditLimits(): Promise<void> {
       );
       if (r.w < 0) r = { x: -r.x, y: -r.y, z: -r.z, w: -r.w };
       const angle = (v: number): number => 2 * Math.asin(Math.max(-1, Math.min(1, v)));
+      const joint = `${sideless(a.node)} -> ${sideless(b.node)}`;
       if (d.type === 'limited-hinge') {
         tally('limited hinge', angle(r.x), d.minAngle, d.maxAngle);
+        tallyPast(`hinge ${joint}`, angle(r.x), d.minAngle, d.maxAngle);
       } else {
         tally('ragdoll twist', angle(r.x), d.twistMinAngle, d.twistMaxAngle);
         tally('ragdoll plane', angle(r.z), d.planeMinAngle, d.planeMaxAngle);
+        tallyPast(`twist ${joint}`, angle(r.x), d.twistMinAngle, d.twistMaxAngle);
+        tallyPast(`plane ${joint}`, angle(r.z), d.planeMinAngle, d.planeMaxAngle);
       }
     }
   }
@@ -407,6 +441,15 @@ async function auditLimits(): Promise<void> {
   for (const [key, { within, mirrored, all }] of stats) {
     console.log(
       `  ${key}: ${String(all)} angles, within the limits as Rapier measures ${(within / all).toFixed(3)}, mirrored ${(mirrored / all).toFixed(3)}`,
+    );
+  }
+  console.log('past their limits (mirrored), the joints of the most poses (by > 1°, > 5°):');
+  const rows = [...past].sort((x, y) => y[1].all - x[1].all).slice(0, 30);
+  const pair = ([one, five]: [number, number]): string =>
+    `${String(one).padStart(4)} ${String(five).padStart(4)}`;
+  for (const [key, { all, lower, upper, most }] of rows) {
+    console.log(
+      `  ${key.padEnd(40)} ${String(all).padStart(5)}  lower ${pair(lower)}  upper ${pair(upper)}  most ${most.toFixed(1)}°`,
     );
   }
 }
