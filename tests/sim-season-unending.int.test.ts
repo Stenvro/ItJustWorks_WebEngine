@@ -167,6 +167,13 @@ describe.skipIf(!hasGamedata())('MQ302 Season Unending', () => {
       expect(await sim.until(() => sim.stageDone(MQ302, 52), 120)).toBe(true);
       expect(lines).toContain('MQ302CouncilSceneIntro: #56 said');
       expect(lines).toContain('MQ302CouncilSceneIntro: #80 said');
+      // Arngeir's greeting (MQ302CouncilForceGreet1Arngeir) waits for the player to come into its
+      // trigger location, input 62 of its ForceGreet template: within 1500 units of alias 5,
+      // Arngeir himself (derived from the package data). The door is some 1600 units from where he
+      // stands, so the player walks into the hall toward him.
+      const arngeirAt = await sim.position(alias(sim, ARNGEIR));
+      expect(arngeirAt).toBeDefined();
+      if (arngeirAt) await sim.walkPath(arngeirAt, 30, 1200);
       expect(await sim.listen(alias(sim, ARNGEIR), 90)).toBeDefined();
       sim.goodbye();
       expect(await sim.until(() => sim.stageDone(MQ302, 55), 30)).toBe(true);
@@ -176,7 +183,10 @@ describe.skipIf(!hasGamedata())('MQ302 Season Unending', () => {
       const chair = await sim.position(PLAYER_CHAIR);
       expect(chair && (await sim.walkPath(chair, 60, 120))).toBe(true);
       expect(sim.activate(PLAYER_CHAIR)).toBe(true);
-      expect(await sim.until(() => sim.stageDone(MQ302, 60), 30)).toBe(true);
+      // Stage 60 comes as phase 2 of MQ302CouncilSceneBegin ends (the player seated), and phase 1
+      // waits for every one of the council to reach their place first (Arngeir and Delphine walk
+      // the furthest).
+      expect(await sim.until(() => sim.stageDone(MQ302, 60), 60)).toBe(true);
       await sim.step(1);
       council = await sim.save('MQ302 60');
     } finally {
