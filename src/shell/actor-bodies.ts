@@ -563,6 +563,13 @@ export class ActorBodies {
       driven: undefined,
     };
     this.#bodies.set(reference, entry);
+    // Its actor disabled or deleted meanwhile: out of the world from the start (frame). A corpse
+    // deleted while its death's driven ragdoll still waited went limp seconds later, its ragdoll
+    // made then in the world, and its trigger volumes were told it entered and left.
+    if (staged.visibility.hidden) {
+      entry.disabled = true;
+      physics.setEnabled(bodies.placed, false);
+    }
     this.#disableSevered(entry);
     // Made in the pose it has now: a keyframed body only gets there by the next step, and one
     // made as its actor dies is let go before that (made where the model's rest pose has it,
