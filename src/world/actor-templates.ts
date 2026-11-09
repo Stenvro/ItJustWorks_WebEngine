@@ -3,7 +3,8 @@
 // stats, factions, spells, AI data, packages, base data, inventory, script, keywords, ...)
 // from the template, which may itself be a leveled list or have a template. Each leveled list
 // on the way is picked once per actor, so every part comes from the same picks; the
-// reference's form id seeds them, so an actor is the same every time it loads.
+// reference's form id seeds them, so an actor is the same every time it loads (until it resets
+// with its cell: each reset draws them anew).
 // Platform-independent. Notes: docs/formats/esm.md ("Actors").
 
 import { view } from '../formats/esm/fields.ts';
@@ -23,8 +24,12 @@ export interface ActorTemplates {
   part(flag: number): number;
 }
 
-/** The seed of a reference's leveled choices (shared by its look and its scripts). */
-export const actorSeed = (reference: number): number => (reference ^ 0x9e3779b9) >>> 0;
+/**
+ * The seed of a reference's leveled choices (shared by its look and its scripts); `resets`: the
+ * times it has reset with its cell (GameState.resets), each drawing them anew.
+ */
+export const actorSeed = (reference: number, resets = 0): number =>
+  ((reference ^ 0x9e3779b9) + Math.imul(resets, 0x85ebca6b)) >>> 0;
 
 /**
  * Resolves the templates of an actor placed with `base` (NPC_ or LVLN) by `reference`, at
@@ -44,8 +49,10 @@ export async function resolveActorTemplates(
    * ExtraLeveledCreature): each leveled list on the way comes down to it, not drawn again.
    */
   keptPick?: number,
+  /** The times the reference has reset with its cell (its picks are drawn anew each time). */
+  resets = 0,
 ): Promise<ActorTemplates | undefined> {
-  const random = seededRandom(actorSeed(reference));
+  const random = seededRandom(actorSeed(reference, resets));
   const picks = new Map<number, number | undefined>();
   const toNpc = async (formId: number, depth = 0): Promise<RecordSource | undefined> => {
     if (depth > MAX_DEPTH) return undefined;

@@ -929,6 +929,7 @@ export class ActorSenses implements ScriptSenses {
       level,
       undefined,
       runtime.state.actors.get(staged.reference)?.leveledBase,
+      runtime.state.resets.get(staged.reference) ?? 0,
     );
     const npc = templates && (await db.get(templates.part(TemplateFlag.defaultPackages)));
     if (npc?.type === 'NPC_') merge(parseNpcCombat(npc).overridePackages);

@@ -2804,9 +2804,13 @@ export class ScriptRuntime implements VmHost {
     this.state.inventories.set(container, items);
     if (this.#seeded.has(container)) return items;
     this.#seeded.add(container);
-    // A restocked container's leveled items are picked anew (restock).
+    // A restocked container's leveled items are picked anew (restock), and so are those of one
+    // reset with its cell (resetHeld).
     const restocks = this.state.restocked.get(container)?.count ?? 0;
-    const random = seededRandom((container ^ 0x5bd1e995) + Math.imul(restocks, 0x9e3779b9));
+    const resets = this.state.resets.get(container) ?? 0;
+    const random = seededRandom(
+      (container ^ 0x5bd1e995) + Math.imul(restocks, 0x9e3779b9) + Math.imul(resets, 0x85ebca6b),
+    );
     const actor = await this.actors.info(container);
     const base = actor ? actor.inventory.formId : await this.baseOf(container);
     let level: number | undefined;
@@ -3152,6 +3156,23 @@ export class ScriptRuntime implements VmHost {
       days: this.state.gameDaysPassed,
       count: (restocked?.count ?? 0) + 1,
     });
+    this.#emptyHolder(container);
+  }
+
+  /**
+   * A reference resets with its cell (cell-reset.ts): what it held goes (as a restock: the item
+   * references in it, improvements, stolen marks) and its own items (CNTO, leveled lists drawn
+   * anew) are there again as it is next read; an actor's leveled lists and templates are drawn
+   * anew as it is next resolved (GameState.resets seeds both).
+   */
+  resetHeld(reference: number): void {
+    this.state.resets.set(reference, (this.state.resets.get(reference) ?? 0) + 1);
+    this.#emptyHolder(reference);
+    this.actors.forget(reference);
+  }
+
+  /** What a container holds goes: its items are its records' again as it is next read. */
+  #emptyHolder(container: number): void {
     for (const state of this.state.references.values()) {
       if (state.container?.holder !== container) continue;
       delete state.container;
@@ -3441,7 +3462,8 @@ export class ScriptRuntime implements VmHost {
     // Casts charge and concentrate; voices recover.
     if (!this.retired) this.casting.update(realSeconds);
     this.scenes.update(realSeconds);
-    // Harvested flora grow again as their cells reset; hazards burn out and hit.
+    // Harvested flora without a cell grow again (those of a cell, as it resets); hazards burn
+    // out and hit.
     if (!this.retired) this.harvest.update(realSeconds);
     if (!this.retired) this.hazards.update(realSeconds);
     // Destruction stages' self damage per second.
