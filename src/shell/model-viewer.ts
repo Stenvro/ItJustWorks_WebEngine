@@ -991,6 +991,10 @@ export class ModelViewer {
     // The actors near the player move in its physics world.
     this.#stage?.attachPlay(play);
     // The player walking into trigger volumes tells their scripts.
+    // The player put somewhere is told (PositionPlayerEvent).
+    play.onPositionPlayer = (type) => {
+      this.#session?.scriptsReady?.events.emit('positionPlayer', { type });
+    };
     play.onTrigger = (reference, entered) => {
       this.#session?.scriptsReady?.triggered(reference, PLAYER_REF, entered);
     };

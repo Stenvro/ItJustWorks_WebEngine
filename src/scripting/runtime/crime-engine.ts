@@ -829,8 +829,8 @@ export class CrimeEngine {
         PICKPOCKET,
         pickpocketUses(value, await this.settings()),
       );
-      this.#stat('pockets picked');
-      this.#stat('items pickpocketed', count);
+      // ItemsPickpocketed: Pockets Picked, Items Pickpocketed (stat-events.ts).
+      runtime.events.emit('itemsPickpocketed', { item: base, count });
     }
     return true;
   }

@@ -8,7 +8,8 @@ import { GroupType } from '../../../formats/esm/record.ts';
 import { ObjectHandle } from '../../values.ts';
 import { globalValue } from '../condition-values.ts';
 import type { ScriptRuntime } from '../runtime.ts';
-import { countObjectiveCompleted } from '../stat-events.ts';
+import type { ObjectiveState as ObjectiveEntry } from '../game-state.ts';
+import { countObjectiveCompleted, objectiveState } from '../stat-events.ts';
 import { bool, formOf, int, num, object, str, type Register } from './args.ts';
 
 export function registerQuest(n: Register, runtime: ScriptRuntime): void {
@@ -87,6 +88,18 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
     }
     return entry;
   };
+  /**
+   * An objective's flags change; a new state is told (ObjectiveState). TODO(M13): the state from
+   * the three flags is inferred (objectiveState in stat-events.ts).
+   */
+  const told = (quest: number, index: number, change: (entry: ObjectiveEntry) => void) => {
+    const entry = objective(quest, index);
+    const old = objectiveState(entry);
+    change(entry);
+    const now = objectiveState(entry);
+    if (now !== old)
+      runtime.events.emit('objectiveState', { quest, objective: index, old, new: now });
+  };
   n('quest.setobjectivedisplayed', async ({ self, args, latent }) => {
     if (!self) return null;
     // Displaying an objective starts the quest.
@@ -101,18 +114,25 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
       state.quest(self.formId).updated = ++state.questClock;
       entry.shown = state.questClock;
     }
-    entry.displayed = displayed;
+    told(self.formId, index, (changed) => {
+      changed.displayed = displayed;
+    });
     return null;
   });
-  // A shown objective's completion and failure are announced too; a completion is counted in
-  // the stats (ObjectiveState: Misc Objectives Completed, stat-events.ts).
+  // A shown objective's completion and failure are announced too; a shown objective's completion
+  // is counted in the stats (Misc Objectives Completed, stat-events.ts) as it is turned on, a
+  // failed one's too, and not when a completed objective is hidden and shown again (TODO(M13):
+  // inferred; the original's stats hear ObjectiveState, and which of its moves they count is not
+  // known).
   const finish = (quest: number, index: number, status: 'completed' | 'failed', on: boolean) => {
     const entry = objective(quest, index);
     if (on && !entry[status] && entry.displayed) {
       runtime.questUpdated(quest, status, index);
       if (status === 'completed') runtime.detach(countObjectiveCompleted(runtime, quest));
     }
-    entry[status] = on;
+    told(quest, index, (changed) => {
+      changed[status] = on;
+    });
   };
   n('quest.setobjectivecompleted', ({ self, args }) => {
     if (self) finish(self.formId, int(args[0]), 'completed', bool(args[1], true));

@@ -73,6 +73,7 @@ import {
   type MagicItemRecord,
 } from '../../world/magic-records.ts';
 import { CastType } from '../../world/spell-records.ts';
+import type { GameEvents } from './event-hub.ts';
 import { PLAYER_REF } from './forms.ts';
 import type { ItemStack } from './game-state.ts';
 import type { ScriptRuntime } from './runtime.ts';
@@ -811,8 +812,23 @@ export class CraftingEngine {
       await runtime.addItem(actor, runtime.formHandle(empty), 1, true);
   }
 
-  #stat(name: string, by = 1): void {
-    this.#runtime.incrementStat(name, by);
+  /**
+   * An item the player made, improved, enchanted or mixed: told (ItemCrafted), the stats count
+   * it (stat-events.ts) before this resolves.
+   */
+  async #crafted(
+    actor: number,
+    item: number,
+    count: number,
+    craft: GameEvents['itemCrafted']['craft'],
+  ): Promise<void> {
+    if (actor !== PLAYER_REF) return;
+    await this.#runtime.events.emitted('itemCrafted', { item, count, craft });
+  }
+
+  /** The player made `count` of an item at a workbench (the crafting menu's recipe: COBJ). */
+  constructed(item: number, count: number): Promise<void> {
+    return this.#crafted(PLAYER_REF, item, count, 'constructed');
   }
 
   /** A skill and Fortify <skill> (worn enchantments' and potions' percent) of an actor. */
@@ -875,7 +891,7 @@ export class CraftingEngine {
     this.addStack(actor, base, temperHealth(level), 1, wasWorn, from?.charge);
     const { crafting } = await this.settings();
     await runtime.progression.useSkill(actor, SMITHING, temperingSkillUse(item.value, crafting));
-    this.#stat(item.type === 'WEAP' ? 'weapons improved' : 'armor improved');
+    await this.#crafted(actor, base, 1, 'improving');
     return { kind: 'improved', level, previous };
   }
 
@@ -1109,7 +1125,7 @@ export class CraftingEngine {
     this.addStack(actor, made, health);
     await this.#useSoulGem(actor, gem);
     await runtime.progression.useSkill(actor, ENCHANTING, ENCHANTING_SKILL_USE);
-    this.#stat('magic items made');
+    await this.#crafted(actor, made, 1, 'enchanting');
     return made;
   }
 
@@ -1215,7 +1231,7 @@ export class CraftingEngine {
     const count = Math.max(1, Math.round(await this.perks.potionsCreated(actor, made)));
     await runtime.addItem(actor, runtime.formHandle(made), count, true);
     await runtime.progression.useSkill(actor, ALCHEMY, alchemySkillUse(potion.value));
-    this.#stat(potion.poison ? 'poisons mixed' : 'potions mixed', count);
+    await this.#crafted(actor, made, count, 'alchemy');
     return { made, potion, count };
   }
 

@@ -186,8 +186,8 @@ export class Compass {
   }
 
   #discover(runtime: ScriptRuntime, settings: GameSettings, marker: MapMarker): void {
-    runtime.mapMarker(marker.reference, true, true);
-    runtime.incrementStat('Locations Discovered');
+    // Shown discovered from now on, and told (LocationDiscovery: Locations Discovered).
+    runtime.locationDiscovered(marker.reference, marker.world);
     if (marker.name) {
       this.#session.hud.discovered(marker.name, settings.string('sDiscoveredText') ?? 'discovered');
     }

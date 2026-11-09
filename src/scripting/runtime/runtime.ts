@@ -1141,6 +1141,10 @@ export class ScriptRuntime implements VmHost {
     relayScriptEvents(this);
     relayStatEvents(this);
     relayUniqueIds(this);
+    // Those registered for a menu (SKSE's RegisterForMenu) hear it open and close.
+    this.events.on('menuOpenClose', ({ menu, opening }) => {
+      this.#menuRegistered(menu, opening);
+    });
   }
 
   // --- VmHost --------------------------------------------------------------------------------
@@ -1940,8 +1944,21 @@ export class ScriptRuntime implements VmHost {
     return null;
   }
 
-  /** The menu stack: a menu opened or closed (MenuOpenCloseEvent) reaches those registered. */
+  /**
+   * The menu stack: a menu opened or closed is told on the hub (MenuOpenCloseEvent), and so
+   * reaches those registered for it (#menuRegistered).
+   */
   menuOpenClose(name: string, opening: boolean): void {
+    this.events.emit('menuOpenClose', { menu: name, opening });
+  }
+
+  /** The menu stack: the game went into menu mode or out of it (MenuModeChangeEvent). */
+  menuModeChange(name: string, displayed: boolean): void {
+    this.events.emit('menuModeChange', { menu: name, displayed });
+  }
+
+  /** A menu opened or closed: OnMenuOpen, OnMenuClose to those registered for it. */
+  #menuRegistered(name: string, opening: boolean): void {
     const receivers = this.#registrations.get(MENU_REGISTRATION + name.toLowerCase());
     for (const target of receivers?.values() ?? [])
       this.detach(this.#sendTo(target, opening ? 'OnMenuOpen' : 'OnMenuClose', [name]));
@@ -2742,6 +2759,16 @@ export class ScriptRuntime implements VmHost {
     if (visible !== undefined) marker.visible = visible;
     marker.travel = travel;
     this.#mapMarkers.set(reference, marker);
+  }
+
+  /**
+   * The player discovered a map marker's location (coming near it: src/shell/compass.ts): it
+   * shows discovered on the maps from now on, and it is told (LocationDiscovery: the stats count
+   * it in Locations Discovered).
+   */
+  locationDiscovered(marker: number, world: number | undefined): void {
+    this.mapMarker(marker, true, true);
+    this.events.emit('locationDiscovery', { marker, world });
   }
 
   mapMarkerVisible(reference: number): boolean {

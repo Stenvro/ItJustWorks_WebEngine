@@ -1264,6 +1264,10 @@ export class SimWorld {
         return place?.kind === 'exterior' ? flows.at(waterPlugin(place.world), x, y) : undefined;
       };
     }
+    // The player put somewhere is told (PositionPlayerEvent).
+    play.onPositionPlayer = (type) => {
+      this.runtime.events.emit('positionPlayer', { type });
+    };
     play.onTrigger = (reference, entered) => {
       this.runtime.triggered(reference, PLAYER_REF, entered);
     };

@@ -228,7 +228,8 @@ export async function lockOpened(runtime: ScriptRuntime, setup: PickSetup): Prom
   runtime.state.reference(reference).locked = false;
   runtime.events.emit('lockChanged', { reference });
   runtime.detach(runtime.progression.useSkill(PLAYER_REF, LOCKPICKING, setup.skillUses.opened));
-  runtime.incrementStat('Locks Picked');
+  // LocksPicked: Locks Picked (the stats: stat-events.ts).
+  runtime.events.emit('locksPicked', { reference });
   await runtime.crime.lockPicked(PLAYER_REF, reference);
   await waxKey(runtime, reference);
 }

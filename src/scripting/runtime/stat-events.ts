@@ -23,15 +23,41 @@
 // Its other handlers (observed in the original), counted here: the player's gold going up
 // (InventoryToMiscStat) adds the rise to Gold Found, whatever brings it (loot, a sale, a
 // reward); a quest completed (QuestStatus) counts in Quests Completed and in its type's stat
-// (questTypeStats), a completed quest reset takes both back, a miscellaneous quest (type 6)
-// counts in neither; a shown objective of a miscellaneous quest completed (ObjectiveState: to
-// completed-and-shown) counts in Misc Objectives Completed; each hour waited counts in Hours
+// (questTypeStats), a completed quest reset takes both back (TODO(M13): inferred, QuestStatus
+// also tells a reset of a quest never completed, and a start, which count nothing), a
+// miscellaneous quest (type 6) counts in neither; a shown objective of a miscellaneous quest
+// completed (ObjectiveState: to completed-and-shown) counts in Misc Objectives Completed; each hour waited counts in Hours
 // Waiting (HoursPassed, as each hour slept counts in Hours Slept); each day passing
 // (DaysPassed) counts in Days as a Vampire and Days as a Werewolf while the default objects'
 // globals PlayerIsVampire (PIVV) and PlayerIsWerewolf (PIWV) are not 0. Side quests (type 8)
 // count only in Quests Completed: their own stat is the scripts' (AchievementsScript), as are
 // Questlines Completed, Werewolf Transformations, Necks Bitten, Horses and Houses Owned, Stores
 // Invested In, Persuasions, Bribes, Intimidations, Standing Stones Found and Brawls Won.
+//
+// The stats' own event sources (the singletons the misc stats listen to: ItemCrafted,
+// ItemHarvested, ItemsPickpocketed, LevelIncrease, LocationDiscovery, LocksPicked,
+// ObjectiveState, QuestStatus, SkillIncrease, SoulsTrapped, SpellsLearned), each a hub kind its
+// producer tells once, counted here: an item the player made (ItemCrafted) in Weapons Made or
+// Armor Made (a workbench's recipe: a weapon, an armor), Weapons Improved or Armor Improved (improved), Magic
+// Items Made (enchanted), Potions Mixed or Poisons Mixed (mixed: by the made potion's poison
+// flag), each by the count made (TODO(M13): that improving and enchanting are told through
+// ItemCrafted rather than events of their own is inferred: the stats are the crafting
+// category's); the player's harvest in Ingredients Harvested (ItemHarvested; Nirnroots Found and
+// Wings Plucked are the scripts' own: NirnrootACTIVATORScript, critter); a pocket picked in
+// Pockets Picked and its items in Items Pickpocketed (ItemsPickpocketed); a map marker
+// discovered in Locations Discovered (LocationDiscovery); a lock the player picked in Locks
+// Picked (LocksPicked); each skill level the player gains in Skill Increases (SkillIncrease);
+// a soul the player caught in Souls Trapped (SoulsTrapped); a spell the player learned in
+// Spells Learned (SpellsLearned); a quest completed or reset (QuestStatus) as above. A shown
+// objective's completion counts in Misc Objectives Completed where SetObjectiveCompleted turns it
+// on (the Quest natives), not from ObjectiveState: our states come from three flags
+// (objectiveState below), and a completed objective hidden and shown again moves into "completed
+// and displayed" with no new completion (TODO(M13): that the original's stats hear ObjectiveState
+// and which of its moves they count is inferred). A level the player reaches (LevelIncrease) is told as the
+// tracked stat Level Increases with the level as its value, and not kept: no save holds that
+// stat (the original's saves' misc stats have none), and AchievementsScript's level achievements
+// compare its value with the levels 5, 10, 25 and 50 (TODO(M13): the value being the new level
+// is inferred from that script).
 //
 // The others this relay counts, each from the hub event that causes it (the stats' names as the
 // journal lists them): the first read of a book by the player (the BooksRead source, told by
@@ -42,11 +68,9 @@
 // ShoutAttack event), a word of power learned (Words of Power Learned), the hours of a sleep (Hours Slept, at its end), food, a potion or an ingredient the
 // player takes (Food Eaten, Potions Used, Ingredients Eaten: an equip of the item), and the most
 // gold the player has had (Most Gold Carried, as gold comes in). Counted where they happen
-// instead: Skill Increases (ProgressionEngine), Spells Learned (ActorEngine.addSpell), Shouts
-// Learned (CastingEngine.teachWord: the shout's last word, by UESP; TODO(M13): the original's
-// writer is not read), Words of Power Unlocked (CastingEngine.unlockWord), Ingredients
-// Harvested (HarvestEngine), Locations Discovered (src/shell/compass.ts), the crimes' (the crime
-// engine), the crafts' (the crafting engine), Locks Picked (the lockpicking menu).
+// instead: Shouts Learned (CastingEngine.teachWord: the shout's last word, by UESP;
+// TODO(M13): the original's writer is not read), Words of Power Unlocked
+// (CastingEngine.unlockWord), the crimes' (the crime engine).
 //
 // The combat and magic counts (observed in the original: CriticalHitToMiscStatHandler,
 // DisarmedToMiscStatHandler and the incrementers of DragonSoulGained, ShoutMastered,
@@ -64,8 +88,39 @@
 import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
 import { parseItem, PotionFlag, type ItemRecord } from '../../world/item-records.ts';
 import { globalValue } from './condition-values.ts';
+import type { GameEvents } from './event-hub.ts';
 import { PLAYER_REF } from './forms.ts';
 import type { ScriptRuntime } from './runtime.ts';
+
+/** A quest objective's states (QUEST_OBJECTIVE_STATE), as ObjectiveState tells them. */
+export const QuestObjectiveState = {
+  dormant: 0,
+  displayed: 1,
+  completed: 2,
+  completedDisplayed: 3,
+  failed: 4,
+  failedDisplayed: 5,
+} as const;
+
+/**
+ * An objective's state from its flags (one failed is failed, completed or not).
+ *
+ * TODO(M13): inferred. The original keeps one QUEST_OBJECTIVE_STATE value per objective, ours
+ * three flags (displayed, completed, failed). Which state the original is in after a completed
+ * objective is hidden, or after SetObjectiveCompleted on a failed one, is not known; this mapping
+ * lets failed win over completed, and hiding keeps the completion.
+ */
+export function objectiveState(entry: {
+  readonly displayed: boolean;
+  readonly completed: boolean;
+  readonly failed: boolean;
+}): number {
+  if (entry.failed)
+    return entry.displayed ? QuestObjectiveState.failedDisplayed : QuestObjectiveState.failed;
+  if (entry.completed)
+    return entry.displayed ? QuestObjectiveState.completedDisplayed : QuestObjectiveState.completed;
+  return entry.displayed ? QuestObjectiveState.displayed : QuestObjectiveState.dormant;
+}
 
 /** The combat stats by the default object of the race keyword that names them. */
 export const KILL_STATS: readonly { readonly keyword: string; readonly stat: string }[] = [
@@ -185,6 +240,27 @@ export function criticalHitStats(sneakHit: boolean, backstab: boolean): string[]
   return stats;
 }
 
+/** The stat an item made counts in, by how it was made, its record type and poison flag. */
+export function craftedStat(
+  craft: GameEvents['itemCrafted']['craft'],
+  type: string | undefined,
+  poison: boolean,
+): string | undefined {
+  switch (craft) {
+    case 'constructed':
+      return type === 'WEAP' ? 'Weapons Made' : type === 'ARMO' ? 'Armor Made' : undefined;
+    case 'improving':
+      return type === 'WEAP' ? 'Weapons Improved' : type === 'ARMO' ? 'Armor Improved' : undefined;
+    case 'enchanting':
+      return 'Magic Items Made';
+    case 'alchemy':
+      return poison ? 'Poisons Mixed' : 'Potions Mixed';
+  }
+}
+
+/** The tracked stat a level reached is told as (LevelIncrease: not kept). */
+export const LEVEL_INCREASES = 'Level Increases';
+
 /** The whole hours of a sleep from its start to its end (game days passed). */
 export function sleptHours(start: number, end: number): number {
   return Math.max(0, Math.round((end - start) * 24));
@@ -276,6 +352,46 @@ export function relayStatEvents(runtime: ScriptRuntime): () => void {
     }),
     runtime.events.on('contractedDisease', (event) => {
       if (event.actor === PLAYER_REF) runtime.incrementStat('Diseases Contracted');
+    }),
+    runtime.events.on('itemCrafted', async (event) => {
+      const record = await runtime.forms.record(event.item);
+      const item = record ? parseItem(record) : undefined;
+      const poison = ((item?.potionFlags ?? 0) & PotionFlag.poison) !== 0;
+      const stat = craftedStat(event.craft, record?.type, poison);
+      if (stat) runtime.incrementStat(stat, event.count);
+    }),
+    runtime.events.on('itemHarvested', (event) => {
+      if (event.harvester === PLAYER_REF) runtime.incrementStat('Ingredients Harvested');
+    }),
+    runtime.events.on('itemsPickpocketed', (event) => {
+      runtime.incrementStat('Pockets Picked');
+      runtime.incrementStat('Items Pickpocketed', event.count);
+    }),
+    runtime.events.on('levelIncrease', (event) => {
+      runtime.events.emit('trackedStats', { stat: LEVEL_INCREASES, value: event.level });
+    }),
+    runtime.events.on('locationDiscovery', () => {
+      runtime.incrementStat('Locations Discovered');
+    }),
+    runtime.events.on('locksPicked', () => {
+      runtime.incrementStat('Locks Picked');
+    }),
+    runtime.events.on('questStatus', (event) => {
+      // A start counts nothing. A reset is told before the quest's completion is cleared: only
+      // a completed quest's reset is taken back (TODO(M13): taking it back is inferred).
+      if (event.status === 'completed') return countQuestStatus(runtime, event.quest, 1);
+      if (event.status === 'reset' && runtime.state.quests.get(event.quest)?.completed === true)
+        return countQuestStatus(runtime, event.quest, -1);
+      return undefined;
+    }),
+    runtime.events.on('skillIncrease', () => {
+      runtime.incrementStat('Skill Increases');
+    }),
+    runtime.events.on('soulsTrapped', (event) => {
+      if (event.trapper === PLAYER_REF) runtime.incrementStat('Souls Trapped');
+    }),
+    runtime.events.on('spellsLearned', () => {
+      runtime.incrementStat('Spells Learned');
     }),
     runtime.events.on('containerChanged', async (event) => {
       if (event.item !== GOLD || event.to !== PLAYER_REF || event.from === PLAYER_REF) return;

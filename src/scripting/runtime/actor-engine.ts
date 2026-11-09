@@ -879,9 +879,9 @@ export class ActorEngine {
     const type = record?.type === 'SPEL' ? parseSpell(record).spellType : undefined;
     if (type === SpellType.voice)
       this.#runtime.detach(this.#runtime.storyEvents.newVoicePower(reference, spell));
-    // The player's stat: a spell (not a power, ability or disease) learned.
+    // The player learned a spell (not a power, ability or disease): SpellsLearned (the stats).
     if (reference === PLAYER_REF && type === SpellType.spell)
-      this.#runtime.incrementStat('Spells Learned');
+      this.#runtime.events.emit('spellsLearned', { spell });
     return true;
   }
 
@@ -998,6 +998,10 @@ export class ActorEngine {
     this.#own(reference, ActorValue.health).damage = (
       await this.value(reference, ActorValue.health)
     ).max;
+    // The player's death is told (BGSActorDeathEvent: the player is its source) as the world
+    // shows it (src/shell/player-death.ts, through world.killed).
+    if (reference === PLAYER_REF)
+      this.#runtime.events.emit('actorDeath', { actor: reference, killer });
     // Silent (KillSilent): no death cry (the stage's: src/shell/actor-stage.ts killed) and no
     // alarm: no murder reported (crime-engine.ts killed).
     this.#runtime.world.killed?.(reference, killer, silent);

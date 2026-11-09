@@ -75,7 +75,8 @@ export class HarvestEngine {
       ]);
       count = Math.max(1, Math.round(perks));
       await runtime.addItem(actor, runtime.formHandle(flora.ingredient), count, false);
-      if (actor === PLAYER_REF) runtime.incrementStat('Ingredients Harvested');
+      // ItemHarvested: the player's counts in Ingredients Harvested (stat-events.ts).
+      runtime.events.emit('itemHarvested', { item: flora.ingredient, harvester: actor });
     }
     // Nothing grew this season: the default object's harvest-failed sound (HVFS) instead.
     const failed = count === 0 ? await runtime.magic.defaultObject('HVFS') : undefined;

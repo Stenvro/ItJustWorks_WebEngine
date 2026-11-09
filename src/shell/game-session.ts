@@ -466,6 +466,10 @@ export class GameSession {
     this.menuStack.listeners.add((event) => {
       this.scriptsReady?.menuOpenClose(event.name, event.opening);
     });
+    // The game going into menu mode and out of it is told too (MenuModeChangeEvent).
+    this.menuStack.modeListeners.add((event) => {
+      this.scriptsReady?.menuModeChange(event.name, event.displayed);
+    });
     this.vfs = vfs;
     const storage =
       presentation.storage === null
@@ -1490,7 +1494,7 @@ export class GameSession {
     // The cell the view has them in (an exterior's once the cell at their place has loaded).
     const cell = this.scriptWorld.livePlacement(PLAYER_REF)?.cell;
     if (cell === undefined) return;
-    runtime.actorLocations.inCell(PLAYER_REF, String(cell));
+    runtime.actorLocations.inCell(PLAYER_REF, String(cell), cell);
     // Where a script sent them is where they are once the world has them (attached area).
     runtime.playerInCell(cell);
   }
@@ -1585,6 +1589,10 @@ export class GameSession {
       };
       sounds.powerAttacking = () =>
         this.scriptsReady?.world.combat?.(PLAYER_REF)?.powerAttacking === true;
+      // The messages the music system takes are told on the game's hub (BSMusicEvent).
+      sounds.music.listeners.add((event) => {
+        this.scriptsReady?.events.emit('music', event);
+      });
       this.soundSystem = sounds;
       return sounds;
     });

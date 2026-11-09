@@ -1056,6 +1056,7 @@ export class PlaySession {
 
   /** Puts the player somewhere new (a door's destination); they wait for its ground. */
   placePlayer(feet: Vec3, yaw: number): void {
+    this.#positionBegins();
     this.player.teleport(feet, yaw);
     this.#spawnPending = true;
     this.#spawnSince = undefined;
@@ -1633,6 +1634,21 @@ export class PlaySession {
 
   /** The player entered (true) or left a trigger volume of a reference. */
   onTrigger: ((reference: number, entered: boolean) => void) | undefined;
+  /**
+   * The player is put somewhere (PositionPlayerEvent): `pre` as the move begins (a new play's
+   * arrival, a door's destination, a script's MoveTo within the loaded area), `post` and
+   * `finish` once they stand on its ground.
+   */
+  onPositionPlayer: ((type: 'pre' | 'post' | 'finish') => void) | undefined;
+  /** A move of the player has begun and not yet been told finished. */
+  #positioning = false;
+
+  /** The player's move begins (told once, however it began). */
+  #positionBegins(): void {
+    if (this.#positioning) return;
+    this.#positioning = true;
+    this.onPositionPlayer?.('pre');
+  }
   /** The automatic load doors of the loaded area (walksThrough). */
   autoDoors: (() => Iterable<CellObject>) | undefined;
   /** An automatic door takes the player through (activated, its scripts first). */
@@ -1733,6 +1749,7 @@ export class PlaySession {
   #trySpawn(): void {
     const [x, y, z] = this.player.feet;
     const now = performance.now() / 1000;
+    this.#positionBegins();
     this.#spawnSince ??= now;
     // The ground's collision is placed, and ray casts see it (after a physics step).
     const ready = this.#groundReady([x, y, z]) && this.physics.queriesCurrent;
@@ -1758,6 +1775,12 @@ export class PlaySession {
     this.player.character.recover();
     this.#spawnPending = false;
     this.#spawnSince = undefined;
+    // TODO(M13): the original tells two more phases between (the packages of those around
+    // updated before and after the move) and what parts `post` from `finish` is inferred: both
+    // are told as the player stands on the ground.
+    this.#positioning = false;
+    this.onPositionPlayer?.('post');
+    this.onPositionPlayer?.('finish');
   }
 
   /** Queues a cell's collision (placed a few per frame, in the order cells are added). */

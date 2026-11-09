@@ -13,7 +13,6 @@ import { ObjectHandle, type Value } from '../values.ts';
 import { AliasFiller } from './alias-fill.ts';
 import type { QuestState } from './game-state.ts';
 import type { ScriptRuntime } from './runtime.ts';
-import { countQuestStatus } from './stat-events.ts';
 import type { StoryEventData } from './story-manager.ts';
 
 export class QuestEngine {
@@ -113,6 +112,9 @@ export class QuestEngine {
     delete state.instanceGlobals;
     // The engine's quest start event (TESQuestStartStopEvent).
     runtime.events.emit('questStartStop', { quest, started: true });
+    // Its status is started (QuestStatus kStarted; TODO(M13): told as it starts running is
+    // inferred). The reset a start makes below is no Quest.Reset and tells no reset.
+    runtime.events.emit('questStatus', { quest, status: 'started' });
     state.completed = false;
     state.failed = false;
     // A quest that does not run once is reset as it starts: its stages and objectives as at its
@@ -261,7 +263,7 @@ export class QuestEngine {
     const state = this.#runtime.state.quest(quest);
     if (!state.completed) {
       this.#runtime.questUpdated(quest, 'completed');
-      this.#runtime.detach(countQuestStatus(this.#runtime, quest, 1));
+      this.#runtime.events.emit('questStatus', { quest, status: 'completed' });
     }
     state.completed = true;
   }
@@ -281,8 +283,9 @@ export class QuestEngine {
     const running = state.running;
     if (running) await this.stop(quest);
     clearProgress(state);
-    // A completed quest reset is taken back from the stats (QuestStatus's reset).
-    if (state.completed) runtime.detach(countQuestStatus(runtime, quest, -1));
+    // Every reset is told (QuestStatus kReseted), before its completion is cleared: the stats
+    // take a completed quest's reset back (stat-events.ts).
+    runtime.events.emit('questStatus', { quest, status: 'reset' });
     state.completed = false;
     state.failed = false;
     await this.#resetScripts(record);

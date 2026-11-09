@@ -70,6 +70,15 @@ export function flightKind(data: Pick<FlightData, 'type' | 'flags'>): FlightKind
   return 'flying';
 }
 
+/**
+ * Whether a projectile that reached something at once tells BeamProjectileImpactEvent: a beam
+ * (BeamProjectile's event) only, not a hitscan projectile of another type (none in the vanilla
+ * records: a mod's hitscan missile reaches at once too, but is no beam).
+ */
+export function tellsBeamImpact(data: Pick<FlightData, 'type'>): boolean {
+  return (data.type & ProjectileType.beam) !== 0;
+}
+
 const length = (v: Vec3): number => Math.hypot(v[0], v[1], v[2]);
 
 export function normalize(v: Vec3): Vec3 {
