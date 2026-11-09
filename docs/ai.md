@@ -161,9 +161,16 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   cost). A door's triangles are closed to one it is locked to, and, while it is shut, to one
   whose race Can't Open Doors (60 races: the animals, dragons, giants, spiders, centurions:
   src/ai/race-ai-flags.ts); such an actor passes a door standing open and takes no load door
-  (`ActorDoors`). A goal that cannot be
-  reached (another island, past 20,000 triangles) gives the path to where the search came
-  nearest to it.
+  (`ActorDoors`). A goal that cannot be reached (past 20,000 triangles, closed by the searcher's
+  rules) gives the path to where the search came nearest to it. One off the island the search
+  begins in (`NavmeshIsland`: the triangles reached over edges and the portal and ledge links a
+  search crosses, made once and kept while its navmeshes are the loaded ones), or off every
+  navmesh, gives the path to the island's point nearest it (straight, in 3D), never complete:
+  searched for itself it took the whole island first, each time (12,000 triangles round Helgen,
+  10–25 ms: the soldiers going for Alduin on the tower, whose top is a navmesh of its own,
+  searched again each time he moved 192 units; now 20–80 nodes, to the tower's foot). Inferred:
+  the original's pathing ends a way it cannot complete where it gets nearest; TODO(M13): how it
+  picks that point.
 - **Searches over frames** (`PathSearch`, `ActorMovers`): the searches of the actors' travels,
   moved actors' and walkers' together, take at most 2,000 nodes of a frame (about 2 ms; a search
   gives way before the node past its share, and counts every node it took); most end within a

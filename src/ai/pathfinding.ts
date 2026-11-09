@@ -14,6 +14,7 @@ import {
   triangleNeighbour,
   type Navmesh,
 } from '../world/navmesh.ts';
+import { islandOf } from './navmesh-islands.ts';
 import { insidePart, ObstacleIndex, partSpan, type NavmeshObstacle } from './navmesh-obstacles.ts';
 
 type Vec3 = readonly [number, number, number];
@@ -373,7 +374,8 @@ export const pathSearchStats: {
 
 /**
  * findPath; `closeAvoided`: whether the triangles under the avoid nodes are closed. Gives way
- * once it has taken its share's allowance of nodes (counted in its `taken`).
+ * once it has taken its share's allowance of nodes (counted in its `taken`). `islands`: whether a
+ * goal off the start's island is taken for the island's point nearest it.
  */
 function* searchSteps(
   set: NavmeshSet,
@@ -382,11 +384,26 @@ function* searchSteps(
   options: PathOptions,
   closeAvoided: boolean,
   share: SearchShare,
+  islands = true,
 ): Generator<undefined, NavPath | undefined, undefined> {
   let avoidedClosed = false;
   const start = set.locate(from);
   const goal = set.locate(to);
   if (!start) return undefined;
+  // A goal no search from here reaches (on another island, or off the navmeshes: an actor on a
+  // tower whose stairs are in an interior, a dragon in the air): the way to the island's point
+  // nearest it, never complete. Searched for itself, it took the whole island each time (12,000
+  // triangles round Helgen, 10-25 ms) to end about as near. Inferred: the original's pathing
+  // ends a way it cannot complete where it gets nearest. TODO(M13): how the engine picks that
+  // point (ours: the island's point nearest the goal in a straight line).
+  if (islands) {
+    const island = islandOf(set, start.navmesh, start.triangle);
+    if (!goal || !island.has(goal.navmesh, goal.triangle)) {
+      const near = island.nearest(to);
+      const path = yield* searchSteps(set, from, near.at, options, closeAvoided, share, false);
+      return path && { ...path, complete: false };
+    }
+  }
   const goalKey = goal ? keyOf(goal.navmesh.formId, goal.triangle) : undefined;
   const obstacles = obstacleIndex(options.obstacles);
   const partsOf = (navmesh: Navmesh, triangle: number): readonly (readonly Vec3[])[] | undefined =>
@@ -573,7 +590,7 @@ function* searchSteps(
   if (reached) pathSearchStats.reached++;
   pathSearchStats.trace?.push({ from, to, nodes: searched, reached: reached !== undefined });
   if (!reached && avoidedClosed) {
-    return yield* searchSteps(set, from, to, options, false, share);
+    return yield* searchSteps(set, from, to, options, false, share, false);
   }
   const end = reached ?? best;
   const chain: Node[] = [];

@@ -173,6 +173,13 @@ describe('findPath', () => {
     const path = findPath(setOf([linked, east]), [50, 20, 0], [150, 80, 0], { radius: 5 });
     expect(path?.complete).toBe(true);
     expect(path?.points[path.points.length - 1]).toEqual([150, 80, 0]);
+    // The linked mesh not loaded yet, the goal is off the start's island; loaded into the same
+    // set (a cell loaded as the player went on), the island is made again and reaches it.
+    const loaded: Navmesh[] = [linked];
+    const set = setOf(loaded);
+    expect(findPath(set, [50, 20, 0], [150, 80, 0], { radius: 5 })?.complete).toBe(false);
+    loaded.push(east);
+    expect(findPath(set, [50, 20, 0], [150, 80, 0], { radius: 5 })?.complete).toBe(true);
   });
 
   it('takes a ledge up no higher than the jump it is given', () => {
@@ -729,6 +736,38 @@ describe('PathSearch', () => {
     expect(near.done).toBe(true);
     expect(taken).toBeGreaterThan(0);
     expect(near.result).toEqual(findPath(set, from, [250, 250, 0], { radius: 10 }));
+  });
+
+  it("goes to its island's point nearest a goal it cannot reach, without searching all of it", () => {
+    // A 30 by 30 field (1,800 triangles) and a goal on a field of its own beyond its east edge
+    // (the islands are not joined), and one off every navmesh north of it.
+    const squares: [number, number][] = [];
+    for (let x = 0; x < 30; x++) for (let y = 0; y < 30; y++) squares.push([x, y]);
+    const other: [number, number][] = [];
+    for (let x = 40; x < 45; x++) for (let y = 10; y < 15; y++) other.push([x, y]);
+    const set = setOf([gridMesh(1, squares), gridMesh(2, other)]);
+    const from: Point = [250, 250, 0];
+    pathSearchStats.trace = [];
+    const across = findPath(set, from, [4250, 1250, 0], { radius: 10 });
+    const nodes = pathSearchStats.trace.at(-1)?.nodes ?? Infinity;
+    pathSearchStats.trace = undefined;
+    // Not complete; it ends on the field's east edge across from the goal.
+    expect(across?.complete).toBe(false);
+    const end = across?.points.at(-1) ?? [0, 0, 0];
+    expect(end[0]).toBeCloseTo(3000, 0);
+    expect(end[1]).toBeCloseTo(1250, 0);
+    // The nodes of the way there (the island searched whole took all 1,800).
+    expect(nodes).toBeLessThan(900);
+    // A goal off every navmesh (north of the field): the field's point nearest it.
+    const off = findPath(set, from, [1550, 5000, 0], { radius: 10 });
+    expect(off?.complete).toBe(false);
+    expect(off?.points.at(-1)?.[0]).toBeCloseTo(1550, 0);
+    expect(off?.points.at(-1)?.[1]).toBeCloseTo(3000, 0);
+    // Joined to the field by a strip, the other field's goal is reached.
+    const strip: [number, number][] = [];
+    for (let x = 30; x < 40; x++) strip.push([x, 12]);
+    const joined = setOf([gridMesh(3, [...squares, ...strip, ...other])]);
+    expect(findPath(joined, from, [4250, 1250, 0], { radius: 10 })?.complete).toBe(true);
   });
 
   it('takes exactly the nodes it is given, a share of one node at a time', () => {
