@@ -158,10 +158,53 @@ const DEACTIVATION_TURN = 0.05;
 const DEACTIVATION_CHECK = 0.25;
 const DEACTIVATION_SECONDS = 1;
 
+/** A body's deactivation reference (PhysicsWorld.#deactivate): Havok units and a rotation. */
+interface DeactivationReference {
+  x: number;
+  y: number;
+  z: number;
+  rotation: RAPIER.Rotation;
+  /** How long the body has stayed near it, as of the last check. */
+  seconds: number;
+}
+
+/**
+ * Whether a body has left its deactivation reference: moved farther than DEACTIVATION_DISTANCE
+ * from it or turned farther than DEACTIVATION_TURN.
+ */
+function movedFrom(reference: DeactivationReference, body: RAPIER.RigidBody): boolean {
+  const t = body.translation();
+  if (Math.hypot(t.x - reference.x, t.y - reference.y, t.z - reference.z) > DEACTIVATION_DISTANCE) {
+    return true;
+  }
+  const q = body.rotation();
+  const r = reference.rotation;
+  const turned =
+    2 * Math.acos(Math.min(1, Math.abs(r.x * q.x + r.y * q.y + r.z * q.z + r.w * q.w)));
+  return turned > DEACTIVATION_TURN;
+}
+
 /** A deactivation group (PhysicsWorld.#deactivate): one system's awake bodies. */
 interface RestingGroup {
   readonly bodies: RAPIER.RigidBody[];
   resting: boolean;
+}
+
+/** The handles of the bodies a body touches (a contact point in the last step). */
+function touchingBodies(world: RAPIER.World, body: RAPIER.RigidBody): Set<number> {
+  const touching = new Set<number>();
+  const narrow = world.narrowPhase;
+  for (let i = 0; i < body.numColliders(); i++) {
+    const handle = body.collider(i).handle;
+    narrow.contactPairsWith(handle, (other) => {
+      const otherBody = world.getCollider(other).parent();
+      if (!otherBody || otherBody.handle === body.handle || touching.has(otherBody.handle)) return;
+      narrow.contactPair(handle, other, world.bodies, (manifold) => {
+        if (manifold.numContacts() > 0) touching.add(otherBody.handle);
+      });
+    });
+  }
+  return touching;
 }
 
 /**
@@ -822,6 +865,8 @@ export class PhysicsWorld {
   #impacts: PhysicsImpact[] = [];
   /** Simulated bodies' velocities before the step (Havok units per second). */
   readonly #velocities = new Map<number, RAPIER.Vector>();
+  /** Their angular velocities before the step (#holdAwake). */
+  readonly #spins = new Map<number, RAPIER.Vector>();
   /** Joints that break under too much force, while they hold. */
   readonly #breakable = new Set<PlacedJoint>();
   /** The impulse each breakable point joint takes in the step under way (#solveBreakable). */
@@ -922,10 +967,7 @@ export class PhysicsWorld {
    * Where each awake simulated body was when it last moved (its deactivation reference: the
    * position in Havok units and the rotation), and for how long it has stayed near it.
    */
-  readonly #still = new Map<
-    number,
-    { x: number; y: number; z: number; rotation: RAPIER.Rotation; seconds: number }
-  >();
+  readonly #still = new Map<number, DeactivationReference>();
   /** Simulated seconds since the deactivation was last checked. */
   #sinceDeactivation = 0;
   /** Simulated seconds. */
@@ -2009,6 +2051,7 @@ export class PhysicsWorld {
       if (this.#breakable.size > 0) this.#solveBreakable();
       this.world.step(this.#events, this.#hooks);
       this.#changed = false;
+      this.#holdAwake();
       if (this.#limits.size > 0) this.#limitVelocities();
       this.#time += size;
       if (this.#depenetrating.size > 0) this.#depenetrate();
@@ -3254,13 +3297,77 @@ export class PhysicsWorld {
   }
 
   /**
+   * Rapier's own sleeping held to Havok's rule (#deactivate). Rapier puts a body, with all it
+   * touches, to sleep once it has moved slower than 0.1 units a second (and turned slower than
+   * about 0.1 radians a second) for half a second, and stops it dead: a box sliding or turning
+   * slowly came to a halt in mid-slide. #deactivate starts Rapier's timer over for every body
+   * not yet inactive long enough, so Rapier rarely gets there; when it does (a body woken
+   * between checks), a body Rapier put to sleep in the step that has not stayed near its
+   * deactivation reference for DEACTIVATION_SECONDS is woken with the speed it had before the
+   * step, and so is what it touches that Rapier put to sleep with it (Havok's island stays
+   * active as a whole). What Rapier puts to sleep by the rule stays asleep, settling or not (a
+   * settling body #deactivate leaves alone). TODO(M13): inferred, as the rule itself; a body
+   * woken so has not moved in that step.
+   */
+  #holdAwake(): void {
+    let slept: Map<number, RAPIER.RigidBody> | undefined;
+    for (const handle of this.#velocities.keys()) {
+      const body = this.world.getRigidBody(handle) as RAPIER.RigidBody | null;
+      if (!body?.isSleeping() || !body.isDynamic() || !body.isEnabled()) continue;
+      (slept ??= new Map()).set(handle, body);
+    }
+    if (!slept) return;
+    const elapsed = this.#sinceDeactivation + this.#size;
+    const waking: RAPIER.RigidBody[] = [];
+    for (const body of slept.values()) {
+      const reference = this.#still.get(body.handle);
+      const resting =
+        reference !== undefined &&
+        !movedFrom(reference, body) &&
+        reference.seconds + elapsed >= DEACTIVATION_SECONDS;
+      if (!resting) waking.push(body);
+    }
+    for (const body of waking) slept.delete(body.handle);
+    // What a woken body touches or is joined to, and what touches that, wakes with it.
+    for (let i = 0; i < waking.length && slept.size > 0; i++) {
+      const body = waking[i];
+      if (!body) continue;
+      const system = this.#systemOf(body);
+      const touching = touchingBodies(this.world, body);
+      for (const [handle, other] of slept) {
+        if (!touching.has(handle) && (system === undefined || this.#systemOf(other) !== system)) {
+          continue;
+        }
+        slept.delete(handle);
+        waking.push(other);
+      }
+    }
+    // Asleep by the rule: woken, it is inactive only after DEACTIVATION_SECONDS again (as
+    // #deactivate leaves what it puts to sleep).
+    for (const handle of slept.keys()) this.#still.delete(handle);
+    for (const body of waking) {
+      body.wakeUp();
+      const v = this.#velocities.get(body.handle);
+      const w = this.#spins.get(body.handle);
+      if (v) body.setLinvel(v, false);
+      if (w) body.setAngvel(w, false);
+    }
+  }
+
+  /** The system (an object's bodies, a ragdoll) a body belongs to, if any. */
+  #systemOf(body: RAPIER.RigidBody): number | undefined {
+    return body.numColliders() > 0 ? this.#systems.get(body.collider(0).handle) : undefined;
+  }
+
+  /**
    * Havok's deactivation (DEACTIVATION_DISTANCE: the distance observed in the original, the rest
    * inferred from Havok's documented behaviour): a body is inactive while it stays within
    * DEACTIVATION_DISTANCE (and DEACTIVATION_TURN) of where it was when it last moved, however
    * it shakes there, and a system of bodies (a ragdoll, a hinged object) that has been inactive
    * for DEACTIVATION_SECONDS as a whole goes to sleep, until something wakes it. Rapier sends
    * bodies to sleep by their speed alone: a ragdoll whose limbs tremble on a slope or against
-   * a rock (stacked joints and contacts never quite at rest) never slept.
+   * a rock (stacked joints and contacts never quite at rest) never slept, and a body moving
+   * slowly slept while still moving (#holdAwake keeps it awake).
    */
   #deactivate(): void {
     this.#sinceDeactivation += this.#size;
@@ -3276,34 +3383,17 @@ export class PhysicsWorld {
       if (!body.isDynamic() || body.isSleeping() || !body.isEnabled()) return;
       const handle = body.handle;
       seen.add(handle);
-      const t = body.translation();
-      const q = body.rotation();
       let entry = still.get(handle);
-      const turned =
-        entry === undefined
-          ? Infinity
-          : 2 *
-            Math.acos(
-              Math.min(
-                1,
-                Math.abs(
-                  entry.rotation.x * q.x +
-                    entry.rotation.y * q.y +
-                    entry.rotation.z * q.z +
-                    entry.rotation.w * q.w,
-                ),
-              ),
-            );
-      if (
-        !entry ||
-        Math.hypot(t.x - entry.x, t.y - entry.y, t.z - entry.z) > DEACTIVATION_DISTANCE ||
-        turned > DEACTIVATION_TURN
-      ) {
-        entry = { x: t.x, y: t.y, z: t.z, rotation: q, seconds: 0 };
+      if (!entry || movedFrom(entry, body)) {
+        const t = body.translation();
+        entry = { x: t.x, y: t.y, z: t.z, rotation: body.rotation(), seconds: 0 };
         still.set(handle, entry);
       } else {
         entry.seconds += elapsed;
       }
+      // Not inactive long enough: Rapier's own sleep timer starts over (it sleeps a body after
+      // half a second, these checks come every quarter), so Rapier does not stop it (#holdAwake).
+      if (entry.seconds < DEACTIVATION_SECONDS) body.wakeUp();
       const collider = body.numColliders() > 0 ? body.collider(0) : undefined;
       const system = collider ? this.#systems.get(collider.handle) : undefined;
       const key = system === undefined ? 'b' + String(handle) : 's' + String(system);
@@ -3360,9 +3450,11 @@ export class PhysicsWorld {
   /** Turns the step's contact force events into impacts of the simulated side. */
   #recordVelocities(): void {
     this.#velocities.clear();
+    this.#spins.clear();
     this.world.bodies.forEach((body) => {
       if (!body.isDynamic() || body.isSleeping()) return;
       this.#velocities.set(body.handle, body.linvel());
+      this.#spins.set(body.handle, body.angvel());
     });
     // A settling body is placed for good once it first sleeps (our deactivation leaves it be
     // until then, at most fWarmStartMaxTime: bAllowDeactivationWhileWarmStarting 0).
