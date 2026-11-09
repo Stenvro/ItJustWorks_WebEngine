@@ -369,6 +369,13 @@ quests (the College's MGR quests) may come out differently from one new game to 
   not run, do nothing and return false, and the game logs "attempting to start event scoped
   quest outside of story manager" as an error of the calling script (SetStage on one the story
   manager started and that runs works as on any other).
+  A start resets a quest that does not run once (Quest.Reset): its stages done, current stage,
+  objectives and journal entries are those of a quest never started, and its scripts start
+  over. From the data: CWGovernment (neither run once nor repeated stages) is started by the
+  story manager each time a capital changes hands, works in its start-up stage and stops
+  itself, and its shut-down stage calls back the CWResetGarrison quest that waits for it with
+  no time limit; with its last run's stages kept, the second start ran neither stage, and the
+  peace council's hold trade (MQ302 stage 260) waited out setOwner's 600 s bail-out.
   The start-up stage is set as it starts; its fragment runs on a thread of its own. Its scenes
   that begin on quest start start, and they end as it stops ([ai.md](ai.md#scenes)).
 - **SetStage** starts the quest if needed; without "allow repeated stages" a stage is set once;
