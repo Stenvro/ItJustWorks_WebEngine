@@ -1319,7 +1319,7 @@ export class ActorFlight {
       const heading = this.#headings.get(forced);
       return {
         kind: 'land',
-        at: [marker[0], marker[1], marker[2]],
+        at: [marker[0] ?? 0, marker[1] ?? 0, marker[2] ?? 0],
         target: forced,
         ...(heading !== undefined && { heading }),
       };
