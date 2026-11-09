@@ -686,6 +686,10 @@ async function main(): Promise<void> {
         return staged ? [staged.position] : [];
       });
     },
+    boundTop: (reference) => {
+      const stage = worldViewer.player ? worldViewer.actorStage : modelViewer.actorStage;
+      return stage?.boundTop(reference);
+    },
     inAir: () => {
       const player = worldViewer.player ?? modelViewer.player;
       return player !== undefined && !player.character.grounded && !player.character.swimming;

@@ -150,6 +150,11 @@ export interface PlayWorld {
   hostilesNear(): Promise<boolean>;
   /** Where the actors fighting the player are (the compass's enemies). */
   enemies?(): readonly (readonly number[])[];
+  /**
+   * The top of a staged actor's loaded 3D's bound above its feet (the floating quest marker's);
+   * undefined: not staged, or not read yet.
+   */
+  boundTop?(reference: number): number | undefined;
 }
 
 /** Vite reloads the page (development): leaving it is not asked about. */
@@ -598,7 +603,11 @@ export class PlayMode {
     if (load) restoreAmbience(runtime, load.save);
     // In the game: its HUD, its compass.
     // Its enemies: those fighting the player on the actor stage (src/shell/actor-combat.ts).
-    const compass = new Compass(session, () => this.#world.enemies?.() ?? []);
+    const compass = new Compass(
+      session,
+      () => this.#world.enemies?.() ?? [],
+      (reference) => this.#world.boundTop?.(reference),
+    );
     const hud = new HudController(this.#host, session.hud, {
       heading: () => this.#world.heading(),
       runtime: () => session.scriptsReady,

@@ -20,6 +20,7 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { GameSettings } from '../world/game-settings.ts';
 import { markerLook, markerLookSettings, MAX_COMPASS_MARKERS } from './compass-look.ts';
+import { floatingTop } from './hud-elements.ts';
 import { MapMarkerFlag, readMapMarkers, type MapMarker } from '../world/map-markers.ts';
 import { spaceOf } from './actors-away.ts';
 import type { GameSession } from './game-session.ts';
@@ -108,10 +109,17 @@ export class Compass {
 
   /** Where the actors fighting the player are now. */
   readonly #enemies: () => readonly (readonly number[])[];
+  /** The top of a staged actor's loaded 3D's bound (hud-elements.ts floatingTop). */
+  readonly #loadedTop: ((reference: number) => number | undefined) | undefined;
 
-  constructor(session: GameSession, enemies: () => readonly (readonly number[])[] = () => []) {
+  constructor(
+    session: GameSession,
+    enemies: () => readonly (readonly number[])[] = () => [],
+    loadedTop?: (reference: number) => number | undefined,
+  ) {
     this.#session = session;
     this.#enemies = enemies;
+    this.#loadedTop = loadedTop;
   }
 
   /** The compass's data now (4 numbers a marker), discovering the markers the player reached. */
@@ -124,10 +132,14 @@ export class Compass {
     const number = (name: string, fallback: number): number => settings.number(name) ?? fallback;
     const look = markerLookSettings((name) => settings.number(name));
     const markers: CompassMarker[] = [...(await this.#questTargets(runtime, at))];
-    // Each with the top of its bound (the floating marker's height over it), when it has one.
+    // Each with the top of its bound (the floating marker's height over it), when it has one:
+    // an actor's loaded 3D's, else its base's.
     this.questPositions = await Promise.all(
       markers.map(async ({ position, reference }) => {
-        const top = reference === undefined ? undefined : await boundTop(runtime, reference);
+        const top =
+          reference === undefined
+            ? undefined
+            : await floatingTop(reference, this.#loadedTop, (target) => boundTop(runtime, target));
         return top === undefined ? position : [...position.slice(0, 3), top];
       }),
     );

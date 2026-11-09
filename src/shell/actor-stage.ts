@@ -1553,6 +1553,15 @@ export class ActorStage {
     return this.#actors.get(reference);
   }
 
+  /**
+   * The top of a staged actor's loaded 3D's bound above its feet (its skeleton's "BBX" at its
+   * size); undefined for one not staged or whose bound is not read yet.
+   */
+  boundTop(reference: number): number | undefined {
+    const staged = this.#actors.get(reference);
+    return staged && this.movers.boundTopOf(staged);
+  }
+
   /** Every actor of the loaded area, enabled or not. */
   all(): Iterable<StagedActor> {
     return this.#actors.values();
