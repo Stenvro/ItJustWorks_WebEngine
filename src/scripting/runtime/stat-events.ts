@@ -34,8 +34,8 @@
 // Invested In, Persuasions, Bribes, Intimidations, Standing Stones Found and Brawls Won.
 //
 // The others this relay counts, each from the hub event that causes it (the stats' names as the
-// journal lists them): the first read of a book by the player (the BooksRead source, told from
-// TESBookReadEvent here: Books Read; one that teaches a
+// journal lists them): the first read of a book by the player (the BooksRead source, told by
+// src/shell/book-reading.ts after TESBookReadEvent: Books Read; one that teaches a
 // skill, Skill Books Read instead: UESP "Skyrim:Statistics", which counts spell tomes and not
 // skill books in the former. TODO(M13): that a re-read counts in neither is inferred from a skill
 // book's teaching once), a shout the player lets out, whatever its words (Times Shouted: the
@@ -62,7 +62,7 @@
 // gives from Dragon Souls Collected, and they come by the same ModActorValue as any other here.
 
 import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
-import { BookFlag, parseItem, PotionFlag, type ItemRecord } from '../../world/item-records.ts';
+import { parseItem, PotionFlag, type ItemRecord } from '../../world/item-records.ts';
 import { globalValue } from './condition-values.ts';
 import { PLAYER_REF } from './forms.ts';
 import type { ScriptRuntime } from './runtime.ts';
@@ -210,14 +210,6 @@ export function relayStatEvents(runtime: ScriptRuntime): () => void {
     }),
     runtime.events.on('locationCleared', () => {
       runtime.incrementStat(DUNGEONS_CLEARED);
-    }),
-    runtime.events.on('bookRead', async (event) => {
-      if (event.reader !== PLAYER_REF || event.first === false) return;
-      const record = await runtime.forms.record(event.book);
-      const book = record ? parseItem(record)?.book : undefined;
-      const skillBook = book !== undefined && (book.flags & BookFlag.teachesSkill) !== 0;
-      // The engine's BooksRead source tells the first read (the stats hear it, below).
-      await runtime.events.emitted('booksRead', { book: event.book, skillBook });
     }),
     runtime.events.on('booksRead', (event) => {
       runtime.incrementStat(event.skillBook ? 'Skill Books Read' : 'Books Read');
