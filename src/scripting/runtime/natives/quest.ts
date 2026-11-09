@@ -101,6 +101,12 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
       state.quest(self.formId).updated = ++state.questClock;
       entry.shown = state.questClock;
     }
+    // An objective newly shown makes its quest active (its targets on the compass and map): the
+    // original's save at MQ101 stage 180 has MQ101 active, which no script of the load order
+    // sets (Quest.SetActive), and the one at stage 70, before its first objective, does not.
+    // TODO(M13): inferred that a quest the player made inactive is made active again by its
+    // next objective.
+    if (displayed && !entry.displayed) state.quest(self.formId).active = true;
     entry.displayed = displayed;
     return null;
   });
