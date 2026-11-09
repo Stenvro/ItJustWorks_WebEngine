@@ -1838,6 +1838,7 @@ export class WorldViewer {
           ...(this.#stage?.referencesIn(cellKey(cell.x, cell.y)) ?? []),
         ],
         (reference) => loaded.has(reference),
+        data.cell.formId,
       );
       for (const [reference, state] of runtime.state.references) {
         if (!runtime.state.created.has(reference) || !state.position) continue;

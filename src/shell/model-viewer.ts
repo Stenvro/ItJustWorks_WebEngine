@@ -2225,7 +2225,11 @@ export class ModelViewer {
       ];
       const loaded = new Set(this.#loadedReferences());
       this.#scriptsAttached = true;
-      await runtime.cellAttached(references, (reference) => loaded.has(reference));
+      await runtime.cellAttached(
+        references,
+        (reference) => loaded.has(reference),
+        cell.data.cell.formId,
+      );
       for (const [reference, state] of runtime.state.references) {
         if (runtime.state.created.has(reference) && state.cell === cell.data.cell.formId) {
           await this.#showCreated(reference);

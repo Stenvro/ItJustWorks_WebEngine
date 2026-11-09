@@ -223,11 +223,21 @@ export class QuestEngine {
     // entry happens (with its own finished callback), so one waiting (Utility.Wait) holds up
     // none of the others; the caller waits for them all. MQ101's stage 500 collapses the bridge
     // over a few seconds in its first entry while the route's entry starts the caves' scene.
+    // Each entry is told done (TESQuestStageItemDoneEvent) once its fragment has run, one without
+    // a fragment at once. TODO(M13): inferred from the event's name and its sink (the story
+    // teller's); when the original tells it was not read.
     const run = async (): Promise<void> => {
       await Promise.all(
-        fragments.map((fragment) =>
-          runtime.vm.call(new ObjectHandle(record.formId, fragment.script), fragment.function),
-        ),
+        [...chosen].map(async (entry) => {
+          for (const fragment of fragments) {
+            if (fragment.logEntry !== entry) continue;
+            await runtime.vm.call(
+              new ObjectHandle(record.formId, fragment.script),
+              fragment.function,
+            );
+          }
+          runtime.events.emit('questStageItemDone', { quest: record.formId, stage, entry });
+        }),
       );
     };
     if (wait) await run();

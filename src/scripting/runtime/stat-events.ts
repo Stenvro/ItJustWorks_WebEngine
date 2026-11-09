@@ -18,7 +18,7 @@
 // MiscStatIncrementer<…>): a location cleared (LocationCleared) counts in Dungeons Cleared; a
 // trade in the barter menu, each buy or sale (TimesBartered), in Barters (barter-menu.ts); the
 // first item the player takes from a container that is not an actor in one opening of the
-// container menu (ChestsLooted), in Chests Looted (container-menu.ts).
+// container menu (ChestsLooted: told by container-menu.ts), in Chests Looted.
 //
 // Its other handlers (observed in the original), counted here: the player's gold going up
 // (InventoryToMiscStat) adds the rise to Gold Found, whatever brings it (loot, a sale, a
@@ -34,7 +34,8 @@
 // Invested In, Persuasions, Bribes, Intimidations, Standing Stones Found and Brawls Won.
 //
 // The others this relay counts, each from the hub event that causes it (the stats' names as the
-// journal lists them): the first read of a book by the player (Books Read; one that teaches a
+// journal lists them): the first read of a book by the player (the BooksRead source, told from
+// TESBookReadEvent here: Books Read; one that teaches a
 // skill, Skill Books Read instead: UESP "Skyrim:Statistics", which counts spell tomes and not
 // skill books in the former. TODO(M13): that a re-read counts in neither is inferred from a skill
 // book's teaching once), a shout the player lets out, whatever its words (Times Shouted: the
@@ -214,8 +215,15 @@ export function relayStatEvents(runtime: ScriptRuntime): () => void {
       if (event.reader !== PLAYER_REF || event.first === false) return;
       const record = await runtime.forms.record(event.book);
       const book = record ? parseItem(record)?.book : undefined;
-      const teaches = book !== undefined && (book.flags & BookFlag.teachesSkill) !== 0;
-      runtime.incrementStat(teaches ? 'Skill Books Read' : 'Books Read');
+      const skillBook = book !== undefined && (book.flags & BookFlag.teachesSkill) !== 0;
+      // The engine's BooksRead source tells the first read (the stats hear it, below).
+      await runtime.events.emitted('booksRead', { book: event.book, skillBook });
+    }),
+    runtime.events.on('booksRead', (event) => {
+      runtime.incrementStat(event.skillBook ? 'Skill Books Read' : 'Books Read');
+    }),
+    runtime.events.on('chestsLooted', () => {
+      runtime.incrementStat('Chests Looted');
     }),
     runtime.events.on('shoutAttack', (event) => {
       if (event.actor === PLAYER_REF) runtime.incrementStat('Times Shouted');

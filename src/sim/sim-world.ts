@@ -993,6 +993,7 @@ export class SimWorld {
         ...this.stage.referencesIn(cell.key),
       ],
       (reference) => loaded.has(reference),
+      cell.data.cell.formId,
     );
     for (const [reference, state] of runtime.state.references) {
       if (!runtime.state.created.has(reference)) continue;

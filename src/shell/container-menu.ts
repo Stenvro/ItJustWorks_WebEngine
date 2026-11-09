@@ -233,10 +233,11 @@ export function containerModel(
     }
     await shelf.move(formId, amount, container, PLAYER_REF, audible, stack);
     // The first take from a container that is not an actor (a corpse) in this opening counts in
-    // Chests Looted (the engine's ChestsLooted incrementer); trading (npcMode) never does.
+    // Chests Looted: the engine tells it (ChestsLooted), its incrementer counts it
+    // (stat-events.ts); trading (npcMode) never does.
     if (!looted && !npcMode && !(await shelf.runtime.actors.isActor(container))) {
       looted = true;
-      shelf.runtime.incrementStat('Chests Looted');
+      shelf.runtime.events.emit('chestsLooted', {});
     }
     if (await stealing()) await crime.steal(PLAYER_REF, formId, amount, container);
     shelf.runtime.detach(shelf.runtime.storyEvents.takenFrom(formId, container, false));

@@ -1113,9 +1113,11 @@ export class PapyrusVm {
   /**
    * Starts OnInit for every script attached to an object, as the game does when an object
    * comes into being: resolves once they run (their other events and calls wait for them),
-   * with `done` for when they have finished.
+   * with `done` for when they have finished and how many scripts it has.
    */
-  async startInitialize(target: ObjectHandle): Promise<{ readonly done: Promise<void> }> {
+  async startInitialize(
+    target: ObjectHandle,
+  ): Promise<{ readonly done: Promise<void>; readonly scripts: number }> {
     const instances = await this.#attachedInstances(target);
     // Told as an event sent to the object, once for all its scripts (as sendEvent tells one).
     if (instances.length > 0) this.onEventSent?.(target, 'OnInit', []);
@@ -1126,7 +1128,7 @@ export class PapyrusVm {
       });
       return instance.initializing;
     });
-    return { done: Promise.all(done).then(() => undefined) };
+    return { done: Promise.all(done).then(() => undefined), scripts: instances.length };
   }
 
   #dispatch(

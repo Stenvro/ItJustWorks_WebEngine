@@ -92,6 +92,8 @@ function sameGridCell(a: readonly number[], b: readonly number[]): boolean {
 export class ActorEngine {
   readonly #runtime: ScriptRuntime;
   readonly #infos = new Map<number, Promise<ActorInfo | undefined>>();
+  /** The NPC_s whose templates were resolved (TESResolveNPCTemplatesEvent told once each). */
+  readonly #resolvedTemplates = new Set<number>();
   readonly #npcs = new Map<number, Promise<NpcStats | undefined>>();
   readonly #races = new Map<number, Promise<RaceStats | undefined>>();
   readonly #factions = new Map<number, Promise<FactionRecord | undefined>>();
@@ -195,6 +197,17 @@ export class ActorEngine {
       runtime.state.actors.get(reference)?.leveledBase,
     );
     if (!templates) return undefined;
+    // An NPC_ that takes a part from a template has its templates resolved (the engine tells
+    // it: TESResolveNPCTemplatesEvent). TODO(M13): inferred: told the first time an actor of
+    // it is made, with the NPC_ placed (a leveled list's pick).
+    const placed = templates.placed;
+    if (
+      !this.#resolvedTemplates.has(placed) &&
+      Object.values(TemplateFlag).some((flag) => templates.part(flag) !== placed)
+    ) {
+      this.#resolvedTemplates.add(placed);
+      runtime.events.emit('resolveNpcTemplates', { npc: placed });
+    }
     const part = async (flag: number): Promise<NpcStats | undefined> =>
       this.#npcNow(templates.part(flag));
     const [stats, traits, factions, spells, ai, baseData, keywords, inventory] = await Promise.all([
