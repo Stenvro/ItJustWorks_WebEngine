@@ -104,7 +104,7 @@ export interface ReferenceState {
   actorCause?: number;
   /**
    * Flora harvested (harvest-engine.ts): when (game days) and in which cell; it grows again as
-   * that cell resets.
+   * it resets with its cell (cell-reset.ts).
    */
   harvested?: { readonly at: number; readonly cell?: number };
   /**
@@ -496,13 +496,18 @@ export class GameState {
   readonly factions = new Map<number, FactionState>();
   readonly locations = new Map<number, LocationState>();
   readonly cells = new Map<number, CellState>();
-  /** When (game days) the player was last in each cell (cells reset after). */
-  readonly cellVisits = new Map<number, number>();
   /**
    * When (whole game hours) each cell last left the loaded area: its reset waits from then
    * (cell-reset.ts).
    */
   readonly cellDetached = new Map<number, number>();
+  /** Cells that reset as they next come into the loaded area, whatever their clocks say. */
+  readonly cellResetsForced = new Set<number>();
+  /**
+   * How many times each reference has been reset with its cell: its leveled lists (a
+   * container's items, a leveled actor's pick) are drawn anew each time (cell-reset.ts).
+   */
+  readonly resets = new Map<number, number>();
   /** The encounter zones' clocks (cell-reset.ts). */
   readonly zoneTimes = new Map<number, ZoneTimes>();
   /** When (whole game hours) each actor died: its respawn and its corpse's clearing wait. */

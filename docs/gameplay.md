@@ -1445,12 +1445,13 @@ seasons, TODO(M13)) the harvester gets the ingredient, as many as its perks make
 Ingredients Harvested: Green Thumb's two), with the item's message and the harvest sound
 (SNAM); harvested, it offers nothing and shows its model's harvested look (its NiSwitchNode's
 second child: 133 of the 186 harvestable models have one; the others look the same, as in the
-game). It grows again as its cell resets (UESP "Skyrim:Respawning"): once the player has not
-been in that cell for iHoursToRespawnCell (240) game hours, iHoursToRespawnCellCleared (720)
-where its location is cleared, never in an interior whose encounter zone Never Resets
-(src/scripting/runtime/harvest-engine.ts; TODO(M12): the harvested state and the cells' visits
-in the save; TODO(M13): ownership, the exterior's "area"). TODO(M13): what the game says when
-nothing grew this season.
+game). It grows again as it resets with its cell (UESP "Skyrim:Respawning"; docs/scripting.md,
+"Cell reset and cleared locations"): by the cell's clock or its encounter zone's, never in a cell
+whose zone Never Resets, and never for a reference flagged No Respawn (a coin purse placed so
+that it never comes back: ccBGSSSE001's in the Winking Skeever). Flora whose harvest noted no
+cell grows again by its own clock, iHoursToRespawnCell hours after its harvest (inferred,
+TODO(M13)) (src/scripting/runtime/harvest-engine.ts; TODO(M13): ownership). TODO(M13): what the
+game says when nothing grew this season.
 
 ### Perks
 
