@@ -903,6 +903,26 @@ export class MagicEngine {
           await this.end(key);
       }
 
+    // A Dual Value Modifier's second weight as its caster's perks have it (observed in the
+    // original: Mod Secondary Value Weight as the effect is adjusted for perks, the spell and the
+    // target its tabs).
+    let secondWeight: number | undefined;
+    if (
+      caster !== undefined &&
+      effect.secondActorValue >= 0 &&
+      (effect.archetype === EffectArchetype.dualValueModifier ||
+        effect.archetype === EffectArchetype.enhanceWeapon)
+    ) {
+      const weight = await runtime.perks.apply(
+        EntryPoint.modSecondaryValueWeight,
+        caster,
+        effect.secondValueWeight,
+        [item.formId, target],
+        { spell: item.formId },
+      );
+      if (weight !== effect.secondValueWeight) secondWeight = weight;
+    }
+
     const handle = new ObjectHandle(runtime.state.nextEffect++, 'activemagiceffect');
     const key = handle.key;
     const number = (await runtime.forms.record(effect.formId))?.fields.has('VMAD')
@@ -924,6 +944,7 @@ export class MagicEngine {
       ...(dual && { dual }),
       ...(options.at && { at: options.at }),
       ...(taper > 0 && { taper, taperMagnitude: magnitude * taperShare }),
+      ...(secondWeight !== undefined && { secondWeight }),
       ...(held && { held }),
     };
     runtime.state.activeEffects.set(key, entry);
@@ -1342,7 +1363,12 @@ export class MagicEngine {
       (effect.archetype === EffectArchetype.dualValueModifier ||
         effect.archetype === EffectArchetype.enhanceWeapon)
     ) {
-      this.#add(entry, entry.target, effect.secondActorValue, amount * effect.secondValueWeight);
+      this.#add(
+        entry,
+        entry.target,
+        effect.secondActorValue,
+        amount * (entry.secondWeight ?? effect.secondValueWeight),
+      );
     }
   }
 
@@ -1396,7 +1422,7 @@ export class MagicEngine {
       await this.#modify(
         entry.target,
         effect.secondActorValue,
-        amount * effect.secondValueWeight,
+        amount * (entry.secondWeight ?? effect.secondValueWeight),
         entry.caster,
       );
     }

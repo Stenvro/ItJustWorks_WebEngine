@@ -383,6 +383,11 @@ export interface ActiveEffectState {
   readonly taper?: number;
   readonly taperMagnitude?: number;
   /**
+   * A Dual Value Modifier's (or Enhance Weapon's) second actor value weight as its caster's
+   * perks left it (Mod Secondary Value Weight); none: its magic effect's.
+   */
+  readonly secondWeight?: number;
+  /**
    * Held by a concentration spell, without a duration of its own: it lasts while the spell is
    * held, a value effect acting each frame (magic-engine.ts endHeld).
    */

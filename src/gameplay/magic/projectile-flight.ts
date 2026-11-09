@@ -295,6 +295,26 @@ export function sticksAsLight(archetype: number | undefined, struck: 'surface' |
   return archetype === EffectArchetype.light && struck === 'surface';
 }
 
+/** iMaxPlayerRunes as Skyrim.esm sets it (the engine's own default is 6). */
+export const MAX_PLAYER_RUNES = 1;
+
+/**
+ * The runes at rest that give way to a caster's newest (the player's: iMaxPlayerRunes, as Mod
+ * Max Placeable Mines leaves it; observed in the original: the engine asks that entry point of
+ * the player for the setting): the caster's beyond `max`, oldest first. TODO(M13): inferred
+ * that the oldest go (UESP "Skyrim:Rune": a new rune takes the last one's place).
+ */
+export function runesGivingWay<R extends { readonly caster: number; readonly restedAt: number }>(
+  runes: Iterable<R>,
+  caster: number,
+  max: number,
+): R[] {
+  const own = [...runes]
+    .filter((rune) => rune.caster === caster)
+    .sort((a, b) => a.restedAt - b.restedAt);
+  return own.slice(0, Math.max(0, own.length - Math.max(0, Math.floor(max))));
+}
+
 /** A moving body's pose in the world (game units; its turn as a quaternion x, y, z, w). */
 export interface BodyPose {
   readonly position: Vec3;

@@ -1495,6 +1495,18 @@ the 92 entry points used). Code: `src/world/perk-records.ts` (the record),
 `src/scripting/runtime/perk-engine.ts` (perks held, entry points applied),
 `src/scripting/runtime/perk-hooks.ts` (the equip system's and crafting's hooks).
 
+Entry points no vanilla perk uses that the engine asks (observed in the original; for mods):
+Mod Secondary Value Weight (the caster's, as a Dual Value Modifier is adjusted for perks, its
+spell and target the tabs: the second actor value's weight), Mod Max Placeable Mines (the
+player's, of iMaxPlayerRunes: Skyrim.esm 1; the player's oldest rune at rest gives way to the
+next, TODO(M13): inferred, UESP "Skyrim:Rune") and Get Should Attack (the other actor the
+owner, the would-be attacker its tab; TODO(M13): where the engine asks it is not read, here a 0
+keeps the other off the attacker's targets). The engine also asks Calculate Mine Explode
+Chance (the player, from 100), Adjust Limb Damage and Mod Addiction Chance (the potion usage
+monitor past fAddictionUsageMonitorThreshold, 25): TODO(M13), not run yet; no call was found
+for Mod Addiction Duration, Mod Positive Chem Duration, Mod Player Reputation, Mod Lockpick
+Level Allowed and Set Progression Picking.
+
 ### Records
 
 A PERK: its requirements (the CTDA before its first entry), DATA (trait, level, rank count,

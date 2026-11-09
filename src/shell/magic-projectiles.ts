@@ -32,9 +32,11 @@ import {
   lightsGivingWay,
   launchFlight,
   LOBBER_DEFAULTS,
+  MAX_PLAYER_RUNES,
   normalize,
   pathHitsActor,
   pointAt,
+  runesGivingWay,
   stepFlight,
   sticksAsLight,
   stuckOnBody,
@@ -154,6 +156,8 @@ interface Flying {
   readonly stream: FlameStream | undefined;
   readonly origin: Vec3;
   done: boolean;
+  /** A rune: when it came to rest (the projectiles' clock), the oldest giving way first. */
+  restedAt?: number;
   /** A loaded save's state of its model's graph, put back as its model loads. */
   savedGraph?: SavedGraph | undefined;
 }
@@ -417,6 +421,8 @@ export class MagicProjectiles {
       );
       if (flying.stream && entry.graph) this.#flames.restoreGraph(flying.stream, entry.graph);
       else flying.savedGraph = entry.graph;
+      // A rune at rest keeps its place among the caster's (the save's order is theirs).
+      if (flight.resting) flying.restedAt = this.#clock;
     }
   }
 
@@ -1073,6 +1079,13 @@ export class MagicProjectiles {
           flying.instance.world.set(placementOf(flying.flight));
           flying.motion.version++;
         }
+        if (flying.flight.resting && flying.restedAt === undefined) {
+          flying.restedAt = this.#clock;
+          if (flying.delivered.caster === PLAYER_REF)
+            void this.#limitRunes().catch((error: unknown) => {
+              this.#options.terminal.log('magic', `runes: ${describe(error)}`, 'warn');
+            });
+        }
         continue;
       }
       if (hit || near || flying.flight.spent) {
@@ -1480,6 +1493,23 @@ export class MagicProjectiles {
       flying.instance.world.set(placementOf(flying.flight));
       flying.motion.version++;
     }
+  }
+
+  /**
+   * The player's runes at rest beyond iMaxPlayerRunes (as their Mod Max Placeable Mines leaves
+   * it) give way, the oldest first (projectile-flight.ts runesGivingWay).
+   */
+  async #limitRunes(): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) return;
+    const setting = await runtime.gameSetting('iMaxPlayerRunes');
+    const base = typeof setting === 'number' ? setting : MAX_PLAYER_RUNES;
+    const max = await runtime.perks.apply(EntryPoint.modMaxPlaceableMines, PLAYER_REF, base, []);
+    const runes: { readonly caster: number; readonly restedAt: number; flying: Flying }[] = [];
+    for (const flying of this.#flying)
+      if (!flying.done && flying.restedAt !== undefined)
+        runes.push({ caster: flying.delivered.caster, restedAt: flying.restedAt, flying });
+    for (const rune of runesGivingWay(runes, PLAYER_REF, max)) this.#end(rune.flying);
   }
 
   #end(flying: Flying): void {

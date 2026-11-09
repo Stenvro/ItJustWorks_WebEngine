@@ -24,7 +24,7 @@ part is kept by hand against docs/gameplay.md and the conformance suites.
 
 | Part                               | Items | Done | Open | Open, unused |
 | ---------------------------------- | ----: | ---: | ---: | -----------: |
-| Perks (entry points, functions)    |   116 |  104 |   12 |           12 |
+| Perks (entry points, functions)    |   116 |  107 |    9 |            9 |
 | Magic effects (archetypes, flags)  |   104 |  102 |    2 |            2 |
 | Spells, enchantments, potions      |    43 |   42 |    1 |            1 |
 | Shouts, skills (SHOU, WOOP, AVIF)  |    16 |   16 |    0 |            0 |
@@ -33,7 +33,7 @@ part is kept by hand against docs/gameplay.md and the conformance suites.
 | Equipment (EQUP, ARMO, WEAP, AMMO) |    43 |   38 |    5 |            5 |
 | Game settings                      |   172 |  172 |    0 |            0 |
 | Mechanics (by hand)                |    20 |   20 |    0 |            0 |
-| Total                              |   580 |  559 |   21 |           21 |
+| Total                              |   580 |  562 |   18 |           18 |
 
 Round 1 wrote the sweep and this list, and built down Weapons Unequipped (the package takes the
 weapons from the actor's hands and does not give them back as the flag goes; observed in the
@@ -131,7 +131,7 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 
 ## Next biggest open items
 
-1. Unused by the load order (mods only, 21): 11 perk entry points, trait, disguise,
+1. Unused by the load order (mods only, 18): 8 perk entry points, trait, disguise,
    enchant visuals, medicine, the workbench type None, two EQUP flags, three weapon flags 2.
 
 ## Mechanics (by hand)
@@ -169,7 +169,7 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 
 ## Lists (from the sweep)
 
-### Perk entry points (81 of 92)
+### Perk entry points (84 of 92)
 
 - [x] calculateWeaponDamage (12), calculateMyCriticalHitChance (14), calculateMyCriticalHitDamage (8), modRecoveredHealth (0), modEnemyCriticalHitChance (0), modRecoverArrowChance (2), modBashingDamage (2), modPowerAttackStamina (4), modPowerAttackDamage (2), modIncomingStagger (2), modTargetStagger (1), modIncomingDamage (23), modTargetDamageResistance (7), modPercentBlocked (8), modShieldDeflectArrowChance (1), setSweepAttack (1), applyCombatHitSpell (58), applyBashingSpell (5), setBooleanGraphVariable (3), applyWeaponSwingSpell (1), modSoulPctCapturedToWeapon (1): src/shell/actor-combat.ts
 - [x] adjustBookSkillPoints (1): src/shell/book-reading.ts
@@ -193,12 +193,12 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 - [x] modSpellRangeTargetLoc (11): src/shell/hud-controller.ts
 - [ ] calculateMineExplodeChance (0): unused by the load order (mods only)
 - [ ] adjustLimbDamage (0): unused by the load order (mods only)
-- [ ] getShouldAttack (0): unused by the load order (mods only)
+- [x] getShouldAttack (0): src/shell/actor-combat-ai.ts (asked by the original; where, inferred: the other actor off its targets)
 - [ ] modAddictionChance (0): unused by the load order (mods only)
 - [ ] modAddictionDuration (0): unused by the load order (mods only)
 - [ ] modPositiveChemDuration (0): unused by the load order (mods only)
-- [ ] modMaxPlaceableMines (0): unused by the load order (mods only)
-- [ ] modSecondaryValueWeight (0): unused by the load order (mods only)
+- [x] modMaxPlaceableMines (0): src/shell/magic-projectiles.ts (the player's iMaxPlayerRunes, observed in the original)
+- [x] modSecondaryValueWeight (0): src/scripting/runtime/magic-engine.ts (the caster's, as the effect is adjusted for perks: observed in the original)
 - [ ] modPlayerReputation (0): unused by the load order (mods only)
 - [ ] modLockpickLevelAllowed (0): unused by the load order (mods only)
 - [ ] setProgressionPicking (0): unused by the load order (mods only)
