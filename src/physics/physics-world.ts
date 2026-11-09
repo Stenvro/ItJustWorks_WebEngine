@@ -3742,11 +3742,11 @@ export class PhysicsWorld {
    * the deeper side, Rapier pushed it through to the far side (`tools/settle-audit.ts`: 92 of
    * the 69,455 loose objects of the interiors). Of the welded triangles a body is pushed to the
    * back of, the deepest one puts it out, each step. Not a body that stands on something under
-   * it (#supported): the triangle passes over it, it is not sunk into it (a chaurus egg on a
-   * cave's floor under the edge of a mound's slope, put out on the slope, rolled 230 units off).
-   * Still open: a body whose floor is not straight under its centre of mass is not seen to stand
-   * (the Blue Palace's bucket 000CC306 is set 28 units up onto what is over it).
-   * Ragdolls meet the one-sided copies instead.
+   * it, within the push to the triangle's back (#supported): the triangle passes over it, it is not
+   * sunk into it (a chaurus egg on a cave's floor under the edge of a mound's slope, put out on
+   * the slope, rolled 230 units off; the Blue Palace's bucket 000CC306 a little over the floor
+   * under a bed, put out on the bed's frame, was set 28 units up). Ragdolls meet the one-sided
+   * copies instead.
    * TODO(M13): inferred from the files' welding type (one-sided: objects are put out on the
    * triangles' front); that Havok does so for a body placed deeper than half into a triangle
    * was not observed, nor whether it also does so after the warm start (here only while the
@@ -3803,7 +3803,7 @@ export class PhysicsWorld {
       if (fronts.some((f) => f.x * out.x + f.y * out.y + f.z * out.z < 0)) continue;
       // It stands on something under the triangle (a floor under a mound's edge, under a
       // counter it reaches up into): the triangle passes over it, it is not sunk into it.
-      if (this.#supported(body)) continue;
+      if (this.#supported(body, lift, -deepest)) continue;
       const at = body.translation();
       body.setTranslation(
         { x: at.x + out.x * lift, y: at.y + out.y * lift, z: at.z + out.z * lift },
@@ -3824,14 +3824,28 @@ export class PhysicsWorld {
   }
 
   /**
-   * Whether a settling body stands on something (#weld): straight under its centre of mass, a
-   * surface that does not move and that it may rest on (facing up, at most 60° steep; a welded
-   * triangle by its front), no farther below than its own lowest point and WELD_SUPPORT_GAP.
-   * TODO(M13): inferred, all of it: the one ray straight down from the centre of mass, the gap
-   * of 2 units (chosen by the settle audit), and reading a trimesh hit's side from Rapier's
-   * featureId (0 the triangle's front, 1 its back: probed, not documented).
+   * Whether a settling body stands on something (#weld) rather than being sunk into the welded
+   * triangle that would put it out at its front by `lift`, the solver pushing it towards the
+   * triangle's back by `depth` (Havok units): straight under its centre of mass, a surface that
+   * does not move and that it may rest on (facing up, at most 60° steep; a welded triangle by its
+   * front), that the push towards the back takes its lowest point onto (no farther below it than
+   * `depth` and WELD_SUPPORT_GAP), and that it is not sunk into deeper than the triangle's front
+   * is above it (`lift`, at least WELD_SUPPORT_GAP).
+   * - The Blue Palace's bucket [000CC306], 3 units over the floor under a bed, its rim 2.5 units
+   *   up into the bed's frame, stands over the floor (put out on the frame, it was set 28 units
+   *   up and ended 12 over its placed spot).
+   * - A buried skull in Dustman's Cairn [000F051B], 5 units out of a dirt mound's top, the cave's
+   *   floor some 9 units under it inside the hollow mound, is in the mound: pushed down out of it,
+   *   it fell to that floor and rolled 125 units off; so too a mote effect's sphere in Yngol
+   *   Barrow [000434FA], 5 units up into a surface with the hall's floor 21 units under it.
+   * - A linen pile on Frostmere Crypt's stairs [000B314E], sunk 4 units into the linen sheet under
+   *   its centre, lies in the stair's tread, not on the sheet: taken to stand on the sheet, it slid
+   *   off it through the hall's wall and fell 3,184 units.
+   * TODO(M13): inferred, all of it: the one ray straight down from the centre of mass, the two
+   * bounds, the gap of 2 units (chosen by the settle audit), and reading a trimesh hit's side from
+   * Rapier's featureId (0 the triangle's front, 1 its back: probed, not documented).
    */
-  #supported(body: RAPIER.RigidBody): boolean {
+  #supported(body: RAPIER.RigidBody, lift: number, depth: number): boolean {
     const down = { x: 0, y: 0, z: -1 };
     let reach = -Infinity;
     for (let i = 0; i < body.numColliders(); i++) {
@@ -3839,8 +3853,14 @@ export class PhysicsWorld {
     }
     if (!Number.isFinite(reach)) return false;
     const com = body.worldCom();
-    // reach is the lowest point's depth below the world's origin (-z).
-    const length = reach + com.z + WELD_SUPPORT_GAP;
+    // reach is the lowest point's depth below the world's origin (-z); lowest its depth below
+    // the centre of mass.
+    const lowest = reach + com.z;
+    // How far under its lowest point (the solver pushes it down by depth) and how far up into
+    // what it is sunk into a surface may lie and still hold it up.
+    const below = WELD_SUPPORT_GAP + depth;
+    const above = Math.max(WELD_SUPPORT_GAP, lift);
+    const length = lowest + below;
     if (!(length > 0)) return false;
     const collides = this.filterFor(this.layerOf(body.collider(0)));
     let found = false;
@@ -3853,9 +3873,14 @@ export class PhysicsWorld {
         // (0: the triangle's front, counter-clockwise; 1: its back). A welded triangle met at
         // its back (a table's underside, from inside the table) holds nothing up.
         // A ray from inside a solid shape (a rubble pile's hull pressing a book into the floor)
-        // meets it at once: nothing the body stands on.
+        // meets it at once: nothing the body stands on. Nor does a surface the body is sunk
+        // into deeper than `above`: it lies in the triangle, not on that surface.
         const back = this.#twoSided.has(hit.collider.handle) && hit.featureId !== 0;
-        found = !back && hit.timeOfImpact > 0 && hit.normal.z >= WELD_GROUND;
+        found =
+          !back &&
+          hit.timeOfImpact > 0 &&
+          hit.timeOfImpact >= lowest - above &&
+          hit.normal.z >= WELD_GROUND;
         return !found;
       },
       RAPIER.QueryFilterFlags.EXCLUDE_SENSORS | RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC,

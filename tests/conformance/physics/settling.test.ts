@@ -170,6 +170,23 @@ describe('a loose object sunk into what it lies on (the engine’s rule, inferre
     expect(rest).toBeLessThan(3);
   });
 
+  it('stays over the floor a little under it, not put out on top of a frame its rim reaches into', () => {
+    // As the Blue Palace's bucket [000CC306], 3 units over the floor under a bed, its rim 2.5
+    // units up into the bed's frame (an open slab facing up, no underside): here 4 and 4. The
+    // solver's push down out of the frame takes it onto the floor; put out 26 units up on the
+    // frame's top, it would stand on the frame.
+    const rest = settled(
+      floor([
+        { z: 0, up: true },
+        { z: 30, up: true },
+      ]),
+      clutter(5, 30),
+      4,
+    );
+    expect(rest).toBeGreaterThan(-3);
+    expect(rest).toBeLessThan(4);
+  });
+
   it('is moved out after the step, so ray and shape casts wait for the next one', () => {
     const physics = new PhysicsWorld(matrix, GRAVITY);
     physics.addObject(floor([{ z: 0, up: true }]), IDENTITY, { reference: 1, kind: 'object' });
@@ -215,6 +232,9 @@ describe.skipIf(!hasGamedata())('cells settle with every loose object in place (
     'MorthalJorgenandLamisHouse',
     // Chaurus eggs on the cave's floor under the edge of a mound's slope.
     'FrostflowAbyss',
+    // A linen pile on the stairs, sunk deeper into the linen sheet under it than into the
+    // stairs' tread [000B314E]: taken to stand on the sheet, it slid off it and fell 3,184 units.
+    'FrostmereCrypt01',
   ];
   let vfs: Vfs;
   let db: RecordDatabase;
@@ -253,6 +273,16 @@ describe.skipIf(!hasGamedata())('cells settle with every loose object in place (
       const [x, y, z] = moved?.get(reference) ?? [NaN, NaN, NaN];
       expect([reference, Math.hypot(x, y, z) < 4]).toEqual([reference, true]);
     }
+  });
+
+  it('keeps the Blue Palace’s bucket under the bed on the floor, not up on the bed’s frame', () => {
+    // [000CC306]: 3 units over the floor, its rim 2.5 units up into the bed's frame; put out on
+    // the frame's top it was set 28 units up and ended 12 units over where it was placed. On the
+    // floor, the frame pushes it a little out from under the bed.
+    const [x, y, z] = results.get('SolitudeBluePalace')?.moved.get(0x000cc306) ?? [NaN, NaN, NaN];
+    expect(Math.hypot(x, y)).toBeLessThan(16);
+    expect(z).toBeGreaterThan(-5);
+    expect(z).toBeLessThan(1);
   });
 
   it('poses the open books on the wall shelves and leaves them at rest (XRGD)', () => {

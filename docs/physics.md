@@ -67,26 +67,39 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   it lies in pushes the other way (a dagger through a table's top into its underside); ragdolls
   meet the one-sided copies as before. Nor is a body that stands on something under it: a
   surface that does not move and that it may rest on (a welded triangle by its front), straight
-  under its centre of mass, no more than 2 units under its lowest point (a chaurus egg in Frostflow
-  Abyss on the cave's floor under the edge of a mound's slope [000A439C, 000A439B] was put out on
-  the slope and rolled 230 units off). The body is moved after the step, so ray and shape casts
+  under its centre of mass, that the solver's push towards the triangle's back takes its lowest
+  point onto (no farther under it than that push's depth and 2 units), and that it is not sunk
+  into deeper than the triangle's front is over it (the lift, at least 2 units). A chaurus egg in
+  Frostflow Abyss on the cave's floor under the edge of a mound's slope [000A439C, 000A439B] was
+  put out on the slope and rolled 230 units off; the Blue Palace's bucket [000CC306], 3 units
+  over the floor under a bed and its rim 2.5 units up into the bed's frame, was set 28 units up
+  onto the frame while the gap was a fixed 2 units. A buried skull in Dustman's Cairn [000F051B],
+  5 units out of a hollow dirt mound with the cave's floor some 9 units under it inside, stays in
+  the mound's top (a gap as large as the lift let it fall to that floor and roll 125 units off).
+  A linen pile on Frostmere Crypt's stairs [000B314E], sunk 4 units into the static linen sheet
+  under its centre, was taken to stand on the sheet, slid off it through the hall's wall and fell
+  3,184 units; now it lies in the stair's tread it is in. The body is moved after the step, so ray and shape casts
   see its new place after the next one (`queriesCurrent`). The triangles' fronts are read from
   our own collision data, not from Rapier's shape (which copies a mesh's buffers out whole).
   `tools/settle-audit.ts` (articulated objects posed by their XRGD, as the session does: 64,248
   of the 69,455 settle, below) now also counts what ends more than 8 units higher than placed.
-  Without the weld 81 fall through and 363 rise; with it 45 fall and 403 rise: of the 52 that
+  On 2026-11-09 38 fall through and 399 rise (with the fixed 2-unit gap 39 and 411; nothing falls
+  with the two bounds that did not before). When the weld came in: without it 81 fell through and
+  363 rose; with it 45 fell and 403 rose: of the 52 that
   rise only with it, 8 would have fallen through, and the rest were placed sunk into what they
-  lie on and stay sunk without it, but for some that the weld puts out on top of what they stand
-  under (the Blue Palace's bucket [000CC306], its top 2.5 units into what is over it, set 28
-  units up: no floor straight under its centre of mass). The support rule also lets one through
-  that the weld alone kept: a RuinsLinenPile [000B314E] now falls 3,218 units; not yet looked
-  into. The support rule (one ray, the 2-unit gap, the side of a hit read from
-  Rapier's featureId) is inferred (TODO(M13)). Exteriors (42 cells around Riverwood on
+  lie on and stay sunk without it, but for some that the weld put out on top of what they stand
+  under (the bucket above). The support rule (one ray, its two bounds, the 2-unit gap, the side
+  of a hit read from Rapier's featureId) is inferred (TODO(M13)). Exteriors (42 cells around Riverwood on
   their landscape) settle alike with and without it. Fort Fellhammer's hand cart [00044727] rolls
   down its ramp with its ore as it did without the weld (then it fell through the ramp; now it
-  rolls on): its wheels are placed 6 to 10 units into the planks, its frame touches nothing but
-  the ore placed inside its bed (up to 16 units deep), and its wheels turn freely on their
-  hinges; it rolls with the ore taken away too. Open: books pushed out of a cupboard's or
+  rolls on; the audit counts it and its six ores among the 38, as a surface lies between where
+  they were placed and where they end): its wheels are placed 6 to 10 units into the planks of
+  the hall's floor where the ramp starts (MineLHallDetwist01), its frame touches nothing but the
+  ramp's edge and the ore placed inside its bed (up to 16 units deep), and its wheels turn freely
+  on their plain hinges (no friction or motor in the file); it rolls with the ore taken away
+  too. Rapier pushes the wheels out of the planks within 0.2 s, then the cart rolls on them.
+  TODO(M13): whether Havok's slower penetration recovery keeps the wheels in the planks until the
+  warm start's end deactivates the cart is not known. Open: books pushed out of a cupboard's or
   shelf's back panel (horizontal faces are left as they were), objects over a table's edge,
   overlaps with simulated or keyframed bodies (the hand cart's ore, trapdoors, a chest's lid,
   stacked plates thrown up off their table), and the baskets on nothing at 154 units in the inns
