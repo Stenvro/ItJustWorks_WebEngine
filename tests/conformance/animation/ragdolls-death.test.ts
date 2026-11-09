@@ -18,8 +18,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { readIdleTree, type IdleTree } from '../../../src/ai/idle-records.ts';
 import { conditionFunctionName } from '../../../src/scripting/condition-functions.ts';
 import { readCombatSettings } from '../../../src/gameplay/combat/combat-settings.ts';
-import { DYING_TIMER, DyingActors, lifeAfterDeath } from '../../../src/gameplay/combat/dying.ts';
-import { LifeState } from '../../../src/gameplay/combat/combat-state.ts';
+import { HAVOK_SCALE } from '../../../src/physics/collision-data.ts';
 import { RecordFlag } from '../../../src/formats/esm/record.ts';
 import {
   drivenRagdollMode,
@@ -227,10 +226,9 @@ describe.skipIf(!hasGamedata())('Hulda killed at the bar counter (headless simul
 });
 
 // The engine's own drive of a ragdoll ([RagdollAnim], the engine's built-in defaults; their use
-// inferred from their names: src/physics/ragdoll-anim.ts) and fDyingTimer (src/gameplay/combat/
-// dying.ts).
+// inferred from their names: src/physics/ragdoll-anim.ts).
 
-describe('the engine’s ragdoll drive and a death’s timer (settings, rules)', () => {
+describe('the engine’s ragdoll drive (settings, rules)', () => {
   it('[RagdollAnim]: the engine’s built-in gains and feedback settings', () => {
     for (const [key, value] of Object.entries(RAGDOLL_ANIM_DEFAULTS)) {
       expect(INI_DEFAULTS.RagdollAnim[key as keyof typeof RAGDOLL_ANIM_DEFAULTS]).toBe(value);
@@ -272,20 +270,11 @@ describe('the engine’s ragdoll drive and a death’s timer (settings, rules)',
     );
   });
 
-  it('fDyingTimer (2): how long an actor dies before it is dead', () => {
-    expect(DYING_TIMER).toBe(2);
-    expect(lifeAfterDeath(0, DYING_TIMER)).toBe(LifeState.dying);
-    expect(lifeAfterDeath(1.99, DYING_TIMER)).toBe(LifeState.dying);
-    expect(lifeAfterDeath(2, DYING_TIMER)).toBe(LifeState.dead);
-    const dying = new DyingActors();
-    dying.died(7);
-    dying.frame(1.5);
-    expect(dying.dying(7)).toBe(true);
-    // A second death's report does not start it again.
-    dying.died(7);
-    dying.frame(0.5);
-    expect(dying.dying(7)).toBe(false);
-  });
+  // Open: the setting's default (2) is the engine's, but what in the original reads the dying
+  // state it times (kept apart from dead) is not known: our scripts' OnDying and OnDeath come
+  // together at the kill (src/scripting/runtime/actor-engine.ts), combat, conditions and saves
+  // see only dead. A dying phase that nothing reads would test nothing.
+  it.todo('fDyingTimer (2): how long an actor dies before it is dead  [settings, original]');
 
   it('[Animation] bAlwaysDriveRagdoll (0): a ragdoll driven while alive', () => {
     expect(INI_DEFAULTS.Animation.bAlwaysDriveRagdoll).toBe(0);
@@ -298,31 +287,49 @@ describe('the engine’s ragdoll drive and a death’s timer (settings, rules)',
 
   it('ragdoll feedback (bRagdollFeedback, fFeedback*): hit impulses on a driven ragdoll', () => {
     const settings = readRagdollAnimSettings();
-    const feedback = new RagdollFeedback(settings);
-    expect(feedback.gainScale(0)).toBe(1);
+    const feedback = new RagdollFeedback();
+    expect(feedback.gainScale(0, settings)).toBe(1);
     // A hit at 10 s: fFeedbackImpulseMult on the body struck; the gains go to 0.3 over 1 s,
     // stay there until 10 s after it, and come back over 1 s.
-    expect(feedback.hit(10)).toBe(500);
-    expect(feedback.gainScale(10.5)).toBeCloseTo(0.65, 6);
-    expect(feedback.gainScale(11)).toBeCloseTo(0.3, 6);
-    expect(feedback.gainScale(19.9)).toBeCloseTo(0.3, 6);
-    expect(feedback.gainScale(20.5)).toBeCloseTo(0.65, 6);
-    expect(feedback.gainScale(21)).toBe(1);
-    // A hit while the gains are down keeps them down, from where they are.
-    feedback.hit(30);
-    feedback.hit(30.5);
-    expect(feedback.gainScale(30.5)).toBeCloseTo(0.65, 6);
-    expect(feedback.gainScale(31)).toBeCloseTo(0.3, 6);
-    expect(feedback.gainScale(39.9)).toBeCloseTo(0.3, 6);
+    expect(feedback.hit(10, settings)).toBe(500);
+    expect(feedback.gainScale(10.5, settings)).toBeCloseTo(0.65, 6);
+    expect(feedback.gainScale(11, settings)).toBeCloseTo(0.3, 6);
+    expect(feedback.gainScale(19.9, settings)).toBeCloseTo(0.3, 6);
+    expect(feedback.gainScale(20.5, settings)).toBeCloseTo(0.65, 6);
+    expect(feedback.gainScale(21, settings)).toBe(1);
+    // A second hit half-way down the ramp: on down from where they are (no jump back up), and
+    // held for the full 10 s from the second hit (until 40.5, not 40).
+    feedback.hit(30, settings);
+    feedback.hit(30.5, settings);
+    expect(feedback.gainScale(30.5, settings)).toBeCloseTo(0.65, 6);
+    expect(feedback.gainScale(31, settings)).toBeCloseTo(0.3, 6);
+    expect(feedback.gainScale(40.25, settings)).toBeCloseTo(0.3, 6);
+    expect(feedback.gainScale(41, settings)).toBeCloseTo(0.65, 6);
+    expect(feedback.gainScale(41.5, settings)).toBe(1);
+    // A hit while they are held renews the hold for the full 10 s (from 55 to 65, not 64).
+    feedback.hit(50, settings);
+    feedback.hit(55, settings);
+    expect(feedback.gainScale(64.5, settings)).toBeCloseTo(0.3, 6);
+    expect(feedback.gainScale(65.5, settings)).toBeCloseTo(0.65, 6);
+    // A hit as they come back up: down again from where they are, held 10 s from it.
+    feedback.hit(70, settings);
+    feedback.hit(80.5, settings);
+    expect(feedback.gainScale(80.5, settings)).toBeCloseTo(0.65, 6);
+    expect(feedback.gainScale(81, settings)).toBeCloseTo(0.3, 6);
+    expect(feedback.gainScale(90.25, settings)).toBeCloseTo(0.3, 6);
+    // The settings of the moment: a lower fFeedbackOnOffGain holds them lower.
+    const lower = readRagdollAnimSettings((key) =>
+      key === 'fFeedbackOnOffGain' ? 0.1 : undefined,
+    );
+    expect(feedback.gainScale(85, lower)).toBeCloseTo(0.1, 6);
     const half = scaledControl(settings.control, 0.5);
     expect(half.hierarchyGain).toBeCloseTo(0.085, 6);
     expect(half.positionMaxLinearVelocity).toBe(14);
     // Off: no push, no yield.
-    const off = new RagdollFeedback(
-      readRagdollAnimSettings((key) => (key === 'bRagdollFeedback' ? 0 : undefined)),
-    );
-    expect(off.hit(1)).toBe(0);
-    expect(off.gainScale(1.5)).toBe(1);
+    const off = readRagdollAnimSettings((key) => (key === 'bRagdollFeedback' ? 0 : undefined));
+    const none = new RagdollFeedback();
+    expect(none.hit(1, off)).toBe(0);
+    expect(none.gainScale(1.5, off)).toBe(1);
   });
 });
 
@@ -330,7 +337,7 @@ describe('the engine’s ragdoll drive and a death’s timer (settings, rules)',
 const HUMAN_GRAPH = 'actors\\character\\behaviors\\0_master.hkx';
 
 describe.skipIf(!hasGamedata())(
-  'the Bannered Mare: the ragdoll INI, a lean’s death and fDyingTimer (headless simulation)',
+  'the Bannered Mare: the ragdoll INI, a lean’s death, a get-up’s blow (headless simulation)',
   () => {
     let sim: Sim;
 
@@ -396,42 +403,79 @@ describe.skipIf(!hasGamedata())(
       expect(bodies.has(HULDA)).toBe(true);
       // Off (the game's): her bodies are keyframed to her pose, no hit pushes them.
       expect(bodies.driven(HULDA)).toBeUndefined();
-      expect(bodies.feedback(HULDA, [1, 0, 0])).toBe(false);
+      expect(bodies.feedback(HULDA, [1, 0, 0])).toBeUndefined();
       sim.world.session.preferences.set('Animation:bAlwaysDriveRagdoll', 1);
       await sim.step(1);
       expect(sim.actor(HULDA)?.dead).toBe(false);
       expect(bodies.driven(HULDA)).toBeDefined();
     }, 120_000);
 
-    it('ragdoll feedback: a hit on her driven ragdoll pushes it and the drive yields', async () => {
+    it('ragdoll feedback: a blow pushes the body it lands nearest and the drive yields', async () => {
       const bodies = sim.world.stage.bodies;
+      const preferences = sim.world.session.preferences;
       if (bodies.driven(HULDA)?.dynamic !== true) {
         // Her graph's rigid body controls simulate her bodies only in the states that have them.
         await sim.until(() => bodies.driven(HULDA)?.dynamic === true, 20);
       }
       expect(bodies.driven(HULDA)?.dynamic).toBe(true);
-      expect(bodies.feedback(HULDA, [1, 0, 0])).toBe(true);
+      // The blow lands on the body farthest from her first (her head or a hand, not her pelvis).
+      const states = bodies.bodyStates(HULDA);
+      const first = states[0];
+      expect(first).toBeDefined();
+      if (!first) return;
+      const far = (s: (typeof states)[number]): number =>
+        Math.hypot(s.at[0] - first.at[0], s.at[1] - first.at[1], s.at[2] - first.at[2]);
+      const target = [...states].sort((a, b) => far(b) - far(a))[0];
+      expect(target).toBeDefined();
+      if (!target) return;
+      expect(far(target)).toBeGreaterThan(20);
+      const before = target.velocity;
+      expect(bodies.feedback(HULDA, [1, 0, 0], target.at)).toBe(target.node);
+      // fFeedbackImpulseMult (500 game units of momentum) made Havok's: 500 / 69.99 on its mass.
+      const after = bodies.bodyStates(HULDA).find((s) => s.node === target.node)?.velocity;
+      const gained = (after?.[0] ?? 0) - before[0];
+      expect(gained).toBeCloseTo(500 / HAVOK_SCALE / target.mass, 3);
       await sim.step(0.5);
       expect(bodies.feedbackGain(HULDA)).toBeLessThan(0.8);
       await sim.step(1);
       expect(bodies.feedbackGain(HULDA)).toBeCloseTo(0.3, 2);
-      await sim.step(10);
+      // The player's settings reach her drive at once (not those of her first hit).
+      preferences.set('RagdollAnim:fFeedbackOnOffGain', 0.5);
+      await sim.step(0.1);
+      expect(bodies.feedbackGain(HULDA)).toBeCloseTo(0.5, 2);
+      preferences.set('RagdollAnim:fFeedbackOnOffGain', 0.3);
+      // Hit again while held: held for the full 10 s from this blow.
+      expect(bodies.feedback(HULDA, [0, 1, 0], target.at)).toBe(target.node);
+      await sim.step(9.5);
+      expect(bodies.feedbackGain(HULDA)).toBeCloseTo(0.3, 2);
+      await sim.step(1.6);
       expect(bodies.feedbackGain(HULDA)).toBe(1);
-      // Turned off again, her ragdoll is no longer driven while she lives.
-      sim.world.session.preferences.set('Animation:bAlwaysDriveRagdoll', 0);
+      // Turned off again, her ragdoll is no longer driven while she lives; no hit pushes it.
+      preferences.set('Animation:bAlwaysDriveRagdoll', 0);
       await sim.step(0.1);
       expect(bodies.driven(HULDA)).toBeUndefined();
+      expect(bodies.feedback(HULDA, [1, 0, 0], target.at)).toBeUndefined();
     }, 120_000);
 
-    it('fDyingTimer (2): killed, she is dying for 2 s, then dead', async () => {
+    it('a blow on her get-up yields its drive; once up, the feedback is gone with the drive', async () => {
       const stage = sim.world.stage;
-      expect(stage.lifeState(HULDA)).toBe(LifeState.alive);
-      await sim.kill(HULDA, PLAYER_REF);
-      expect(stage.lifeState(HULDA)).toBe(LifeState.dying);
-      await sim.step(1.5);
-      expect(stage.lifeState(HULDA)).toBe(LifeState.dying);
-      await sim.step(0.6);
-      expect(stage.lifeState(HULDA)).toBe(LifeState.dead);
+      const bodies = stage.bodies;
+      expect(bodies.driven(HULDA)).toBeUndefined();
+      expect(await stage.knockdowns.knockDown(HULDA, { direction: [1, 0, 0], force: 2 })).toBe(
+        true,
+      );
+      // Getting up, her ragdoll is in the world, driven by the get-up's rigid body controls.
+      expect(await sim.until(() => bodies.driven(HULDA)?.dynamic === true, 20)).toBe(true);
+      const head = bodies.bodyStates(HULDA).find((s) => /head/i.test(s.node));
+      expect(head).toBeDefined();
+      if (!head) return;
+      expect(bodies.feedback(HULDA, [1, 0, 0], head.at)).toBe(head.node);
+      await sim.step(0.5);
+      expect(bodies.feedbackGain(HULDA)).toBeLessThan(0.8);
+      // Up in a few seconds: its drive over, so is its feedback (not the 11 s of the hit's).
+      expect(await sim.until(() => bodies.driven(HULDA) === undefined, 8)).toBe(true);
+      expect(bodies.feedbackGain(HULDA)).toBe(1);
+      expect(stage.knockdowns.holds(HULDA)).toBe(false);
     }, 120_000);
   },
 );

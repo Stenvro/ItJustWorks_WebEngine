@@ -363,10 +363,12 @@ tries taking turns round the actors from where the last frame stopped (at least 
 the restrained (life state 6) keep their wish but try none; the dying, dead and unconscious
 drop it (their graphs ask again as they stand up); the player's body picks them too (its
 PickNewIdle; the first-person arms' none) in third person, furniture's camera and the auto
-vanity camera, never in first person (ActionIdle gives the player IdlePlayer standing, the
-chair idles seated: the people's tree leaves the player out of the others by GetIsID). Not yet:
-the meal's gate. Seen in the headless
-simulation (the Bannered Mare at 20:00, 60 s): Hulda wiped the counter (IdleBarCounterWipe),
+vanity camera, never in first person, seated either (where the camera's state is furniture's;
+ActionIdle gives the player IdlePlayer standing, the chair idles seated: the people's tree
+leaves the player out of the others by GetIsID); an idle that plays counts as cut off once its
+actor moves off (its package walks it or paths, the player's keys move them: no PickNewIdle of
+its end comes), so a specific idle after that skips nothing. Not yet: the meal's gate. Seen in
+the headless simulation (the Bannered Mare at 20:00, 60 s): Hulda wiped the counter (IdleBarCounterWipe),
 Lucia put a hand on her hip (IdleHDRight), Saadia and Sinmir took MotionDrivenIdle (armed:
 IdleIfEquipped).
 
@@ -860,11 +862,11 @@ while dead) until the graph adds the ragdoll; one whose graph did not take the i
 unchanged 0.3 s on) goes limp, and so does one whose graph never adds it, or keeps it keyframed
 or powered, 8 s after it began (TODO(M13): what the engine does with such a graph; before, a
 graph that kept its ragdoll keyframed held the corpse on its feet for good). A killmove's
-victim dies in its paired clip. **Dying, then dead** (the game setting fDyingTimer, engine
-default 2 s; `src/gameplay/combat/dying.ts`, the stage's `lifeState`): an actor killed is dying
-(life state 1) for fDyingTimer seconds, then dead (2); that the timer ends the dying life state
-is inferred from its name (TODO(M13)). Its body and its scripts' OnDying and OnDeath (both told
-at once, as before) do not wait for it. Seen in the browser (Riverwood): a villager's DeathAnim,
+victim dies in its paired clip. **Dying, then dead**: not told apart (the stage's `lifeState`
+is dead from the kill; the scripts' OnDying and OnDeath are told at once). TODO(M13): the game
+setting fDyingTimer (engine default 2 s) presumably times the dying life state (1) before dead
+(2), but what reads that state in the original (OnDeath's "finished dying", combat, conditions,
+saves) is not known, so no system here would see it. Seen in the browser (Riverwood): a villager's DeathAnim,
 AddRagdollToWorld 0.06 s in, AnimateToRagdoll with 18 bones keyframed, limp as FullyRagdoll
 began at 1.2 s; a cow and a dog took DeathAnimation and lay as ragdolls within 0.7 s (the dog's
 DeathAnimation goes to Fully Ragdoll at once: it drops from the pose it stood in).

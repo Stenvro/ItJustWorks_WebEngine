@@ -6,8 +6,9 @@
 //   fPositionGain 0.05, fPositionMaxLinearVelocity 14, fPositionMaxAngularVelocity 18,
 //   fSnapGain 0.1, fSnapMaxLinearVelocity 3, fSnapMaxAngularVelocity 0.3,
 //   fSnapMaxLinearDistance 0.3, fSnapMaxAngularDistance 1: a key frame hierarchy controller's
-//   control data (keyframe-hierarchy.ts), Havok's defaults for the gains, its velocity and
-//   distance limits ten times Havok's.
+//   control data (keyframe-hierarchy.ts). The gains are Havok's defaults, and so is the snap's
+//   angular velocity limit (0.3); the other limits are Havok's times ten (its position limits
+//   1.4 and 1.8, snap linear velocity 0.3, snap distances 0.03 and 0.1).
 // - The feedback: bRagdollFeedback 1, fFeedbackImpulseMult 500, fFeedbackOnOffGain 0.3,
 //   fFeedbackOnOffGainTimeMS 1000, fFeedbackTimeMS 10000.
 // - [Animation] bDriveRagdollWithGraph 1, bAlwaysDriveRagdoll 0.
@@ -26,10 +27,13 @@
 //   body ragdoll controls where those are active (the root states have them), keyframed to the
 //   pose where not.
 // - The feedback (bRagdollFeedback): a hit on an actor whose ragdoll its graph drives pushes
-//   the body it struck with fFeedbackImpulseMult (an impulse in game units, made Havok's by the
-//   world scale) along the blow, and the drive yields to it: its gains go to fFeedbackOnOffGain
-//   of their own over fFeedbackOnOffGainTimeMS, stay there until fFeedbackTimeMS after the hit,
-//   and come back over fFeedbackOnOffGainTimeMS again.
+//   the body nearest the blow with fFeedbackImpulseMult (an impulse in game units, made Havok's
+//   by the world scale) along the blow, and the drive yields to it: its gains go to
+//   fFeedbackOnOffGain of their own over fFeedbackOnOffGainTimeMS, stay there until
+//   fFeedbackTimeMS after the hit, and come back over fFeedbackOnOffGainTimeMS again; a further
+//   hit holds them down for the full fFeedbackTimeMS from itself (RagdollFeedback). The feedback
+//   is the drive's: once the ragdoll is driven no more (its get-up over, out of the world, let go
+//   limp) it is gone, and a later drive starts with none.
 //
 // Platform-free.
 
@@ -150,55 +154,60 @@ export function scaledControl(control: HierarchyControl, scale: number): Hierarc
   };
 }
 
-/** One ragdoll's feedback: the hits on it and how far its drive yields to them. */
+/**
+ * One ragdoll's feedback: the hits on it and how far its drive yields to them. The settings are
+ * passed on each call (the INI's values now: a change applies at the next hit and update).
+ *
+ * The rule (inferred, TODO(M13)): a hit holds the gains down until fFeedbackTimeMS after it. A
+ * hit while they are still down, or coming back up, holds them down until fFeedbackTimeMS after
+ * this hit (the full time again); they go on down from where they are, over the rest of the
+ * ramp, without first jumping back up.
+ */
 export class RagdollFeedback {
-  /** The last hit (seconds on the caller's clock; undefined: none). */
-  #hit: number | undefined;
-  readonly #settings: RagdollAnimSettings;
-
-  constructor(settings: RagdollAnimSettings) {
-    this.#settings = settings;
-  }
+  /** When the gains began going down, set back so the ramp is where they are (seconds). */
+  #from: number | undefined;
+  /** When the last hit's hold ends (seconds); the gains come back up from then. */
+  #until = 0;
 
   /**
    * A hit at `now` (seconds): the impulse on the body it struck (game units: the caller makes it
    * Havok's), or 0 with feedback off.
    */
-  hit(now: number): number {
-    if (!this.#settings.feedback) return 0;
-    // A hit during the feedback keeps the gains down, without going through the ramp again.
-    const scale = this.gainScale(now);
-    this.#hit = scale < 1 ? now - this.#rampFor(scale) : now;
-    return this.#settings.feedbackImpulse;
+  hit(now: number, settings: RagdollAnimSettings): number {
+    if (!settings.feedback) return 0;
+    const scale = this.gainScale(now, settings);
+    // Down from where they are: the ramp's start set back by how far down they are.
+    this.#from = now - rampFor(scale, settings);
+    this.#until = now + settings.feedbackTime;
+    return settings.feedbackImpulse;
   }
 
   /** The share of the drive's gains at `now` (1: no feedback). */
-  gainScale(now: number): number {
-    const hit = this.#hit;
-    if (hit === undefined) return 1;
-    const s = this.#settings;
-    const since = now - hit;
-    if (since < 0 || since >= s.feedbackTime + s.feedbackGainTime) return 1;
-    const low = s.feedbackGain;
-    const ramp = s.feedbackGainTime;
-    if (ramp <= 0) return since < s.feedbackTime ? low : 1;
-    // Down over the ramp, held, back up over the ramp after the feedback's time.
-    if (since < ramp) return 1 + (low - 1) * (since / ramp);
-    if (since < s.feedbackTime) return low;
-    return low + (1 - low) * ((since - s.feedbackTime) / ramp);
+  gainScale(now: number, settings: RagdollAnimSettings): number {
+    const from = this.#from;
+    if (from === undefined || now < from) return 1;
+    const low = settings.feedbackGain;
+    const ramp = settings.feedbackGainTime;
+    // Down over the ramp from #from, held until #until, back up over the ramp from there.
+    const down = (at: number): number =>
+      ramp <= 0 ? low : 1 + (low - 1) * Math.min(1, Math.max(0, (at - from) / ramp));
+    if (now < this.#until) return down(now);
+    if (ramp <= 0) return 1;
+    const held = down(this.#until);
+    const up = (now - this.#until) / ramp;
+    return up >= 1 ? 1 : held + (1 - held) * up;
   }
 
   /** Whether the feedback of a hit still acts at `now`. */
-  active(now: number): boolean {
-    return this.gainScale(now) < 1;
+  active(now: number, settings: RagdollAnimSettings): boolean {
+    return this.gainScale(now, settings) < 1;
   }
+}
 
-  /** The seconds into the downward ramp at which the gains are at `scale`. */
-  #rampFor(scale: number): number {
-    const s = this.#settings;
-    const low = s.feedbackGain;
-    if (low >= 1 || s.feedbackGainTime <= 0) return 0;
-    const into = ((1 - scale) / (1 - low)) * s.feedbackGainTime;
-    return Math.min(s.feedbackGainTime, Math.max(0, into));
-  }
+/** The seconds into the downward ramp at which the gains are at `scale`. */
+function rampFor(scale: number, settings: RagdollAnimSettings): number {
+  const low = settings.feedbackGain;
+  if (low >= 1 || settings.feedbackGainTime <= 0) return 0;
+  const into = ((1 - scale) / (1 - low)) * settings.feedbackGainTime;
+  return Math.min(settings.feedbackGainTime, Math.max(0, into));
 }

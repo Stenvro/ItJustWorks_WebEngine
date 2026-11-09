@@ -24,7 +24,10 @@
 // read as microseconds); the restrained (life state 6) pick none; a dying or unconscious actor's
 // update tries none and drops the wish it had (its graph asks again as it stands up); the player
 // picks them as the actors do, in third person, in furniture's camera and in the auto vanity
-// camera (the views that show the player's own body standing or seated), never in first person.
+// camera (the views that show the player's own body standing or seated), never in first person
+// (seated in first person neither, though the camera's state is then furniture's); an idle that
+// plays counts as cut off once its actor moves (its package walks it, the player's keys), so a
+// specific idle after that skips no PickNewIdle.
 //
 // Platform-independent: the caller values the gates and plays the action.
 
@@ -147,6 +150,15 @@ export function playerAmbientIdleCamera(cameraState: number): boolean {
 }
 
 /**
+ * Whether the player picks ambient idles in a view: its camera state allows them, and the
+ * player does not look out of their own eyes (first person: none, even seated, where the camera
+ * state is furniture's; the auto vanity camera is third person while it circles).
+ */
+export function playerAmbientIdleView(cameraState: number, pov: 'first' | 'third'): boolean {
+  return pov === 'third' && playerAmbientIdleCamera(cameraState);
+}
+
+/**
  * The idle wait timer an ambient idle sets as it plays (seconds): fAIIdleWaitTime, or
  * fAIIdleWaitTimeComplexScene while a complex scene runs.
  */
@@ -170,7 +182,10 @@ export function isComplexScene(actors: number, complexSceneActors: number): bool
 interface AmbientIdleState {
   wants: boolean;
   skip: boolean;
-  /** An idle plays on it (one it picked or a specific one), until its graph asks for another. */
+  /**
+   * An idle plays on it (one it picked or a specific one), until its graph asks for another or
+   * it moves off (inferred, TODO(M13)).
+   */
   playing: boolean;
   /** Its idle wait timer runs out then (seconds on the caller's clock). */
   waitUntil: number;
@@ -230,6 +245,21 @@ export class AmbientIdleFlags {
     const state = this.#states.get(actor);
     if (state?.wants !== true) return false;
     return !state.waitComplex || now >= state.waitUntil;
+  }
+
+  /** Whether an idle plays on it (played, specificIdle; until PickNewIdle or moved). */
+  playing(actor: number): boolean {
+    return this.#states.get(actor)?.playing === true;
+  }
+
+  /**
+   * It moves off (its package walks it, the player's keys move them): the idle that played is
+   * cut off without the PickNewIdle of its end, so a specific idle after this plays over none
+   * and skips nothing (inferred, TODO(M13)).
+   */
+  moved(actor: number): void {
+    const state = this.#states.get(actor);
+    if (state) state.playing = false;
   }
 
   /** Its wish is dropped (dying, dead or unconscious: ambientIdleUpdate 'drop'). */

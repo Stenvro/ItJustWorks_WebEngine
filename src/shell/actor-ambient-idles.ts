@@ -13,7 +13,7 @@ import {
   ambientIdleWait,
   COMPLEX_SCENE_ACTORS,
   isComplexScene,
-  playerAmbientIdleCamera,
+  playerAmbientIdleView,
   readAmbientIdleSettings,
   type AmbientIdleActor,
   type AmbientIdleSettings,
@@ -50,6 +50,8 @@ export interface ActorAmbientIdlesOptions {
   readonly player?: () => AmbientIdlePlayer | undefined;
   /** The clock the frame's budget is measured with (ms; default performance.now). */
   readonly clock?: () => number;
+  /** Whether an actor moves off now (its package walks it, it paths; undefined: never). */
+  readonly moving?: (reference: number) => boolean;
 }
 
 /** The player as its idle update sees it. */
@@ -58,6 +60,10 @@ export interface AmbientIdlePlayer {
   readonly user: FurnitureUser;
   /** The camera's state (src/shell/camera-states.ts). */
   readonly camera: number;
+  /** First or third person (src/shell/player.ts). */
+  readonly pov: 'first' | 'third';
+  /** The player's keys move them now. */
+  readonly moving?: boolean;
   /** Its life state (undefined: alive). */
   readonly life?: number;
 }
@@ -129,17 +135,22 @@ export class ActorAmbientIdles {
    */
   frame(focus: Vec3 | undefined, seconds = 0): void {
     this.#clock += seconds;
-    if (!focus) return;
     const now = this.#clock;
     const staged = new Map<number, StagedActor>();
     let high = 0;
     for (const actor of this.#options.actors()) {
       staged.set(actor.reference, actor);
       if (!actor.dead && this.#options.highProcess?.(actor.reference) !== false) high++;
+      // Moving off cuts the idle that played (no PickNewIdle of its end comes).
+      if (this.flags.playing(actor.reference) && this.#options.moving?.(actor.reference) === true) {
+        this.flags.moved(actor.reference);
+      }
     }
+    const player = this.#options.player?.();
+    if (player?.moving === true) this.flags.moved(PLAYER_REF);
+    if (!focus) return;
     const complex = isComplexScene(high, this.#complexSceneActors);
     const order = [...staged.keys()];
-    const player = this.#options.player?.();
     if (player) order.push(PLAYER_REF);
     const clock = this.#options.clock ?? (() => performance.now());
     this.#turns.run(order, this.#budget, clock, (reference) => {
@@ -169,7 +180,7 @@ export class ActorAmbientIdles {
 
   /** The player's idle update (with its flag set): whether it tried ActionIdle. */
   #tryPlayer(player: AmbientIdlePlayer, now: number, complex: boolean): boolean {
-    if (!playerAmbientIdleCamera(player.camera)) return false;
+    if (!playerAmbientIdleView(player.camera, player.pov)) return false;
     const update = ambientIdleUpdate({
       distance: 0,
       reach: Infinity,

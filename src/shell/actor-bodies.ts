@@ -111,8 +111,19 @@ interface ActorBody {
    * knocked-down actor getting up): undefined when not; `dynamic` while the graph's rigid
    * body controls drive bodies of it (#drive), `blend` the seconds since they began.
    */
-  driven: { dynamic: boolean; blend: number; always?: boolean } | undefined;
-  /** The hits' feedback on its driven ragdoll (src/physics/ragdoll-anim.ts). */
+  driven: Driven | undefined;
+}
+
+/** A ragdoll in the world driven by its graph (ActorBody.driven). */
+interface Driven {
+  dynamic: boolean;
+  blend: number;
+  /** Driven by bAlwaysDriveRagdoll alone (its graph did not add it). */
+  always?: boolean;
+  /**
+   * The hits' feedback on it (src/physics/ragdoll-anim.ts): the drive's own, so it goes with
+   * the drive (inferred, TODO(M13)).
+   */
   feedback?: RagdollFeedback;
 }
 
@@ -275,43 +286,70 @@ export class ActorBodies {
 
   /**
    * A hit on an actor whose ragdoll its graph drives ([RagdollAnim] bRagdollFeedback): the body
-   * nearest `point` (game units; none: the first) is pushed along `direction` by
-   * fFeedbackImpulseMult, and the drive yields to it a while (src/physics/ragdoll-anim.ts).
-   * Whether it was pushed (false: its ragdoll is not driven, or feedback is off).
+   * nearest `point` (where the blow landed, game units; none: the first body) is pushed along
+   * `direction` by fFeedbackImpulseMult (game units of momentum, made Havok's: / HAVOK_SCALE),
+   * and the drive yields to it a while (src/physics/ragdoll-anim.ts). The struck body's node
+   * (undefined: none pushed, its ragdoll not driven with bodies simulated, or feedback off).
    */
-  feedback(reference: number, direction: Vec3, point?: Vec3): boolean {
+  feedback(reference: number, direction: Vec3, point?: Vec3): string | undefined {
     const entry = this.#bodies.get(reference);
     const physics = this.#physics;
-    if (!entry || !physics || entry.articulation || entry.driven?.dynamic !== true) return false;
-    entry.feedback ??= new RagdollFeedback(this.#ragdollAnim);
-    const impulse = entry.feedback.hit(this.#clock);
-    if (impulse <= 0) return false;
+    const driven = entry?.driven;
+    if (!entry || !physics || entry.articulation || driven?.dynamic !== true) return undefined;
+    driven.feedback ??= new RagdollFeedback();
+    const impulse = driven.feedback.hit(this.#clock, this.#ragdollAnim);
+    if (impulse <= 0) return undefined;
     let struck = entry.bodies[0]?.body;
     if (point) {
-      const at: Vec3 = [point[0] * HAVOK_SCALE, point[1] * HAVOK_SCALE, point[2] * HAVOK_SCALE];
+      const at: Vec3 = [point[0] / HAVOK_SCALE, point[1] / HAVOK_SCALE, point[2] / HAVOK_SCALE];
       let nearest = Infinity;
       for (const { body } of entry.bodies) {
-        const { position } = physics.bodyFrame(body);
-        const d = distance(position, at);
+        const d = distance(physics.bodyFrame(body).position, at);
         if (d < nearest) {
           nearest = d;
           struck = body;
         }
       }
     }
-    if (!struck) return false;
+    if (!struck) return undefined;
     const length = Math.hypot(direction[0], direction[1], direction[2]) || 1;
-    const k = (impulse * HAVOK_SCALE) / length;
+    const k = impulse / HAVOK_SCALE / length;
     struck.body.applyImpulse(
       { x: direction[0] * k, y: direction[1] * k, z: direction[2] * k },
       true,
     );
-    return true;
+    return struck.data.node;
   }
 
   /** The share of an actor's driven ragdoll's gains its hits' feedback leaves now (1: none). */
   feedbackGain(reference: number): number {
-    return this.#bodies.get(reference)?.feedback?.gainScale(this.#clock) ?? 1;
+    return (
+      this.#bodies.get(reference)?.driven?.feedback?.gainScale(this.#clock, this.#ragdollAnim) ?? 1
+    );
+  }
+
+  /**
+   * An actor's bodies as they are now: each one's node, place (game units, world), velocity
+   * (Havok units a second) and mass (the checks').
+   */
+  bodyStates(reference: number): {
+    readonly node: string;
+    readonly at: Vec3;
+    readonly velocity: Vec3;
+    readonly mass: number;
+  }[] {
+    const entry = this.#bodies.get(reference);
+    if (!entry) return [];
+    return entry.bodies.map(({ body }) => {
+      const t = body.body.translation();
+      const v = body.body.linvel();
+      return {
+        node: body.data.node,
+        at: [t.x * HAVOK_SCALE, t.y * HAVOK_SCALE, t.z * HAVOK_SCALE],
+        velocity: [v.x, v.y, v.z],
+        mass: body.body.mass(),
+      };
+    });
   }
 
   /**
@@ -838,7 +876,10 @@ export class ActorBodies {
     const own = usePowered ? this.#ragdollAnim.control : rigid?.control;
     if (!own) return;
     // A hit's feedback: the drive yields to the push a while.
-    const control = scaledControl(own, entry.feedback?.gainScale(this.#clock) ?? 1);
+    const control = scaledControl(
+      own,
+      driven.feedback?.gainScale(this.#clock, this.#ragdollAnim) ?? 1,
+    );
     const nodes = entry.pose.skeleton.rig.names;
     this.#steer(entry, physics, ({ node }) => {
       const name = (nodes[node] ?? '').toLowerCase();

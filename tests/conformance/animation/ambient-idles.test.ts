@@ -27,6 +27,7 @@ import {
   COMPLEX_SCENE_ACTORS,
   isComplexScene,
   playerAmbientIdleCamera,
+  playerAmbientIdleView,
   readAmbientIdleSettings,
   SPECIAL_IDLE_PICK_TIME,
   type AmbientIdleActor,
@@ -34,9 +35,9 @@ import {
 import { readIdleTree, type IdleTree } from '../../../src/ai/idle-records.ts';
 import { RaceSize } from '../../../src/ai/race-combat-records.ts';
 import type { AmbientIdlePlayed } from '../../../src/shell/actor-ambient-idles.ts';
-import { CameraState } from '../../../src/shell/camera-states.ts';
+import { cameraState, CameraState } from '../../../src/shell/camera-states.ts';
 import { INI_DEFAULTS } from '../../../src/world/ini-settings.ts';
-import { hasGamedata, openSim, type Sim } from '../../helpers/sim.ts';
+import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 describe('the settings', () => {
   it('the engine’s defaults (settings)', () => {
@@ -259,6 +260,17 @@ describe('the idle update (original; the specifics inferred: src/ai/ambient-idle
     idle.specificIdle(2);
     idle.pickNewIdle(2);
     expect(idle.wants(2)).toBe(true);
+    // An idle cut off as its actor moves off raises no PickNewIdle: a specific idle after that
+    // plays over none and skips nothing (inferred).
+    const walked = new AmbientIdleFlags();
+    walked.pickNewIdle(3);
+    walked.played(3, 0, 0.1, false);
+    expect(walked.playing(3)).toBe(true);
+    walked.moved(3);
+    expect(walked.playing(3)).toBe(false);
+    walked.specificIdle(3);
+    walked.pickNewIdle(3);
+    expect(walked.wants(3)).toBe(true);
   });
 
   it('in a complex scene the next try waits fAIIdleWaitTimeComplexScene after an idle', () => {
@@ -328,6 +340,16 @@ describe('the idle update (original; the specifics inferred: src/ai/ambient-idle
     ]) {
       expect(playerAmbientIdleCamera(state)).toBe(false);
     }
+    // Seated, the camera's state is furniture's in either view; in first person the player
+    // looks out of their own eyes and picks none.
+    const seatedFirst = cameraState({ pov: 'first', furniture: true });
+    expect(seatedFirst).toBe(CameraState.furniture);
+    expect(playerAmbientIdleView(seatedFirst, 'first')).toBe(false);
+    expect(playerAmbientIdleView(cameraState({ pov: 'third', furniture: true }), 'third')).toBe(
+      true,
+    );
+    expect(playerAmbientIdleView(cameraState({ pov: 'third' }), 'third')).toBe(true);
+    expect(playerAmbientIdleView(cameraState({ pov: 'first' }), 'first')).toBe(false);
   });
 
   it('a dying or unconscious actor’s idle update tries none and drops its wish', () => {
@@ -352,3 +374,78 @@ describe('the idle update (original; the specifics inferred: src/ai/ambient-idle
     expect(ambientIdleUpdate(restrained)).toBe('keep');
   });
 });
+
+// The player in a chair of the Bannered Mare in the morning: seated in first person they pick no
+// ambient idle (the camera's state is furniture's, but they look out of their own eyes); in third
+// person they pick the chair idles as the people do; walking off cuts the one that plays.
+
+describe.skipIf(!hasGamedata())(
+  'the player seated at the Bannered Mare (headless simulation)',
+  () => {
+    let sim: Sim;
+    let chair: number | undefined;
+
+    beforeAll(async () => {
+      sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
+      const stage = sim.world.stage;
+      const feet = await sim.position(PLAYER_REF);
+      chair = sim.world
+        .placedObjects()
+        .filter(({ object }) => object.furniture?.sit === true)
+        .filter(({ object }) => !stage.furniture.inUse(object.reference))
+        .map(({ object }) => object)
+        .sort(
+          (a, b) =>
+            Math.hypot(
+              (a.world[12] ?? 0) - (feet?.[0] ?? 0),
+              (a.world[13] ?? 0) - (feet?.[1] ?? 0),
+            ) -
+            Math.hypot(
+              (b.world[12] ?? 0) - (feet?.[0] ?? 0),
+              (b.world[13] ?? 0) - (feet?.[1] ?? 0),
+            ),
+        )[0]?.reference;
+    }, 600_000);
+    afterAll(async () => {
+      await sim.close();
+    });
+
+    const theirs = (): AmbientIdlePlayed[] =>
+      sim.world.stage.ambientIdles.played.filter((idle) => idle.actor === PLAYER_REF);
+
+    it('seated in first person, the player picks none', async () => {
+      expect(chair).toBeDefined();
+      if (chair === undefined) return;
+      sim.world.player.setPov('first');
+      expect(sim.activate(chair)).toBe(true);
+      expect(
+        await sim.until(() => sim.world.stage.furniture.interaction(PLAYER_REF)?.state === 3, 15),
+      ).toBe(true);
+      await sim.step(30);
+      expect(theirs()).toEqual([]);
+    }, 300_000);
+
+    it('seated in third person, the player picks the chair idles', async () => {
+      expect(sim.world.stage.furniture.interaction(PLAYER_REF)?.state).toBe(3);
+      sim.world.player.setPov('third');
+      expect(await sim.until(() => theirs().length > 0, 60)).toBe(true);
+      // The chair as the action's target: a seated idle, not a standing one.
+      expect(theirs()[0]?.furniture).toBe(chair);
+      expect(sim.world.stage.ambientIdles.flags.playing(PLAYER_REF)).toBe(true);
+    }, 300_000);
+
+    it('getting up and walking off cuts the idle that played', async () => {
+      const flags = sim.world.stage.ambientIdles.flags;
+      sim.press('Forward', true);
+      expect(
+        await sim.until(
+          () =>
+            sim.world.stage.furniture.interaction(PLAYER_REF) === undefined &&
+            !flags.playing(PLAYER_REF),
+          10,
+        ),
+      ).toBe(true);
+      sim.press('Forward', false);
+    }, 300_000);
+  },
+);

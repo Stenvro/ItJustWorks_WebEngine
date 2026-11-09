@@ -121,7 +121,6 @@ import { PlayerPilot } from './player-pilot.ts';
 import { reactionsOf } from '../ai/combat-reactions.ts';
 import { ProjectileAim } from './projectile-aim.ts';
 import { ActorAmbientIdles } from './actor-ambient-idles.ts';
-import { DYING_TIMER, DyingActors } from '../gameplay/combat/dying.ts';
 import { ActorAnimObjects } from './actor-anim-objects.ts';
 import { outOfSight } from '../ai/followers.ts';
 import { fliesByRace } from '../ai/flight.ts';
@@ -398,8 +397,6 @@ export class ActorStage {
   readonly dismemberment: ActorDismemberment;
   /** The idles actors pick by themselves (src/shell/actor-ambient-idles.ts): PickNewIdle's. */
   readonly ambientIdles: ActorAmbientIdles;
-  /** The actors killed lately: dying for fDyingTimer, then dead (src/gameplay/combat/dying.ts). */
-  readonly dying = new DyingActors();
   /** The renderer's clock at the last frame (seconds between frames, for the AI). */
   #clock: number | undefined;
   /** Each actor as a user of furniture. */
@@ -409,12 +406,6 @@ export class ActorStage {
 
   constructor(options: ActorStageOptions) {
     this.#options = options;
-    options.session.settings().then(
-      (settings) => {
-        this.dying.timer = settings.number('fDyingTimer') ?? DYING_TIMER;
-      },
-      () => undefined,
-    );
     this.process = new ProcessSlicer(options.processClock ?? (() => performance.now()));
     this.doors = new ActorDoors({
       session: options.session,
@@ -1025,13 +1016,17 @@ export class ActorStage {
         const user = options.seat?.()?.user;
         if (!view?.avatar || !user) return undefined;
         const seated = this.furniture.interaction(PLAYER_REF)?.state === 3;
+        const player = view.play.player;
         return {
           user,
-          camera: view.play.player.cameraState({
-            free: view.play.freeCamera,
-            furniture: seated,
-          }),
+          camera: player.cameraState({ free: view.play.freeCamera, furniture: seated }),
+          pov: player.pov,
+          moving: Math.hypot(...player.character.velocity) > 0,
         };
+      },
+      moving: (reference) => {
+        const motion = this.movers.motion(reference);
+        return motion !== undefined && (motion.moving || motion.pathing);
       },
       ...(options.processClock && { clock: options.processClock }),
     });
@@ -1687,14 +1682,16 @@ export class ActorStage {
   }
 
   /**
-   * An actor's life state (ACTOR_LIFE_STATE; undefined: not on the stage): dying for
-   * fDyingTimer after it was killed, then dead; restrained and unconscious as its scripts set
-   * it; else its fight's (bleeding out, essential down) or alive.
+   * An actor's life state (ACTOR_LIFE_STATE; undefined: not on the stage): dead once killed;
+   * restrained and unconscious as its scripts set it; else its fight's (bleeding out, essential
+   * down) or alive. TODO(M13): the dying state between (fDyingTimer, 2 s) is not told apart;
+   * what in the original reads it is not known here (tests/conformance/animation/
+   * ragdolls-death.test.ts).
    */
   lifeState(reference: number): number | undefined {
     const staged = this.#actors.get(reference);
     if (!staged) return undefined;
-    if (staged.dead) return this.dying.dying(reference) ? LifeState.dying : LifeState.dead;
+    if (staged.dead) return LifeState.dead;
     const state = this.#options.session.scriptsReady?.state.actors.get(reference);
     if (state?.restrained === true) return LifeState.restrained;
     if (state?.unconscious === true) return LifeState.unconscious;
@@ -1714,7 +1711,6 @@ export class ActorStage {
     const staged = this.#actors.get(reference);
     if (!staged || staged.dead) return;
     staged.dead = true;
-    this.dying.died(reference);
     this.ai.remove(reference);
     this.senses.killed(reference);
     this.casting.remove(reference);
@@ -2900,7 +2896,6 @@ export class ActorStage {
     this.combat.frame(frame, this.#options.focus?.());
     this.knockdowns.frame(frame);
     this.graphEvents.frame(frame);
-    this.dying.frame(frame);
     this.ambientIdles.frame(this.#options.focus?.(), frame);
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
     this.updateObstacles(frame);
@@ -3225,7 +3220,6 @@ export class ActorStage {
     this.graphEvents.remove(staged.reference);
     this.animObjects.remove(staged.reference);
     this.ambientIdles.remove(staged.reference);
-    this.dying.remove(staged.reference);
     this.looks.remove(staged.reference);
     this.moods.forget(staged.reference);
     this.#alphas.delete(staged.reference);
