@@ -1065,6 +1065,9 @@ export class ScriptRuntime implements VmHost {
     number,
     Promise<Map<number, { readonly child: number; readonly delay: number }[]>>
   >();
+  /** The load order's activate children by parent, wherever they stand (read once: XAPR). */
+  #farActivateChildren:
+    Promise<Map<number, { readonly child: number; readonly delay: number }[]>> | undefined;
   #settings: Promise<GameSettings> | undefined;
   #startDate: GameDate | undefined;
   #startDays = 0;
@@ -2662,8 +2665,8 @@ export class ScriptRuntime implements VmHost {
 
   /**
    * XAPR the other way: the references a reference activates as it is activated (those in its
-   * own cell, or its worldspace's persistent cell, whose Activate Parents name it), with their
-   * delays (seconds). Read once per cell.
+   * own cell, or its worldspace's persistent cell, whose Activate Parents name it; a persistent
+   * one's wherever they stand), with their delays (seconds). Read once per cell.
    */
   async activateChildren(
     reference: number,
@@ -2713,7 +2716,46 @@ export class ScriptRuntime implements VmHost {
       }
       found.push(...((await index).get(reference) ?? []));
     }
+    // A persistent parent's children beyond those cells (158 of the 6,527 vanilla pairs, every
+    // one of whose parents is persistent: an interior's door waking an ambush outside, a marker
+    // in the persistent cell enabling books in a fort). The engine keeps a parent's children on
+    // it as they load, so a persistent parent, always there, knows them wherever they stand.
+    // TODO(M13): inferred; whether a child whose cell is not in memory (neither loaded nor
+    // buffered) is left out in the original is not read; here every one is activated.
+    const flags = this.indexedFlags(reference) ?? (await this.forms.record(reference))?.flags ?? 0;
+    if ((flags & RecordFlag.persistent) !== 0) {
+      const far = (await this.#farChildren()).get(reference) ?? [];
+      for (const entry of far) {
+        if (!found.some((other) => other.child === entry.child)) found.push(entry);
+      }
+    }
     return found;
+  }
+
+  /** Every activate child of the load order by its parent (XAPR), read once. */
+  #farChildren(): Promise<Map<number, { readonly child: number; readonly delay: number }[]>> {
+    this.#farActivateChildren ??= (async () => {
+      const byParent = new Map<number, { child: number; delay: number }[]>();
+      await this.forms.db.scan(
+        ['REFR', 'ACHR', 'PGRE', 'PHZD', 'PMIS', 'PARW', 'PBAR', 'PBEA', 'PCON', 'PFLA'],
+        (flags) => (flags & RecordFlag.deleted) === 0,
+        (record) => {
+          for (const data of record.fields.all('XAPR')) {
+            const parent = record.formIdAt(data);
+            if (parent === 0) continue;
+            const delay = data.length >= 8 ? view(data).getFloat32(4, true) : 0;
+            const list = byParent.get(parent) ?? [];
+            list.push({
+              child: record.formId,
+              delay: Number.isFinite(delay) ? Math.max(0, delay) : 0,
+            });
+            byParent.set(parent, list);
+          }
+        },
+      );
+      return byParent;
+    })();
+    return this.#farActivateChildren;
   }
 
   /**
