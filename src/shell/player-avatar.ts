@@ -588,6 +588,9 @@ export class PlayerAvatar {
     // the view already (FirstPersonBody.place), and their graph's own twist would turn them twice.
     // Held level while the graphs' PitchOverride is on (an equip or unequip: the camera's flag
     // in third person, a spell's equip the shown graph's own variable; OverriddenPitch).
+    // The camera's flag goes with the clip that raised it: an equip cut off before its end (a
+    // stagger, a knockdown) ends it (CameraPitchOverride).
+    player.followPitchOverride([body.behavior, this.#firstPerson?.skeleton.behavior]);
     const third = player.pov === 'third';
     const shownGraph = third ? body.behavior : this.#firstPerson?.skeleton.behavior;
     const overridden =

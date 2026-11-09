@@ -18,6 +18,7 @@ import {
   type CameraState,
 } from './camera-states.ts';
 import { TweenCamera } from './tween-camera.ts';
+import { CameraPitchOverride, type PitchOverrideGraph } from '../animation/pitch-override.ts';
 import type { Camera } from '../render/view-camera.ts';
 import type { MoveRequest } from '../ai/locomotion.ts';
 import { mountedPitchFloor } from '../ai/mounts.ts';
@@ -503,7 +504,15 @@ export class Player implements Camera {
   /** Compass heading in radians: 0 looks along +Y (north), π/2 along +X (east). */
   yaw = 0;
   pitch = 0;
-  pov: Pov = 'first';
+  #pov: Pov = 'first';
+  /** First or third person. A change ends the third-person camera's PitchOverride flag. */
+  get pov(): Pov {
+    return this.#pov;
+  }
+  set pov(next: Pov) {
+    if (next !== this.#pov) this.#pitchOverride.end();
+    this.#pov = next;
+  }
   /** The camera stays as it is (furniture that forces one: src/shell/player-furniture.ts). */
   povLocked = false;
   /**
@@ -1470,6 +1479,7 @@ export class Player implements Camera {
    * their movement and camera state go on as they move.
    */
   keepStance(stance: PlayerStance): void {
+    this.#pitchOverride.end();
     this.sneaking = stance.sneaking;
     this.#alwaysRun = stance.alwaysRun;
     this.#zoomTarget = stance.zoom;
@@ -1607,9 +1617,13 @@ export class Player implements Camera {
    * third-person camera while it is the camera's state (the equip and unequip clips raise them
    * at their first frame and their end). Ours: the body's pitch from the view is held level
    * while it is on, in third person (src/animation/pitch-override.ts; inferred, TODO(M13): what
-   * the original's camera does with it).
+   * the original's camera does with it). A change of view, a load, a new place and death end it
+   * too, and so does an equip cut off before its end (CameraPitchOverride; inferred, TODO(M13)).
    */
-  pitchOverride = false;
+  readonly #pitchOverride = new CameraPitchOverride();
+  get pitchOverride(): boolean {
+    return this.#pitchOverride.on;
+  }
 
   /**
    * CameraOverrideStart / CameraOverrideStop (the player's graph): observed in the
@@ -1626,7 +1640,21 @@ export class Player implements Camera {
   graphBowZoom: boolean | undefined;
 
   setPitchOverride(on: boolean): void {
-    if (this.pov === 'third') this.pitchOverride = on;
+    if (on) this.#pitchOverride.start(this.pov);
+    else this.#pitchOverride.end();
+  }
+
+  /** A load, a new place, death: the camera's PitchOverride flag ends. */
+  endPitchOverride(): void {
+    this.#pitchOverride.end();
+  }
+
+  /**
+   * Each update of the player's graphs: the camera's PitchOverride flag ends once none of them
+   * plays a clip that raises or ends it any more (an equip cut off by a stagger or knockdown).
+   */
+  followPitchOverride(graphs: readonly (PitchOverrideGraph | undefined)[]): void {
+    this.#pitchOverride.follow(this.pov, graphs);
   }
 
   /**
