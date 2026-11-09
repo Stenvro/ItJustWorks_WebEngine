@@ -383,10 +383,19 @@ holds for 0.5 s only (`SPECIFIC_IDLE_SKIP_WINDOW`): a later PickNewIdle is taken
 idle's own end, a request (the original's flag holds until the next PickNewIdle; ours is bounded
 so that a cut our graph raises no PickNewIdle for does not swallow the end's and leave the actor
 without ambient idles: in the headless simulation a script's IdleHDRight over a Bannered Mare
-guest's ambient idle brought no PickNewIdle until its own end, 24 s on). Not yet: the meal's
-gate; the seated player's chair idles (TODO(M13): seated, the player's body graph raises no
-PickNewIdle in the headless simulation, none in 60 s with bNeutralState 1, so they pick none
-there yet; `tests/conformance/animation/ambient-idles.test.ts`, the seated player's case is marked it.fails). Seen in
+guest's ambient idle brought no PickNewIdle until its own end, 24 s on). The meal's gate: an Eat
+package's eating step runs from its food's use (the eating idle) until its meal is done or the
+procedure is cut short (`PackageBody.meal`; inferred, TODO(M13): the step's bounds taken as the
+food's use and the procedure's 6 s after it), and the actor picks none while it lasts. The
+seated request (inferred, TODO(M13)): the chair's seated base state raises no PickNewIdle of its
+own (mt_behavior.hkx: ChairIdleBehavior starts ChairIdle3rdPerson or, by i1stPerson,
+ChairIdle1stPerson; ChairIdle3rdPerson's base, ChairBaseVar1, loops Chair_IdleBaseVar1 and only
+sets bNeutralState; its variants raise PickNewIdle as they end), and the idle that played as the
+actor sat down was cut off without its end's, so an actor or the player who settles in furniture
+(its use reaching sitting or leaning, not asleep) wants a new idle then. The player who sat down
+in first person keeps that wish until seen in third person, then picks the chair idles
+(`tests/conformance/animation/ambient-idles.test.ts`: the player seated at the Bannered Mare, the
+stage's idle update). Seen in
 the headless simulation (the Bannered Mare at 20:00, 60 s): Hulda wiped the counter (IdleBarCounterWipe),
 Lucia put a hand on her hip (IdleHDRight), Saadia and Sinmir took MotionDrivenIdle (armed:
 IdleIfEquipped).
@@ -1453,10 +1462,12 @@ the morphs to the FaceGen head's shapes (rendering.md, Skinning).
   strengths; SetExpressionOverride's default 50 is taken). The player's face too. A response's
   emotion (INFO TRDT emotion type and value: anger, disgust, fear,
   sad, happy, surprise, puzzled as the Dialogue* expressions; neutral none) shows instead of it
-  while it is said. The shown expression's morph moves towards its strength, the others towards
-  none, by fExpressionChangePerSec (2) a second and fExpressionStrengthAdd (1) more times the
-  strength (the engine's expression update, observed in the original; the strength is taken to be the
-  target expression's).
+  while it is said, at the value / 100 (inferred, TODO(M13): the scale of the mfg console's
+  expression strengths; the engine's own is not documented). The shown expression's morph moves
+  towards its strength, the others towards none, by fExpressionChangePerSec (2) a second and
+  fExpressionStrengthAdd (1) more times the strength (the engine's expression update, observed in
+  the original; TODO(M13): the strength is taken to be the target expression's, none when the
+  face goes back to no expression).
 - **Speech:** a line's lip-sync curves (formats/audio.md, LIP) drive the phonemes and the
   modifiers (blinks join the face's own, the strongest wins; brows, eye looks). The curves
   start with their lead-in frames, the audio after them, at the head through the 3D dialogue

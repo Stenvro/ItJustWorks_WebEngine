@@ -1201,15 +1201,23 @@ const activate: ProcedureRunner = async (run) => {
 
 /**
  * Eat: food its criteria name that it carries (one used up), else, if it may (Create Fake
- * Food), food made for the meal: its eating idle plays.
+ * Food), food made for the meal: its eating idle plays. From its eating idle until the meal is
+ * done (or the procedure is cut short) the actor is at its meal (PackageBody.meal: no ambient
+ * idles then). Inferred, TODO(M13): the eating step taken as the food's use and EAT_SECONDS
+ * after it.
  */
 const eat: ProcedureRunner = async (run) => {
   const criteria = run.inputs.target(0);
   const carried = criteria && (await run.mind.carried(run.actor, criteria));
   const food = carried ?? (run.inputs.bool(1) ? await run.mind.fakeFood() : undefined);
   if (food === undefined || run.stopped()) return 'failure';
-  if (!(await run.body.useItem(food, carried !== undefined))) return 'failure';
-  await waitFor(run, EAT_SECONDS);
+  run.body.meal?.(true);
+  try {
+    if (!(await run.body.useItem(food, carried !== undefined))) return 'failure';
+    await waitFor(run, EAT_SECONDS);
+  } finally {
+    run.body.meal?.(false);
+  }
   return 'success';
 };
 

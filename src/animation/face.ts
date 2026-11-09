@@ -353,7 +353,9 @@ export class FaceAnimation implements FaceWeights {
 
   /**
    * Shows a response's emotion (its type, EMOTION_EXPRESSIONS, and value 0..100) over the
-   * face's mood while it is said, eased in; `undefined` lets it go (eased out).
+   * face's mood while it is said, eased in; `undefined` lets it go (eased out). Inferred,
+   * TODO(M13): the expression's strength is the value / 100 (the scale of the mfg console's
+   * expression strengths, 0..100); the engine's own scale is not documented.
    */
   showEmotion(emotion: number | undefined, value = 50): void {
     const name = emotion === undefined ? undefined : EMOTION_EXPRESSIONS[emotion];
@@ -401,7 +403,8 @@ export class FaceAnimation implements FaceWeights {
 
     // The emotion of the response said, else the mood: its morph moves towards its strength,
     // the others towards none, by fExpressionChangePerSec a second (and fExpressionStrengthAdd
-    // more times the strength shown).
+    // more times the strength shown). TODO(M13): which strength scales the rate (taken as the
+    // target expression's; none when the face goes back to no expression) is inferred.
     const target = this.#emotion ?? this.#expression;
     const perSecond =
       this.#blink.fExpressionChangePerSec ?? EXPRESSION_DEFAULTS.fExpressionChangePerSec;

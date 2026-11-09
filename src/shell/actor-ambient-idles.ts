@@ -52,6 +52,8 @@ export interface ActorAmbientIdlesOptions {
   readonly clock?: () => number;
   /** Whether an actor moves off now (its package walks it, it paths; undefined: never). */
   readonly moving?: (reference: number) => boolean;
+  /** Whether an actor is at its meal (an Eat package's eating step; undefined: never). */
+  readonly eating?: (reference: number) => boolean;
 }
 
 /** The player as its idle update sees it. */
@@ -93,6 +95,8 @@ export class ActorAmbientIdles {
   readonly #raceSizes = new Map<number, number>();
   /** Whether a package has idles of its own (PACK IDLA), by package, as read. */
   readonly #packageIdles = new Map<number, boolean>();
+  /** Those settled in their furniture (sitting or leaning in it) as of the last frame. */
+  readonly #settled = new Set<number>();
 
   /** Seconds of frames seen (the idle wait timers' clock). */
   #clock = 0;
@@ -146,9 +150,11 @@ export class ActorAmbientIdles {
       if (this.flags.playing(actor.reference) && this.#options.moving?.(actor.reference) === true) {
         this.flags.moved(actor.reference);
       }
+      if (!actor.dead) this.#settle(actor.reference);
     }
     const player = this.#options.player?.();
     if (player?.moving === true) this.flags.moved(PLAYER_REF);
+    if (player) this.#settle(PLAYER_REF);
     if (!focus) return;
     const complex = isComplexScene(high, this.#complexSceneActors);
     const order = [...staged.keys()];
@@ -222,6 +228,27 @@ export class ActorAmbientIdles {
 
   remove(reference: number): void {
     this.flags.remove(reference);
+    this.#settled.delete(reference);
+  }
+
+  /**
+   * One that settles in its furniture (its use reaches sitting or leaning in it, not asleep)
+   * wants a new idle, as its sitting state asks for one: the seated base states raise no
+   * PickNewIdle of their own (mt_behavior.hkx's ChairBaseVar1 loops and sets bNeutralState
+   * only; the chair idles raise it as they end), and the idle that played as it sat down was cut
+   * off without its end's (inferred, TODO(M13): the original's seated request; the player who sat
+   * down in first person picks the chair idles once seen in third).
+   */
+  #settle(reference: number): void {
+    const using = this.#options.interaction(reference);
+    const settled = using?.state === IN_FURNITURE && using.animationType !== SLEEP_ANIMATION;
+    if (!settled) {
+      this.#settled.delete(reference);
+      return;
+    }
+    if (this.#settled.has(reference)) return;
+    this.#settled.add(reference);
+    this.flags.want(reference);
   }
 
   /** What the gates see of an actor (undefined: its race's size is still being read). */
@@ -235,9 +262,8 @@ export class ActorAmbientIdles {
       reach: ambientIdleDistance(boundRadius(staged), size, this.#settings),
       furniture: this.#furnitureState(staged.reference),
       packageIdles: this.#hasPackageIdles(this.#options.packageOf(staged.reference)),
-      // TODO(M13): observed in the original, an actor at its meal (an Eat package at its
-      // eating step) picks none; our Eat procedure's steps are not told apart here.
-      eating: false,
+      // At its meal (an Eat package's eating step: src/ai/procedure-runs.ts) it picks none.
+      eating: this.#options.eating?.(staged.reference) === true,
       life: this.#options.lifeOf?.(staged.reference) ?? AmbientIdleLife.alive,
     };
   }

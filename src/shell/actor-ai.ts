@@ -201,6 +201,8 @@ export class ActorAi {
   readonly #ridden = new Set<number>();
   /** The actors whose Flee procedure counts as fleeing now (IsFleeing). */
   readonly #fleeing = new Set<number>();
+  /** The actors at their meal now (an Eat package eating: PackageBody.meal). */
+  readonly #eating = new Set<number>();
   /** A food for meals made up (Eat's Create Fake Food): the first in the load order. */
   #fakeFood: Promise<number | undefined> | undefined;
   readonly #actors = new Map<number, { packages: ActorPackages; staged: StagedActor }>();
@@ -417,6 +419,11 @@ export class ActorAi {
     return this.#fleeing.has(reference);
   }
 
+  /** Whether an actor is at its meal now (an Eat package's eating step: no ambient idles). */
+  eating(reference: number): boolean {
+    return this.#eating.has(reference);
+  }
+
   /** The leader an actor follows now (its Follow or FollowTo), if any. */
   leaderOf(reference: number): number | undefined {
     return this.#leaders.get(reference);
@@ -453,6 +460,7 @@ export class ActorAi {
     this.#joined.delete(reference);
     this.#ridden.delete(reference);
     this.#fleeing.delete(reference);
+    this.#eating.delete(reference);
     const entry = this.#actors.get(reference);
     if (!entry) return;
     entry.packages.stop();
@@ -842,6 +850,10 @@ export class ActorAi {
       fleeing: (on) => {
         if (on) this.#fleeing.add(reference);
         else this.#fleeing.delete(reference);
+      },
+      meal: (eating) => {
+        if (eating) this.#eating.add(reference);
+        else this.#eating.delete(reference);
       },
       following: (leader, wanted = 0) => {
         if (leader === undefined) {

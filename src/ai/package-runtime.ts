@@ -345,6 +345,12 @@ export interface PackageBody {
   take(reference: number): Promise<boolean>;
   /** Uses an item (eats food: its idle), using one of those it carries up with `consume`. */
   useItem(item: number, consume: boolean): Promise<boolean>;
+  /**
+   * It is at its meal (true) or no longer (false): an Eat package's eating step, from its food's
+   * eating idle until the meal is done or the procedure ends. While it eats, it picks no ambient
+   * idles (src/ai/ambient-idles.ts, ambientIdleAllowed).
+   */
+  meal?(eating: boolean): void;
   /** Talks to the player (ForceGreet): the conversation opens, with a topic's line first. */
   greet(topic: number | undefined): boolean;
   /** Whether it stands still on its own (not on its way, not in furniture, not turning). */

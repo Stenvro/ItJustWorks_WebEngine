@@ -75,6 +75,8 @@ function harness(
   extra: Partial<ProcedureRun> = {},
 ) {
   const done: string[] = [];
+  /** Its meals (on, off) and its waits between them. */
+  const meals: string[] = [];
   let stopped = false;
   let waited = 0;
   const body = {
@@ -110,6 +112,9 @@ function harness(
     useItem: (item: number, consume: boolean) => {
       done.push(`eat ${item.toString(16)}${consume ? ' carried' : ''}`);
       return Promise.resolve(true);
+    },
+    meal: (eating: boolean) => {
+      meals.push(eating ? 'meal on' : 'meal off');
     },
     greet: () => true,
     flies: () => true,
@@ -214,6 +219,7 @@ function harness(
       },
       stopped: () => stopped,
       wait: (seconds) => {
+        meals.push('wait');
         if (waits !== undefined) {
           done.push(`wait ${String(seconds)}`);
           if (++waited >= waits) stopped = true;
@@ -225,7 +231,7 @@ function harness(
     };
     return runner(procedureRun);
   };
-  return { run, done, found };
+  return { run, done, found, meals };
 }
 
 describe('flying procedures', () => {
@@ -444,6 +450,30 @@ describe('procedures', () => {
       'success',
     );
     expect(done).toEqual(['eat 700', 'eat 710 carried']);
+  });
+
+  it('eat is at its meal from its food to the meal’s end (no ambient idles then)', async () => {
+    const { run, meals } = harness();
+    const food: PackageInput = {
+      id: 0,
+      type: 'TargetSelector',
+      value: {
+        kind: 'targetSelector',
+        target: { type: TargetType.objectType, value: ObjectType.food, count: 0 },
+      },
+    };
+    const fake: PackageInput = { id: 1, type: 'Bool', value: { kind: 'bool', value: true } };
+    expect(await run('Eat', [0, 1], [food, fake])).toBe('success');
+    expect(meals[0]).toBe('meal on');
+    expect(meals.at(-1)).toBe('meal off');
+    // The meal's waits fall between them.
+    expect(meals.slice(1, -1).length).toBeGreaterThan(0);
+    expect(meals.slice(1, -1).every((step) => step === 'wait')).toBe(true);
+    // No food: no meal.
+    meals.length = 0;
+    const none: PackageInput = { id: 1, type: 'Bool', value: { kind: 'bool', value: false } };
+    expect(await run('Eat', [0, 1], [food, none])).toBe('failure');
+    expect(meals).toEqual([]);
   });
 
   it('ends a repeatable patrol whose way does not come round', async () => {

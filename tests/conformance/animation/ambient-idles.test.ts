@@ -35,8 +35,10 @@ import {
 } from '../../../src/ai/ambient-idles.ts';
 import { readIdleTree, type IdleTree } from '../../../src/ai/idle-records.ts';
 import { RaceSize } from '../../../src/ai/race-combat-records.ts';
+import type { ActorInteraction } from '../../../src/scripting/runtime/runtime.ts';
 import {
   ActorAmbientIdles,
+  type ActorAmbientIdlesOptions,
   type AmbientIdlePlayed,
 } from '../../../src/shell/actor-ambient-idles.ts';
 import type { FurnitureUser } from '../../../src/shell/actor-furniture.ts';
@@ -549,12 +551,98 @@ describe('the stage’s idle update: moving off (inferred: src/shell/actor-ambie
     idles.specificIdle(NPC);
     expect(idles.flags.skipping(NPC)).toBe(false);
   });
+
+  const CHAIR = 0x2b000;
+  /** An actor standing at the origin (its race read as medium, no package). */
+  const standing = {
+    reference: NPC,
+    dead: false,
+    position: [0, 0, 0],
+    placed: {
+      behavior: {},
+      look: { race: 0x13746, scale: 1 },
+      pose: { worlds: new Float32Array(0) },
+    },
+  } as unknown as StagedActor;
+  /** A stage of that one actor whose tries are counted. */
+  const stage = (
+    extra: Partial<ActorAmbientIdlesOptions>,
+  ): { idles: ActorAmbientIdles; tries: number[] } => {
+    const tries: number[] = [];
+    const idles = new ActorAmbientIdles({
+      session: {
+        ini: { number: () => SPECIAL_IDLE_PICK_TIME },
+        settings: () => new Promise<never>(() => undefined),
+        db: Promise.resolve({ get: () => Promise.resolve(undefined) }),
+      } as unknown as GameSession,
+      actors: () => [standing],
+      userOf: () => ({ reference: NPC }) as unknown as FurnitureUser,
+      furnitureOf: () => undefined,
+      interaction: () => undefined,
+      packageOf: () => undefined,
+      playAction: (user) => {
+        tries.push(user.reference);
+        return Promise.resolve(undefined);
+      },
+      clock: () => 0,
+      ...extra,
+    });
+    return { idles, tries };
+  };
+  const using = (state: number, animationType = 1): ActorInteraction =>
+    ({ furniture: CHAIR, base: 0, marker: 0, animationType, entry: 0, state }) as ActorInteraction;
+  /** Lets the tries' promises settle. */
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('one that settles in its furniture wants a new idle (inferred: the seated request)', () => {
+    let use: ActorInteraction | undefined;
+    const { idles } = stage({
+      furnitureOf: () => (use ? CHAIR : undefined),
+      interaction: () => use,
+    });
+    idles.frame([0, 0, 0], 0.1);
+    expect(idles.flags.wants(NPC)).toBe(false);
+    // On its way in: not yet.
+    use = using(2);
+    idles.frame([0, 0, 0], 0.1);
+    expect(idles.flags.wants(NPC)).toBe(false);
+    // Sitting: it wants one (the chair idles), once as it settles.
+    use = using(3);
+    idles.frame([0, 0, 0], 0.1);
+    expect(idles.flags.wants(NPC)).toBe(true);
+    idles.flags.tried(NPC, true);
+    idles.frame([0, 0, 0], 0.1);
+    expect(idles.flags.wants(NPC)).toBe(false);
+    // Asleep in a bed: no.
+    use = using(3, 2);
+    idles.frame([0, 0, 0], 0.1);
+    expect(idles.flags.wants(NPC)).toBe(false);
+  });
+
+  it('at its meal (an Eat package eating) it picks none; after the meal it does', async () => {
+    let eating = true;
+    const { idles, tries } = stage({ eating: () => eating });
+    idles.flags.want(NPC);
+    // Its race is read on the first frame.
+    for (let frame = 0; frame < 3; frame++) {
+      idles.frame([0, 0, 0], 0.1);
+      await settle();
+    }
+    expect(tries).toEqual([]);
+    expect(idles.flags.wants(NPC)).toBe(true);
+    eating = false;
+    idles.frame([0, 0, 0], 0.1);
+    await settle();
+    expect(tries).toEqual([NPC]);
+  });
 });
 
 // The player in a chair of the Bannered Mare in the morning: seated in first person they pick no
 // ambient idle (the camera's state is furniture's, but they look out of their own eyes); in third
 // person they pick the chair idles as the people do; getting up ends the idle that played.
-// Known to differ (it.fails): seated in third person, ours picks none yet (TODO(M13)).
+// The seated request is inferred (TODO(M13), src/shell/actor-ambient-idles.ts): the chair's base
+// state (mt_behavior.hkx ChairBaseVar1) raises no PickNewIdle, so settling in the chair asks for
+// an idle; seated in first person the wish waits until the player is seen in third.
 
 describe.skipIf(!hasGamedata())(
   'the player seated at the Bannered Mare (headless simulation)',
@@ -602,9 +690,9 @@ describe.skipIf(!hasGamedata())(
       expect(theirs()).toEqual([]);
     }, 300_000);
 
-    it.fails(
+    it(
       'seated in third person, the player picks the chair idles ' +
-        'TODO(M13): seated, the player’s body graph raises no PickNewIdle (bNeutralState 1)',
+        '(inferred: settling in the chair asks for one; the seated base state raises no PickNewIdle)',
       async () => {
         expect(sim.world.stage.furniture.interaction(PLAYER_REF)?.state).toBe(3);
         const idles = sim.world.stage.ambientIdles;
