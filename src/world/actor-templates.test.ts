@@ -30,6 +30,20 @@ function formIdAt(data: Uint8Array, offset = 0): number {
 }
 
 describe('actor templates', () => {
+  it('name the links down to the one that gives a part (Sovngarde: MQ304Alduin)', async () => {
+    // MQ304Alduin uses AlduinBase's scripts, which uses EncDragon01Fire's; not its factions.
+    const records = new Map<number, Source>([
+      [0x10, npc(0x10, TemplateFlag.script, 0x20)],
+      [0x20, npc(0x20, TemplateFlag.script, 0x30)],
+      [0x30, npc(0x30, 0)],
+    ]);
+    const get = (formId: number) => Promise.resolve(records.get(formId));
+    const templates = await resolveActorTemplates(get, 0x10, 0x1000, 1);
+    expect(templates?.part(TemplateFlag.script)).toBe(0x30);
+    expect(templates?.partChain(TemplateFlag.script)).toEqual([0x10, 0x20, 0x30]);
+    expect(templates?.partChain(TemplateFlag.factions)).toEqual([0x10]);
+  });
+
   it('take each part from the template its flags name, a leveled template picked once', async () => {
     const records = new Map<number, Source>([
       // The placed NPC takes its traits and stats from a leveled list of two NPCs.

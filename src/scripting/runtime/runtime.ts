@@ -1183,11 +1183,14 @@ export class ScriptRuntime implements VmHost {
     // An actor runs the scripts of the NPC_ it takes them from: its leveled list's pick, and
     // that one's template when it uses the template's scripts (TemplateFlag.script), as it
     // takes its other parts (Creation Kit: Template Data).
-    const scriptBase = await this.#actorScriptBase(target);
+    // Template links that take their template's scripts but have scripts of their own run
+    // those too (inferred: TODO(M13)), each over the ones further down.
+    const actor = await this.#actorScriptBase(target);
+    const scriptBase = actor?.base;
+    const own = actor?.own ?? [];
     const created = target.alias < 0 ? this.state.created.get(target.formId) : undefined;
     // A created reference runs its base object's scripts.
-    if (created)
-      return this.forms.attachedScripts(new ObjectHandle(scriptBase ?? created.base, 'form'));
+    if (created) return this.forms.baseScripts([...own, scriptBase ?? created.base]);
     // A persistent reference without scripts of its own runs its base's (no read of its own).
     const base = target.alias < 0 ? this.#index?.base.get(target.formId) : undefined;
     if (
@@ -1195,16 +1198,22 @@ export class ScriptRuntime implements VmHost {
       target.formId !== PLAYER_REF &&
       !this.#index?.scripted.has(target.formId)
     ) {
-      return this.forms.attachedScripts(new ObjectHandle(scriptBase ?? base, 'form'));
+      return this.forms.baseScripts([...own, scriptBase ?? base]);
     }
-    return this.forms.attachedScripts(target, scriptBase);
+    return this.forms.attachedScripts(target, scriptBase, own);
   }
 
-  /** For an actor reference (not the player), the NPC_ whose scripts it runs. */
-  async #actorScriptBase(target: ObjectHandle): Promise<number | undefined> {
+  /**
+   * For an actor reference (not the player), the NPC_ whose scripts it runs, and the template
+   * links on the way there that have scripts of their own (ActorInfo.ownScripts).
+   */
+  async #actorScriptBase(
+    target: ObjectHandle,
+  ): Promise<{ readonly base: number; readonly own: readonly number[] } | undefined> {
     if (target.alias >= 0 || target.formId === PLAYER_REF) return undefined;
     if ((await this.formType(target)) !== 'actor') return undefined;
-    return (await this.actors.info(target.formId))?.scripts;
+    const info = await this.actors.info(target.formId);
+    return info && { base: info.scripts, own: info.ownScripts };
   }
 
   native(script: string, fn: string): NativeFunction | undefined {
@@ -1592,12 +1601,10 @@ export class ScriptRuntime implements VmHost {
     // template's (MQ104's dragon takes DragonActorScript from its template's). That
     // is known once the actor is resolved, so such a persistent actor's scripts start as its
     // cell attaches, not with the new game (where nothing is picked yet).
-    const scriptBase = await this.#actorScriptBase(this.referenceHandle(reference));
-    return (
-      scriptBase !== undefined &&
-      scriptBase !== base &&
-      (await this.forms.attachments(scriptBase)) !== undefined
-    );
+    const actor = await this.#actorScriptBase(this.referenceHandle(reference));
+    if (!actor) return false;
+    if (actor.own.length > 0) return true;
+    return actor.base !== base && (await this.forms.attachments(actor.base)) !== undefined;
   }
 
   /**

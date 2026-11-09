@@ -947,7 +947,11 @@ own scripts and the story manager; the engine's part is the events and the alias
 templates per part; its scripts too: an actor runs the scripts of the NPC_ it takes them from,
 its leveled list's pick and that one's template while it uses the template's scripts, Template
 Data "Use Script", with its reference's own VMAD over them: a placed or created leveled actor
-runs its pick's scripts, not none), its level (fixed, or the player's times its multiplier within its calc
+runs its pick's scripts, not none; a link on the way that uses its template's scripts but has
+scripts of its own runs those too, over the template's: Sovngarde's Alduin, MQ304Alduin, runs
+DragonActorScript from his template's template and his own FXAlduinScript, whose death MQ305
+waits for; 266 vanilla NPC_s are such links, ambush and ghost scripts among them; inferred,
+TODO(M13)), its level (fixed, or the player's times its multiplier within its calc
 min and max), its actor values (the record's base: skills and offsets from DNAM, health,
 magicka and stamina as the Creation Kit calculated them, AI values from AIDT, carry weight,
 mass and regeneration from its race; then scripts' permanent modifiers and damage), factions

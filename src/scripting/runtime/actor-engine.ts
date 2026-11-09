@@ -42,6 +42,12 @@ export interface ActorInfo {
   readonly leveled: number;
   /** The NPC_ whose scripts it runs (TemplateFlag.script: a template's, when it uses those). */
   readonly scripts: number;
+  /**
+   * The NPC_s on the way there that use their template's scripts and have scripts of their own
+   * (placed one first): those run as well (Sovngarde's Alduin, MQ304Alduin, takes
+   * DragonActorScript from his template's template and has FXAlduinScript of his own).
+   */
+  readonly ownScripts: readonly number[];
   /** Each part from the NPC_ that gives it (TemplateFlag). */
   readonly stats: NpcStats;
   readonly traits: NpcStats;
@@ -214,6 +220,7 @@ export class ActorEngine {
       base,
       leveled: templates.placed,
       scripts: templates.part(TemplateFlag.script),
+      ownScripts: await this.#ownScripts(templates.partChain(TemplateFlag.script).slice(0, -1)),
       stats,
       traits,
       factions,
@@ -223,6 +230,15 @@ export class ActorEngine {
       keywords,
       inventory,
     };
+  }
+
+  /** Of NPC_s that take their template's scripts, those with scripts of their own. */
+  async #ownScripts(links: readonly number[]): Promise<number[]> {
+    const own: number[] = [];
+    for (const link of links) {
+      if ((await this.#runtime.forms.attachments(link))?.scripts.length) own.push(link);
+    }
+    return own;
   }
 
   async isActor(reference: number): Promise<boolean> {
