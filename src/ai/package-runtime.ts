@@ -12,7 +12,7 @@
 
 import type { Condition } from '../scripting/conditions.ts';
 import { AI_DEFAULTS, type AiSettings } from './ai-settings.ts';
-import { upFirst } from './engine-packages.ts';
+import { getsUpFirst, getUpFromChairBed } from './engine-packages.ts';
 import type { FlightRequest } from './flight.ts';
 import type { Gait } from './locomotion.ts';
 import {
@@ -779,7 +779,7 @@ export class ActorPackages {
   #clock = 0;
   #waiting: { readonly until: number; readonly resolve: () => void }[] = [];
   /** The engine package in front of its own (EnginePackage), while it runs. */
-  #engine: { readonly kind: EnginePackage; stopped: boolean } | undefined;
+  #engine: { kind: EnginePackage; stopped: boolean } | undefined;
   /** Asked whether its procedure stopped this often since its clock last moved (LOOP_LIMIT). */
   #checks = 0;
   #checkedAt = -1;
@@ -890,7 +890,16 @@ export class ActorPackages {
    */
   push(kind: EnginePackage, runner: EngineRunner, target?: number): boolean {
     if (this.#engine) return false;
-    const engine = { kind, stopped: false };
+    // In its furniture, Get Up From Chair Or Bed is put in front of it first unless the package
+    // may run there (engine-packages.ts getsUpFirst): the actor runs it until it stands, then
+    // the package asked for. One on its way into furniture (or a body that cannot tell) leaves
+    // it too, as the package's start, without a Get Up package.
+    const getUp = getsUpFirst(kind);
+    const seated = getUp && this.#body.inFurniture?.() !== undefined;
+    const engine: { kind: EnginePackage; stopped: boolean } = {
+      kind: seated ? 'getUpFromChairBed' : kind,
+      stopped: false,
+    };
     this.#engine = engine;
     const current = this.#running;
     if (current) current.stopped = true;
@@ -898,11 +907,7 @@ export class ActorPackages {
     this.#body.stop();
     this.#body.face(undefined);
     const settings = this.#mind.settings?.() ?? AI_DEFAULTS;
-    // In its furniture, it gets up first unless the package may run there (Get Up From Chair Or Bed).
-    void upFirst(
-      kind,
-      runner,
-    )({
+    const run: EngineRun = {
       actor: this.actor,
       body: this.#body,
       mind: this.#mind,
@@ -916,7 +921,13 @@ export class ActorPackages {
               this.#waiting.push({ until: this.#clock + Math.max(0, seconds), resolve });
             }),
       random: this.#random,
-    })
+    };
+    void (async () => {
+      if (getUp) await getUpFromChairBed(run);
+      if (engine.stopped) return;
+      engine.kind = kind;
+      await runner(run);
+    })()
       .catch(() => undefined)
       .finally(() => {
         if (this.#engine !== engine) return;

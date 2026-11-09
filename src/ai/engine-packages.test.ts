@@ -231,6 +231,44 @@ describe('what starts Get Up and Surface', () => {
     expect(order.slice(0, 2)).toEqual(['up', 'travel']);
   });
 
+  it('puts Get Up From Chair Or Bed in front of an engine package on a seated actor (inferred)', async () => {
+    const lasting: ProcedureRunner = async (run) => {
+      while (!run.stopped()) await run.wait(1);
+      return 'failure';
+    };
+    let seat: number | undefined = 0x77;
+    let stand: (() => void) | undefined;
+    const { actor } = packageActor(
+      [pack(1, procedure('lasting'))],
+      { lasting },
+      {
+        mind: { livePosition: () => [20, 0, 0] },
+        body: {
+          position: () => [50, 0, 0],
+          inFurniture: () => seat,
+          leaveFurniture: () =>
+            seat === undefined
+              ? Promise.resolve()
+              : new Promise<void>((resolve) => {
+                  stand = () => {
+                    seat = undefined;
+                    resolve();
+                  };
+                }),
+          travel: () => new Promise<boolean>(() => undefined),
+        },
+      },
+    );
+    await tick(actor, 1);
+    expect(actor.push('avoidPlayer', avoidPlayer)).toBe(true);
+    // It runs Get Up, a package of its own, until it stands; then Avoid Player.
+    await tick(actor, 0.1);
+    expect(actor.engine()).toBe('getUpFromChairBed');
+    stand?.();
+    await tick(actor, 0.1);
+    expect(actor.engine()).toBe('avoidPlayer');
+  });
+
   it('has a swimmer under water surface once its breath is short of the rise and a second', () => {
     const settings = { swimBreathBase: 10, swimBreathMult: 0.5 };
     const breath = new Breath();

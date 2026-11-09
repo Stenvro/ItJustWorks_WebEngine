@@ -183,24 +183,25 @@ export const getUpFromChairBed: EngineRunner = async (run) => {
 
 /**
  * The engine packages an actor may take in its furniture (it looks from its seat); the others
- * get it up first, as Get Up From Chair Or Bed does. The engine puts a created package with a
- * flag allowing it from furniture (Actor::PutCreatedPackage's allowFromFurniture, CommonLibSSE);
- * TODO(M13): which packages it allows was not read, nor what makes the Get Up package itself (no
- * maker of it was found among the package factory's callers: the engine's packages leave
- * furniture as they start, as ours do).
+ * get it up first. The engine puts a created package with a flag allowing it from furniture
+ * (Actor::PutCreatedPackage's allowFromFurniture, CommonLibSSE).
+ * TODO(M13): which packages it allows was not read.
  */
 const FROM_FURNITURE: ReadonlySet<EnginePackage> = new Set([
   'reactToDestroyedObject',
   'getUpFromChairBed',
 ]);
 
-/** An engine package's procedure, the actor got up from its furniture first where it must. */
-export function upFirst(kind: EnginePackage, runner: EngineRunner): EngineRunner {
-  if (FROM_FURNITURE.has(kind)) return runner;
-  return async (run) => {
-    await getUpFromChairBed(run);
-    if (!run.stopped()) await runner(run);
-  };
+/**
+ * The Get Up package's maker: whether putting an engine package on an actor in furniture puts
+ * Get Up From Chair Or Bed in front of it first (the package asked for runs once it stands, as
+ * an engine package of its own). Inferred, TODO(M13): no other maker of the Get Up package was
+ * found among the package factory's callers (observed in the original), so it is taken to be
+ * made where a created package not allowed from furniture is put on a seated actor; the actor's
+ * own packages leave furniture as their procedures start, and combat as it starts to fight.
+ */
+export function getsUpFirst(kind: EnginePackage): boolean {
+  return !FROM_FURNITURE.has(kind);
 }
 
 /** How long an actor looks at an object destroyed near it (real seconds; ours). */
