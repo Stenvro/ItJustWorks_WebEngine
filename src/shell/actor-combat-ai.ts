@@ -87,8 +87,15 @@ import {
   type MovementRun,
   type MovementTarget,
 } from '../ai/combat-movement.ts';
-import { CombatSearch, type SearchBody, type SearchSettings } from '../ai/combat-search.ts';
+import {
+  CombatSearch,
+  SearchArea,
+  type SearchBody,
+  type SearchSettings,
+  type SearchShare,
+} from '../ai/combat-search.ts';
 import type { SavedFight } from '../save/world-save.ts';
+import type { FledFight, FledFightDue } from '../ai/fled-through-doors.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
 import {
   allyAttackPlaces,
@@ -115,6 +122,7 @@ import {
   pickFleeDoor,
   pickWeapon,
   readCombatSubtreeSettings,
+  searchPoints,
   searchRadius,
   type CombatSubtreeSettings,
   type LooseWeapon,
@@ -968,6 +976,11 @@ export class ActorCombatAi {
     return this.#groups.size(reference);
   }
 
+  /** The combat group an actor fights in (undefined: none). */
+  groupId(reference: number): number | undefined {
+    return this.#groups.groupOf(reference)?.id;
+  }
+
   /** An actor left the stage or died: its combat ends, and others' memory of it goes. */
   remove(reference: number): void {
     const mind = this.#minds.get(reference);
@@ -997,6 +1010,7 @@ export class ActorCombatAi {
     for (const mind of this.#minds.values()) mind.search?.cancel();
     this.#minds.clear();
     this.#groups.clear();
+    this.#searchAreas.clear();
     this.#locations.clear();
     this.#reactions.clear();
     this.#health.clear();
@@ -1957,13 +1971,43 @@ export class ActorCombatAi {
       return;
     }
     mind.search?.cancel();
+    const settings = this.#searchSettings();
     mind.search = new CombatSearch(
       at,
       this.#searchBody(reference),
-      this.#searchSettings(),
+      settings,
       this.#random,
+      this.#searchShare(reference, at, settings.searchRadius),
     );
   }
+
+  /**
+   * Its share of its group's search area round a place (SearchArea: the priority points its
+   * searchers split): the group's own while it searches round the same place, else made anew.
+   */
+  #searchShare(reference: number, at: Vec3, radius: number | undefined): SearchShare | undefined {
+    const group = this.#groups.groupOf(reference);
+    const set = this.#navmeshes();
+    if (!group || !set) return undefined;
+    const live = new Set<number>();
+    for (const each of this.#groups.groups()) live.add(each.id);
+    for (const id of this.#searchAreas.keys()) if (!live.has(id)) this.#searchAreas.delete(id);
+    const s = this.#subtrees;
+    let area = this.#searchAreas.get(group.id);
+    if (!area || flat(area.center, at) > s.searchIgnoreLocationRadius) {
+      const points = searchPoints(set, at, radius ?? s.searchInteriorRadiusMin, s);
+      area = new SearchArea(at, points, {
+        ignoreLocationRadius: s.searchIgnoreLocationRadius,
+        sightRadius: s.searchSightRadius,
+        doorFailureMax: s.searchDoorFailureMax,
+      });
+      this.#searchAreas.set(group.id, area);
+    }
+    return { area, member: reference, doorDistance: s.searchDoorDistance };
+  }
+
+  /** Each searching group's search area, by its group. */
+  readonly #searchAreas = new Map<number, SearchArea>();
 
   /** What a search moves: the actor, by its movers. */
   #searchBody(reference: number): SearchBody {
@@ -1978,6 +2022,7 @@ export class ActorCombatAi {
         movers.stop(reference);
         movers.request(reference, undefined);
       },
+      sees: (at) => this.#options.senses?.()?.sees(reference, at) === true,
     };
   }
 
@@ -2012,6 +2057,44 @@ export class ActorCombatAi {
   }
 
   /**
+   * What an actor's flight carries through a load door (src/ai/fled-through-doors.ts): the
+   * enemy it flees, its confidence modifier and boosts. None unless it flees.
+   */
+  fledFight(reference: number): Omit<FledFight, 'door'> | undefined {
+    const mind = this.#minds.get(reference);
+    if (mind?.mode !== 'flee' || mind.target === undefined) return undefined;
+    return {
+      enemy: mind.target,
+      modifier: mind.modifier,
+      boost: mind.confidenceBoost,
+      keep: this.#groups.settings.fleeingLostRemoveTime,
+    };
+  }
+
+  /**
+   * A fled fight taken up on the door's other side (its target set by StartCombat already): it
+   * flees on from its enemy as afraid as it was, and leaves the door it came out of alone as one
+   * it has just come by (fCombatFleeLastDoorRestrictTime, fCombatFleeUseDoorRestrictTime from its
+   * passage). False: its fight is not that one (yet).
+   */
+  resumeFlight(reference: number, fight: FledFightDue): boolean {
+    const mind = this.#minds.get(reference);
+    if (!mind || mind.mode === 'idle' || mind.target !== fight.enemy) return false;
+    const passed = this.#clock - fight.ago;
+    mind.confidenceBoost = fight.boost;
+    mind.lastDoor = { door: fight.door, at: passed };
+    mind.fleeDoorAt = passed;
+    if (mind.mode !== 'flee') {
+      mind.mode = 'flee';
+      mind.leash = undefined;
+      mind.fleeWay = undefined;
+      mind.fleeFailed = false;
+      this.#releaseBlock(mind, this.#options.host.fighter(reference));
+    }
+    return true;
+  }
+
+  /**
    * A loaded save's fight taken up again (its target set by StartCombat already): its group
    * knows of the target what it knew, and a search goes on from its place and step instead of
    * beginning again from detection (it does not bark CombatToLost again).
@@ -2032,11 +2115,15 @@ export class ActorCombatAi {
     mind.nextLine =
       this.#clock + this.#between(this.#settings.searchLineMin, this.#settings.searchLineMax);
     mind.search?.cancel();
+    // Its group's priority points are found again round the place (the points it searched
+    // before the save are searched again).
+    const radius = saved.search.radius ?? this.#searchSettings().searchRadius;
     mind.search = CombatSearch.restore(
       saved.search,
       this.#searchBody(reference),
       this.#searchSettings(),
       this.#random,
+      this.#searchShare(reference, saved.search.at, radius),
     );
   }
 
@@ -3192,8 +3279,9 @@ export class ActorCombatAi {
   /**
    * The hide after Flee To Cover (Hide Parallel: Track Target, Turn Around, the Hide Selector with
    * Boost Confidence last; observed in the original): its back to its enemy it stays down until
-   * the enemy comes near or engages it (hideFails, weighed each half second); then Boost
-   * Confidence: it turns and fights.
+   * the enemy comes near, engages it or, looking its way, finds it (hideFails, weighed each half
+   * second); then Boost Confidence: it turns and fights. Down, it sneaks: its enemies' detection
+   * weighs it so.
    */
   #hide(f: CombatFrame): Status {
     const mind = f.mind;
@@ -3214,7 +3302,16 @@ export class ActorCombatAi {
       f.there[1] + target[1] * anticipate,
       f.there[2],
     ];
-    const sees = this.#options.senses?.()?.sees(mind.reference, f.there) ?? false;
+    const senses = this.#options.senses?.();
+    const sees = senses?.sees(mind.reference, f.there) ?? false;
+    // Its enemy's eyes: the way it faces against the way to the hider, and the line between.
+    const enemy = f.target.feet;
+    const watched = senses &&
+      enemy && {
+        offAngle: turnBetween(f.target.heading, headingTo(enemy, f.feet)),
+        halfCone: (senses.settings.viewCone * Math.PI) / 360,
+        clear: senses.sees(f.target.reference, f.feet),
+      };
     if (
       !hideFails(
         {
@@ -3223,6 +3320,7 @@ export class ActorCombatAi {
           radii: 2 * HIDE_RADIUS,
           sees,
           engagedSince: mind.engagedAt > mind.hideSince,
+          watched,
         },
         this.#subtrees,
       )

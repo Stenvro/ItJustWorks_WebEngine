@@ -217,6 +217,26 @@ describe('who flees (formula)', () => {
     expect(hideFails({ ...check, engagedSince: true })).toBe(true);
   });
 
+  it('a hide is found as its enemy looks its way (fCombatHideCheckViewCone*)  [inferred]', () => {
+    expect(COMBAT_SUBTREE_DEFAULTS.hideCheckViewConeDistanceMin).toBe(1024);
+    expect(COMBAT_SUBTREE_DEFAULTS.hideCheckViewConeDistanceMax).toBe(4096);
+    const halfCone = (190 / 2) * (Math.PI / 180);
+    const check = { distance: 2000, distanceAhead: 2000, radii: 64, sees: false };
+    const watched = (degrees: number, clear = true) => ({
+      ...check,
+      engagedSince: false,
+      watched: { offAngle: degrees * (Math.PI / 180), halfCone, clear },
+    });
+    // Looked at straight on with nothing between, 2000 units off: found.
+    expect(hideFails(watched(0))).toBe(true);
+    // Something between them, or behind its enemy: still hidden.
+    expect(hideFails(watched(0, false))).toBe(false);
+    expect(hideFails(watched(120))).toBe(false);
+    // Near the cone's edge it is found only nearer: 80° off reaches about 1509 units.
+    expect(hideFails(watched(80))).toBe(false);
+    expect(hideFails({ ...watched(80), distance: 1400, distanceAhead: 1400 })).toBe(true);
+  });
+
   it('Fallback To Ranged backs to fCombatRangedDistance from its target  [original]', () => {
     const place = fallbackPlace([100, 0, 0], [0, 0, 0], COMBAT_SUBTREE_DEFAULTS);
     expect(place).toEqual([COMBAT_SUBTREE_DEFAULTS.rangedDistance, 0, 0]);

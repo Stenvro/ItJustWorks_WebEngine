@@ -58,6 +58,7 @@ import type { Terminal } from './terminal.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { inwardOnNavmesh, type NavmeshSet } from '../ai/pathfinding.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
+import type { FledFlights } from '../ai/fled-through-doors.ts';
 import {
   processLevel,
   processListsBudget,
@@ -1458,7 +1459,11 @@ export class ActorStage {
     return zonesAllow(own, there);
   }
 
-  /** One fleeing, at the load door it fled to, goes through it (Flee Through Door). */
+  /**
+   * One fleeing, at the load door it fled to, goes through it (Flee Through Door); its flight
+   * goes on on the other side (src/ai/fled-through-doors.ts: taken up as it and its enemy are
+   * here again).
+   */
   async fleeThrough(actor: number, door: number): Promise<boolean> {
     const staged = this.#actors.get(actor);
     if (!staged) return false;
@@ -1470,8 +1475,29 @@ export class ActorStage {
       position: routeDoor.arrival,
       heading: routeDoor.arrivalHeading,
     };
+    const fight = this.combat.fledFight(actor);
+    if (fight) this.#fled.went(actor, { ...fight, door: routeDoor.destination });
     await this.leaveThrough(staged, routeDoor, arrival);
     return true;
+  }
+
+  /**
+   * The fights of actors that fled through a load door, carried to the other side. The game's,
+   * not this stage's: a change of cell (which clears the stage) keeps them, and they reach the
+   * other viewer's stage; a load or a New Game drops them (GameSession.resetStates).
+   */
+  get #fled(): FledFlights {
+    return this.#session.fledFlights;
+  }
+
+  /**
+   * A fled actor placed again with its enemy here (the player followed it through, or the other
+   * side was loaded): its fight starts again and it flees on (ActorCombatAi.resumeFlight).
+   */
+  #resumeFled(seconds: number): void {
+    const present = (reference: number): boolean =>
+      reference === PLAYER_REF || this.#actors.get(reference)?.dead === false;
+    this.#fled.update(seconds, present, this.combat);
   }
 
   /**
@@ -2900,6 +2926,7 @@ export class ActorStage {
     this.away.frame(frame);
     this.#restorePlayer();
     this.#restoreCombat(frame);
+    this.#resumeFled(frame);
     this.combat.frame(frame, this.#options.focus?.());
     this.knockdowns.frame(frame);
     this.graphEvents.frame(frame);

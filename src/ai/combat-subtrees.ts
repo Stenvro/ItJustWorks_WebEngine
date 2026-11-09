@@ -27,6 +27,10 @@ export interface CombatSubtreeSettings {
   readonly searchWanderDistance: number;
   readonly searchLookTime: number;
   readonly searchDoorDistance: number;
+  readonly searchDoorSearchRadius: number;
+  readonly searchDoorFailureMax: number;
+  readonly searchSightRadius: number;
+  readonly searchIgnoreLocationRadius: number;
   readonly coverSearchDistanceMin: number;
   readonly coverSearchDistanceMax: number;
   readonly coverMinimumRange: number;
@@ -55,6 +59,8 @@ export interface CombatSubtreeSettings {
   readonly fleeLastDoorRestrictTime: number;
   readonly hideFailedTargetDistance: number;
   readonly hideFailedTargetLosDistance: number;
+  readonly hideCheckViewConeDistanceMin: number;
+  readonly hideCheckViewConeDistanceMax: number;
   readonly fleeCoverMinDistance: number;
   readonly fleeCoverSearchRadius: number;
   readonly acquireUnarmedDistanceMin: number;
@@ -106,6 +112,10 @@ const SETTINGS: readonly (readonly [keyof CombatSubtreeSettings, string, number]
   ['searchWanderDistance', 'fCombatSearchWanderDistance', 512],
   ['searchLookTime', 'fCombatSearchLookTime', 1],
   ['searchDoorDistance', 'fCombatSearchDoorDistance', 384],
+  ['searchDoorSearchRadius', 'fCombatSearchDoorSearchRadius', 512],
+  ['searchDoorFailureMax', 'iCombatSearchDoorFailureMax', 3],
+  ['searchSightRadius', 'fCombatSearchSightRadius', 1536],
+  ['searchIgnoreLocationRadius', 'fCombatSearchIgnoreLocationRadius', 384],
   ['coverSearchDistanceMin', 'fCombatCoverSearchDistanceMin', 1536],
   ['coverSearchDistanceMax', 'fCombatCoverSearchDistanceMax', 3072],
   ['coverMinimumRange', 'fCombatCoverMinimumRange', 768],
@@ -126,6 +136,8 @@ const SETTINGS: readonly (readonly [keyof CombatSubtreeSettings, string, number]
   ['fleeLastDoorRestrictTime', 'fCombatFleeLastDoorRestrictTime', 30],
   ['hideFailedTargetDistance', 'fCombatHideFailedTargetDistance', 128],
   ['hideFailedTargetLosDistance', 'fCombatHideFailedTargetLOSDistance', 384],
+  ['hideCheckViewConeDistanceMin', 'fCombatHideCheckViewConeDistanceMin', 1024],
+  ['hideCheckViewConeDistanceMax', 'fCombatHideCheckViewConeDistanceMax', 4096],
   ['coverRangeMinBufferDistance', 'fCombatCoverRangeMinBufferDistance', 512],
   ['coverRangeMaxBufferDistance', 'fCombatCoverRangeMaxBufferDistance', 768],
   ['coverMidPointMaxRangeBuffer', 'fCombatCoverMidPointMaxRangeBuffer', 256],
@@ -504,12 +516,38 @@ export interface HideCheck {
   readonly sees: boolean;
   /** Its enemy has engaged it since the hide began. */
   readonly engagedSince: boolean;
+  /**
+   * How its enemy looks at it: the angle between the enemy's facing and the way to it
+   * (radians), half the enemy's view cone (radians), and whether nothing stands between the
+   * enemy's eyes and it. Without it, the view cone is not weighed.
+   */
+  readonly watched?:
+    { readonly offAngle: number; readonly halfCone: number; readonly clear: boolean } | undefined;
+}
+
+/**
+ * How far an enemy looking at a hider finds it (the view cone check of a hide): out to
+ * fCombatHideCheckViewConeDistanceMax straight ahead, falling to fCombatHideCheckViewConeDistanceMin
+ * at the cone's edge; 0 outside the cone or with something between them. Inferred from the
+ * settings' names, TODO(M13): the original's scale between the two.
+ */
+export function hideSpottedDistance(
+  watched: NonNullable<HideCheck['watched']>,
+  settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+): number {
+  if (!watched.clear || watched.halfCone <= 0) return 0;
+  const off = Math.abs(watched.offAngle);
+  if (off > watched.halfCone) return 0;
+  const min = settings.hideCheckViewConeDistanceMin;
+  const max = settings.hideCheckViewConeDistanceMax;
+  return min + (max - min) * (1 - off / watched.halfCone);
 }
 
 /**
  * A hide is over once its enemy comes near: within fCombatHideFailedTargetDistance out of sight,
  * or (in sight) fCombatHideFailedTargetLOSDistance fCombatAnticipateTime ahead, or once it is
- * engaged after all. The Hide Selector then goes on to Boost Confidence: it turns and fights.
+ * engaged after all; or once its enemy looks its way and finds it (hideSpottedDistance). The
+ * Hide Selector then goes on to Boost Confidence: it turns and fights.
  */
 export function hideFails(
   check: HideCheck,
@@ -518,7 +556,9 @@ export function hideFails(
   const near = check.sees
     ? check.distanceAhead < check.radii + settings.hideFailedTargetLosDistance
     : check.distance < check.radii + settings.hideFailedTargetDistance;
-  return near || check.engagedSince;
+  const spotted =
+    check.watched !== undefined && check.distance < hideSpottedDistance(check.watched, settings);
+  return near || check.engagedSince || spotted;
 }
 
 /**
@@ -603,6 +643,38 @@ export function doorSpots(set: NavmeshSet, from: Vec3, radius: number): DoorSpot
     }
   }
   return out;
+}
+
+/** A search area holds at most this many priority points (inferred, TODO(M13)). */
+export const SEARCH_POINTS_MAX = 12;
+
+/**
+ * A search area's priority points round the place a group last knew its target (Search,
+ * Investigating Door): the cover edges a crouched actor hides behind within the search radius
+ * (no ledge), one per fCombatSearchIgnoreLocationRadius, and the doors within the radius and
+ * fCombatSearchDoorSearchRadius past it; nearest the place first, at most SEARCH_POINTS_MAX.
+ * Inferred from the behaviours' and settings' names, TODO(M13): the original's choice of points.
+ */
+export function searchPoints(
+  set: NavmeshSet,
+  center: Vec3,
+  radius: number,
+  settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+  actor: CoverActor = COVER_ACTOR,
+): { readonly at: Vec3; readonly door?: number }[] {
+  const points: { at: Vec3; door?: number }[] = [];
+  for (const door of doorSpots(set, center, radius + settings.searchDoorSearchRadius)) {
+    points.push({ at: door.at, door: door.door });
+  }
+  const hiding: Vec3[] = [];
+  for (const spot of coverSpots(set, center, radius, actor, settings)) {
+    if (spot.ledge === true || spot.height < actor.crouched) continue;
+    if (hiding.some((at) => flat(at, spot.at) <= settings.searchIgnoreLocationRadius)) continue;
+    hiding.push(spot.at);
+  }
+  for (const at of hiding) points.push({ at });
+  points.sort((a, b) => flat(a.at, center) - flat(b.at, center));
+  return points.slice(0, SEARCH_POINTS_MAX);
 }
 
 /**

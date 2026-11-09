@@ -2965,13 +2965,30 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   fCombatFleeDoorDistanceMax with no enemy within fCombatFleeDoorTargetCheckDistance of it, not
   the one it came by within fCombatFleeLastDoorRestrictTime, none whose other side lies out of its
   encounter zone; it runs there and goes through (it leaves the stage and comes out on the other
-  side: `ActorStage.fleeThrough`). To cover hidden from its enemy (Find Hide Cover: cover at least
+  side: `ActorStage.fleeThrough`). Its flight goes on there (`src/ai/fled-through-doors.ts`):
+  placed again while its enemy is there too (the player followed it through, or that side is
+  loaded) within fCombatDetectionFleeingLostRemoveTime (30 s) of its passage, its fight starts
+  again and it flees on from that enemy, its confidence boosts and modifier kept, leaving the door
+  it came out of alone as the one it came by (fCombatFleeLastDoorRestrictTime,
+  fCombatFleeUseDoorRestrictTime from its passage); later its fight is over, as a group all
+  fleeing gives up a lost target (inferred, TODO(M13): the original's handling of a fight whose
+  actor left the loaded area). The carried fights are the game's (`GameSession.fledFlights`), not
+  a stage's: a change of cell keeps them and they reach the other viewer's stage (an interior
+  left for the exterior), while a load or a New Game (`GameSession.resetStates`) drops them, so
+  no fight of the game left is forced on the one loaded. To cover hidden from its enemy (Find Hide Cover: cover at least
   its crouched height, no ledge) at least fCombatFleeCoverMinDistance from it within
   fCombatFleeCoverSearchRadius, where it hides (Hide Parallel: Track Target, Turn Around, the Hide
   Selector with Boost Confidence last): down, its back to the enemy, weighing each half second:
   the enemy within fCombatHideFailedTargetDistance of it out of sight, or in sight
   fCombatHideFailedTargetLOSDistance fCombatAnticipateTime ahead, or a blow since it began ends the
-  hide, and Boost Confidence turns it to fight. TODO(M13): the Hide behaviour's own time limit.
+  hide, and Boost Confidence turns it to fight. Down, it sneaks: its enemies' detection weighs it
+  as sneaking, and an enemy group that loses it searches for it. Its enemy looking its way finds it
+  too: within its view cone (fDetectionViewCone) with nothing between, out to
+  fCombatHideCheckViewConeDistanceMax straight ahead, falling to fCombatHideCheckViewConeDistanceMin
+  at the cone's edge (`hideSpottedDistance`; inferred from the settings' names, TODO(M13): the
+  original's scale between the two). TODO(M13): the Hide behaviour's own time limit (ours: the hide
+  lasts until it is found, or until its fight ends as its group gives up an enemy it lost, after
+  fCombatDetectionFleeingLostRemoveTime while all of it flees).
   Else away (fFleeDistance\*), cowering where it can go no farther.
 - **Flanking Movement** (Stalk, then the Flank Selector: Flank, Chase, Flank Distant, Watch
   Target): far off the chase; else the maneuver (flank or stalk), out of range Flank Distant
@@ -2985,10 +3002,19 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
 - **Search** (Wait to Start Search; Search Repeat: the Search Selector's Search Location,
   Search, Search Unimportant Location, Search Wander, Search Center, Search Idle and Fail Search,
   then the Investigate Selector's Investigating Door, Investigating, Looking): ours stands
-  fCombatSearchStartWaitTime, goes to the place, investigates it, then wanders within the
-  search radius (fCombatSearchInterior / ExteriorRadiusMin .. Max) in steps of at most
-  fCombatSearchWanderDistance, looking fCombatSearchLookTime at each (TODO(M13): the priority
-  points and the doors).
+  fCombatSearchStartWaitTime, goes to the place, investigates it, then takes its group's priority
+  points round it (Search; `SearchArea`, `searchPoints`): the cover edges a crouched target hides
+  behind within the search radius, one per fCombatSearchIgnoreLocationRadius, and the doors within
+  that radius and fCombatSearchDoorSearchRadius past it, nearest the place first, at most 12. Each
+  searcher takes the first point no other holds; a hiding place counts as searched once a
+  searcher passed within fCombatSearchIgnoreLocationRadius of it or sees it from within
+  fCombatSearchSightRadius; at a door it stops fCombatSearchDoorDistance off and looks at it
+  fCombatSearchInvestigateTime (Investigating Door), at a hiding place fCombatSearchLookTime
+  (Looking); doors are left after iCombatSearchDoorFailureMax it could not reach. Then it
+  wanders within the search radius (fCombatSearchInterior / ExteriorRadiusMin .. Max) in steps of
+  at most fCombatSearchWanderDistance, looking fCombatSearchLookTime at each. The points, their
+  order and their number are inferred from the behaviours' and settings' names (TODO(M13): the
+  original's choice of points).
 - **Casters** (`chooseCombatSupport`: the Potion slot, then `chooseCaster`; `holdsRestore`,
   `holdsWard`; the stage's support every second, `src/shell/actor-combat-ai.ts`): a health
   potion below its restore share, a magicka potion below its magicka share, then a ward against
@@ -3271,7 +3297,9 @@ engine's ([Combat movement](#combat-movement)).
   ([Combat detection](#combat-detection)) it searches (CombatToLost; GetCombatState 2): it runs
   to where the group last knew its target to be (within
   fCombatSearchLocationInvestigateDistance), looks round three times
-  (fCombatSearchInvestigateTime), walks to points within 768 units round the place, saying its
+  (fCombatSearchInvestigateTime), walks to its group's priority points (the hiding places and
+  doors round the place, shared among its searchers: Search above), then to points within its
+  search radius round the place, saying its
   LostIdle lines (fCombatDetectionDialogueIdle\*); the group finding one again (LostToCombat) it
   fights on; the group giving its targets up, it ends its combat (LostToNormal; detection's
   alert ends).
