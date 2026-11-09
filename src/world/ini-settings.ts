@@ -7,6 +7,7 @@
 // Platform-independent. Notes: docs/formats/esm.md ("INI settings").
 
 import { iniValue, type Ini } from '../formats/ini/ini.ts';
+import { RAGDOLL_ANIM_DEFAULTS } from '../physics/ragdoll-anim.ts';
 
 export const INI_DEFAULTS = {
   // Death into the ragdoll (src/shell/actor-graph-events.ts): the ragdoll a graph adds to the
@@ -482,6 +483,9 @@ export const INI_DEFAULTS = {
     fDetectionUpdateTimeSec: 5,
     fDesiredVel: 1.5,
     fImpulseLimit: 15,
+    // The engine's own drive of a ragdoll in the world: its gains for the bones a graph powers,
+    // and the feedback of hits on a driven ragdoll (src/physics/ragdoll-anim.ts).
+    ...RAGDOLL_ANIM_DEFAULTS,
   },
   HAVOK: {
     // How fast a waterfall carries what floats against it (src/physics/water-physics.ts).

@@ -860,7 +860,11 @@ while dead) until the graph adds the ragdoll; one whose graph did not take the i
 unchanged 0.3 s on) goes limp, and so does one whose graph never adds it, or keeps it keyframed
 or powered, 8 s after it began (TODO(M13): what the engine does with such a graph; before, a
 graph that kept its ragdoll keyframed held the corpse on its feet for good). A killmove's
-victim dies in its paired clip. Seen in the browser (Riverwood): a villager's DeathAnim,
+victim dies in its paired clip. **Dying, then dead** (the game setting fDyingTimer, engine
+default 2 s; `src/gameplay/combat/dying.ts`, the stage's `lifeState`): an actor killed is dying
+(life state 1) for fDyingTimer seconds, then dead (2); that the timer ends the dying life state
+is inferred from its name (TODO(M13)). Its body and its scripts' OnDying and OnDeath (both told
+at once, as before) do not wait for it. Seen in the browser (Riverwood): a villager's DeathAnim,
 AddRagdollToWorld 0.06 s in, AnimateToRagdoll with 18 bones keyframed, limp as FullyRagdoll
 began at 1.2 s; a cow and a dog took DeathAnimation and lay as ragdolls within 0.7 s (the dog's
 DeathAnimation goes to Fully Ragdoll at once: it drops from the pose it stood in).

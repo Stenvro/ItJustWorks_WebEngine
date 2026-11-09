@@ -14,12 +14,25 @@
 //   the dying; DeathEmote queues the Death line.
 // - The settings: the engine's defaults and Skyrim.esm (`node tools/gmst-info.ts --prefix fDeath`).
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { readIdleTree, type IdleTree } from '../../../src/ai/idle-records.ts';
 import { conditionFunctionName } from '../../../src/scripting/condition-functions.ts';
 import { readCombatSettings } from '../../../src/gameplay/combat/combat-settings.ts';
+import { DYING_TIMER, DyingActors, lifeAfterDeath } from '../../../src/gameplay/combat/dying.ts';
+import { LifeState } from '../../../src/gameplay/combat/combat-state.ts';
 import { RecordFlag } from '../../../src/formats/esm/record.ts';
+import {
+  drivenRagdollMode,
+  RAGDOLL_ANIM_DEFAULTS,
+  RagdollFeedback,
+  ragdollDrivenByGraph,
+  readRagdollAnimSettings,
+  scaledControl,
+} from '../../../src/physics/ragdoll-anim.ts';
+import { ObjectHandle } from '../../../src/scripting/values.ts';
+import type { ActorInteraction } from '../../../src/scripting/runtime/runtime.ts';
 import { FurnitureMarkerType, parseFurniture } from '../../../src/world/furniture-records.ts';
+import { INI_DEFAULTS } from '../../../src/world/ini-settings.ts';
 import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 /** Skyrim.esm's death force settings (gmst-info), the engine's for the mass terms. */
@@ -213,12 +226,212 @@ describe.skipIf(!hasGamedata())('Hulda killed at the bar counter (headless simul
   }
 });
 
-describe('ragdolls and death (todo)', () => {
-  it.todo('powered ragdoll motors: the graph’s powered bones by the RagdollAnim gains  [INI]');
-  it.todo('fDyingTimer (2): how long an actor dies before it is dead  [settings, original]');
-  it.todo('[Animation] bAlwaysDriveRagdoll (0): a ragdoll driven while alive  [INI]');
-  it.todo('a death in a lean marker (type 4): Ragdoll half the time, else DeathAnim  [data]');
-  it.todo(
-    'ragdoll feedback (bRagdollFeedback, fFeedback*): hit impulses on a driven ragdoll  [INI]',
-  );
+// The engine's own drive of a ragdoll ([RagdollAnim], the engine's built-in defaults; their use
+// inferred from their names: src/physics/ragdoll-anim.ts) and fDyingTimer (src/gameplay/combat/
+// dying.ts).
+
+describe('the engine’s ragdoll drive and a death’s timer (settings, rules)', () => {
+  it('[RagdollAnim]: the engine’s built-in gains and feedback settings', () => {
+    for (const [key, value] of Object.entries(RAGDOLL_ANIM_DEFAULTS)) {
+      expect(INI_DEFAULTS.RagdollAnim[key as keyof typeof RAGDOLL_ANIM_DEFAULTS]).toBe(value);
+    }
+    const settings = readRagdollAnimSettings();
+    expect(settings.control).toEqual({
+      hierarchyGain: 0.17,
+      velocityDamping: 0,
+      accelerationGain: 1,
+      velocityGain: 0.6,
+      positionGain: 0.05,
+      positionMaxLinearVelocity: 14,
+      positionMaxAngularVelocity: 18,
+      snapGain: 0.1,
+      snapMaxLinearVelocity: 3,
+      snapMaxAngularVelocity: 0.3,
+      snapMaxLinearDistance: 0.3,
+      snapMaxAngularDistance: 1,
+    });
+    expect(settings.feedback).toBe(true);
+    expect(settings.feedbackImpulse).toBe(500);
+    expect(settings.feedbackGain).toBeCloseTo(0.3, 6);
+    expect(settings.feedbackGainTime).toBe(1);
+    expect(settings.feedbackTime).toBe(10);
+  });
+
+  it('powered ragdoll motors: the graph’s powered bones by the RagdollAnim gains', () => {
+    // A dying graph's powered bones (force above 0) are driven by the [RagdollAnim] gains.
+    expect(drivenRagdollMode({ rigid: false, poweredForce: 200, dying: true })).toBe('powered');
+    expect(drivenRagdollMode({ rigid: true, poweredForce: 200, dying: true })).toBe('powered');
+    // FullyRagdoll's limp (force 0) lets the death go; a get-up's powered controls keep their
+    // motors (the living's).
+    expect(drivenRagdollMode({ rigid: true, poweredForce: 0, dying: true })).toBe('follow');
+    expect(drivenRagdollMode({ rigid: false, poweredForce: 200, dying: false })).toBe('follow');
+    // The rigid body controls drive it where no powered controls are; neither: its pose.
+    expect(drivenRagdollMode({ rigid: true, poweredForce: undefined, dying: true })).toBe('rigid');
+    expect(drivenRagdollMode({ rigid: false, poweredForce: undefined, dying: true })).toBe(
+      'follow',
+    );
+  });
+
+  it('fDyingTimer (2): how long an actor dies before it is dead', () => {
+    expect(DYING_TIMER).toBe(2);
+    expect(lifeAfterDeath(0, DYING_TIMER)).toBe(LifeState.dying);
+    expect(lifeAfterDeath(1.99, DYING_TIMER)).toBe(LifeState.dying);
+    expect(lifeAfterDeath(2, DYING_TIMER)).toBe(LifeState.dead);
+    const dying = new DyingActors();
+    dying.died(7);
+    dying.frame(1.5);
+    expect(dying.dying(7)).toBe(true);
+    // A second death's report does not start it again.
+    dying.died(7);
+    dying.frame(0.5);
+    expect(dying.dying(7)).toBe(false);
+  });
+
+  it('[Animation] bAlwaysDriveRagdoll (0): a ragdoll driven while alive', () => {
+    expect(INI_DEFAULTS.Animation.bAlwaysDriveRagdoll).toBe(0);
+    const game = { driveWithGraph: true, alwaysDrive: false };
+    expect(ragdollDrivenByGraph(game, false)).toBe(false);
+    expect(ragdollDrivenByGraph(game, true)).toBe(true);
+    expect(ragdollDrivenByGraph({ ...game, alwaysDrive: true }, false)).toBe(true);
+    expect(ragdollDrivenByGraph({ driveWithGraph: false, alwaysDrive: false }, true)).toBe(false);
+  });
+
+  it('ragdoll feedback (bRagdollFeedback, fFeedback*): hit impulses on a driven ragdoll', () => {
+    const settings = readRagdollAnimSettings();
+    const feedback = new RagdollFeedback(settings);
+    expect(feedback.gainScale(0)).toBe(1);
+    // A hit at 10 s: fFeedbackImpulseMult on the body struck; the gains go to 0.3 over 1 s,
+    // stay there until 10 s after it, and come back over 1 s.
+    expect(feedback.hit(10)).toBe(500);
+    expect(feedback.gainScale(10.5)).toBeCloseTo(0.65, 6);
+    expect(feedback.gainScale(11)).toBeCloseTo(0.3, 6);
+    expect(feedback.gainScale(19.9)).toBeCloseTo(0.3, 6);
+    expect(feedback.gainScale(20.5)).toBeCloseTo(0.65, 6);
+    expect(feedback.gainScale(21)).toBe(1);
+    // A hit while the gains are down keeps them down, from where they are.
+    feedback.hit(30);
+    feedback.hit(30.5);
+    expect(feedback.gainScale(30.5)).toBeCloseTo(0.65, 6);
+    expect(feedback.gainScale(31)).toBeCloseTo(0.3, 6);
+    expect(feedback.gainScale(39.9)).toBeCloseTo(0.3, 6);
+    const half = scaledControl(settings.control, 0.5);
+    expect(half.hierarchyGain).toBeCloseTo(0.085, 6);
+    expect(half.positionMaxLinearVelocity).toBe(14);
+    // Off: no push, no yield.
+    const off = new RagdollFeedback(
+      readRagdollAnimSettings((key) => (key === 'bRagdollFeedback' ? 0 : undefined)),
+    );
+    expect(off.hit(1)).toBe(0);
+    expect(off.gainScale(1.5)).toBe(1);
+  });
 });
+
+/** The humans' behaviour graph, as the idle tree names it. */
+const HUMAN_GRAPH = 'actors\\character\\behaviors\\0_master.hkx';
+
+describe.skipIf(!hasGamedata())(
+  'the Bannered Mare: the ragdoll INI, a lean’s death and fDyingTimer (headless simulation)',
+  () => {
+    let sim: Sim;
+
+    beforeAll(async () => {
+      sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
+      await sim.step(5);
+    }, 600_000);
+    afterAll(async () => {
+      await sim.close();
+    });
+
+    it('a death in a lean marker (type 4): Ragdoll half the time, else DeathAnim', async () => {
+      const tree = await readIdleTree(sim.db);
+      const action = tree.action('ActionDeathWait');
+      const runtime = sim.runtime;
+      const world = runtime.world;
+      const original = Object.getOwnPropertyDescriptor(world, 'interaction');
+      const before = world.interaction?.bind(world);
+      // The death idle chosen for Hulda in furniture of an animation type, the random percent
+      // drawn as `random` × 100; her killer, the player, is the action's target.
+      const choose = async (animationType: number, random: number): Promise<string | undefined> => {
+        world.interaction = (actor: number): ActorInteraction | undefined =>
+          actor === HULDA
+            ? {
+                furniture: 0x58e17,
+                base: 0,
+                marker: 0,
+                animationType,
+                entry: 0x10000,
+                state: 3,
+                quickEnter: false,
+                quickExit: false,
+              }
+            : before?.(actor);
+        const spy = vi.spyOn(Math, 'random').mockReturnValue(random);
+        try {
+          const idle = await tree.resolveAsync(action?.formId ?? 0, HUMAN_GRAPH, (candidate) =>
+            runtime.conditionsHold(
+              candidate.conditions,
+              new ObjectHandle(HULDA, 'actor'),
+              undefined,
+              {
+                target: runtime.referenceHandle(PLAYER_REF),
+              },
+            ),
+          );
+          return idle?.editorId;
+        } finally {
+          spy.mockRestore();
+          if (original) Object.defineProperty(world, 'interaction', original);
+          else delete (world as { interaction?: unknown }).interaction;
+        }
+      };
+      // Leaning (type 4) is not IsInFurnitureState 1: Ragdoll only by GetRandomPercent < 50.
+      expect(await choose(FurnitureMarkerType.lean, 0.3)).toBe('Ragdoll');
+      expect(await choose(FurnitureMarkerType.lean, 0.7)).toBe('DeathAnimationStart');
+      // Sitting (type 1, the counter she leans at) always drops her as a ragdoll.
+      expect(await choose(FurnitureMarkerType.sit, 0.7)).toBe('Ragdoll');
+    }, 120_000);
+
+    it('bAlwaysDriveRagdoll on: a living actor’s ragdoll is driven by its graph', async () => {
+      const bodies = sim.world.stage.bodies;
+      expect(bodies.has(HULDA)).toBe(true);
+      // Off (the game's): her bodies are keyframed to her pose, no hit pushes them.
+      expect(bodies.driven(HULDA)).toBeUndefined();
+      expect(bodies.feedback(HULDA, [1, 0, 0])).toBe(false);
+      sim.world.session.preferences.set('Animation:bAlwaysDriveRagdoll', 1);
+      await sim.step(1);
+      expect(sim.actor(HULDA)?.dead).toBe(false);
+      expect(bodies.driven(HULDA)).toBeDefined();
+    }, 120_000);
+
+    it('ragdoll feedback: a hit on her driven ragdoll pushes it and the drive yields', async () => {
+      const bodies = sim.world.stage.bodies;
+      if (bodies.driven(HULDA)?.dynamic !== true) {
+        // Her graph's rigid body controls simulate her bodies only in the states that have them.
+        await sim.until(() => bodies.driven(HULDA)?.dynamic === true, 20);
+      }
+      expect(bodies.driven(HULDA)?.dynamic).toBe(true);
+      expect(bodies.feedback(HULDA, [1, 0, 0])).toBe(true);
+      await sim.step(0.5);
+      expect(bodies.feedbackGain(HULDA)).toBeLessThan(0.8);
+      await sim.step(1);
+      expect(bodies.feedbackGain(HULDA)).toBeCloseTo(0.3, 2);
+      await sim.step(10);
+      expect(bodies.feedbackGain(HULDA)).toBe(1);
+      // Turned off again, her ragdoll is no longer driven while she lives.
+      sim.world.session.preferences.set('Animation:bAlwaysDriveRagdoll', 0);
+      await sim.step(0.1);
+      expect(bodies.driven(HULDA)).toBeUndefined();
+    }, 120_000);
+
+    it('fDyingTimer (2): killed, she is dying for 2 s, then dead', async () => {
+      const stage = sim.world.stage;
+      expect(stage.lifeState(HULDA)).toBe(LifeState.alive);
+      await sim.kill(HULDA, PLAYER_REF);
+      expect(stage.lifeState(HULDA)).toBe(LifeState.dying);
+      await sim.step(1.5);
+      expect(stage.lifeState(HULDA)).toBe(LifeState.dying);
+      await sim.step(0.6);
+      expect(stage.lifeState(HULDA)).toBe(LifeState.dead);
+    }, 120_000);
+  },
+);
