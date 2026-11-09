@@ -163,14 +163,50 @@ export interface LookCandidate {
   readonly player?: boolean | undefined;
   /** It sits, sleeps or leans in furniture (the player's own use does not count). */
   readonly inFurniture?: boolean | undefined;
+  /**
+   * It goes with the one choosing (lookParty): its commander, one it commands, or another of
+   * the player's teammates and commanded actors when the one choosing is one of them.
+   */
+  readonly party?: boolean | undefined;
 }
+
+/** Who an actor goes with, as head tracking's choice asks it (lookParty). */
+export interface LookSide {
+  readonly reference: number;
+  /** Who commands it (the head of its commanders: a summoner, a necromancer), if anyone. */
+  readonly commander?: number | undefined;
+  /** It is the player's teammate (SetPlayerTeammate). */
+  readonly teammate?: boolean | undefined;
+}
+
+/**
+ * Whether a candidate goes with the actor choosing whom to look at: its commander, one it
+ * commands, or, both following the same leader (the player for teammates and the player's
+ * commanded actors, a commander for its own), each other. Such a one is chosen as the player
+ * is: nearer than LOOK_CHOICE_NEAREST, and in furniture while the one choosing is too.
+ * TODO(M13): inferred. The engine's choice has exceptions for a commanded actor and a teammate
+ * whose fields were not identified; this reads them as the company an actor keeps (who walks at
+ * its side), while the nearness rule keeps strangers passing close from being looked at.
+ */
+export function lookParty(chooser: LookSide, candidate: LookSide): boolean {
+  if (chooser.commander === candidate.reference) return true;
+  if (candidate.commander === chooser.reference) return true;
+  const chooserLeader = leaderOf(chooser);
+  return chooserLeader !== undefined && chooserLeader === leaderOf(candidate);
+}
+
+/** The player's reference (teammates follow the player). */
+const PLAYER = 0x14;
+const leaderOf = (side: LookSide): number | undefined =>
+  side.commander ?? (side.teammate === true ? PLAYER : undefined);
 
 /**
  * Whether an actor may choose a candidate (observed in the original): within `maxDistance`, not
  * nearer than LOOK_CHOICE_NEAREST unless the player or the one it looks at (`current`), and within
  * 120° of its facing, the one it looks at wherever it stands. Two in furniture do not look at
- * each other, unless one is the player. TODO(M13): the exceptions for a commanded actor and those a
- * teammate's or the mount's checks read, whose fields were not identified, are not kept here.
+ * each other, unless one is the player. One that goes with it (`party`: lookParty) is chosen as
+ * the player is (inferred). TODO(M13): the mount's check, whose fields were not identified, is not
+ * kept here.
  */
 function mayLookAt(
   head: Vec3,
@@ -185,8 +221,9 @@ function mayLookAt(
   const dz = candidate.head[2] - head[2];
   const distance = Math.hypot(dx, dy, dz);
   if (distance > maxDistance) return false;
-  if (distance < LOOK_CHOICE_NEAREST && candidate.player !== true && !current) return false;
-  if (selfInFurniture && candidate.inFurniture === true && candidate.player !== true) return false;
+  const asPlayer = candidate.player === true || candidate.party === true;
+  if (distance < LOOK_CHOICE_NEAREST && !asPlayer && !current) return false;
+  if (selfInFurniture && candidate.inFurniture === true && !asPlayer) return false;
   if (current) return true;
   const horizontal = Math.hypot(dx, dy);
   if (horizontal <= 1e-3) return true;

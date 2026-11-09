@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { markerRank } from './furniture-markers.ts';
+import { ENTER_GRACE, enterStep, markerRank } from './furniture-markers.ts';
+
+describe('entering furniture: the graph says when (ChairEnterHandler, BedEnterHandler)', () => {
+  it('moves by its enter while the root motion plays', () => {
+    expect(enterStep(0.8)).toBe('moving');
+  });
+
+  it('waits at its marker for the graph once the root motion has played, not in yet', () => {
+    expect(enterStep(0)).toBe('waiting');
+    expect(enterStep(-ENTER_GRACE / 2)).toBe('waiting');
+  });
+
+  it('is in without the graph’s word only ENTER_GRACE after (inferred)', () => {
+    expect(ENTER_GRACE).toBe(1.5);
+    expect(enterStep(-ENTER_GRACE)).toBe('in');
+  });
+});
 
 describe('furniture markers', () => {
   const isExecutioner = 0x70c0a;

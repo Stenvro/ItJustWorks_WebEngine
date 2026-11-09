@@ -165,6 +165,9 @@ export const INI_DEFAULTS = {
     fOverShoulderHorseAddY: -300,
     fOverShoulderHorsePosX: 0,
     fOverShoulderHorsePosZ: 0,
+    // How far (degrees) the view may turn from a moving horse's heading before the horse's
+    // turns take it along (src/shell/camera-states.ts horseViewYaw); the engine's built-in value.
+    fHorseMaxAngleBeforeTurn: 90,
     // On a dragon's back (the dragon's camera state: src/shell/camera-states.ts), the engine's
     // built-in values: its shoulder offsets, the view's limit from a moving horse-like mount
     // (degrees), the ease to and from a locked target (seconds), whether it hangs on the player.

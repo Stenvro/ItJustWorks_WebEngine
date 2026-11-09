@@ -17,3 +17,24 @@ export function markerRank(
   if (keyword === undefined || held === undefined) return 1;
   return held.has(keyword) ? 0 : undefined;
 }
+
+/**
+ * An entering use is in its furniture when its graph says it reached the furniture's state
+ * (idleChairSitting: ChairEnterHandler, idleBedSleeping: BedEnterHandler; src/shell/
+ * actor-furniture.ts graphEntered); one whose graph has not said so this long after its enter's
+ * root motion ended is in it all the same (seconds). TODO(M13): the engine waits for the graph
+ * alone; this covers graphs whose enters our runtime does not play to the event (inferred, as
+ * the exit's grace).
+ */
+export const ENTER_GRACE = 1.5;
+
+/**
+ * Where an entering use stands by the seconds `left` of its enter's root motion: moving by it
+ * (and the tween to the marker at its end), then at its marker waiting for its graph's word,
+ * then in its furniture without it after ENTER_GRACE. Its graph's enter event puts it in at
+ * any time.
+ */
+export function enterStep(left: number): 'moving' | 'waiting' | 'in' {
+  if (left > 0) return 'moving';
+  return left <= -ENTER_GRACE ? 'in' : 'waiting';
+}

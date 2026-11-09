@@ -359,9 +359,10 @@ export class ActorGraphEvents {
       const camera = source.player ? this.#camera() : undefined;
       if (camera) camera.graphBowZoom = false;
     });
-    // JumpBegin: the actor's controller jumps (the player's jump: src/shell/player-avatar.ts
-    // hears it, as it asked for the jump). Its JumpUp too where a graph raises no JumpBegin
-    // (below): the human graphs' jump clips raise JumpUp.
+    // JumpBegin: the actor's controller jumps (the horse's graph raises jumpBegin as its jump
+    // starts; the player's jump: src/shell/player-avatar.ts hears it, as it asked for the jump,
+    // and there also the JumpUp the human graphs' jump clips raise instead). The response files
+    // name no handler for JumpUp, so an NPC's human graph does not jump its controller.
     d.handle('JumpAnimEventHandler', (source) => {
       if (!source.player) this.#options.stage.movers.jump(source.reference);
     });

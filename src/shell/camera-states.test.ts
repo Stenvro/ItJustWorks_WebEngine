@@ -6,6 +6,7 @@ import {
   DragonCamera,
   dragonShoulder,
   horseShoulder,
+  horseViewYaw,
   lookAngles,
   zoomRange,
   type VanitySettings,
@@ -100,6 +101,32 @@ describe('the dragon camera', () => {
     const free = { yaw: 0, pitch: 0, heading: 0, holds: false };
     expect(camera.step(free, 0.375, settings).view[0]).toBeCloseTo(Math.PI / 2);
     expect(camera.step(free, 0.375, settings).view[1]).toBeCloseTo(Math.PI / 8);
+  });
+});
+
+describe('the horse camera (inferred: the dragon camera’s rule with fHorseMaxAngleBeforeTurn)', () => {
+  const maxAngle = (number('fHorseMaxAngleBeforeTurn') * Math.PI) / 180;
+  const deg = Math.PI / 180;
+
+  it('the engine’s built-in fHorseMaxAngleBeforeTurn is 90°', () => {
+    expect(number('fHorseMaxAngleBeforeTurn')).toBe(90);
+  });
+
+  it('a moving horse keeps the view in the world within the angle of its heading', () => {
+    expect(horseViewYaw(60 * deg, 0, true, maxAngle)).toBeCloseTo(60 * deg);
+  });
+
+  it('turned farther, the moving horse takes the view along at the angle', () => {
+    expect(horseViewYaw(150 * deg, 0, true, maxAngle)).toBeCloseTo(90 * deg);
+    expect(horseViewYaw(-120 * deg, 10 * deg, true, maxAngle)).toBeCloseTo(-80 * deg);
+    // Its own winding is kept: one turn round and 150° is held at one turn and 90°.
+    expect(horseViewYaw(2 * Math.PI + 150 * deg, 0, true, maxAngle)).toBeCloseTo(
+      2 * Math.PI + 90 * deg,
+    );
+  });
+
+  it('a standing horse leaves the view free (the player looks round it)', () => {
+    expect(horseViewYaw(170 * deg, 0, false, maxAngle)).toBeCloseTo(170 * deg);
   });
 });
 

@@ -12,6 +12,7 @@ import {
   DragonCamera,
   dragonShoulder,
   horseShoulder,
+  horseViewYaw,
   lookAngles,
   zoomRange,
   type CameraConditions,
@@ -666,6 +667,8 @@ export class Player implements Camera {
   mount: (() => 'horse' | 'dragon' | undefined) | undefined;
   /** The ridden dragon the dragon's camera follows (src/shell/camera-states.ts). */
   dragonRide: (() => DragonRideView | undefined) | undefined;
+  /** The ridden horse the horse's camera follows: its heading, whether it moves. */
+  horseRide: (() => { readonly heading: number; readonly moving: boolean } | undefined) | undefined;
   /** The dragon's camera state: the view turning with the dragon, its lock on a target. */
   readonly dragonCamera = new DragonCamera();
   /** The dragon camera's view (heading, pitch) this frame; undefined: not on a dragon. */
@@ -1029,6 +1032,13 @@ export class Player implements Camera {
     const mount = this.mount?.();
     if (mount === 'dragon' && this.pov === 'first') this.setPov('third');
     this.#stepDragonCamera(mount === 'dragon' ? this.dragonRide?.() : undefined, deltaSeconds);
+    // The horse's camera: a moving horse's turns take the view along past
+    // fHorseMaxAngleBeforeTurn from its heading (camera-states.ts horseViewYaw).
+    const horse = mount === 'horse' ? this.horseRide?.() : undefined;
+    if (horse) {
+      const maxAngle = (ini.number('Camera', 'fHorseMaxAngleBeforeTurn') * Math.PI) / 180;
+      this.yaw = horseViewYaw(this.yaw, horse.heading, horse.moving, maxAngle);
+    }
     const input = this.#input;
     this.#input = false;
     const idle = !input && this.#held.size === 0 && !this.motion.moving && this.pilot === undefined;
