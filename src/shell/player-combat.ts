@@ -9,7 +9,7 @@
 // scroll) casts instead: its button goes to the player's casting (src/shell/player-casting.ts).
 
 import { POWER_ATTACK_TIMING } from '../gameplay/combat/combat-settings.ts';
-import { AttackState, WeaponState } from '../gameplay/combat/combat-state.ts';
+import { AttackState, attacking, WeaponState } from '../gameplay/combat/combat-state.ts';
 import { WeaponType } from '../world/item-records.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ActorCombat } from './actor-combat.ts';
@@ -42,6 +42,8 @@ export class PlayerCombat {
   #right: Hold | undefined;
   #left: Hold | undefined;
   #blocking = false;
+  /** A block asked of the graph and not answered yet. */
+  #raising = false;
 
   /** The player's casting, if any. */
   readonly #casting: () => CastingButtons | undefined;
@@ -115,10 +117,27 @@ export class PlayerCombat {
     if (leftPressed) {
       if (blocks) {
         this.#blocking = true;
-        void combat.block(PLAYER_REF, true);
+        if (bow) void combat.block(PLAYER_REF, true);
       } else {
         this.#left = { since: this.#clock, power: false };
       }
+    }
+    // A block held goes up once no attack is under way: pressed in the middle of a swing, it
+    // waits for the swing's end (the graph takes no block then, and the press was lost: the
+    // player stood with the button held and no guard up). TODO(M13): inferred; the original
+    // raises a block held through a swing as the swing ends.
+    if (
+      !bow &&
+      this.#blocking &&
+      player.isHeld(LEFT) &&
+      !state.blocking &&
+      !attacking(state) &&
+      !this.#raising
+    ) {
+      this.#raising = true;
+      void combat.block(PLAYER_REF, true).finally(() => {
+        this.#raising = false;
+      });
     }
     if (this.#blocking && !player.isHeld(LEFT)) {
       this.#blocking = false;
