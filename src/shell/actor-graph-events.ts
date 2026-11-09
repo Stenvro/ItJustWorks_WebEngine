@@ -25,6 +25,7 @@ import {
   type FurnitureUser,
 } from './actor-furniture.ts';
 import { explosionShake, type ShakingExplosion } from './camera-shake.ts';
+import { shakeRumble } from './controller-rumble.ts';
 import type { ActorStage, StagedActor } from './actor-stage.ts';
 import type { GameSession } from './game-session.ts';
 import type { PlayerAvatar } from './player-avatar.ts';
@@ -474,7 +475,16 @@ export class ActorGraphEvents {
     const camera = this.#camera();
     if (!camera) return;
     const [x, y, z] = camera.position;
-    camera.shake.start(strength, Math.hypot(at[0] - x, at[1] - y, at[2] - z), seconds);
+    const distance = Math.hypot(at[0] - x, at[1] - y, at[2] - z);
+    camera.shake.start(strength, distance, seconds);
+    // The controller rumbles with it (fRumbleShakeRadiusMult, fRumbleShakeTimeMult:
+    // controller-rumble.ts).
+    const session = this.#options.session;
+    const settings = camera.shake.settings;
+    void session.rumbleSettings().then((rumble) => {
+      const felt = shakeRumble(strength, distance, seconds, settings, rumble);
+      if (felt) session.rumble.play(felt);
+    });
   }
 
   /** An explosion bursts at a place: the camera shakes by its radius (camera-shake.ts). */

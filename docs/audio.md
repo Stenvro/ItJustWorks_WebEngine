@@ -145,7 +145,8 @@ sample of every audio pass; once a frame each peak is raised to
 dead zone a motor stops (a big motor below its dead zone silences the small one, as the original
 does), else it is lerped between its LerpMin and LerpMax. The shell drives the gamepad's
 dual-rumble effect with the result (with the Vibration setting on), a frame's strengths held
-0.1 s. The player's sounds reach those models once they play through POPM and P3OM.
+0.1 s, among the rumble's other causes (blows, the camera's shake, Game.ShakeController: each
+motor at the strongest; [ui.md](ui.md#rumble)). The player's sounds reach those models once they play through POPM and P3OM.
 
 ## Mixing rules
 

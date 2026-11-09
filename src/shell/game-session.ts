@@ -108,6 +108,13 @@ import { SceneLines } from './scene-lines.ts';
 import { PlayerLook } from './player-look.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { rumbleGamepad } from './gamepad-input.ts';
+import {
+  causeRumble,
+  ControllerRumble,
+  readControllerRumbleSettings,
+  type ControllerRumbleSettings,
+  type RumbleCause,
+} from './controller-rumble.ts';
 import type { PlacedActor } from './actors.ts';
 import type { Terminal } from './terminal.ts';
 
@@ -320,6 +327,31 @@ export class GameSession {
   /** What the scripts do to the world on screen (the viewers attach to it). */
   readonly scriptWorld: ScriptWorld;
   /**
+   * The controller's rumble (src/shell/controller-rumble.ts): the player's sounds, blows, the
+   * camera's shake and Game.ShakeController, with the Vibration setting ([Controls]
+   * bGamePadRumble) on.
+   */
+  readonly rumble = new ControllerRumble(rumbleGamepad, () =>
+    this.ini.bool('Controls', 'bGamePadRumble'),
+  );
+  /** The rumble's game settings (fRumble*), once read. */
+  #rumbleSettings: ControllerRumbleSettings | undefined;
+
+  /** Something the player feels rumbles the controller by its fRumble* settings. */
+  rumbleFor(cause: RumbleCause): void {
+    void this.rumbleSettings().then((settings) => {
+      this.rumble.play(causeRumble(cause, settings));
+    });
+  }
+
+  /** The rumble's game settings (fRumble*: the load order's, else the engine's). */
+  async rumbleSettings(): Promise<ControllerRumbleSettings> {
+    if (this.#rumbleSettings) return this.#rumbleSettings;
+    const gmst = await this.settings();
+    this.#rumbleSettings = readControllerRumbleSettings((name) => gmst.number(name));
+    return this.#rumbleSettings;
+  }
+  /**
    * The sky's weather, one for the whole game as the engine's (src/world/sky-weather.ts): the
    * viewers draw it and run it each frame, scripts, the console and conditions drive and read it.
    */
@@ -486,7 +518,9 @@ export class GameSession {
     this.lines = new WorldLines(this, terminal);
     this.sceneLines = new SceneLines(this, terminal);
     this.scriptWorld.sceneLine = (speech) => this.sceneLines.speak(speech);
-    this.scriptWorld.gamepadRumble = () => this.ini.bool('Controls', 'bGamePadRumble');
+    this.scriptWorld.rumble = (rumble) => {
+      this.rumble.play(rumble);
+    };
     this.scriptWorld.say = (speaker, topic, speakAs, inHead) => {
       if (topic === undefined) return;
       this.lines.say(speaker, topic, speakAs, inHead).catch((error: unknown) => {
@@ -1582,10 +1616,10 @@ export class GameSession {
         this.#terminal.log('audio', message, 'warn');
       };
       // The player's sounds rumble the gamepad (src/audio/rumble.ts) with the Vibration
-      // setting on: each frame's strengths held a little past the next frame.
+      // setting on: each frame's strengths held a little past the next frame, among the
+      // rumble's other causes (controller-rumble.ts).
       sounds.onRumble = (motors) => {
-        if (this.ini.bool('Controls', 'bGamePadRumble'))
-          rumbleGamepad(motors.small, motors.big, SOUND_RUMBLE_SECONDS);
+        this.rumble.sound(motors.small, motors.big, SOUND_RUMBLE_SECONDS);
       };
       sounds.powerAttacking = () =>
         this.scriptsReady?.world.combat?.(PLAYER_REF)?.powerAttacking === true;

@@ -173,6 +173,7 @@ import { splattersForHit } from '../render/screen-blood-data.ts';
 import type { Impact } from '../world/impact-records.ts';
 import { CombatProjectiles } from './combat-projectiles.ts';
 import type { GameSession } from './game-session.ts';
+import { blowRumbleCause } from './controller-rumble.ts';
 import type { PlaySession } from './play-session.ts';
 import type { PlayerAvatar } from './player-avatar.ts';
 import type { CombatBridge } from './script-world.ts';
@@ -2808,9 +2809,11 @@ export class ActorCombat implements CombatBridge {
       const deflect = await perks.apply(EntryPoint.modShieldDeflectArrowChance, targetRef, 0);
       if (Math.random() * 100 < deflect) {
         void this.#act(target, 'ActionBlockHit');
+        this.#rumble(attacker, target, true);
         return;
       }
     }
+    this.#rumble(attacker, target, blocks);
     const targetBlockSkill = (await runtime.actors.value(targetRef, ActorValue.firstSkill + 3))
       .current;
     const blocked = blocks
@@ -5007,6 +5010,19 @@ export class ActorCombat implements CombatBridge {
     }
   }
 
+  /**
+   * A blow the player lands or takes rumbles the controller (src/shell/controller-rumble.ts:
+   * fRumbleHit*, fRumbleHitBlocked*, fRumbleBlock*, fRumbleStruck*).
+   */
+  #rumble(attacker: Fighter, target: Fighter, blocked: boolean): void {
+    const cause = blowRumbleCause({
+      attackerIsPlayer: attacker.player,
+      targetIsPlayer: target.player,
+      blocked,
+    });
+    if (cause) this.#options.session.rumbleFor(cause);
+  }
+
   #playSound(sound: number | undefined, fighter: Fighter): void {
     if (sound === undefined) return;
     const place = this.#weaponPlace(fighter);
@@ -5224,6 +5240,9 @@ export class ActorCombat implements CombatBridge {
     if (painful && this.#fighters.get(victim)?.state.life === LifeState.alive) {
       this.#bark(victim, 'Hit', caster);
     }
+    // A hostile spell that hurts the player rumbles the controller (fRumblePain*:
+    // controller-rumble.ts; a Painless one does not).
+    if (painful && victim === PLAYER_REF) this.#options.session.rumbleFor('pain');
   }
 
   /**
