@@ -104,14 +104,91 @@ describe.skipIf(!hasGamedata())('story manager: Change Location (headless simula
     expect(actor).toEqual({ form: PLAYER_REF });
     expect(to).toEqual({ form: BANNERED_MARE_LOCATION });
   });
+});
 
-  it.todo(
+// Moves that raise no Change Location, from the data: Dragonsreach [000165A3] and its Jarl's
+// Quarters [00080C6A] are two cells of WhiterunDragonsreachLocation [0001F871] (their XLCN); the
+// player going from one to the other enters no other location. An NPC that a script moves to
+// another location (ObjectReference.MoveTo to the Bannered Mare) changes location
+// (TESActorLocationChangeEvent: its OnLocationChange), but the story manager's Change Location
+// is the player's alone (the engine raises it as it puts the player in a cell of another
+// location; observed in the original, docs/scripting.md "Story events").
+const DRAGONSREACH = 0x165a3;
+const JARLS_QUARTERS = 0x80c6a;
+const DRAGONSREACH_LOCATION = 0x1f871;
+
+describe.skipIf(!hasGamedata())('story manager: moves without Change Location (simulation)', () => {
+  let sim: Sim;
+  let upstairs = 0;
+  let movedAt = 0;
+  let mover = 0;
+  let locationUpstairs: number | undefined;
+
+  beforeAll(async () => {
+    sim = await openSim({ interior: DRAGONSREACH, hour: 10 });
+    await sim.step(2);
+    // One of the hall's actors with scripts (or an alias) to hear its OnLocationChange.
+    const heard = new Set(sim.scriptEvents().map((event) => event.target));
+    const actors = sim.actors().map((staged) => staged.reference);
+    mover = actors.find((actor) => actor !== PLAYER_REF && heard.has(actor)) ?? 0;
+    upstairs = sim.time;
+    await sim.openInterior(JARLS_QUARTERS);
+    await sim.step(2);
+    locationUpstairs = sim.runtime.state.playerLocation;
+    // A script moves it to the Bannered Mare (both cells out of the loaded area now).
+    const marker = sim.db.cellReferences(BANNERED_MARE)[0];
+    if (mover !== 0 && marker !== undefined) {
+      movedAt = sim.time;
+      await sim.native(sim.runtime.referenceHandle(mover), 'ObjectReference', 'MoveTo', [
+        sim.runtime.referenceHandle(marker),
+        0,
+        0,
+        0,
+        true,
+      ]);
+      await sim.step(2);
+    }
+  }, 300_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it(
     'raises no Change Location for a move between cells of one location (the engine raises it ' +
       'only between locations: CK, Change Location event)',
+    () => {
+      expect(locationUpstairs).toBe(DRAGONSREACH_LOCATION);
+      expect(
+        sim.events('actorLocationChange').filter((event) => event.actor === PLAYER_REF),
+      ).toEqual([{ actor: PLAYER_REF, from: undefined, to: DRAGONSREACH_LOCATION }]);
+      expect(sim.storyEvents('CLOC').filter((event) => event.at >= upstairs)).toEqual([]);
+      expect(
+        sim.scriptEvents({ event: 'OnLocationChange', target: PLAYER_REF, since: upstairs }),
+      ).toEqual([]);
+    },
   );
-  it.todo(
+
+  it(
     'raises Change Location for no actor but the player, while NPCs still get ' +
       'OnLocationChange (engine map: Script events, OnLocationChange for NPCs)',
+    () => {
+      expect(mover).not.toBe(0);
+      const moves = sim
+        .events('actorLocationChange')
+        .filter((event) => event.actor === mover && event.to === BANNERED_MARE_LOCATION);
+      expect(moves).toEqual([
+        { actor: mover, from: DRAGONSREACH_LOCATION, to: BANNERED_MARE_LOCATION },
+      ]);
+      const told = sim.scriptEvents({ event: 'OnLocationChange', target: mover, since: movedAt });
+      expect(told.length).toBeGreaterThan(0);
+      for (const event of told) {
+        expect(event.args).toEqual([
+          { form: DRAGONSREACH_LOCATION },
+          { form: BANNERED_MARE_LOCATION },
+        ]);
+      }
+      expect(sim.storyEvents('CLOC').filter((event) => event.forms.R1 !== PLAYER_REF)).toEqual([]);
+    },
   );
 });
 
