@@ -649,8 +649,22 @@ the player in a runtime on the game data, `--audit` reads every record).
   atlas (with Particle Animated running through its frames: from its start frame, at its Frame
   Count a second, looping back to its loop start frame after its end frame; TODO(M13): that the
   count is frames a second is inferred from the vanilla shaders), through the particle palette.
-  TODO(M13):
-  holes (NAM7), addon models (DEBR), the ambient sound.
+  Its ambient sound loops at its target while it plays. Its holes (NAM7 and DATA 248 .. 271:
+  start and end time, start and end value, the edge's width and colour) cut its target away:
+  the threshold goes from the start value to the end value (0..255) between the two times, 255
+  leaving it whole and 0 cutting all of it (TimeFadeOut01FXS 255 to 0 over 0.1 .. 2.1 s; the
+  fade-ins and the Boneman's summon 0 to 255), and a shader with holes plays at least to their
+  end time (`holesShare` in src/world/effect-shader-records.ts; 25 vanilla shaders have a holes
+  texture; the others' holes fields go unused). The share cut away is
+  dithered off the target as a distance fade is: an actor's veil with its alpha and
+  invisibility, an object's own fade. TODO(M13): the cut follows the holes texture's own pattern
+  and draws its edge's width and colour. Its addon models (DEBR at DATA 244, its timing at
+  284 .. 304: fade in, fade out, scale start and end, scale in and out time) hang on the bones
+  the target's skin is bound to, spread along them (an object: at its origin), each model by its
+  percentage as a chance; they fade in and grow from Scale Start to Scale End over the scale-in
+  time, and as the shader stops fade out and go back to Scale Start over the scale-out time
+  (`addonLook`; FrostIceFormFXShader's ice chunks, the tentacles of DLC2mkTentacleFXShader).
+  TODO(M13): inferred: where the engine hangs them, what the scale goes back to.
 - Invisibility (src/gameplay/magic/invisibility.ts; observed in the original): an invisible
   actor is drawn veiled, dithered away as a distance fade is (the renderer's InstanceFade.veil),
   all but fInvisibilityMinRefraction (0.01); the player all but fMagicPlayerMinimumInvisibility

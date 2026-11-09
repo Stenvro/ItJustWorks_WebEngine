@@ -572,7 +572,33 @@ or interior (hidden with them when taken), the ones the game made too: dropped, 
 script, an enchanted copy made at the enchanting table (a created form with its EITM; the shell's
 world and interior viewers glow them as `CreatedObjects` shows them). 2,903 of 3,018 enchanted
 vanilla weapons and 2,819 of 2,847 enchanted armours have a shader (`node tools/effect-audit.ts
---glow`). TODO(M13): worn armour shows none (as remembered of the game, unchecked).
+--glow`).
+
+Worn armour shows no glow. The armour enchantments' effects carry shaders of their own
+(EnchArmorMagickaFXS on 1,142 armours, ...StaminaFXS 758, ...HealthFXS 329, ...FireFXS 324,
+...FrostFXS 134, ...ShockFXS 128): a membrane that fades from full to a 5% persistent share in
+a second, no particles. But CommonLibSSE names one reference effect controller for enchanted
+items, the weapon's (`WeaponEnchantmentController`, with a visitor that refreshes the enchanted
+weapons), and none for armour; the worn enchantments' visitors cast, dispel, preload and unload
+their abilities (the effects' own hit visuals, which the magic system shows). So the worn armour
+stays as it is, as is remembered of the game. TODO(M13): confirm in the original (what the
+armour shaders were made for; whether armour lying in the world glows, which we show as a
+weapon's).
+
+The art an enchanted weapon shows (its Enchant Art: Chillrend's frost, the bound weapons'
+flames, the Draugr weapons' streaks) hangs where the weapon's root is: on its hand node while
+drawn, its sheath node while sheathed, first person too (`heldAnchor` in
+`src/gameplay/magic/effect-placement.ts`); an actor's art follows its bones by name, an
+object's stands at its origin.
+
+A visual effect's (RFCT) flags (CommonLibSSE `BGSReferenceEffect::Flag`) place its art: with
+Face Target (the absorb streams, soul trap's, the dragon soul's: 29 effects) its +Y turns from
+its target's origin towards the origin of the reference VisualEffect.Play names to face (Play's
+third argument), each frame; with Attach To Camera (the camera-attached dust, fog, snow, embers
+and the Elder Scroll readings: 41 effects, all with Inherit Rotation) it hangs at the camera,
+turned with the camera's forward with Inherit Rotation, shown whether its target is or not
+(`facingWorld`, `cameraWorld`). TODO(M13): inferred: the axis that faces (+Y, the game's
+forward), that it pitches as well as turns, and that it faces its facing reference's origin.
 
 ### Per-object light lists
 

@@ -1287,7 +1287,9 @@ export class ActorStage {
       if (!fade) continue;
       const invisible = runtime.magic.aiState(staged.reference).invisible;
       const veil = invisibilityVeil(invisible, staged.reference === PLAYER_REF, this.#invisibility);
-      fade.veil = 1 - (1 - veil) * this.#alpha(runtime, staged.reference, frame);
+      // An effect shader's holes (NAM7) cut it away besides (actor-effects.ts).
+      const whole = 1 - this.effects.holes(staged.reference);
+      fade.veil = 1 - (1 - veil) * this.#alpha(runtime, staged.reference, frame) * whole;
       // The shimmer through its shapes: the refraction its Invisibility set (magic-engine.ts).
       fade.refraction = invisible
         ? (runtime.state.actors.get(staged.reference)?.refraction ?? 0)
@@ -3007,6 +3009,8 @@ export class ActorStage {
     this.dismemberment.frame(frame);
     // The casting art follows the hands as they are posed now, and so do their props.
     this.casting.afterAnimate();
+    // The effects' placed art (faced, on a held weapon) and addon models, likewise.
+    this.effects.afterAnimate();
     this.animObjects.frame();
     // How their graphs moved them (root motion) moves them in the next physics steps; those
     // entering or leaving furniture it moves at once (they have no controller).

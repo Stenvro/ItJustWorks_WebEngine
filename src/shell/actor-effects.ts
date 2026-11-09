@@ -14,9 +14,15 @@
 // with its alpha timeline (fade in, full, fade out to a persistent share, pulsing), the fill
 // texture scrolling; and its particles off the actor's skin (src/shell/surface-particles.ts).
 // Art objects hang on the actor's skeleton: their nodes and skinned shapes follow its bones by
-// name. The fill follows its colour keys over the shader's age, the keys' times taken as seconds as
-// its alpha timeline's are (TODO(M13): inferred, no document says what the times count). TODO(M13):
-// the shaders' holes (NAM7, burning away), addon models (DEBR).
+// name; on a held weapon at the weapon's root, where its hand (or sheath) node holds it
+// (src/gameplay/magic/effect-placement.ts). A visual effect's (RFCT) art with Face Target turns
+// towards the reference VisualEffect.Play names to face, one with Attach To Camera hangs at the
+// camera (turning with it with Inherit Rotation). The fill follows its colour keys over the
+// shader's age, the keys' times taken as seconds as its alpha timeline's are (TODO(M13): inferred,
+// no document says what the times count). A shader with a holes texture (NAM7) cuts its target
+// away by its holes threshold over its holes times (holesShare: dithered as a distance fade is,
+// TODO(M13): the texture's own pattern and edge); its addon models (DEBR) hang on the target's
+// bones while it plays, fading and scaling by its addon times (addonLook).
 
 import { ActorPose, ActorSkeleton, wearOnRig } from '../animation/skeleton.ts';
 import type { Vec3 } from '../render/math.ts';
@@ -27,23 +33,34 @@ import type { RenderPort } from '../render/render-port.ts';
 import type {
   GpuModel,
   GpuScene,
+  InstanceFade,
+  InstanceMotion,
   InstanceVisibility,
   ModelInstance,
 } from '../render/scene-renderer.ts';
+import {
+  cameraWorld,
+  facingWorld,
+  heldAnchor,
+  spreadOver,
+} from '../gameplay/magic/effect-placement.ts';
+import { parseDebris } from '../world/destruction-records.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { MagicEffectShown } from '../scripting/runtime/magic-engine.ts';
-import { meshPath } from '../world/actors.ts';
+import { meshPath, seededRandom } from '../world/actors.ts';
 import type { CellLight } from '../world/cell-loader.ts';
 import { parseLight, type LightRecord } from '../world/cell-records.ts';
 import {
+  addonLook,
   EffectShaderFlag,
   fillColor,
+  holesShare,
   parseEffectShader,
   timelineAlpha,
   type EffectShaderRecord,
 } from '../world/effect-shader-records.ts';
 import type { EnchantmentGlow } from '../gameplay/magic/enchantment-glow.ts';
-import { EffectArchetype, parseVisualEffect } from '../world/magic-effects.ts';
+import { EffectArchetype, parseVisualEffect, VisualEffectFlag } from '../world/magic-effects.ts';
 import { parseArtObject } from '../world/magic-records.ts';
 import type { GameSession } from './game-session.ts';
 import { alphaFlags, SurfaceParticles, texturePath, Z_TEST_ALWAYS } from './surface-particles.ts';
@@ -113,6 +130,27 @@ interface BuiltShader {
     { readonly scene: GpuScene | undefined; readonly source: SurfaceParticles } | undefined;
   readonly models: readonly GpuModel[];
   readonly sources: readonly GpuModel[];
+  /** Its addon models (DEBR), each on a bone of the body (-1: at its origin). */
+  readonly addons: BuiltAddons | undefined;
+}
+
+interface BuiltAddons {
+  readonly scene: GpuScene | undefined;
+  readonly fade: InstanceFade;
+  readonly hung: readonly {
+    readonly world: Float32Array;
+    readonly motion: InstanceMotion;
+    readonly node: number;
+  }[];
+}
+
+/** How a visual effect's (RFCT) art stands, by its flags. */
+interface ArtPlace {
+  /** Face Target: turned towards this reference (VisualEffect.Play's facing object). */
+  readonly facing: number | undefined;
+  /** Attach To Camera, and Inherit Rotation. */
+  readonly camera: boolean;
+  readonly inheritRotation: boolean;
 }
 
 /** An art object on a reference. */
@@ -120,6 +158,7 @@ interface ArtShow {
   readonly actor: number;
   readonly body: () => EffectBody | undefined;
   readonly model: string;
+  readonly place: ArtPlace | undefined;
   age: number;
   readonly duration: number | undefined;
   stopping: boolean;
@@ -129,6 +168,17 @@ interface ArtShow {
         readonly scene: GpuScene | undefined;
         readonly pose: ActorPose;
         readonly nodes: Int16Array;
+        /**
+         * Placed by the effects each frame (faced, at the camera, on a held weapon): its own
+         * world and motion, and the held weapon's node it hangs at.
+         */
+        readonly own:
+          | {
+              readonly world: Float32Array;
+              readonly motion: InstanceMotion;
+              readonly anchor: number | undefined;
+            }
+          | undefined;
       }
     | undefined;
   building: boolean;
@@ -176,6 +226,8 @@ export class ActorEffects {
   readonly #detects = new Map<string, DetectShow>();
   readonly #shaderRecords = new Map<number, Promise<EffectShaderRecord | undefined>>();
   readonly #lightRecords = new Map<number, Promise<LightRecord | undefined>>();
+  /** The objects' fades the holes veil now (#holeObjects). */
+  #holed = new Set<InstanceFade>();
 
   constructor(options: ActorEffectsOptions) {
     this.#options = options;
@@ -227,14 +279,17 @@ export class ActorEffects {
     this.#startArt(`art:${String(art)}:${String(target)}`, target, art, Math.max(0, seconds));
   }
 
-  /** VisualEffect.Play and Stop (RFCT: its art and its shader) on an actor. */
-  visual(effect: number, target: number, play: boolean, duration: number): void {
+  /**
+   * VisualEffect.Play and Stop (RFCT: its art and its shader) on an actor; `facing`: the reference
+   * its art faces with Face Target (Play's akFacingObject).
+   */
+  visual(effect: number, target: number, play: boolean, duration: number, facing?: number): void {
     const key = `visual:${String(effect)}:${String(target)}`;
     if (!play) {
       this.#stop(key);
       return;
     }
-    this.#startVisuals(key, target, effect, duration < 0 ? undefined : duration);
+    this.#startVisuals(key, target, effect, duration < 0 ? undefined : duration, undefined, facing);
   }
 
   /** A visual effect's (RFCT) art and shader on what it covers. */
@@ -244,12 +299,23 @@ export class ActorEffects {
     effect: number,
     seconds: number | undefined,
     body?: () => EffectBody | undefined,
+    facing?: number,
   ): void {
     void (async () => {
       const record = await this.#options.session.scriptsReady?.forms.record(effect);
       const visual = record && parseVisualEffect(record);
       if (!visual) return;
-      if (visual.art !== undefined) this.#startArt(key, target, visual.art, seconds, body);
+      const faces = (visual.flags & VisualEffectFlag.faceTarget) !== 0 && facing !== undefined;
+      const camera = (visual.flags & VisualEffectFlag.attachToCamera) !== 0;
+      const place: ArtPlace | undefined =
+        faces || camera
+          ? {
+              facing: faces ? facing : undefined,
+              camera,
+              inheritRotation: (visual.flags & VisualEffectFlag.inheritRotation) !== 0,
+            }
+          : undefined;
+      if (visual.art !== undefined) this.#startArt(key, target, visual.art, seconds, body, place);
       if (visual.shader !== undefined)
         await this.#startShader(key, target, visual.shader, seconds, body);
     })().catch((error: unknown) => {
@@ -343,6 +409,8 @@ export class ActorEffects {
       shader.particles.birthRampUp +
         shader.particles.fullBirthTime +
         shader.particles.birthRampDown,
+      // Its holes burn on to their end time.
+      shader.holesTexture === '' ? 0 : shader.holes.endTime,
     );
     this.#shaders.set(key, {
       actor,
@@ -399,6 +467,8 @@ export class ActorEffects {
           ...(instance.partitionVisible && { partitionVisible: instance.partitionVisible }),
           ...(instance.partShown && { partShown: instance.partShown }),
           ...(instance.face && { face: instance.face }),
+          // A first-person weapon's cover is drawn with the first-person view, as it is.
+          ...(instance.firstPerson && { firstPerson: true }),
         });
       }
       return renderer.scene.createScene(instances);
@@ -492,7 +562,122 @@ export class ActorEffects {
       ]);
       particles = { scene, source };
     }
-    return { placed, fill, edge, particles, models, sources };
+    const addons =
+      shader.addonModels === undefined
+        ? undefined
+        : await this.#buildAddons(show, shader.addonModels, body);
+    return { placed, fill, edge, particles, models, sources, addons };
+  }
+
+  /**
+   * A shader's addon models (its DEBR's models) on its body: each on one of the bones its skin
+   * is bound to, spread along them (an object: at its origin), each model shown by its
+   * percentage as a chance. TODO(M13): where the engine hangs them (taken: on the skin's bones;
+   * the percentage taken as each model's chance, as debris counts it).
+   */
+  async #buildAddons(
+    show: ShaderShow,
+    formId: number,
+    body: EffectBody,
+  ): Promise<BuiltAddons | undefined> {
+    const { session, renderer } = this.#options;
+    const record = await session.scriptsReady?.forms.record(formId);
+    const debris = record?.type === 'DEBR' ? parseDebris(record) : undefined;
+    const placed = body.placed;
+    const first = placed.instances[0];
+    if (!debris || debris.models.length === 0 || !first) return undefined;
+    const random = seededRandom((show.actor ^ formId) >>> 0);
+    const chosen = debris.models.filter((entry) => random() * 100 < entry.percentage);
+    const nodes = spreadOver(skinBones(placed), chosen.length);
+    const fade: InstanceFade = { kind: 'object', byDistance: false, veil: 1 };
+    const hung: BuiltAddons['hung'][number][] = [];
+    const instances: ModelInstance[] = [];
+    for (const [i, entry] of chosen.entries()) {
+      const model = await session.model(meshPath(entry.model));
+      if (!model) continue;
+      const world = new Float32Array(first.world);
+      const motion: InstanceMotion = { version: 0 };
+      hung.push({ world, motion, node: nodes[i] ?? -1 });
+      instances.push({
+        model,
+        world,
+        motion,
+        fade,
+        ...(body.visibility && { visibility: body.visibility }),
+        ...(first.firstPerson && { firstPerson: true }),
+      });
+    }
+    if (instances.length === 0) return undefined;
+    return { scene: renderer.scene.createScene(instances), fade, hung };
+  }
+
+  /** The addon models where their bones are now, at their look's scale and alpha. */
+  #placeAddons(show: ShaderShow, built: BuiltShader, body: EffectBody): boolean {
+    const addons = built.addons;
+    if (!addons) return true;
+    const look = addonLook(show.shader.addon, show.age, show.stopping);
+    addons.fade.veil = 1 - look.alpha;
+    const base = body.placed.instances[0]?.world;
+    const pose = built.placed.pose;
+    if (base) {
+      const scale = new Float32Array([
+        look.scale,
+        0,
+        0,
+        0,
+        0,
+        look.scale,
+        0,
+        0,
+        0,
+        0,
+        look.scale,
+        0,
+        0,
+        0,
+        0,
+        1,
+      ]);
+      for (const hung of addons.hung) {
+        const at =
+          pose && hung.node >= 0
+            ? multiply(base, pose.worlds.subarray(hung.node * 16, hung.node * 16 + 16))
+            : base;
+        multiply(at, scale, hung.world);
+        hung.motion.version++;
+      }
+    }
+    return look.done;
+  }
+
+  /** The share of a reference its shaders' holes have cut away now (0: whole, 1: gone). */
+  holes(reference: number): number {
+    let share = 0;
+    for (const show of this.#shaders.values()) {
+      if (show.actor === reference) share = Math.max(share, holesShare(show.shader, show.age));
+    }
+    return share;
+  }
+
+  /**
+   * Objects (no skeleton) their shaders' holes cut away: their own instances' fade veils them by
+   * the share (an actor's veil is the stage's, which takes `holes`); one no longer cut is whole.
+   */
+  #holeObjects(): void {
+    const veils = new Map<InstanceFade, number>();
+    for (const show of this.#shaders.values()) {
+      if (show.shader.holesTexture === '') continue;
+      const placed = show.body()?.placed;
+      if (!placed || placed.pose) continue;
+      const share = holesShare(show.shader, show.age);
+      for (const instance of placed.instances) {
+        if (!instance.fade || instance.pose) continue;
+        veils.set(instance.fade, Math.max(share, veils.get(instance.fade) ?? 0));
+      }
+    }
+    for (const fade of this.#holed) if (!veils.has(fade)) fade.veil = 0;
+    for (const [fade, share] of veils) fade.veil = share;
+    this.#holed = new Set(veils.keys());
   }
 
   #dropShader(key: string): void {
@@ -512,6 +697,7 @@ export class ActorEffects {
     art: number,
     duration: number | undefined,
     body: () => EffectBody | undefined = () => this.#options.body(actor),
+    place?: ArtPlace,
   ): void {
     void (async () => {
       const record = await this.#options.session.scriptsReady?.forms.record(art);
@@ -522,6 +708,7 @@ export class ActorEffects {
         actor,
         body,
         model,
+        place,
         age: 0,
         duration: duration === 0 ? ONCE_SECONDS : duration,
         stopping: false,
@@ -547,24 +734,69 @@ export class ActorEffects {
       [{ nodes: model.nodes ?? [], attachTo: model.attachTo, lagBones: model.nodeLagBones }],
     );
     const pose = new ActorPose(new ActorSkeleton(dressed.rig, undefined));
-    // An object's art stands at its origin (no skeleton to follow).
-    const nodes = Int16Array.from(
-      dressed.rig.names,
-      (name) => placed.pose?.skeleton.nodeByName.get(name.toLowerCase()) ?? -1,
+    // Placed each frame by the effects: faced, at the camera, or on a held weapon's root.
+    const anchor = heldAnchor(placed);
+    const own =
+      show.place !== undefined || anchor !== undefined
+        ? { world: new Float32Array(first.world), motion: { version: 0 }, anchor }
+        : undefined;
+    // An object's art stands at its origin (no skeleton to follow); a placed one follows none.
+    const nodes = Int16Array.from(dressed.rig.names, (name) =>
+      own ? -1 : (placed.pose?.skeleton.nodeByName.get(name.toLowerCase()) ?? -1),
     );
+    const motion = own?.motion ?? first.motion;
+    // One at the camera is seen whether its target is (the player in first person) or not.
+    const visibility = show.place?.camera ? undefined : body.visibility;
     const scene = renderer.scene.createScene([
       {
         model,
-        world: first.world,
-        ...(first.motion && { motion: first.motion }),
-        ...(body.visibility && { visibility: body.visibility }),
+        world: own?.world ?? first.world,
+        ...(motion && { motion }),
+        ...(visibility && { visibility }),
+        ...(first.firstPerson && !show.place?.camera && { firstPerson: true }),
         ...(model.nodes && {
           pose,
           ...(dressed.nodeMaps[0] && { poseNodes: dressed.nodeMaps[0] }),
         }),
       },
     ]);
-    return { placed, scene, pose, nodes };
+    const built = { placed, scene, pose, nodes, own };
+    // Its own nodes at rest under its root (no skeleton drives them).
+    if (own) pose.place(new Map());
+    this.#placeArt(show, built);
+    return built;
+  }
+
+  /**
+   * A placed art where it stands now: at the camera (turned with it when it inherits its
+   * rotation), or where it hangs (its target's origin, a held weapon's root) turned to face its
+   * facing reference's origin when it has one.
+   */
+  #placeArt(show: ArtShow, built: NonNullable<ArtShow['built']>): void {
+    const own = built.own;
+    if (!own) return;
+    const place = show.place;
+    if (place?.camera) {
+      const camera = this.#options.renderer.view?.camera;
+      if (!camera) return;
+      cameraWorld(camera.position, camera.forward, place.inheritRotation, own.world);
+      own.motion.version++;
+      return;
+    }
+    const first = show.body()?.placed.instances[0];
+    if (!first) return;
+    const held = own.anchor !== undefined ? first.pose : undefined;
+    const at =
+      held && own.anchor !== undefined
+        ? multiply(first.world, held.worlds.subarray(own.anchor * 16, own.anchor * 16 + 16))
+        : first.world;
+    const toward =
+      place?.facing === undefined
+        ? undefined
+        : this.#options.body(place.facing)?.placed.instances[0]?.world;
+    if (toward) facingWorld(at, [toward[12] ?? 0, toward[13] ?? 0, toward[14] ?? 0], own.world);
+    else own.world.set(at);
+    own.motion.version++;
   }
 
   #dropArt(key: string): void {
@@ -668,10 +900,12 @@ export class ActorEffects {
       if (built?.edge) renderer.scene.fadeScene(built.edge, edge);
       if (show.stopping !== undefined) built?.particles?.source.stop();
       const particlesDone = !built?.particles || built.particles.source.finished;
-      if (show.stopping !== undefined && fill <= 0 && edge <= 0 && particlesDone)
+      const addonsDone = !built || !body || this.#placeAddons(show, built, body);
+      if (show.stopping !== undefined && fill <= 0 && edge <= 0 && particlesDone && addonsDone)
         this.#dropShader(key);
       else if (show.stopping !== undefined && show.stopping > 10) this.#dropShader(key);
     }
+    this.#holeObjects();
     for (const [key, show] of [...this.#arts]) {
       show.age += seconds;
       if (show.stopping || (show.duration !== undefined && show.age >= show.duration)) {
@@ -697,8 +931,12 @@ export class ActorEffects {
           });
       }
       const built = show.built;
-      const follow = built?.placed.pose;
-      if (built && follow) followSkeleton(built.pose, built.nodes, follow);
+      if (built?.own) {
+        this.#placeArt(show, built);
+      } else {
+        const follow = built?.placed.pose;
+        if (built && follow) followSkeleton(built.pose, built.nodes, follow);
+      }
     }
     for (const detect of this.#detects.values()) {
       detect.wait -= seconds;
@@ -741,6 +979,18 @@ export class ActorEffects {
     }
   }
 
+  /**
+   * After the skeletons animated and the actors moved: the placed art (faced, at the camera, on
+   * a held weapon) and the addon models stand where their bodies are this frame, not the last.
+   */
+  afterAnimate(): void {
+    for (const show of this.#arts.values()) if (show.built?.own) this.#placeArt(show, show.built);
+    for (const show of this.#shaders.values()) {
+      const body = show.body();
+      if (show.built?.addons && body) this.#placeAddons(show, show.built, body);
+    }
+  }
+
   *scenes(): Iterable<GpuScene> {
     for (const show of this.#shaders.values()) {
       const built = show.built;
@@ -748,6 +998,7 @@ export class ActorEffects {
       if (built.fill) yield built.fill;
       if (built.edge) yield built.edge;
       if (built.particles?.scene) yield built.particles.scene;
+      if (built.addons?.scene) yield built.addons.scene;
     }
     for (const show of this.#arts.values()) if (show.built?.scene) yield show.built.scene;
   }
@@ -771,6 +1022,22 @@ function hungOn(placed: EffectShape): ((part: ModelPart) => Mat4 | undefined) | 
     const at = pose.worlds.subarray(node * 16, node * 16 + 16);
     return part.local ? multiply(at, part.local) : at;
   };
+}
+
+/** The skeleton's bones a body's skinned shapes are bound to, in the skeleton's order. */
+function skinBones(placed: EffectShape): number[] {
+  const pose = placed.pose;
+  if (!pose) return [];
+  const bones = new Set<number>();
+  for (const instance of placed.instances) {
+    for (const gpu of instance.model.parts) {
+      for (const name of gpu.part.skin?.names ?? []) {
+        const node = pose.skeleton.nodeByName.get(name.toLowerCase());
+        if (node !== undefined) bones.add(node);
+      }
+    }
+  }
+  return [...bones].sort((a, b) => a - b);
 }
 
 /** Skin shapes (Affect Skin Only): the FaceGen and skin-tinted ones. */
@@ -828,6 +1095,7 @@ function destroyBuilt(built: BuiltShader): void {
   built.fill?.destroy();
   built.edge?.destroy();
   built.particles?.scene?.destroy();
+  built.addons?.scene?.destroy();
   for (const model of built.models) model.destroy();
   for (const model of built.sources) model.release();
 }
