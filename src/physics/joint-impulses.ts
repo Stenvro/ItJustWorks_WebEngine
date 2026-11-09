@@ -1,16 +1,20 @@
-// The impulses a group of point joints (balls and sockets, a chain's links, hinges' pivots) take
-// in a step, solved together and exactly: what Havok's solver results tell a breakable
-// constraint (docs/physics.md, "Breakable"). Rapier does not expose its joints' impulses, and a
-// body's own change of momentum only tells the sum of all that holds it: the mace trap's mace
-// hangs by its pin and by its chain, and the chain's pull, which the pin holds against, cancelled
-// out of it (the pin seemed to carry the mace's weight alone and never broke).
+// The impulses a group of joints (balls and sockets, a chain's links, hinges) takes in a step:
+// what Havok's solver results tell a breakable constraint (docs/physics.md, "Breakable"). Rapier
+// does not expose its joints' impulses, and a body's own change of momentum only tells the sum of
+// all that holds it: the mace trap's mace hangs by its pin and by its chain, and the chain's
+// pull, which the pin holds against, cancelled out of it (the pin seemed to carry the mace's
+// weight alone and never broke).
 //
-// The solve: every joint's two pivot points must move as one after the step's impulses. With
-// the bodies' velocities before the step (gravity's speed over the step added to the simulated
-// ones), the joints' impulses λ satisfy K λ = −u, u the pivots' relative velocities and K the
-// effect of each joint's impulse on each joint's relative velocity through the bodies they
-// share. A direct solve, as Havok solves a constraint chain (hkpBallSocketChainData) as one.
-// TODO(M13): inferred; Havok's own solver iterates, with tau's position correction (not here).
+// The solve (groupImpulses) is Havok's: the step's iterations, in each one every constraint in
+// turn (Gauss-Seidel), a ball and socket's three linear rows and a hinge's two angular rows
+// together, a chain's links all at once (hkpBallSocketChainData is solved directly, as one). A
+// constraint's impulse in an iteration takes `damping` of the way from its pivots' relative
+// velocity to the one that closes `tau` of their error in the step, with its virtual mass scaled
+// by its strength (a malleable constraint's) and its constraint force mixing on the diagonal (a
+// chain's softness). The step's solver results are the impulses summed over its iterations.
+// The velocities solved are the bodies' before the step, gravity's speed of the step added.
+// TODO(M13): inferred from Havok's documented solver (hkpSolverInfo's tau and damping,
+// hkpMalleableConstraintData's strength as the virtual mass factor); contacts are not solved here.
 //
 // Platform-independent (plain numbers, no Rapier).
 
@@ -35,52 +39,69 @@ export interface PointJoint {
   readonly rb: Vec3;
 }
 
+/** A joint as Havok's solver takes it in a group (groupImpulses). */
+export interface GroupJoint extends PointJoint {
+  /** The share of the pivots' error closed in the step (Havok's tau). */
+  readonly tau: number;
+  /** The share of the way to that velocity an iteration's impulse takes (Havok's damping). */
+  readonly damping: number;
+  /** The pivots' error: pivot B − pivot A (world, Havok units); none: 0. */
+  readonly error?: Vec3;
+  /**
+   * World axes about which the bodies' relative turn is held (a hinge's: the two across its
+   * axle), each with the turn's error about it (radians).
+   */
+  readonly angular?: readonly (readonly [Vec3, number])[];
+  /** Constraint force mixing: added to the diagonal of its rows (a chain's softness). */
+  readonly softness?: number;
+  /** Its virtual mass factor (a malleable constraint's strength; 1: none). */
+  readonly strength?: number;
+  /** Joints with the same block are solved as one (a chain's links); none: on its own. */
+  readonly block?: number;
+}
+
+/** A joint's solver results over the step: its linear rows' impulses and its angular rows'. */
+export interface JointResult {
+  /** Havok units, kg·m/s (world). */
+  readonly linear: Vec3;
+  /** Havok units, kg·m²/s, one per `angular` axis. */
+  readonly angular: readonly number[];
+  /**
+   * What the iterations leave of its rows' velocities (Havok units a second; radians a second
+   * about its angular axes): its pivots' error grows by them over the step.
+   */
+  readonly left: { readonly linear: Vec3; readonly angular: readonly number[] };
+}
+
+/**
+ * What a breakable constraint weighs against its threshold: the root of the sum of the squares of
+ * its solver results (every row of the constraint it wraps, linear and angular).
+ */
+export function solverResultSize({ linear, angular }: JointResult): number {
+  let sum = linear[0] * linear[0] + linear[1] * linear[1] + linear[2] * linear[2];
+  for (const x of angular) sum += x * x;
+  return Math.sqrt(sum);
+}
+
 type M3 = [number, number, number, number, number, number, number, number, number];
 
 function cross(a: Vec3, b: Vec3): Vec3 {
   return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 }
 
-/** [r]× as a matrix (row-major): [r]× p = r × p. */
-function skew(r: Vec3): M3 {
-  return [0, -r[2], r[1], r[2], 0, -r[0], -r[1], r[0], 0];
+function dot(a: Vec3, b: Vec3): number {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
 function sym(i: ImpulseBody['invInertia']): M3 {
   return [i[0], i[1], i[2], i[1], i[3], i[4], i[2], i[4], i[5]];
 }
 
-function mul(a: M3, b: M3): M3 {
-  const out: M3 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-  for (let r = 0; r < 3; r++) {
-    for (let c = 0; c < 3; c++) {
-      out[r * 3 + c] =
-        (a[r * 3] ?? 0) * (b[c] ?? 0) +
-        (a[r * 3 + 1] ?? 0) * (b[3 + c] ?? 0) +
-        (a[r * 3 + 2] ?? 0) * (b[6 + c] ?? 0);
-    }
-  }
-  return out;
-}
-
-/**
- * The velocity change at `rj` on a body from a unit impulse at `rk` on it, as a matrix:
- * m⁻¹ E − [rj]× I⁻¹ [rk]×.
- */
-function response(body: ImpulseBody, rj: Vec3, rk: Vec3): M3 {
-  const out = mul(mul(skew(rj), sym(body.invInertia)), skew(rk));
-  for (let i = 0; i < 9; i++) out[i] = -(out[i] ?? 0);
-  out[0] += body.invMass;
-  out[4] += body.invMass;
-  out[8] += body.invMass;
-  return out;
-}
-
-/** A joint's two ends: the body, the sign of the joint's impulse on it, its pivot. */
-function ends(joint: PointJoint): readonly (readonly [number, number, Vec3])[] {
+function times(m: M3, v: Vec3): Vec3 {
   return [
-    [joint.a, -1, joint.ra],
-    [joint.b, 1, joint.rb],
+    m[0] * v[0] + m[1] * v[1] + m[2] * v[2],
+    m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
+    m[6] * v[0] + m[7] * v[1] + m[8] * v[2],
   ];
 }
 
@@ -88,71 +109,235 @@ function moves(body: ImpulseBody): boolean {
   return body.invMass > 0 || body.invInertia.some((x) => x !== 0);
 }
 
-/** A pivot's velocity on a body. */
-function pointVelocity(body: ImpulseBody, r: Vec3): Vec3 {
-  const t = cross(body.angular, r);
-  return [body.linear[0] + t[0], body.linear[1] + t[1], body.linear[2] + t[2]];
+/** A body's velocities while the solve runs. */
+interface Moving {
+  readonly invMass: number;
+  readonly invInertia: M3;
+  readonly v: [number, number, number];
+  readonly w: [number, number, number];
 }
 
 /**
- * The impulse each joint takes for its pivots to move as one (Havok units, kg·m/s), in the
- * joints' order. Joints between two bodies that nothing moves take none. A group with joints that
- * hold the same motion twice gets the least of the impulses that do it (a small regularization).
+ * One row of a joint (Havok's Jacobian): its velocity is lin · (vB + ωB × rb − vA − ωA × ra) for
+ * a linear row along `lin`, ang · (ωB − ωA) for an angular one about `ang`.
+ */
+interface Row {
+  readonly a: number;
+  readonly b: number;
+  /** The row's linear and angular parts on body A and on body B. */
+  readonly linA: Vec3;
+  readonly angA: Vec3;
+  readonly linB: Vec3;
+  readonly angB: Vec3;
+  /** The velocity it drives toward (−tau × its error over the step). */
+  readonly target: number;
+  readonly damping: number;
+  readonly strength: number;
+  readonly softness: number;
+}
+
+const AXES: readonly Vec3[] = [
+  [1, 0, 0],
+  [0, 1, 0],
+  [0, 0, 1],
+];
+const NONE: Vec3 = [0, 0, 0];
+
+/** A joint's rows: three linear, then one per angular axis. */
+function rowsOf(joint: GroupJoint, step: number): Row[] {
+  const common = {
+    a: joint.a,
+    b: joint.b,
+    damping: joint.damping,
+    strength: joint.strength ?? 1,
+    softness: joint.softness ?? 0,
+  };
+  const error = joint.error ?? NONE;
+  const rows: Row[] = AXES.map((e) => ({
+    ...common,
+    linA: [-e[0], -e[1], -e[2]],
+    angA: cross(e, joint.ra),
+    linB: e,
+    angB: cross(joint.rb, e),
+    target: (-joint.tau * dot(error, e)) / step,
+  }));
+  for (const [n, angle] of joint.angular ?? []) {
+    rows.push({
+      ...common,
+      linA: NONE,
+      angA: [-n[0], -n[1], -n[2]],
+      linB: NONE,
+      angB: n,
+      target: (-joint.tau * angle) / step,
+    });
+  }
+  return rows;
+}
+
+/** A row's velocity now. */
+function rowVelocity(row: Row, bodies: readonly Moving[]): number {
+  const a = bodies[row.a];
+  const b = bodies[row.b];
+  if (!a || !b) return 0;
+  return dot(row.linA, a.v) + dot(row.angA, a.w) + dot(row.linB, b.v) + dot(row.angB, b.w);
+}
+
+/** An impulse λ along a row, on its two bodies. */
+function applyRow(row: Row, lambda: number, bodies: readonly Moving[]): void {
+  for (const [index, lin, ang] of [
+    [row.a, row.linA, row.angA],
+    [row.b, row.linB, row.angB],
+  ] as const) {
+    const body = bodies[index];
+    if (!body) continue;
+    const dw = times(body.invInertia, ang);
+    for (let i = 0; i < 3; i++) {
+      body.v[i] = (body.v[i] ?? 0) + lambda * body.invMass * (lin[i] ?? 0);
+      body.w[i] = (body.w[i] ?? 0) + lambda * (dw[i] ?? 0);
+    }
+  }
+}
+
+/** The effect of a unit impulse along row `k` on the velocity of row `j`. */
+function coupling(j: Row, k: Row, bodies: readonly Moving[], still: readonly boolean[]): number {
+  let sum = 0;
+  for (const [index, lin, ang] of [
+    [j.a, j.linA, j.angA],
+    [j.b, j.linB, j.angB],
+  ] as const) {
+    const body = bodies[index];
+    if (!body || still[index]) continue;
+    for (const [other, olin, oang] of [
+      [k.a, k.linA, k.angA],
+      [k.b, k.linB, k.angB],
+    ] as const) {
+      if (other !== index) continue;
+      sum += body.invMass * dot(lin, olin) + dot(ang, times(body.invInertia, oang));
+    }
+  }
+  return sum;
+}
+
+/**
+ * Solves a block of rows as one: the impulses that take each row `damping` of the way to its
+ * target, its virtual mass × strength. Rows whose two bodies nothing moves take none; rows that
+ * hold the same motion twice share it (a small regularization). Returns the impulses (applied).
+ */
+function solveBlock(rows: readonly Row[], bodies: readonly Moving[], still: readonly boolean[]) {
+  const n = rows.length;
+  const k = new Float64Array(n * n);
+  const rhs = new Float64Array(n);
+  for (let r = 0; r < n; r++) {
+    const row = rows[r];
+    if (!row) continue;
+    for (let c = 0; c < n; c++) {
+      const other = rows[c];
+      if (other) k[r * n + c] = coupling(row, other, bodies, still);
+    }
+  }
+  let trace = 0;
+  for (let r = 0; r < n; r++) {
+    const row = rows[r];
+    const diagonal = k[r * n + r] ?? 0;
+    if (!row || !(diagonal > 0)) {
+      // Nothing moves it: no impulse.
+      for (let c = 0; c < n; c++) {
+        k[r * n + c] = 0;
+        k[c * n + r] = 0;
+      }
+      k[r * n + r] = 1;
+      rhs[r] = 0;
+      continue;
+    }
+    trace += diagonal;
+    k[r * n + r] = diagonal + row.softness;
+    rhs[r] = row.damping * row.strength * (row.target - rowVelocity(row, bodies));
+  }
+  // A little on the diagonal: rows that hold the same motion twice leave K singular.
+  const epsilon = (trace / Math.max(1, n)) * 1e-9 + 1e-12;
+  for (let i = 0; i < n; i++) k[i * n + i] = (k[i * n + i] ?? 0) + epsilon;
+  const lambda = solve(k, rhs, n);
+  rows.forEach((row, i) => {
+    applyRow(row, lambda[i] ?? 0, bodies);
+  });
+  return lambda;
+}
+
+/**
+ * Havok's solve of a group of joints over a step of `step` seconds in `iterations`: each joint's
+ * solver results (its impulses summed over the iterations), in the joints' order. The joints are
+ * solved in their order (a block where its first joint stands).
+ */
+export function groupImpulses(
+  bodies: readonly ImpulseBody[],
+  joints: readonly GroupJoint[],
+  solver: { readonly step: number; readonly iterations: number },
+): JointResult[] {
+  const moving: Moving[] = bodies.map((body) => ({
+    invMass: body.invMass,
+    invInertia: sym(body.invInertia),
+    v: [body.linear[0], body.linear[1], body.linear[2]],
+    w: [body.angular[0], body.angular[1], body.angular[2]],
+  }));
+  const still = bodies.map((body) => !moves(body));
+  const step = solver.step > 0 ? solver.step : 1;
+  const rows = joints.map((joint) => rowsOf(joint, step));
+  const sums = rows.map((list) => new Float64Array(list.length));
+  // The blocks in order: a chain's links together, the others each on its own.
+  const blocks: number[][] = [];
+  const byBlock = new Map<number, number[]>();
+  joints.forEach((joint, i) => {
+    if (joint.block === undefined) {
+      blocks.push([i]);
+      return;
+    }
+    const known = byBlock.get(joint.block);
+    if (known) {
+      known.push(i);
+      return;
+    }
+    const block = [i];
+    byBlock.set(joint.block, block);
+    blocks.push(block);
+  });
+  for (let iteration = 0; iteration < Math.max(1, solver.iterations); iteration++) {
+    for (const block of blocks) {
+      const blockRows = block.flatMap((i) => rows[i] ?? []);
+      const lambda = solveBlock(blockRows, moving, still);
+      let at = 0;
+      for (const i of block) {
+        const sum = sums[i];
+        if (!sum) continue;
+        for (let r = 0; r < sum.length; r++) sum[r] = (sum[r] ?? 0) + (lambda[at++] ?? 0);
+      }
+    }
+  }
+  return sums.map((sum, i) => {
+    const left = (rows[i] ?? []).map((row) => rowVelocity(row, moving));
+    return {
+      linear: [sum[0] ?? 0, sum[1] ?? 0, sum[2] ?? 0],
+      angular: [...sum.subarray(3)],
+      left: { linear: [left[0] ?? 0, left[1] ?? 0, left[2] ?? 0], angular: left.slice(3) },
+    };
+  });
+}
+
+/**
+ * The impulse each point joint takes for its pivots to move as one (Havok units, kg·m/s), in the
+ * joints' order, all solved together and exactly (one block, no position correction): what a
+ * solver converges to. Joints between two bodies that nothing moves take none. A group with
+ * joints that hold the same motion twice gets the least of the impulses that do it (a small
+ * regularization).
  */
 export function jointImpulses(
   bodies: readonly ImpulseBody[],
   joints: readonly PointJoint[],
 ): Vec3[] {
-  const n = joints.length * 3;
-  const k = new Float64Array(n * n);
-  const rhs = new Float64Array(n);
-  joints.forEach((j, row) => {
-    const a = bodies[j.a];
-    const b = bodies[j.b];
-    if (!a || !b) return;
-    const va = pointVelocity(a, j.ra);
-    const vb = pointVelocity(b, j.rb);
-    for (let i = 0; i < 3; i++) rhs[row * 3 + i] = -((vb[i] ?? 0) - (va[i] ?? 0));
-    joints.forEach((other, column) => {
-      // Each body the two joints share, by the signs of their ends on it (b +, a −).
-      for (const [index, sj, rj] of ends(j)) {
-        const body = bodies[index];
-        if (!body || !moves(body)) continue;
-        for (const [otherIndex, sk, rk] of ends(other)) {
-          if (otherIndex !== index) continue;
-          const m = response(body, rj, rk);
-          const sign = sj * sk;
-          for (let r = 0; r < 3; r++) {
-            for (let c = 0; c < 3; c++) {
-              const at = (row * 3 + r) * n + column * 3 + c;
-              k[at] = (k[at] ?? 0) + sign * (m[r * 3 + c] ?? 0);
-            }
-          }
-        }
-      }
-    });
-  });
-  // A joint between two bodies nothing moves takes nothing.
-  for (let joint = 0; joint < joints.length; joint++) {
-    let diagonal = 0;
-    for (let i = joint * 3; i < joint * 3 + 3; i++) diagonal += k[i * n + i] ?? 0;
-    if (diagonal > 0) continue;
-    for (let i = joint * 3; i < joint * 3 + 3; i++) {
-      for (let c = 0; c < n; c++) {
-        k[i * n + c] = 0;
-        k[c * n + i] = 0;
-      }
-      k[i * n + i] = 1;
-      rhs[i] = 0;
-    }
-  }
-  // A little on the diagonal: joints that hold the same motion twice leave K singular.
-  let trace = 0;
-  for (let i = 0; i < n; i++) trace += Math.abs(k[i * n + i] ?? 0);
-  const epsilon = (trace / Math.max(1, n)) * 1e-9 + 1e-12;
-  for (let i = 0; i < n; i++) k[i * n + i] = (k[i * n + i] ?? 0) + epsilon;
-  const x = solve(k, rhs, n);
-  return joints.map((_, i) => [x[i * 3] ?? 0, x[i * 3 + 1] ?? 0, x[i * 3 + 2] ?? 0]);
+  return groupImpulses(
+    bodies,
+    joints.map((joint) => ({ ...joint, tau: 0, damping: 1, block: 0 })),
+    { step: 1, iterations: 1 },
+  ).map(({ linear }) => linear);
 }
 
 /** Gaussian elimination with partial pivoting (k is n × n, row-major; both are overwritten). */

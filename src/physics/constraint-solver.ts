@@ -84,6 +84,12 @@ export interface SolverConstraint {
   readonly maxFriction: number;
   /** A ragdoll's cone (radians): its second twist axis within this of its first's. */
   readonly cone?: number;
+  /**
+   * A malleable constraint's strength (0..1): Havok scales the virtual mass of the constraint
+   * it wraps by it, so each of its rows takes that share of its impulse in an iteration.
+   * TODO(M13): inferred from hkpMalleableConstraintData; none in the vanilla data.
+   */
+  readonly strength?: number;
 }
 
 /**
@@ -331,12 +337,16 @@ export function solveJoints(
     const qa = bodyA.rotation();
     const qb = bodyB.rotation();
     const rows: Row[] = [];
+    // A malleable constraint's rows: their virtual mass × its strength.
+    const strength = Math.max(0, c.strength ?? 1);
     const row = (n: V | undefined, lo: number, hi: number, bias = 0, gain = 1): void => {
       if (!n) return;
       const ia = symTimes(a.invInertia, n);
       const ib = symTimes(b.invInertia, n);
       const k = dot(n, ia) + dot(n, ib);
-      if (k > 1e-12) rows.push({ a, b, n, ia, ib, mass: 1 / k, lo, hi, bias, gain, impulse: 0 });
+      if (k > 1e-12 && strength > 0) {
+        rows.push({ a, b, n, ia, ib, mass: strength / k, lo, hi, bias, gain, impulse: 0 });
+      }
     };
     const motor = joint.motor;
     if (motor && motor.maxForce > 0 && step > 0) {

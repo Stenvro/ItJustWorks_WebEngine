@@ -32,6 +32,7 @@ import { parseNif } from '../../../src/formats/nif/nif.ts';
 import {
   buildCollision,
   HAVOK_SCALE,
+  type CollisionBody,
   type CollisionData,
 } from '../../../src/physics/collision-data.ts';
 import { CollisionMatrix as Matrix, Layer } from '../../../src/physics/collision-layers.ts';
@@ -319,7 +320,10 @@ describe.skipIf(!hasGamedata())('a log set off by its tripwire (headless simulat
 // by a pin (bhkBreakableConstraint, a ball and socket of threshold 30). MaceTrap.fireTrap makes
 // its bodies simulated (SetMotionType 1), waits initialDelay (0.2 s) and pushes them down
 // (ApplyHavokImpulse 0, 0, −1 by 15, then by 50): the pin breaks and the mace swings down past its
-// base.
+// base. Havok's measure (hkpBreakableConstraintData, inferred from its documented solver): the
+// root of the sum of the squares of the wrapped constraint's solver results, the impulses its rows
+// took over the step's iterations (the world's four, tau 0.6, damping 1; the chain's links as one
+// block with the chain's own tau 1, damping 0.6 and constraint force mixing).
 const MACE_MODEL = 'meshes\\traps\\macetrap\\trapmace01.nif';
 
 describe.skipIf(!hasGamedata())('a hanging mace’s pin (data: TrapMace01)', () => {
@@ -334,15 +338,18 @@ describe.skipIf(!hasGamedata())('a hanging mace’s pin (data: TrapMace01)', () 
     }
   });
 
-  const hang = (): {
+  const hang = (
+    model: CollisionData = collision,
+  ): {
     physics: PhysicsWorld;
     placed: PlacedCollision;
     mace: () => [number, number, number];
     pinned: () => boolean;
+    load: () => number | undefined;
   } => {
     const physics = new PhysicsWorld(new Matrix([]), GRAVITY);
     const placed = physics.addObject(
-      collision,
+      model,
       new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1000, 1]),
       { reference: 1, kind: 'object' },
       false,
@@ -363,11 +370,67 @@ describe.skipIf(!hasGamedata())('a hanging mace’s pin (data: TrapMace01)', () 
         return [t.x * HAVOK_SCALE, t.y * HAVOK_SCALE, t.z * HAVOK_SCALE - 1000];
       },
       pinned: () => pin.joint !== undefined,
+      load: () => physics.breakableLoad(pin),
     };
   };
   const push = (physics: PhysicsWorld, placed: PlacedCollision, magnitude: number): void => {
     physics.impulse(placed, [0, 0, -1], magnitude, (layer) => gameplayImpulse(1, layer, undefined));
   };
+  /** The pin's solver results in the step of fireTrap's first push (15), the mace hung so. */
+  const firstPush = (model: CollisionData = collision): number | undefined => {
+    const { physics, placed, load } = hang(model);
+    for (let i = 0; i < 12; i++) physics.step(1 / 60);
+    push(physics, placed, 15);
+    physics.step(1 / 60);
+    const taken = load();
+    physics.free();
+    return taken;
+  };
+
+  it('weighs the pin by its solver results over the step’s four iterations, as Havok does', () => {
+    const { physics, load } = hang();
+    for (let i = 0; i < 180; i++) physics.step(1 / 60);
+    // At rest: its share of the mace's weight and the chain's pull (below its threshold, 30).
+    expect(load()).toBeGreaterThan(15);
+    expect(load()).toBeLessThan(20);
+    physics.free();
+    // fireTrap's first push (15) breaks it: the links' push (3.2 each) pulls the chain taut.
+    // Four iterations leave the pin less of it than a rigid solve of the group (68.9).
+    const pushed = firstPush() ?? 0;
+    expect(pushed).toBeGreaterThan(30);
+    expect(pushed).toBeLessThan(60);
+  });
+
+  it('solves the chain with its own damping (0.6): the links keep some of the push into the next step', () => {
+    const chain = collision.constraints?.find((constraint) => constraint.chain)?.chain;
+    expect(chain?.tau).toBe(1);
+    expect(chain?.damping).toBeCloseTo(0.6, 5);
+    const stiff: CollisionData = {
+      ...collision,
+      constraints: collision.constraints?.map((constraint) =>
+        constraint.chain
+          ? { ...constraint, chain: { ...constraint.chain, damping: 1 } }
+          : constraint,
+      ),
+    };
+    // A chain that took all of its links' speed error each iteration would pass the pin more.
+    expect((firstPush(stiff) ?? 0) - (firstPush() ?? 0)).toBeGreaterThan(5);
+  });
+
+  it('softens a malleable joint by its strength (its virtual mass factor)', () => {
+    // No vanilla model has one: the pin wrapped in a malleable constraint of strength 0.5.
+    const soft: CollisionData = {
+      ...collision,
+      constraints: collision.constraints?.map((constraint) =>
+        constraint.breakable
+          ? { ...constraint, data: { type: 'malleable', inner: constraint.data, strength: 0.5 } }
+          : constraint,
+      ),
+    };
+    const softened = firstPush(soft);
+    expect(softened).toBeDefined();
+    expect((firstPush() ?? 0) - (softened ?? 0)).toBeGreaterThan(5);
+  });
 
   it('holds the mace up beside its base under its weight and its chain’s', () => {
     const { physics, mace, pinned } = hang();
@@ -415,7 +478,10 @@ describe.skipIf(!hasGamedata())('a mace set off by its tripwire (headless simula
   let since = 0;
   let held: readonly number[] = [];
   let swung: readonly number[] = [];
+  let struckAt: readonly number[] = [];
   const staggered: [number, number][] = [];
+  const hitAt: (readonly number[] | undefined)[] = [];
+  const staggeredFrom: (readonly number[] | undefined)[] = [];
 
   const maceAt = (): readonly number[] => {
     for (const placed of sim.world.play?.placementsOf(HANGING_MACE) ?? []) {
@@ -442,13 +508,22 @@ describe.skipIf(!hasGamedata())('a mace set off by its tripwire (headless simula
     const stagger = world.stagger?.bind(world);
     vi.spyOn(world, 'stagger').mockImplementation((who, magnitude, caster, from) => {
       staggered.push([who, magnitude]);
+      if (who === actor) hitAt.push(from);
       stagger?.(who, magnitude, caster, from);
+    });
+    // Where the stagger the actor takes comes from (ActionStaggerStart's staggerDirection).
+    const combat = sim.world.stage.combat;
+    const staggerFrom = combat.stagger.bind(combat);
+    vi.spyOn(combat, 'stagger').mockImplementation((who, magnitude, from) => {
+      if (who === actor) staggeredFrom.push(from);
+      staggerFrom(who, magnitude, from);
     });
     const wire = await sim.position(MACE_TRIPWIRE);
     expect(wire).toBeDefined();
     if (wire) await sim.moveTo([wire[0], wire[1], wire[2]]);
     await sim.until(() => sim.events('trapHit').some((event) => event.target === actor), 4);
     swung = maceAt();
+    struckAt = (await sim.position(actor)) ?? [];
     await sim.step(0.5);
   }, 600_000);
   afterAll(async () => {
@@ -472,6 +547,113 @@ describe.skipIf(!hasGamedata())('a mace set off by its tripwire (headless simula
     expect(unhurt - health.current).toBeGreaterThan(10);
     // PhysicsTrapHit's staggerAmount on TrapMace01.
     expect(staggered).toContainEqual([actor, expect.closeTo(0.2, 5)]);
+  });
+
+  it('staggers the actor from where the mace hit it (ProcessTrapHit’s position)  [data: PhysicsTrapHit]', () => {
+    const hit = hitAt[0];
+    expect(hit).toHaveLength(3);
+    expect(staggeredFrom).toContainEqual(hit);
+    // The hit's position is the contact's point on the mace, not the actor's own centre (a
+    // stagger from there would come from no side).
+    const [x = 0, y = 0] = hit ?? [];
+    expect(Math.hypot(x - (struckAt[0] ?? 0), y - (struckAt[1] ?? 0))).toBeGreaterThan(5);
+  });
+});
+
+describe('a breakable hinge (Havok’s solver results)', () => {
+  // A 10 kg bar 4 long (Havok units) held out level from a bracket by a hinge at its end whose
+  // axle runs along it: the hinge's angular rows hold the bar's turn, its weight's torque on a
+  // lever of 2 (3.27 a step against the weight's 1.63), and its solver results count them.
+  const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  const part = (min: number[], max: number[]): CollisionBody['shapes'][number] => {
+    const points: number[] = [];
+    for (const x of [min[0] ?? 0, max[0] ?? 0]) {
+      for (const y of [min[1] ?? 0, max[1] ?? 0]) {
+        for (const z of [min[2] ?? 0, max[2] ?? 0]) points.push(x, y, z);
+      }
+    }
+    return {
+      type: 'convex',
+      layer: Layer.clutter,
+      material: 0,
+      points: Float32Array.from(points),
+      radius: 0,
+    };
+  };
+  const base: CollisionBody = {
+    node: 'Bracket',
+    transform: IDENTITY,
+    motion: 'fixed',
+    phantom: false,
+    layer: Layer.clutter,
+    mass: 0,
+    inertia: [0, 0, 0],
+    centerOfMass: [0, 0, 0],
+    friction: 0.5,
+    restitution: 0.4,
+    linearDamping: 0,
+    angularDamping: 0,
+    gravityFactor: 1,
+    maxLinearVelocity: 0,
+    maxAngularVelocity: 0,
+    quality: 0,
+    solverDeactivation: 1,
+    shapes: [part([-5, -5, -5], [0, 5, 5])],
+  };
+  const length = 4 * HAVOK_SCALE;
+  const bar: CollisionBody = {
+    ...base,
+    node: 'Bar',
+    motion: 'dynamic',
+    mass: 10,
+    inertia: [0.1, (10 * 16) / 12, (10 * 16) / 12],
+    centerOfMass: [length / 2, 0, 0],
+    shapes: [part([0, -5, -5], [length, 5, 5])],
+  };
+  const frame = {
+    pivot: [0, 0, 0] as [number, number, number],
+    axes: [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+    ] as [[number, number, number], [number, number, number], [number, number, number]],
+  };
+  const held = (threshold: number): { held: boolean; load: number | undefined } => {
+    const model: CollisionData = {
+      bodies: [base, bar],
+      constraints: [
+        {
+          bodyA: 0,
+          bodyB: 1,
+          data: { type: 'hinge', a: frame, b: frame },
+          breakable: { threshold, removeWhenBroken: false },
+        },
+      ],
+      skipped: [],
+    };
+    const physics = new PhysicsWorld(new Matrix([]), GRAVITY);
+    const placed = physics.addObject(model, IDENTITY, { reference: 1, kind: 'object' }, false);
+    for (const { body } of placed.bodies) physics.release(body);
+    const hinge = placed.joints[0];
+    if (!hinge) throw new Error('no hinge');
+    let load: number | undefined;
+    for (let i = 0; i < 20 && hinge.joint !== undefined; i++) {
+      physics.step(1 / 60);
+      load = physics.breakableLoad(hinge) ?? load;
+    }
+    const result = { held: hinge.joint !== undefined, load };
+    physics.free();
+    return result;
+  };
+
+  it('weighs the turn its angular rows hold with its pivot’s impulse', async () => {
+    await initPhysics();
+    const weight = (10 * GRAVITY) / 60;
+    const strong = held(5);
+    expect(strong.held).toBe(true);
+    expect(strong.load).toBeCloseTo(Math.hypot(1, 2) * weight, 0);
+    // Above the weight alone (1.63), below the weight and its turn (3.65): it breaks.
+    expect(held(2.5).held).toBe(false);
   });
 });
 

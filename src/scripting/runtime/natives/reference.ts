@@ -857,9 +857,10 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
   // trap's doings are (SetActorCause), and the push back away from the trap: its character
   // controller pushed by the pushback (the trap's own push, as a hit's knockback: observed in
   // the original; not knocked down). An actor staggers by afStagger as by a Stagger effect of
-  // that magnitude, weighed against its mass (the mace trap's 0.2; most traps pass 0).
-  // TODO(M13): the stagger is inferred from the argument's name; the hit's material impact
-  // (aeMaterial).
+  // that magnitude, weighed against its mass (the mace trap's 0.2; most traps pass 0), from the
+  // hit's position (afXPos, afYPos, afZPos: its staggerDirection as a blow's from there).
+  // TODO(M13): the stagger and its direction are inferred from the arguments' names; the hit's
+  // material impact (aeMaterial).
   n('objectreference.processtraphit', async (call) => {
     const reference = self(call);
     const trap = ref(call.args[0]);
