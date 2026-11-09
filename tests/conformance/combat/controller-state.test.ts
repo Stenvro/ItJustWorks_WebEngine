@@ -23,6 +23,7 @@ import {
   oddsWeighed,
   shouldFlee,
   UNWEIGHED_ODDS,
+  yieldOver,
   yields,
 } from '../../../src/ai/combat-ai.ts';
 import { CombatSearch } from '../../../src/ai/combat-search.ts';
@@ -138,9 +139,24 @@ describe('the controller (todo)', () => {
     expect(regenPerSecond(0, { ...base, inCombat: true, regenInCombat: true })).toBeCloseTo(out);
     expect(regenPerSecond(0, { ...base, inCombat: true, combatHealthMult: 1 })).toBeCloseTo(out);
   });
-  // Stays: the original's rule lives in the player-side routine that reads fCombatYieldTime and
-  // fCombatYieldRetryTime, not read to its end; the settings' test is above (yields).
-  it.todo('the actor’s yield rule (ours borrows the player’s settings)  [original]');
+  // The original reads fCombatYieldTime and fCombatYieldRetryTime in the player-side routine (the
+  // player's yield, tried once a combat: CommonLibSSE attemptedYieldInCurrentCombat); the actor's
+  // own rule is inferred after it (combat-ai.ts yields, yieldOver).
+  it('the actor’s yield rule: once a fight, over as the player holds off  [inferred]', () => {
+    const base = { fightsPlayer: true, playerEnemy: false, wouldFlee: true, settings };
+    const long = settings.yieldRetryTime;
+    expect(yields({ ...base, sinceLastYield: long, yieldedThisFight: false })).toBe(true);
+    // Not twice in one fight, however long ago.
+    expect(yields({ ...base, sinceLastYield: long * 2, yieldedThisFight: true })).toBe(false);
+    // Over once the player has held off as long as an accepted yield needs, since it yielded.
+    const hold = settings.acceptYieldTime;
+    expect(yieldOver({ since: hold, heldOff: hold, settings })).toBe(true);
+    expect(yieldOver({ since: hold, heldOff: hold - 0.5, settings })).toBe(false);
+    expect(yieldOver({ since: hold - 0.5, heldOff: 30, settings })).toBe(false);
+    // The player's weapon out all along: over at fCombatYieldTime at the latest.
+    expect(yieldOver({ since: settings.yieldTime, heldOff: 0, settings })).toBe(true);
+    expect(yieldOver({ since: settings.yieldTime - 0.5, heldOff: 0, settings })).toBe(false);
+  });
   it('combat groups: one per side, its members sharing their fight  [CommonLibSSE CombatGroup]', () => {
     const groups = new CombatGroups();
     const first = groups.join(1, []);

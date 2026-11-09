@@ -113,12 +113,12 @@ export interface CombatAiSettings {
    * after it last chose one (seconds).
    */
   readonly selectTargetSwitchUpdateTime: number;
-  /** fCombatYieldTime: a yielding actor stays out of the fight this long (seconds). */
+  /** fCombatYieldTime: a yielding actor stays out of the fight at most this long (seconds). */
   readonly yieldTime: number;
   /**
    * fCombatYieldRetryTime: after this long it may yield again. The engine reads it (and
    * fCombatYieldTime) where the player yields to those fighting them; an actor's own yield
-   * borrows them. TODO(M13): the rule of an actor's yield.
+   * (yields, yieldOver) keeps them as its outer bounds. TODO(M13): the rule of an actor's yield.
    */
   readonly yieldRetryTime: number;
   /** How long the player must hold off before an actor accepts their yield (seconds). */
@@ -132,6 +132,16 @@ export interface CombatAiSettings {
   readonly minEquipTimeShout: number;
   readonly minEquipTimeStaff: number;
   readonly minEquipTimeDefault: number;
+  /**
+   * The combat inventory's torch (combat-tactics.ts torchInFight): fCombatInventoryTorchEquipRange
+   * and fCombatInventoryMinEquipTimeTorch; the dark it is taken up in: fTorchLightLevelInterior
+   * (the light level inside), fTorchLightLevelMorning and Night (the sky's light outside).
+   */
+  readonly torchEquipRange: number;
+  readonly minEquipTimeTorch: number;
+  readonly torchLightLevelInterior: number;
+  readonly torchLightLevelMorning: number;
+  readonly torchLightLevelNight: number;
   /**
    * fCombatInventoryMaxRangeScoreMult, …MinRangeScoreMult: × the score of an option its target
    * is beyond the range of, or within the least range of.
@@ -322,6 +332,11 @@ const SETTINGS: readonly (readonly [keyof CombatAiSettings, string | undefined, 
   ['minEquipTimeShout', 'fCombatInventoryMinEquipTimeShout', 3],
   ['minEquipTimeStaff', 'fCombatInventoryMinEquipTimeStaff', 5],
   ['minEquipTimeDefault', 'fCombatInventoryMinEquipTimeDefault', 0],
+  ['torchEquipRange', 'fCombatInventoryTorchEquipRange', 256],
+  ['minEquipTimeTorch', 'fCombatInventoryMinEquipTimeTorch', 5],
+  ['torchLightLevelInterior', 'fTorchLightLevelInterior', 40],
+  ['torchLightLevelMorning', 'fTorchLightLevelMorning', 0.6],
+  ['torchLightLevelNight', 'fTorchLightLevelNight', 1.2],
   ['inventoryMaxRangeScoreMult', 'fCombatInventoryMaxRangeScoreMult', 0.1],
   ['inventoryMinRangeScoreMult', 'fCombatInventoryMinRangeScoreMult', 0.1],
   ['maximumProjectileRange', 'fCombatMaximumProjectileRange', 4096],
@@ -636,6 +651,24 @@ export function selectTarget(
   return latest?.reference;
 }
 
+/**
+ * The Fixed target selector (CombatTargetSelectorFixed: a target and no timer of its own, as a
+ * save keeps it): a combat controller holds its selectors in a list, the standard one first; a
+ * script's StartCombat puts a fixed one for its target on top. The top selector chooses: the
+ * fixed target is kept whatever the scores while it is one of the actor's candidates (its side
+ * knows of it and has not given it up); while it is not, the standard one chooses, and once the
+ * target is dead or gone the fixed selector goes (the shell's part). Returns the fixed target
+ * while it holds (undefined: the standard selector's turn). Inferred, TODO(M13): the original's selectors were seen as classes and in
+ * saves only, not followed to their use.
+ */
+export function fixedTarget(
+  candidates: readonly Pick<TargetCandidate, 'reference'>[],
+  fixed: number | undefined,
+): number | undefined {
+  if (fixed === undefined) return undefined;
+  return candidates.some((candidate) => candidate.reference === fixed) ? fixed : undefined;
+}
+
 /** Target selection's weights and its distance's reach (observed in the original). */
 const TARGET_SENSED_SCORE = 1000;
 const TARGET_HEARD_SCORE = 100;
@@ -894,23 +927,48 @@ export function mayBoostConfidence(
 // --- Yielding -----------------------------------------------------------------------------------
 
 /**
- * Whether an actor yields to the player (its Yield line; it stops fighting them for
- * fCombatYieldTime): it fights the player without being their enemy (it was attacked, or helped
- * one attacked), it would flee, and it has not yielded within fCombatYieldRetryTime. TODO(M13):
- * the engine's rule.
+ * Whether an actor yields to the player (its Yield line; it stops fighting them): it fights the
+ * player without being their enemy (it was attacked, or helped one attacked), it would flee, it
+ * has not yielded within fCombatYieldRetryTime, and not yet in this fight (`yieldedThisFight`).
+ * The once a fight is the actor's own rule, after the player's own yield, which the original
+ * lets the player try once a combat (CommonLibSSE PlayerCharacter
+ * attemptedYieldInCurrentCombat). Inferred, TODO(M13): the engine's rule for an actor.
  */
 export function yields(input: {
   readonly fightsPlayer: boolean;
   readonly playerEnemy: boolean;
   readonly wouldFlee: boolean;
   readonly sinceLastYield: number;
+  readonly yieldedThisFight?: boolean;
   readonly settings: CombatAiSettings;
 }): boolean {
   return (
     input.fightsPlayer &&
     !input.playerEnemy &&
     input.wouldFlee &&
+    input.yieldedThisFight !== true &&
     input.sinceLastYield >= input.settings.yieldRetryTime
+  );
+}
+
+/**
+ * Whether an actor's yield is over (it stands down from its fight with the player, who no
+ * longer counts as its enemy): as the player's own yield is accepted, once the player has held
+ * off (weapon away, no blow) for the hold-off an accepted yield needs since it yielded; else at
+ * the latest after fCombatYieldTime. Struck by the player meanwhile, it fights on (and does not
+ * yield again in this fight: `yields`). Inferred, TODO(M13): the engine's rule for an actor.
+ */
+export function yieldOver(input: {
+  /** Seconds since it yielded. */
+  readonly since: number;
+  /** Seconds the player has held off. */
+  readonly heldOff: number;
+  readonly settings: CombatAiSettings;
+}): boolean {
+  const accepted = input.settings.acceptYieldTime;
+  return (
+    (input.since >= accepted && input.heldOff >= accepted) ||
+    input.since >= input.settings.yieldTime
   );
 }
 

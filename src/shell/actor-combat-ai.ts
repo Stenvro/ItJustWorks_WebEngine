@@ -35,6 +35,7 @@ import {
   drawConfidenceModifier,
   mayBoostConfidence,
   maySwitchTarget,
+  fixedTarget,
   readCombatAiSettings,
   COMBAT_AI_DEFAULTS,
   Confidence,
@@ -42,6 +43,7 @@ import {
   shouldFlee,
   strengthRatio,
   turnsOnAttacker,
+  yieldOver,
   yields,
   type CombatAiSettings,
   type TargetCandidate,
@@ -145,6 +147,9 @@ import {
   offensiveMult,
   rangedAttackChance,
   specialAttackChance,
+  killMoveFirst,
+  darkForTorch,
+  torchInFight,
   threatens,
   type AdvanceRadii,
   type EquipKind,
@@ -224,6 +229,8 @@ export interface FighterGear {
   /** The spell its right and left hands hold (undefined: none). */
   readonly rightSpell?: number;
   readonly leftSpell?: number;
+  /** A torch in its left hand. */
+  readonly torch?: boolean;
   /** Its normal attack's ATKD strike angle (degrees) and recovery times (seconds). */
   readonly strikeAngle?: number;
   readonly recoveryTime?: number;
@@ -271,6 +278,8 @@ export interface CombatAiHost {
   act(reference: number, action: string, target?: number): Promise<string | undefined>;
   /** What flies at the actors now (arrows, spells, breath). */
   threats(): Iterable<Threat>;
+  /** ShouldAttackKill: whether an attacker's next strike would kill a target (undefined: unknown). */
+  attackKills?(attacker: number, target: number): Promise<boolean> | undefined;
 }
 
 /** One of the casts or potions an actor in combat uses for itself (combat-tactics chooseSupport). */
@@ -454,7 +463,12 @@ interface Mind {
   scaredFrom: Vec3 | undefined;
   scaredUntil: number;
   yieldedAt: number;
-  yieldUntil: number;
+  /** It yielded to the player in this fight (combat-ai.ts yields: once a fight). */
+  yieldedThisFight: boolean;
+  /** A script's target (StartCombat): the Fixed selector's (combat-ai.ts fixedTarget). */
+  fixedTarget: number | undefined;
+  /** The torch it took up in this fight, and when (torchInFight). */
+  torch: { readonly form: number; readonly at: number } | undefined;
   /** Aggro radius warnings: since when it warns each. */
   readonly warned: Map<number, number>;
   nextWarn: number;
@@ -570,6 +584,8 @@ type CombatStateValue = 0 | 1 | 2;
 
 /** An actor weighs its fight this often (seconds). TODO(M13): the engine's rates. */
 const DECIDE_SECONDS = 0.25;
+/** The light level a light of level 1 gives (light-level.ts). */
+const LIGHT_LEVEL_SCALE = 100;
 /** Its profile (AI values, style, what it carries) is read again this often. */
 const PROFILE_SECONDS = 3;
 /** Reactions between two actors are valued again this often. */
@@ -800,6 +816,7 @@ export class ActorCombatAi {
     if (actor === target || actor === PLAYER_REF) return;
     const mind = this.#mind(actor);
     mind.enemies.add(target);
+    mind.fixedTarget = target;
     mind.next = 0;
     if (mind.mode !== 'idle') this.#setTarget(mind, target);
     else if (this.#options.host.fighter(actor)) this.#enter(mind, target, false);
@@ -1092,6 +1109,9 @@ export class ActorCombatAi {
     invisible: (target) =>
       this.#options.session.scriptsReady?.magic.aiState(target).invisible ?? false,
     sees: (member, at) => this.#options.senses?.()?.sees(member, at) ?? false,
+    callStrategy: (leader, target) => {
+      this.#bark(leader, 'GroupStrategy', target);
+    },
   };
 
   #fightingPlayer(): boolean {
@@ -1162,7 +1182,9 @@ export class ActorCombatAi {
         scaredFrom: undefined,
         scaredUntil: 0,
         yieldedAt: -Infinity,
-        yieldUntil: 0,
+        yieldedThisFight: false,
+        fixedTarget: undefined,
+        torch: undefined,
         warned: new Map(),
         nextWarn: 0,
         leash: undefined,
@@ -1228,7 +1250,12 @@ export class ActorCombatAi {
       return;
     }
     if (mind.mode === 'yield') {
-      if (this.#clock < mind.yieldUntil) return;
+      const over = yieldOver({
+        since: this.#clock - mind.yieldedAt,
+        heldOff: this.#playerHeldOff(),
+        settings: this.#settings,
+      });
+      if (!over) return;
       mind.mode = 'fight';
     }
     const candidates = this.#candidates(mind, view, views, profile, magic, senses);
@@ -1270,10 +1297,19 @@ export class ActorCombatAi {
     // at once when its target is gone.
     const kept = candidates.some((candidate) => candidate.reference === mind.target);
     let target = mind.target;
-    if (!kept || this.#clock >= mind.nextSelect) {
+    // A script's target (StartCombat) is kept while it is there: the Fixed selector's. Dead or
+    // gone, the selector goes; not yet known to its side, the standard one chooses meanwhile.
+    if (mind.fixedTarget !== undefined && !this.#groupWorld.present(mind.fixedTarget)) {
+      mind.fixedTarget = undefined;
+    }
+    const fixed = fixedTarget(candidates, mind.fixedTarget);
+    if (!kept || fixed !== undefined || this.#clock >= mind.nextSelect) {
       mind.nextSelect = this.#clock + this.#settings.selectTargetUpdateTime;
-      target = selectTarget(candidates, mind.target);
-      const switches = !kept || maySwitchTarget(this.#clock - mind.switchedAt, this.#settings);
+      target = fixed ?? selectTarget(candidates, mind.target);
+      const switches =
+        !kept ||
+        fixed !== undefined ||
+        maySwitchTarget(this.#clock - mind.switchedAt, this.#settings);
       if (target !== undefined && target !== mind.target && switches) {
         mind.switchedAt = this.#clock;
         this.#setTarget(mind, target);
@@ -1349,6 +1385,7 @@ export class ActorCombatAi {
             playerEnemy,
             wouldFlee: true,
             sinceLastYield: this.#clock - mind.yieldedAt,
+            yieldedThisFight: mind.yieldedThisFight,
             settings: this.#settings,
           })
         ) {
@@ -1716,6 +1753,7 @@ export class ActorCombatAi {
     const reference = mind.reference;
     mind.mode = 'fight';
     mind.warned.clear();
+    mind.yieldedThisFight = false;
     mind.sheatheAt = undefined;
     mind.nextLine = this.#clock + firstTauntTime(this.#random, this.#settings);
     mind.nextEquip = 0;
@@ -1926,11 +1964,14 @@ export class ActorCombatAi {
     return this.#clock - Math.max(this.#playerBlow, this.#playerArmed);
   }
 
-  /** It yields to the player (Yield): out of the fight for fCombatYieldTime, weapon away. */
+  /**
+   * It yields to the player (Yield): out of the fight until its yield is over (combat-ai.ts
+   * yieldOver), weapon away; once a fight.
+   */
   #yield(mind: Mind): void {
     mind.mode = 'yield';
     mind.yieldedAt = this.#clock;
-    mind.yieldUntil = this.#clock + this.#settings.yieldTime;
+    mind.yieldedThisFight = true;
     mind.enemies.delete(PLAYER_REF);
     this.#releaseBlock(mind, this.#options.host.fighter(mind.reference));
     this.#options.movers.request(mind.reference, undefined);
@@ -1949,6 +1990,11 @@ export class ActorCombatAi {
     if (!silent && how === 'lost') this.#bark(reference, 'LostToNormal', target);
     mind.mode = 'idle';
     mind.target = undefined;
+    mind.fixedTarget = undefined;
+    // The torch it took up for the fight goes with it (inferred: TODO(M13)).
+    const torch = mind.torch;
+    mind.torch = undefined;
+    if (torch) void this.#options.session.scriptsReady?.equipment.unequip(reference, torch.form);
     mind.run = undefined;
     mind.runTravel = undefined;
     mind.aim = undefined;
@@ -2979,8 +3025,11 @@ export class ActorCombatAi {
       this.#settings,
     );
     if (gear.leftWeapon === true) mind.hand = hand === 'left' ? 'right' : 'left';
-    void this.#options.host
-      .attack(reference, action, { powerCooling, left: hand === 'left' })
+    const host = this.#options.host;
+    void this.#killMove(f)
+      .then((began) =>
+        began ? true : host.attack(reference, action, { powerCooling, left: hand === 'left' }),
+      )
       .then((began) => {
         if (began) {
           mind.lastAttack = asked;
@@ -2991,6 +3040,20 @@ export class ActorCombatAi {
         return this.#options.host.attack(reference, 'ActionRightPowerAttack');
       });
     return 'success';
+  }
+
+  /**
+   * Its kill move, if it goes for one (combat-tactics.ts killMoveFirst): its Special Attack's
+   * action, whose idle tree picks the kill move; whether its graph took one.
+   */
+  async #killMove(f: CombatFrame): Promise<boolean> {
+    const reference = f.mind.reference;
+    const target = f.target.reference;
+    const groupTargets = this.#groups.groupOf(reference)?.targets.size ?? 1;
+    if (groupTargets > 1 || !this.#inReach(f, false)) return false;
+    const kills = (await this.#options.host.attackKills?.(reference, target)) === true;
+    if (!killMoveFirst({ kills, groupTargets })) return false;
+    return this.#options.host.attack(reference, 'ActionRightPowerAttack');
   }
 
   /** How fast its target backs off from it (units per second; sampled while it blocks). */
@@ -4320,6 +4383,27 @@ export class ActorCombatAi {
     const gear = view.gear;
     const profile = mind.profile;
     if (!gear || !profile || gear.weapon === undefined || gear.leftSpell !== undefined) return;
+    // A torch it took up in this fight: kept its while, then while it is dark.
+    if (gear.torch === true) {
+      const torch = mind.torch;
+      if (!torch) return;
+      const keep = torchInFight(
+        {
+          dark: this.#dark(mind.reference),
+          carries: true,
+          leftHandFree: true,
+          distance,
+          holding: true,
+          heldFor: this.#clock - torch.at,
+        },
+        this.#settings,
+      );
+      if (!keep) {
+        mind.torch = undefined;
+        await runtime.equipment.unequip(mind.reference, torch.form);
+      }
+      return;
+    }
     // A race that can dual wield, its style allowing it: a second one-handed weapon first.
     const weapon = leftHandWeapon(
       {
@@ -4350,8 +4434,59 @@ export class ActorCombatAi {
       profile.style,
       this.#settings,
     );
-    if (spell === undefined) return;
-    await runtime.equipment.equipSpell(mind.reference, spell, CastingSource.left);
+    if (spell !== undefined) {
+      await runtime.equipment.equipSpell(mind.reference, spell, CastingSource.left);
+      return;
+    }
+    // Nothing else for the free hand: a torch it carries, in the dark (torchInFight).
+    const oneHanded = gear.weaponType >= 1 && gear.weaponType <= 4;
+    if (!oneHanded || gear.shield || gear.leftWeapon === true) return;
+    const dark = this.#dark(mind.reference);
+    if (!dark) return;
+    const torch = await this.#carriedTorch(mind.reference, runtime);
+    const takes = torchInFight(
+      {
+        dark,
+        carries: torch !== undefined,
+        leftHandFree: true,
+        distance,
+        holding: false,
+        heldFor: 0,
+      },
+      this.#settings,
+    );
+    if (!takes || torch === undefined) return;
+    mind.torch = { form: torch, at: this.#clock };
+    await runtime.equipment.equip(mind.reference, torch, { hand: 'left' });
+  }
+
+  /**
+   * Whether it is dark for a torch where an actor stands (combat-tactics.ts darkForTorch): the
+   * view's own light there, its point lights left out (a torch it holds does not light its
+   * own dark away): inside its ambient and directional light as a light level, outside the sky.
+   */
+  #dark(reference: number): boolean {
+    const senses = this.#options.senses?.();
+    const sky = senses?.skyLight(reference);
+    if (!senses || sky === undefined) return false;
+    return darkForTorch(
+      {
+        interior: senses.interior,
+        level: sky * LIGHT_LEVEL_SCALE,
+        sky,
+        hour: this.#options.session.gameHour,
+      },
+      this.#settings,
+    );
+  }
+
+  /** A torch it carries (a light that can be carried), if any. */
+  async #carriedTorch(actor: number, runtime: ScriptRuntime): Promise<number | undefined> {
+    for (const [form, count] of await runtime.inventory(actor)) {
+      if (count <= 0) continue;
+      if ((await runtime.equipment.item(form))?.type === 'LIGH') return form;
+    }
+    return undefined;
   }
 
   /** Arrows for a bow, bolts for a crossbow: the best it carries. */

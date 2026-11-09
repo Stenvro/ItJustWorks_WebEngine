@@ -79,6 +79,18 @@ export function lightLevel(
   return Math.max(0, light * LEVEL_SCALE);
 }
 
+/**
+ * The sky's light at a place (1 a full channel): the mean of its ambient light and its
+ * directional light (the sun or moon), its point lights left out (a torch's dark: combat-tactics.ts
+ * darkForTorch).
+ */
+export function skyLevel(probe: LightProbe): number {
+  let ambient = 0;
+  for (const color of probe.ambient) ambient += colorLevel(color);
+  if (probe.ambient.length > 0) ambient /= probe.ambient.length;
+  return ambient + colorLevel(probe.sunColor);
+}
+
 /** The brightest channel of the mean ambient light of a probe (0..1). */
 export function brightestAmbient(probe: LightProbe): number {
   if (probe.ambient.length === 0) return 0;

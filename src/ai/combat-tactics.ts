@@ -132,6 +132,87 @@ export function specialAttackChance(style: CombatStyle, settings: CombatAiSettin
 }
 
 /**
+ * Whether an NPC in melee goes for its kill move: its Special Attack (ActionRightPowerAttack,
+ * whose idle tree holds the kill moves under their own conditions: docs/gameplay.md, Killmoves)
+ * before its attack data, when its next strike would kill its target (ShouldAttackKill) and
+ * that target is the last its combat group fights, as the player's kill moves need the last
+ * hostile actor (IsLastHostileActor). Its idle tree may still give none (a target in furniture,
+ * no clip of its weapon and race): then it attacks as ever. Inferred, TODO(M13): which rule of
+ * the original starts an NPC's kill move was not found; UESP ("Kill moves") has them on the
+ * last enemy of a fight.
+ */
+export function killMoveFirst(input: {
+  /** Its next strike would kill its target (ShouldAttackKill). */
+  readonly kills: boolean;
+  /** How many targets its combat group fights (the target among them). */
+  readonly groupTargets: number;
+}): boolean {
+  return input.kills && input.groupTargets <= 1;
+}
+
+/** Before this hour it is morning for a torch (the sky brightening). */
+const TORCH_NOON = 12;
+
+/**
+ * Whether it is dark enough for a torch where an actor stands: inside, the light level on it
+ * (GetLightLevel's scale; the shell gives the cell's own light there, its point lights left out,
+ * so a torch held does not light its own dark away) below fTorchLightLevelInterior (40);
+ * outside, the sky's light on it
+ * (light-level.ts skyLevel: the sun's and the ambient light's, 1 a full channel) below
+ * fTorchLightLevelMorning (0.6) before noon, fTorchLightLevelNight (1.2) after: a torch comes out
+ * at dusk at a brighter sky than it is put away by at dawn. Inferred, TODO(M13): the settings
+ * are the original's, what they are compared with is not read (their values' scales say inside a
+ * light level, outside the sky's light).
+ */
+export function darkForTorch(
+  light: {
+    readonly interior: boolean;
+    /** Inside: the light level on it (GetLightLevel's scale). */
+    readonly level: number;
+    /** Outside: the sky's light on it. */
+    readonly sky: number;
+    /** The game hour (0..24). */
+    readonly hour: number;
+  },
+  settings: Pick<
+    CombatAiSettings,
+    'torchLightLevelInterior' | 'torchLightLevelMorning' | 'torchLightLevelNight'
+  >,
+): boolean {
+  if (light.interior) return light.level < settings.torchLightLevelInterior;
+  const limit =
+    light.hour < TORCH_NOON ? settings.torchLightLevelMorning : settings.torchLightLevelNight;
+  return light.sky < limit;
+}
+
+/**
+ * Whether a fighter holds a torch (the combat inventory's torch item: CombatInventoryItemTorch):
+ * it takes one it carries up in a free left hand (a one-handed weapon in the right, nothing in
+ * the left: no shield, spell or second weapon) in the dark, while its target is beyond
+ * fCombatInventoryTorchEquipRange (256: not face to face); one it holds it keeps at least
+ * fCombatInventoryMinEquipTimeTorch (5 s), then while it is dark. Inferred, TODO(M13): the
+ * torch item's check in the original was not followed; its two settings are its.
+ */
+export function torchInFight(
+  input: {
+    readonly dark: boolean;
+    readonly carries: boolean;
+    readonly leftHandFree: boolean;
+    /** Its distance to its target. */
+    readonly distance: number;
+    /** It holds one now, and for how long (seconds). */
+    readonly holding: boolean;
+    readonly heldFor: number;
+  },
+  settings: Pick<CombatAiSettings, 'torchEquipRange' | 'minEquipTimeTorch'>,
+): boolean {
+  if (input.holding) return input.heldFor < settings.minEquipTimeTorch || input.dark;
+  return (
+    input.dark && input.carries && input.leftHandFree && input.distance > settings.torchEquipRange
+  );
+}
+
+/**
  * Its chance to block (the defensive mult on fCombatBlockChanceMin .. Max), ×
  * fCombatBlockChanceWeaponMult blocking with a weapon rather than a shield.
  */

@@ -5,6 +5,7 @@
 // ranged kill camera's odds, observed in the original ([VATS] fVATSRanged*: docs/gameplay.md).
 
 import { describe, expect, it } from 'vitest';
+import { killMoveFirst } from '../../../src/ai/combat-tactics.ts';
 import { COMBAT_DEFAULTS } from '../../../src/gameplay/combat/combat-settings.ts';
 import {
   rangedKillCameraChance,
@@ -44,12 +45,17 @@ describe('kill moves', () => {
   // (docs/completeness/combat.md, round 4b): nothing to test. The paired idle's choice by weapon,
   // races and conditions: tests/killmoves.int.test.ts. The radial blur between shots:
   // kill-camera-shots.test.ts and src/gameplay/combat/kill-camera-transition.test.ts.
-  // Stays: an NPC's kill move comes by its Special Attack under ActionRightPowerAttack, by the idle
-  // tree's conditions, tested in real-fight.test.ts and melee-choice.test.ts; a rule of the
-  // engine's own above those conditions was not found.
-  it.todo(
-    'NPCs’ kill moves on the last enemy: which rule starts an NPC’s was not read  [UESP Kill moves]',
-  );
+  // An NPC's kill move comes by its Special Attack under ActionRightPowerAttack, by the idle
+  // tree's conditions (real-fight.test.ts, melee-choice.test.ts). The rule above those conditions
+  // is inferred (combat-tactics.ts killMoveFirst): it goes for one first when its strike would
+  // kill the last target its group fights.
+  it('NPCs’ kill moves on the last enemy: a killing strike on its group’s last target goes for one  [UESP Kill moves] (inferred)', () => {
+    expect(killMoveFirst({ kills: true, groupTargets: 1 })).toBe(true);
+    // Others still fighting its side: its attack data, as ever.
+    expect(killMoveFirst({ kills: true, groupTargets: 2 })).toBe(false);
+    // A strike that would not kill: no kill move.
+    expect(killMoveFirst({ kills: false, groupTargets: 1 })).toBe(false);
+  });
   it('the magic kill cam: a cast predicted to kill, on the ranged one’s odds  [original]', () => {
     expect(spellPredictedKill(49, 50)).toBe(false);
     expect(spellPredictedKill(50, 50)).toBe(true);

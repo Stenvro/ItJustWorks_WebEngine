@@ -4036,6 +4036,7 @@ export class ActorCombat implements CombatBridge {
         return fighter ? this.#act(fighter, action, target) : Promise.resolve(undefined);
       },
       threats: () => this.#threats(),
+      attackKills: (attacker, target) => this.attackKills(attacker, target),
     };
   }
 
@@ -4113,6 +4114,7 @@ export class ActorCombat implements CombatBridge {
         raceFlags: gear.raceFlags,
         rightSpell: gear.spellForms.right,
         leftSpell: gear.spellForms.left,
+        torch: gear.torch !== undefined,
         strikeAngle,
         recoveryTime,
         powerRecoveryTime,

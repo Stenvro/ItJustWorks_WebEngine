@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   COMBAT_AI_DEFAULTS,
+  fixedTarget,
   maySwitchTarget,
   targetEngaged,
   zonesAllow,
@@ -124,9 +125,17 @@ describe('target selection', () => {
     // Its own zone decides, not the other's.
     expect(zonesAllow(zone(1), zone(2, true))).toBe(false);
   });
-  // Stays: a script's target is hostile to it for the fight (startCombat) and weighed as any
-  // other; what makes the original's Fixed selector the actor's was not read.
-  it.todo(
-    'a scripted target (StartCombat) is kept: what makes the Fixed selector the actor’s was not read  [CK StartCombat]',
-  );
+  // The Fixed selector (CombatTargetSelectorFixed, a target in a save's controller) is StartCombat's
+  // (inferred: combat-ai.ts fixedTarget; the shell keeps it as the actor's fixedTarget).
+  it('a scripted target (StartCombat) is kept while it is there, then the standard selector  [CK StartCombat] (inferred)', () => {
+    const near = at(1, { distance: 64, sees: true });
+    const far = at(2, { distance: 2000 });
+    // Scores alone take the near one ...
+    expect(selectTarget([near, far], undefined)).toBe(1);
+    // ... the fixed one holds against them.
+    expect(fixedTarget([near, far], 2)).toBe(2);
+    // Gone (dead, given up by its side): the standard selector chooses again.
+    expect(fixedTarget([near], 2)).toBeUndefined();
+    expect(fixedTarget([near, far], undefined)).toBeUndefined();
+  });
 });

@@ -141,10 +141,15 @@ Round 5 (2026-11-04) read the mechanics left from the original (docs/ai.md "Use 
   left-hand attacks have their own attack data (the actor's melee options keep them apart);
   Fallback To Ranged backs to fCombatRangedDistance (fallbackPlace).
 
-Left of the conformance list, each with its reason at the test: GroupStrategy (nothing found that
-says it), the Fixed target selector (what makes it an actor's), an NPC's kill move above its idle
-conditions, an actor's own yield rule, torches in a fight, the Flee package's safety (the AI's, not
-combat's).
+Round 5 (2026-11-09) took the last of the conformance list's open cases, each with an inferred
+rule (TODO(M13)) where the original's was not found: GroupStrategy (the group's leader calls it as
+two or more of the group come to attack one target: combat-groups.ts #strategies), the Fixed
+target selector (StartCombat's target is kept while it is there: combat-ai.ts fixedTarget), an
+NPC's kill move (a killing strike on its group's last target goes for its Special Attack first:
+combat-tactics.ts killMoveFirst), an actor's own yield rule (once a fight, over as the player
+holds off: combat-ai.ts yields, yieldOver), torches in a fight (combat-tactics.ts darkForTorch,
+torchInFight; fCombatInventoryTorchEquipRange and MinEquipTimeTorch, fTorchLightLevel*), the
+Flee package's safety (procedure-runs.ts fleeSafe: fFleeIsSafeTimer beyond fFleeDoneDistance*).
 
 ## Combat style (CSTY)
 
