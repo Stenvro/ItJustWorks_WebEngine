@@ -3051,7 +3051,8 @@ export class ActorCombatAi {
     const target = f.target.reference;
     const groupTargets = this.#groups.groupOf(reference)?.targets.size ?? 1;
     if (groupTargets > 1 || !this.#inReach(f, false)) return false;
-    const kills = (await this.#options.host.attackKills?.(reference, target)) === true;
+    const asked = this.#options.host.attackKills?.(reference, target);
+    const kills = asked !== undefined && (await asked.catch(() => false));
     if (!killMoveFirst({ kills, groupTargets })) return false;
     return this.#options.host.attack(reference, 'ActionRightPowerAttack');
   }
