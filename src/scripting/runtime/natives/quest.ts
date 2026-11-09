@@ -9,7 +9,7 @@ import { ObjectHandle } from '../../values.ts';
 import { globalValue } from '../condition-values.ts';
 import type { ScriptRuntime } from '../runtime.ts';
 import type { ObjectiveState as ObjectiveEntry } from '../game-state.ts';
-import { objectiveState } from '../stat-events.ts';
+import { countObjectiveCompleted, objectiveState } from '../stat-events.ts';
 import { bool, formOf, int, num, object, str, type Register } from './args.ts';
 
 export function registerQuest(n: Register, runtime: ScriptRuntime): void {
@@ -88,7 +88,10 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
     }
     return entry;
   };
-  /** An objective's flags change; a new state is told (ObjectiveState: the stats hear it). */
+  /**
+   * An objective's flags change; a new state is told (ObjectiveState). TODO(M13): the state from
+   * the three flags is inferred (objectiveState in stat-events.ts).
+   */
   const told = (quest: number, index: number, change: (entry: ObjectiveEntry) => void) => {
     const entry = objective(quest, index);
     const old = objectiveState(entry);
@@ -116,11 +119,17 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
     });
     return null;
   });
-  // A shown objective's completion and failure are announced too; a completion is counted in
-  // the stats (ObjectiveState: Misc Objectives Completed, stat-events.ts).
+  // A shown objective's completion and failure are announced too; a shown objective's completion
+  // is counted in the stats (Misc Objectives Completed, stat-events.ts) as it is turned on, a
+  // failed one's too, and not when a completed objective is hidden and shown again (TODO(M13):
+  // inferred; the original's stats hear ObjectiveState, and which of its moves they count is not
+  // known).
   const finish = (quest: number, index: number, status: 'completed' | 'failed', on: boolean) => {
     const entry = objective(quest, index);
-    if (on && !entry[status] && entry.displayed) runtime.questUpdated(quest, status, index);
+    if (on && !entry[status] && entry.displayed) {
+      runtime.questUpdated(quest, status, index);
+      if (status === 'completed') runtime.detach(countObjectiveCompleted(runtime, quest));
+    }
     told(quest, index, (changed) => {
       changed[status] = on;
     });

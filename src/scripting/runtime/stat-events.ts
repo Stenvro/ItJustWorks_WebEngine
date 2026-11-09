@@ -47,8 +47,12 @@
 // discovered in Locations Discovered (LocationDiscovery); a lock the player picked in Locks
 // Picked (LocksPicked); each skill level the player gains in Skill Increases (SkillIncrease);
 // a soul the player caught in Souls Trapped (SoulsTrapped); a spell the player learned in
-// Spells Learned (SpellsLearned); a quest completed or reset (QuestStatus) and a shown objective
-// completed (ObjectiveState) as above. A level the player reaches (LevelIncrease) is told as the
+// Spells Learned (SpellsLearned); a quest completed or reset (QuestStatus) as above. A shown
+// objective's completion counts in Misc Objectives Completed where SetObjectiveCompleted turns it
+// on (the Quest natives), not from ObjectiveState: our states come from three flags
+// (objectiveState below), and a completed objective hidden and shown again moves into "completed
+// and displayed" with no new completion (TODO(M13): that the original's stats hear ObjectiveState
+// and which of its moves they count is inferred). A level the player reaches (LevelIncrease) is told as the
 // tracked stat Level Increases with the level as its value, and not kept: no save holds that
 // stat (the original's saves' misc stats have none), and AchievementsScript's level achievements
 // compare its value with the levels 5, 10, 25 and 50 (TODO(M13): the value being the new level
@@ -96,7 +100,14 @@ export const QuestObjectiveState = {
   failedDisplayed: 5,
 } as const;
 
-/** An objective's state from its flags (one failed is failed, completed or not). */
+/**
+ * An objective's state from its flags (one failed is failed, completed or not).
+ *
+ * TODO(M13): inferred. The original keeps one QUEST_OBJECTIVE_STATE value per objective, ours
+ * three flags (displayed, completed, failed). Which state the original is in after a completed
+ * objective is hidden, or after SetObjectiveCompleted on a failed one, is not known; this mapping
+ * lets failed win over completed, and hiding keeps the completion.
+ */
 export function objectiveState(entry: {
   readonly displayed: boolean;
   readonly completed: boolean;
@@ -367,10 +378,6 @@ export function relayStatEvents(runtime: ScriptRuntime): () => void {
     runtime.events.on('questStatus', (event) =>
       countQuestStatus(runtime, event.quest, event.completed ? 1 : -1),
     ),
-    runtime.events.on('objectiveState', async (event) => {
-      if (event.new === QuestObjectiveState.completedDisplayed && event.old !== event.new)
-        await countObjectiveCompleted(runtime, event.quest);
-    }),
     runtime.events.on('skillIncrease', () => {
       runtime.incrementStat('Skill Increases');
     }),

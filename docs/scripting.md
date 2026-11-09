@@ -738,7 +738,11 @@ enchanted or a potion mixed, the crafting engine), `itemHarvested` (a flora's pr
 Increases with the new level, which AchievementsScript's level achievements read, and not kept),
 `locationDiscovery` (a map marker discovered, `ScriptRuntime.locationDiscovered` from the
 compass), `locksPicked` (`lock-picking.ts`), `objectiveState` (an objective's state changing,
-QUEST_OBJECTIVE_STATE 0 to 5, the Quest natives), `questStatus` (a quest completed, or a
+QUEST_OBJECTIVE_STATE 0 to 5, the Quest natives; TODO(M13): the state is inferred from our three
+flags, failed winning over completed and a hidden objective keeping its completion. Misc
+Objectives Completed is not counted from it but where SetObjectiveCompleted turns a shown
+objective's completion on, a failed one's too, so a completed objective hidden and shown again
+is not counted twice), `questStatus` (a quest completed, or a
 completed quest reset, `quests.ts`), `skillIncrease` (each skill level the player gains),
 `soulsTrapped` (any trapper's catch; the player's counts) and `spellsLearned` (the player's new
 spell, not a power or a shout's word); `dragonSoulGained`, `shoutAttack` and `locationCleared` as

@@ -27,6 +27,7 @@ import {
 } from '../../../src/audio/music.ts';
 import type { SoundConditionContext } from '../../../src/audio/sound-conditions.ts';
 import type { PexInstruction } from '../../../src/formats/pex/pex.ts';
+import { flightKind, tellsBeamImpact } from '../../../src/gameplay/magic/projectile-flight.ts';
 import {
   EventHub,
   type GameEventKind,
@@ -42,6 +43,7 @@ import { MenuName, MenuStack } from '../../../src/ui/menu-stack.ts';
 import { Vfs } from '../../../src/vfs/vfs.ts';
 import { ActorValue } from '../../../src/world/actor-values.ts';
 import { readMapMarkers } from '../../../src/world/map-markers.ts';
+import { ProjectileFlag, ProjectileType } from '../../../src/world/projectile-data.ts';
 import { QuestFlag } from '../../../src/world/quest-records.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
 import {
@@ -364,6 +366,32 @@ describe('the event sources and the hub', () => {
       await vi.waitFor(() => {
         expect(stat(game, 'Misc Objectives Completed')).toBe(1);
       });
+      // Hidden and shown again, a completed objective moves 3 -> 2 -> 3 with no new completion:
+      // not counted again. One completed unseen and shown later was no shown completion either.
+      await callNative(game, misc, 'SetObjectiveDisplayed', [10, false]);
+      await callNative(game, misc, 'SetObjectiveDisplayed', [10, true]);
+      await callNative(game, misc, 'SetObjectiveCompleted', [20, true]);
+      await callNative(game, misc, 'SetObjectiveDisplayed', [20, true]);
+      // A shown objective failed, then completed: the completion counts, its state stays failed
+      // (TODO(M13): both inferred, our states come from three flags).
+      await callNative(game, misc, 'SetObjectiveDisplayed', [30, true]);
+      await callNative(game, misc, 'SetObjectiveFailed', [30, true]);
+      await callNative(game, misc, 'SetObjectiveCompleted', [30, true]);
+      expect(states.slice(2)).toEqual([
+        { quest: misc, objective: 10, old: 3, new: 2 },
+        { quest: misc, objective: 10, old: 2, new: 3 },
+        { quest: misc, objective: 20, old: 0, new: 2 },
+        { quest: misc, objective: 20, old: 2, new: 3 },
+        { quest: misc, objective: 30, old: 0, new: 1 },
+        { quest: misc, objective: 30, old: 1, new: 5 },
+      ]);
+      await vi.waitFor(() => {
+        expect(stat(game, 'Misc Objectives Completed')).toBe(2);
+      });
+      // Every count asked for has been made (the quest's record read): no more come.
+      await game.forms.quest(misc);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(stat(game, 'Misc Objectives Completed')).toBe(2);
       // A miscellaneous quest counts in neither; the completed main quest reset is taken back.
       game.quests.complete(misc);
       await game.quests.reset(main);
@@ -495,7 +523,17 @@ describe('the event sources and the hub', () => {
     'BeamProjectileImpactEvent: a beam projectile struck something  [original]',
     async () => {
       const sim = await playSim();
-      const wolf = await sim.place(await sim.formId('NPC_', 'EncWolf'), PLAYER_REF);
+      const wolfBase = await sim.formId('NPC_', 'EncWolf');
+      // A missile (Firebolt) that strikes a wolf is no beam: its hit is told, no beam impact.
+      const other = await sim.place(wolfBase, PLAYER_REF);
+      const firebolt = await sim.formId('SPEL', 'Firebolt');
+      const beamsBefore = sim.events('beamImpact').length;
+      const burnt = () =>
+        sim.events('hit').some((hit) => hit.target === other && hit.source === firebolt);
+      expect(await sim.cast(firebolt, other)).toBe(true);
+      expect(await sim.until(burnt, 10)).toBe(true);
+      expect(sim.events('beamImpact').slice(beamsBefore)).toEqual([]);
+      const wolf = await sim.place(wolfBase, PLAYER_REF);
       const bolt = LIGHTNING_BOLT;
       expect(await sim.cast(bolt, wolf)).toBe(true);
       await sim.step(0.5);
@@ -504,9 +542,19 @@ describe('the event sources and the hub', () => {
       expect(struck[0]?.caster).toBe(PLAYER_REF);
       const projectile = await sim.runtime.forms.record(struck[0]?.projectile ?? 0);
       expect(projectile?.type).toBe('PROJ');
-      // A missile (a firebolt) is no beam.
-      const missiles = sim.events('beamImpact').filter((impact) => impact.target !== wolf);
-      expect(missiles).toEqual([]);
+      // The bolt made no other beam impact.
+      const others = sim
+        .events('beamImpact')
+        .slice(beamsBefore)
+        .filter((impact) => impact.target !== wolf);
+      expect(others).toEqual([]);
+      // A hitscan projectile of another type reaches at once as a beam does, but is no beam:
+      // only the beam type tells it (no such projectile in the vanilla records, a mod's may).
+      expect(flightKind({ type: ProjectileType.missile, flags: ProjectileFlag.hitscan })).toBe(
+        'instant',
+      );
+      expect(tellsBeamImpact({ type: ProjectileType.missile })).toBe(false);
+      expect(tellsBeamImpact({ type: ProjectileType.beam })).toBe(true);
     },
   );
   it('BSMusicEvent: the music system’s track changes  [original]', async () => {
