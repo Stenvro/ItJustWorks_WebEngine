@@ -374,8 +374,15 @@ by the blow's damage before armour (UESP "Skyrim:Light Armor"), unblocked.
 of 0.69 (out again below 0.64), floating with its shoulders at the surface and rising or sinking
 to it at most at its swimming speed. An NPC swims only if its race has the Swims flag (RACE
 DATA); others walk the bottom. It swims at its race's swimming movement type (SWMV, else DOBJ
-DMSW, NPCSwimming), and its paths cross the navmesh's water triangles at no extra cost.
-TODO(M13): the packages' Allow Swimming flag.
+DMSW, NPCSwimming), and its paths cross the navmesh's water triangles at no extra cost while
+it may swim now (src/ai/race-ai-flags.ts swimsNow: its package's Allow Swimming; with no package,
+fighting or in an Alarm package by its race alone); else water costs it four times its length.
+Its graph swims as its controller does (ActionSwimStateChange: SwimStart, SwimStop). An NPC sent
+across Riverwood's river (no package, as a script's PathToReference) wades in, swims across and
+walks out on the far bank (`tests/sim-water.int.test.ts`). Where the navmesh's water triangles
+do not reach a bank, its way goes round: from the river's deepest point by the village (22592,
+-41024) the water triangles join only the east bank, and a way to the west bank there crosses
+Riverwood's bridge.
 
 ### Water damage
 
