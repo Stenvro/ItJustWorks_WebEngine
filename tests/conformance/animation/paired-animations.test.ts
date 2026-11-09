@@ -23,10 +23,14 @@ import { parseAnimationResponses } from '../../../src/formats/animdata/responses
 import type { AnimationBinding, HkxSkeleton } from '../../../src/formats/hkx/animation.ts';
 import type { BehaviorGenerator } from '../../../src/formats/hkx/behavior.ts';
 import {
+  markFrom,
   PAIRED_ROOT,
   PARTNER_PREFIX,
   pairedSide,
   pairedTrackBones,
+  placeByRoot,
+  placementTracks,
+  trackMark,
 } from '../../../src/animation/paired-clips.ts';
 import { hasGamedata, openSim, PLAYER_REF, SIM_STEP, type Sim } from '../../helpers/sim.ts';
 
@@ -235,6 +239,101 @@ describe('the events of a paired clip go to each side by their prefix (inferred 
   });
 });
 
+/**
+ * A clip of the one-bone skeleton whose root moves as the mount's rider's does at its end
+ * (Paired_Mount.hkx's NPC Root: (−4.2, 65.15, 130.42), turned 90° to the left).
+ */
+const HALF = Math.SQRT1_2;
+const MOUNTING: AnimationBinding = {
+  ...SECOND,
+  animation: {
+    ...SECOND.animation,
+    sample: (_time, out) => {
+      out.set([-4.2, 65.15, 130.42, 0, 0, HALF, HALF, 1, 1, 1]);
+    },
+  },
+};
+
+/** A graph playing one synchronized clip of MOUNTING, with or without bApplyMotionFromRoot. */
+function rootSide(applyMotionFromRoot: boolean): BehaviorRuntime {
+  const root: BehaviorGenerator = {
+    kind: 'synchronized-clip',
+    name: 'Synced',
+    syncPrefix: undefined,
+    ignoreMarkPlacement: false,
+    getToMarkTime: 0,
+    markErrorThreshold: 1,
+    leadCharacter: false,
+    reorientSupport: true,
+    applyMotionFromRoot,
+    generator: { kind: 'clip', name: 'Mount', animation: 'mount', mode: 0, playbackSpeed: 1 },
+  };
+  return new BehaviorRuntime({
+    root: { name: 'rider', events: [], variables: [], root },
+    host: { clip: () => MOUNTING, behavior: () => undefined },
+    skeleton: SKELETON,
+  });
+}
+
+describe('bApplyMotionFromRoot: the actor moves by its root bone (observed in the original)', () => {
+  it('the clip leaves the root bone at the origin and gives its pose to move the actor', () => {
+    const rider = rootSide(true);
+    rider.update(0.5);
+    expect([...rider.pose.subarray(0, 7)]).toEqual([0, 0, 0, 0, 0, 0, 1]);
+    const motion = rider.motionFromRoot();
+    expect(motion?.translation.map((v) => Math.round(v * 100) / 100)).toEqual([
+      -4.2, 65.15, 130.42,
+    ]);
+    expect(motion?.rotation[2]).toBeCloseTo(HALF, 5);
+    expect(rider.synchronizedClip()?.applyMotionFromRoot).toBe(true);
+    // Without the flag the bone keeps the clip's pose and nothing moves the actor.
+    const other = rootSide(false);
+    other.update(0.5);
+    expect(other.pose[1]).toBeCloseTo(65.15, 2);
+    expect(other.motionFromRoot()).toBeUndefined();
+  });
+
+  it('a rider mounted by Paired_Mount ends on the saddle: its mark composed with its root', () => {
+    // The horse leads; the rider's placement track "NPC" stands 63.48 units to the horse's
+    // left, turned 90° to the right (to face it), the horse's "2_" at the root.
+    const pair: AnimationBinding = {
+      ...SECOND,
+      animation: {
+        ...SECOND.animation,
+        trackCount: 3,
+        trackNames: [PAIRED_ROOT, 'NPC', '2_'],
+        sample: (_time, out) => {
+          out.set([0, 0, 0, 0, 0, 0, 1, 1, 1, 1], 0);
+          out.set([-63.48, 0, 0, 0, 0, -HALF, HALF, 1, 1, 1], 10);
+          out.set([0, 0, 0, 0, 0, 0, 1, 1, 1, 1], 20);
+        },
+      },
+    };
+    const tracks = placementTracks(undefined);
+    expect(tracks).toEqual({ own: 'NPC', partner: '2_' });
+    const offset = trackMark(pair, tracks.partner, tracks.own, false);
+    if (!offset) throw new Error('no mark');
+    // A horse at (1000, 2000, 50) facing east (heading 90°, clockwise from north).
+    const horse = { position: [1000, 2000, 50] as const, heading: Math.PI / 2 };
+    const mark = markFrom(horse, offset);
+    // 63.48 to the horse's left (its north), facing it (south).
+    expect(mark.position.map((v) => Math.round(v * 100) / 100)).toEqual([1000, 2063.48, 50]);
+    expect(mark.heading).toBeCloseTo(Math.PI, 5);
+    const rider = rootSide(true);
+    rider.update(1);
+    const motion = rider.motionFromRoot();
+    if (!motion) throw new Error('no motion');
+    const seated = placeByRoot(mark, motion);
+    // Paired_Dismount.hkx's "NPC" track holds the seat: (1.67, 4.42, 130.44) from the horse.
+    expect(seated.position[0]).toBeCloseTo(1000 + 4.2, 1);
+    expect(seated.position[1]).toBeCloseTo(2000 - 1.67, 1);
+    expect(seated.position[2]).toBeCloseTo(50 + 130.42, 1);
+    expect(seated.heading).toBeCloseTo(Math.PI / 2, 5);
+    // At twice the scale the root's way is twice as long.
+    expect(placeByRoot(mark, motion, 2).position[2]).toBeCloseTo(50 + 2 * 130.42, 1);
+  });
+});
+
 // The player and Hulda (the Bannered Mare's innkeeper) paired as the engine pairs two actors
 // (a paired idle: ActorCombat.pairIdle), their graphs' events handed to the engine's handlers.
 const BANNERED_MARE = 0x1605e;
@@ -341,6 +440,40 @@ describe.skipIf(!hasGamedata())('a pair’s end (headless simulation)', () => {
     expect(played).toBeGreaterThan(3.3);
     expect(await sim.runtime.actors.isDead(PLAYER_REF)).toBe(false);
     expect(sim.deaths().some((death) => death.actor === PLAYER_REF)).toBe(false);
+  });
+});
+
+describe.skipIf(!hasGamedata())('a rider’s mount clip (headless simulation)', () => {
+  let sim: Sim;
+  beforeAll(async () => {
+    sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
+    await sim.step(1);
+  }, 600_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it('a rider mounting moves by its clip’s root bone from its mark beside the horse (bApplyMotionFromRoot)  [original]', async () => {
+    const horse = await sim.place(await sim.formId('NPC_', 'EncHorseSaddledBrown'), PLAYER_REF);
+    await sim.step(0.5);
+    const mounts = sim.world.stage.mounts;
+    const across = async (): Promise<number> => {
+      const rider = await sim.position(PLAYER_REF);
+      const at = sim.actor(horse)?.position;
+      return rider && at ? Math.hypot(rider[0] - at[0], rider[1] - at[1]) : 0;
+    };
+    const mounted = mounts.mountPlayer(horse);
+    // Paired_Mount's rider begins 63.5 units to the horse's left and rises to its seat, 4.7
+    // units across from the horse's root: it never stood at the horse's root through the clip.
+    let farthest = 0;
+    // Its use of the horse: about to mount 2, riding 3.
+    for (let t = 0; t < 3 && mounts.interaction(PLAYER_REF)?.state === 2; t += SIM_STEP) {
+      await sim.step(SIM_STEP);
+      farthest = Math.max(farthest, await across());
+    }
+    expect(await mounted).toBe(true);
+    expect(mounts.interaction(PLAYER_REF)?.state).toBe(3);
+    expect(farthest).toBeGreaterThan(40);
   });
 });
 

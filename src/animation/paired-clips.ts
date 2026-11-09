@@ -160,12 +160,27 @@ export function partnerMark(
   binding: AnimationBinding,
   prefix = PARTNER_PREFIX,
 ): PartnerMark | undefined {
+  return trackMark(binding, FIRST_EVENT_PREFIX, prefix, false);
+}
+
+/**
+ * Where one placement track of a paired clip is from another as the clip begins, in the
+ * other's frame: `to` from `from` ("2_" from "NPC": partnerMark). Undefined where the clip
+ * names no `to` track (a missing `from` is the pair's root), or with `both` no `from` either.
+ */
+export function trackMark(
+  binding: AnimationBinding,
+  from: string,
+  to: string,
+  both = true,
+): PartnerMark | undefined {
   const names = binding.animation.trackNames;
   if (!names) return undefined;
   const lower = names.map((name) => name.toLowerCase());
-  const partner = lower.indexOf(prefix.toLowerCase());
+  const partner = lower.indexOf(to.toLowerCase());
   if (partner < 0) return undefined;
-  const lead = lower.indexOf('npc');
+  const lead = lower.indexOf(from.toLowerCase());
+  if (both && lead < 0) return undefined;
   const out = new Float32Array(binding.animation.trackCount * TRANSFORM_FLOATS);
   // Unwritten (unusable) tracks read as the identity.
   for (let track = 0; track < binding.animation.trackCount; track++) {
@@ -179,17 +194,77 @@ export function partnerMark(
     const qw = out[o + 6] ?? 1;
     return { x: out[o] ?? 0, y: out[o + 1] ?? 0, z: out[o + 2] ?? 0, yaw: 2 * Math.atan2(qz, qw) };
   };
-  const from = place(lead);
-  const to = place(partner);
+  const a = place(lead);
+  const b = place(partner);
   // Into the lead's frame: its placement's turn undone.
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const cos = Math.cos(-from.yaw);
-  const sin = Math.sin(-from.yaw);
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const cos = Math.cos(-a.yaw);
+  const sin = Math.sin(-a.yaw);
   return {
-    offset: [dx * cos - dy * sin, dx * sin + dy * cos, to.z - from.z],
-    yaw: to.yaw - from.yaw,
+    offset: [dx * cos - dy * sin, dx * sin + dy * cos, b.z - a.z],
+    yaw: b.yaw - a.yaw,
   };
+}
+
+/**
+ * A side's own placement track in a paired clip, and its partner's, by the SyncAnimPrefix of
+ * the synchronized clip it plays: the second actor's "2_" (the prefix alone), the first's "NPC"
+ * (a rider's on a horse or dragon, whose side names none).
+ */
+export function placementTracks(syncPrefix: string | undefined): {
+  readonly own: string;
+  readonly partner: string;
+} {
+  const own = ownEventPrefix(syncPrefix);
+  return { own, partner: partnerEventPrefix(own) };
+}
+
+/** An actor's placement: where it stands, and its heading (radians, clockwise from north). */
+export interface PairPlacement {
+  readonly position: readonly [number, number, number];
+  readonly heading: number;
+}
+
+/**
+ * A side's mark in the world: its partner's placement composed with where the clip puts this
+ * side's placement track from the partner's (trackMark) as it begins (observed in the original:
+ * each mark is set once, from the lead's world placement and the two placement tracks). A
+ * rider's mount mark is the horse's place, 63.5 units to its left, turned to it.
+ */
+export function markFrom(partner: PairPlacement, mark: PartnerMark): PairPlacement {
+  const [x, y, z] = mark.offset;
+  const cos = Math.cos(partner.heading);
+  const sin = Math.sin(partner.heading);
+  const [px, py, pz] = partner.position;
+  // The yaw is counter-clockwise, the heading clockwise.
+  return {
+    position: [px + x * cos + y * sin, py - x * sin + y * cos, pz + z],
+    heading: partner.heading - mark.yaw,
+  };
+}
+
+/**
+ * bApplyMotionFromRoot (observed in the original): the actor's placement is its mark's
+ * composed with its root bone's local pose (BehaviorRuntime.motionFromRoot: its translation in
+ * the mark's frame, at the actor's scale, and its turn about z), the bone itself left at the
+ * origin. Drawn there, the actor shows as its root bone showed it from the mark; its own place
+ * follows the clip (a rider dismounted stands where its clip set it down).
+ */
+export function placeByRoot(
+  mark: PairPlacement,
+  root: {
+    readonly translation: readonly [number, number, number];
+    readonly rotation: readonly [number, number, number, number];
+  },
+  scale = 1,
+): PairPlacement {
+  const [tx, ty, tz] = root.translation;
+  const [, , qz, qw] = root.rotation;
+  return markFrom(mark, {
+    offset: [tx * scale, ty * scale, tz * scale],
+    yaw: 2 * Math.atan2(qz, qw),
+  });
 }
 
 /**

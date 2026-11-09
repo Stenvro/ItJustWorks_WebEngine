@@ -2,8 +2,8 @@
 // src/ai/mounts.ts). The player mounts a horse by activating it ("Ride", sRide; another's horse
 // is stolen: "Steal", sStealHorse asks first, then the crime), an actor whose procedure lets it
 // ride ("Ride Horse If Possible") mounts its horse (its ACHR's XHOR) before it sets out. Mounting and dismounting are paired
-// animations: rider and horse stand at the horse's root while they play; riding, the rider's
-// root is on the horse's SaddleBone. A ridden horse's own AI waits: the player's controls drive
+// animations: the rider's clip moves the rider by its root bone from its mark beside the horse
+// (bApplyMotionFromRoot: #byRoot); riding, the rider's root is on the horse's SaddleBone. A ridden horse's own AI waits: the player's controls drive
 // it (src/ai/mounts.ts riddenRequest), an actor's AI sends it where it goes. While riding, the
 // rider's graphs are driven by the horse's movement (its HorseRider_State blends by Speed).
 //
@@ -21,6 +21,13 @@
 import { aiSettingsOf } from '../ai/ai-settings.ts';
 import { angleBetween, Locomotion, type LocomotionGraph } from '../ai/locomotion.ts';
 import type { GraphEvent } from '../animation/graph-events.ts';
+import {
+  markFrom,
+  placeByRoot,
+  placementTracks,
+  trackMark,
+  type PairPlacement,
+} from '../animation/paired-clips.ts';
 import type { BehaviorRuntime } from '../animation/behavior-runtime.ts';
 import type { ActorGraphSource } from './actor-graph-events.ts';
 import {
@@ -127,6 +134,13 @@ interface Ride {
   feet: Vec3 | undefined;
   /** Activate was held at the last frame (the player gets off on a press). */
   activating: boolean;
+  /**
+   * The rider's mark in its mount or dismount clip (set once as the clip plays, from the
+   * horse's placement: paired-clips.ts markFrom), and where its root bone put it from there
+   * last (bApplyMotionFromRoot: placeByRoot); cleared as the phase changes.
+   */
+  mark: PairPlacement | undefined;
+  byRoot: PairPlacement | undefined;
 }
 
 /** How long a loaded save's rider waits for its horse to be placed (its cell's actors load). */
@@ -522,6 +536,8 @@ export class ActorMounts {
       locomotion: new Locomotion(),
       feet: undefined,
       activating: true,
+      mark: undefined,
+      byRoot: undefined,
     };
     this.#rides.set(rider, ride);
     this.#send(rider, instant ? events.instant : events.mount);
@@ -567,6 +583,8 @@ export class ActorMounts {
     this.#options.get(ride.horse)?.placed.behavior?.sendEvent(PAIR_END);
     ride.phase = 'riding';
     ride.elapsed = 0;
+    ride.mark = undefined;
+    ride.byRoot = undefined;
     this.#takeOff(ride);
     const done = ride.done;
     ride.done = undefined;
@@ -625,6 +643,8 @@ export class ActorMounts {
     if (ride.kind === 'dragon') this.#options.flight?.()?.request(ride.horse, undefined);
     ride.phase = 'dismounting';
     ride.elapsed = 0;
+    ride.mark = undefined;
+    ride.byRoot = undefined;
     this.#send(actor, event);
     horse?.placed.behavior?.sendEvent(partnerEvent(event));
     return new Promise((resolve) => {
@@ -641,14 +661,23 @@ export class ActorMounts {
     const horse = get(ride.horse);
     horse?.placed.behavior?.sendEvent(PAIR_END);
     this.#rides.delete(ride.rider);
-    const at = horse
-      ? dismountPlace({ position: horse.position, heading: horse.heading }, (place) => {
-          const over: Vec3 = [place[0], place[1], place[2] + SET_DOWN_RISE];
-          return ride.rider === PLAYER_REF
-            ? this.#options.player?.()?.play.player.character.goodPosition(over) !== false
-            : this.#options.movers.goodPosition(ride.rider, over);
-        })
-      : undefined;
+    const good = (place: readonly number[]): boolean => {
+      const over: Vec3 = [place[0] ?? 0, place[1] ?? 0, (place[2] ?? 0) + SET_DOWN_RISE];
+      return ride.rider === PLAYER_REF
+        ? this.#options.player?.()?.play.player.character.goodPosition(over) !== false
+        : this.#options.movers.goodPosition(ride.rider, over);
+    };
+    // The dismount clip moved the rider by its root bone (bApplyMotionFromRoot): it stands
+    // where the clip set it down. A rider without one (its clip ended early, a timeout), or
+    // set down where there is no room, takes the dismount's place beside the horse.
+    // TODO(M13): that the original checks the clip's spot for room is inferred.
+    const byRoot = ride.byRoot;
+    const at: Placed | undefined =
+      byRoot && good(byRoot.position)
+        ? { position: [...byRoot.position], heading: byRoot.heading }
+        : horse
+          ? dismountPlace({ position: horse.position, heading: horse.heading }, good)
+          : undefined;
     if (ride.rider === PLAYER_REF) {
       if (at) this.#options.player?.()?.play.player.teleport([...at.position]);
       this.#standPlayer();
@@ -743,10 +772,22 @@ export class ActorMounts {
     instance.motion.version++;
   }
 
-  /** Where a rider's root is now: at the horse's root in a paired animation, else its saddle. */
+  /**
+   * Where a rider's root is now: riding, on its saddle; in its mount or dismount clip, where
+   * the clip's root bone puts it from its mark (bApplyMotionFromRoot: #byRoot). Before that clip
+   * plays, an NPC mounting stands where it is, the player at the horse's root, a rider getting
+   * off on its saddle.
+   */
   #riderPlace(ride: Ride, horse: StagedActor): Placed {
     const at: Placed = { position: horse.position, heading: horse.drawnHeading ?? horse.heading };
-    if (ride.phase !== 'riding') return at;
+    if (ride.phase !== 'riding') {
+      const byRoot = this.#byRoot(ride, at);
+      if (byRoot) return { position: [...byRoot.position], heading: byRoot.heading };
+      if (ride.phase === 'mounting') {
+        const staged = ride.rider === PLAYER_REF ? undefined : this.#options.get(ride.rider);
+        return staged ? { position: staged.position, heading: staged.heading } : at;
+      }
+    }
     const node = horse.placed.pose.world(KIND_EVENTS[ride.kind].saddle);
     const world = horse.placed.instances[0]?.world;
     const saddle =
@@ -754,6 +795,30 @@ export class ActorMounts {
         ? transformPoint(world, [node[12] ?? 0, node[13] ?? 0, node[14] ?? 0])
         : undefined;
     return saddlePlace(at, saddle);
+  }
+
+  /**
+   * bApplyMotionFromRoot (observed in the original; the rider's sides of Mount, Dismount,
+   * DragonMount and DragonDismount): the rider's synchronized clip leaves its root bone at the
+   * origin and moves the rider itself, its placement its mark's composed with that bone's pose.
+   * The mark is set once as the clip plays: the horse's placement composed with where the clip
+   * puts the rider's placement track ("NPC") from the horse's ("2_"). Undefined while no such
+   * clip gave the rider's pose.
+   */
+  #byRoot(ride: Ride, horse: Placed): PairPlacement | undefined {
+    const body = this.#bodyOf(ride.rider);
+    const graph = body?.behavior;
+    const sync = graph?.synchronizedClip();
+    const root = graph?.motionFromRoot();
+    if (!body || !sync?.applyMotionFromRoot || !sync.binding || !root) return undefined;
+    if (!ride.mark) {
+      const tracks = placementTracks(sync.syncPrefix);
+      const mark = trackMark(sync.binding, tracks.partner, tracks.own, false);
+      if (!mark) return undefined;
+      ride.mark = markFrom(horse, mark);
+    }
+    ride.byRoot = placeByRoot(ride.mark, root, body.look.scale * body.actor.scale);
+    return ride.byRoot;
   }
 
   /** Loaded saves' riders waiting for their horses to be placed: the horse, seconds left. */
@@ -1019,17 +1084,14 @@ export class ActorMounts {
     const horse = ride && this.#options.get(ride.horse);
     if (!ride || !view || !horse) return;
     const feet = this.#options.movers.state(ride.horse)?.feet ?? horse.position;
-    const offset: Vec3 =
-      ride.phase === 'riding'
-        ? (() => {
-            const at = this.#riderPlace(ride, horse);
-            return [
-              at.position[0] - horse.position[0],
-              at.position[1] - horse.position[1],
-              at.position[2] - horse.position[2],
-            ];
-          })()
-        : [0, 0, 0];
+    // Off the horse's root: its saddle riding, where its clip's root bone puts it mounting and
+    // getting off (#riderPlace).
+    const at = this.#riderPlace(ride, horse);
+    const offset: Vec3 = [
+      at.position[0] - horse.position[0],
+      at.position[1] - horse.position[1],
+      at.position[2] - horse.position[2],
+    ];
     const previous = ride.feet ?? feet;
     view.play.player.character.carry(
       [previous[0] + offset[0], previous[1] + offset[1], previous[2] + offset[2]],

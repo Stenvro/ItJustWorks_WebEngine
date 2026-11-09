@@ -67,6 +67,63 @@ export function spellPredictedKill(damage: number, health: number): boolean {
   return damage > 0 && damage >= health;
 }
 
+/**
+ * What a spell's kill camera rides, by how its projectile reaches (projectile-flight.ts
+ * flightKind): a missile or lobber its flight (none in the air: nothing was loosed, no
+ * camera); a flame its spray; a beam, which reaches at once, and a cone nothing. The kill
+ * cameras' tree itself decides by the projectile's type and the casting type what plays for
+ * them (observed in the data: MagicOrBowCams' RangedKills leave out beams and concentration
+ * spells, SpecialBeamShots take a fire and forget beam, ExitCloseRangedBeamExit one within 75
+ * units, ExitInvalidProjectileOrCastingType02 a cone or a spell neither aimed nor self).
+ */
+export function spellCameraRide(
+  kind: 'flying' | 'lobber' | 'instant' | 'spray' | 'cone',
+): 'flight' | 'spray' | 'none' {
+  switch (kind) {
+    case 'flying':
+    case 'lobber':
+      return 'flight';
+    case 'spray':
+      return 'spray';
+    default:
+      return 'none';
+  }
+}
+
+/**
+ * The damage a spell's loosing is predicted to deal (CastingEngine.predictedDamage gives a
+ * concentration spell's for a second): a concentration spell's spray carries its interval's
+ * share, so the spray that kills is the one predicted to (inferred, TODO(M13): the original's
+ * prediction for a concentration spell is not read); any other cast its whole.
+ */
+export function spellLoosedDamage(perCast: number, seconds: number | undefined): number {
+  return seconds === undefined ? perCast : perCast * Math.max(0, seconds);
+}
+
+/** One the self spell's area reaches: how far from the caster, its predicted kill. */
+export interface SelfAreaCandidate {
+  readonly reference: number;
+  readonly distance: number;
+  /** The damage of the effects whose area reaches it (predictedDamage of those). */
+  readonly damage: number;
+  readonly health: number;
+  readonly essential: boolean;
+}
+
+/**
+ * A self spell's kill (the magic kill camera's SelfCastTest paths: its cameras circle the
+ * caster): of those its area reaches, the nearest it is predicted to kill, not essential.
+ * Inferred, TODO(M13): the original's choice of the self cast's target is not read.
+ */
+export function selfAreaKill(candidates: readonly SelfAreaCandidate[]): number | undefined {
+  let best: SelfAreaCandidate | undefined;
+  for (const candidate of candidates) {
+    if (candidate.essential || !spellPredictedKill(candidate.damage, candidate.health)) continue;
+    if (!best || candidate.distance < best.distance) best = candidate;
+  }
+  return best?.reference;
+}
+
 export function rangedKillCameraPlays(
   shot: RangedKillCameraShot,
   settings: RangedKillCameraSettings,

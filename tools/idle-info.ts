@@ -103,8 +103,12 @@ async function describeConditions(conditions: readonly Condition[]): Promise<str
           ? `@${await name(condition.reference)}`
           : `@${RUN_ON_NAMES[condition.runOn] ?? String(condition.runOn)}`;
     const swap = condition.swapSubjectAndTarget === true ? '(swap)' : '';
+    const functionName = conditionFunctionName(condition.function);
+    // GetVATSValue's second parameter is the value its function compares (an action, a
+    // projectile type, a delivery, a casting type).
+    const second = functionName === 'GetVATSValue' ? `, ${String(condition.param2)}` : '';
     parts.push(
-      `${conditionFunctionName(condition.function)}(${param})${runOn}${swap}${operator}${comparand}${condition.or ? ' OR' : ''}`,
+      `${functionName}(${param}${second})${runOn}${swap}${operator}${comparand}${condition.or ? ' OR' : ''}`,
     );
   }
   return parts.join(' ');

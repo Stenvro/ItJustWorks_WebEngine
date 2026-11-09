@@ -140,7 +140,9 @@ Round 5 (2026-11-04) read the mechanics left from the original (docs/ai.md "Use 
   (hideSpottedDistance, fCombatHideCheckViewCone\*); the search takes its group's priority points
   and doors (combat-search.ts SearchArea, combat-subtrees.ts searchPoints); combat music weighs
   each group near the player apart. All four inferred rules, TODO(M13).
-- The magic kill camera (actor-combat.ts spellLoosed).
+- The magic kill camera (actor-combat.ts spellLoosed); its beams, flames, cones and self casts
+  by the tree's projectile type, delivery and casting type (2026-11-09; a concentration
+  spray's prediction and a self cast's kill inferred).
 - The encounter zone bounds a fight (zonesAllow); the odds stand at 100 for a frenzied actor and
   after 120 s unengaged (oddsWeighed); combat music and daresHelp weigh damage per second;
   left-hand attacks have their own attack data (the actor's melee options keep them apart);

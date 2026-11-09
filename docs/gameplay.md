@@ -1130,8 +1130,26 @@ The magic kill camera (observed in the original; `spellLoosed` in `src/shell/act
 `src/shell/actor-casting.ts`): the same way for a spell the player looses whose projectile flies at
 one it is predicted to kill (each hostile effect on Health, its magnitude by its seconds through
 what the target keeps: `CastingEngine.predictedDamage`), the camera riding the projectile, with the
-casting type and delivery in GetVATSValue and its action magic. A beam or flame has no flight to
-ride: no camera (TODO(M13): the original's own for them).
+casting type and delivery in GetVATSValue and its action magic. What plays for a beam, a flame,
+a cone or a self spell is the kill cameras' tree's own choice, by GetVATSValue's projectile type
+(18), delivery (19) and casting type (20) (read from the data: `node tools/idle-info.ts
+--cameras` prints each GetVATSValue's compared value): MagicOrBowCams' RangedKills leave out
+beams and concentration spells; ExitCloseRangedBeamExit ends a fire and forget beam within 75
+units with no shots; SpecialBeamShots (one in five, a beam not concentrated, within 5000 units)
+play side cameras at the caster and the target; ExitInvalidProjectileOrCastingType02 gives none
+to a cone or to a spell neither aimed nor self; SelfCastTest's cameras (SelfAreaCam*) circle a
+self caster; the close cameras take the rest, flames included (`spellCameraRide`,
+src/gameplay/combat/ranged-kill-camera.ts). So: a missile's or lobber's camera rides it (none
+in the air: none), a flame's rides its spray (MagicProjectiles.flying with its sprays), a
+beam's rides nothing (it reaches at once; a shot at the projectile is measured from the
+attacker). A concentration spell's spray is predicted by its interval's share of the spell's
+second, so the spray that kills is the one predicted to (`spellLoosedDamage`; inferred,
+TODO(M13)). A self spell with an area (Fire Storm) loosed is the kill of the nearest actor its
+area reaches whom the effects reaching that far are predicted to kill, not essential
+(`selfAreaKill`, CastingEngine.predictedDamage with the distance; inferred, TODO(M13): the
+original's choice of a self cast's target is not read); a self spell without an area (a cloak, a
+heal) has none. Tests: src/gameplay/combat/ranged-kill-camera.test.ts,
+tests/magic-kill-camera.int.test.ts.
 
 ## Crime and factions
 

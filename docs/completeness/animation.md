@@ -108,9 +108,10 @@ synchronized clip's fMarkErrorThreshold: once its get-to-mark time is over, the 
 its mark when within it on each axis (and turn, reorienting); until then it is put there again
 (`atMark`, src/shell/actor-combat.ts). bDisableInterp has no setter in the engine: it reads it
 with bIsSynced and bSpeedSynced, any of them set keeping the graph from interpolation (all three
-now asked). The player's graph is given ActionWaterwalkStart. Read, not built:
-bApplyMotionFromRoot (the actor moved by its root bone; docs/animation.md, "Killmoves"). Not
-reached: the powered ragdoll's world-from-model mode; ActionLook, ActionVoiceReady and
+now asked). The player's graph is given ActionWaterwalkStart. bApplyMotionFromRoot (the actor
+moved by its root bone, the bone left at the origin; docs/animation.md, "Killmoves"): built
+2026-11-09 (BehaviorRuntime.motionFromRoot; the riders placed by it, src/shell/actor-mounts.ts).
+Not reached: the powered ragdoll's world-from-model mode; ActionLook, ActionVoiceReady and
 ActionListen (the computed reads of the default objects are the actor's queue of actions, and
 what fills it was not found).
 

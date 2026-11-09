@@ -91,7 +91,14 @@ export interface ActorCastingOptions {
   readonly furniture: ActorFurniture;
   readonly projectiles: MagicProjectiles;
   /** The player's spell has left the hand (the magic kill camera). */
-  readonly spellLoosed?: (actor: number, item: MagicItemRecord, from: Vec3, aim: Vec3) => void;
+  readonly spellLoosed?: (
+    actor: number,
+    item: MagicItemRecord,
+    from: Vec3,
+    aim: Vec3,
+    /** A concentration spell's spray: its interval (seconds). */
+    seconds?: number,
+  ) => void;
   /** Where the casts go: the player's aim assistance, an NPC's aim at its target. */
   readonly aim?: ProjectileAim;
   readonly get: (reference: number) => StagedActor | undefined;
@@ -975,7 +982,8 @@ export class ActorCasting {
       // A beam stays on the hand that cast it.
       follow: () => this.origin(actor, source),
     });
-    if (actor === PLAYER_REF) this.#options.spellLoosed?.(actor, delivered.item, origin, aim);
+    if (actor === PLAYER_REF)
+      this.#options.spellLoosed?.(actor, delivered.item, origin, aim, seconds);
   }
 
   /**
