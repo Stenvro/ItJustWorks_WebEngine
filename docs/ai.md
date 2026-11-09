@@ -1340,7 +1340,10 @@ the barracks), in no quest alias, whose packages (WhiterunGateGuardForcegreet,
 WhiterunGateGuard2Travel) have them by the gate's Tamriel side; WhiterunLocation lists them
 (CWSoldier) and the plains outside the gate belong to it. Coming there from Tamriel, the player
 finds them by the gate, and the first walks up and stops them ("Halt! City's closed with the
-dragons about."; `tests/sim-gate-guard.int.test.ts`). The original keeps no exterior cell behind
+dragons about."; `tests/sim-gate-guard.int.test.ts`). On MQ102, sent by the Riverwood friend,
+the player answers "Riverwood calls for the Jarl's aid.": its info sets
+DialogueWhiterunGuardGateStop 10, which unlocks the gate (WhiterunMainGateRef) and stops the
+quest (`tests/sim-before-the-storm.int.test.ts`). The original keeps no exterior cell behind
 a load door loaded (it preloads only linked interiors, bPreloadLinkedInteriors, off by default),
 so the guards' own cell is not what brings them. TODO(M13): the original's own rule for which
 temporary actors of unloaded cells keep a schedule is not documented; ours is the player's
