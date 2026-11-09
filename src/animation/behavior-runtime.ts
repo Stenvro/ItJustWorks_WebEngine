@@ -2015,8 +2015,9 @@ export class BehaviorRuntime {
     }
     // A ping-pong clip never jumps over a seam: it retraces its way at each turn, so a step moves
     // the root by the net way between where it was and where it is (the sweeps up and back down
-    // past a turn cancel), backward when it ends before where it began.
-    if (node.mode === CLIP_MODE.pingPong) {
+    // past a turn cancel), backward when it ends before where it began. Driven by a syncing
+    // blender's phase it has no turn: it loops with that phase, and is taken as a loop below.
+    if (node.mode === CLIP_MODE.pingPong && state.phase === undefined) {
       const back = state.time < state.previous;
       const from = Math.min(state.time, state.previous) + crop;
       const to = Math.max(state.time, state.previous) + crop;

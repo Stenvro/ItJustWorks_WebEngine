@@ -1427,6 +1427,22 @@ describe('syncing blenders', () => {
     expect(time('trot')).toBeCloseTo(0.25, 5);
   });
 
+  it("moves a ping-pong clip on over its blender's seam, as its phase loops (a tail's walk)", () => {
+    // Driven by a syncing blender's phase, a ping-pong clip loops with it and has no turn: over
+    // the seam it moves the little way on, not most of a cycle back.
+    const tail = syncBlend('Forward', 0, [[0, clip('walk', 3)]]);
+    const runtime = new BehaviorRuntime({
+      root: graph(tail, [], [{ name: 'Speed', initial: 0 }]),
+      host: { ...host({ walk: animation(0, 1) }), rootMotion: forward },
+      skeleton,
+    });
+    runtime.update(0);
+    runtime.update(0.99);
+    runtime.update(0.02);
+    expect(runtime.playing()[0]?.time).toBeCloseTo(0.01, 5);
+    expect(runtime.rootMotion().translation[1]).toBeCloseTo(0.02, 5);
+  });
+
   /**
    * Two clips with their sync point at 0.2 of the one and 0.6 of the other, blended 3:1: as the
    * blend goes towards the second, the cycle's sync point moves on and the clips' phase steps back.
