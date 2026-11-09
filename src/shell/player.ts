@@ -615,6 +615,8 @@ export class Player implements Camera {
 
   /** fDefault1stPersonFOV: first person's own field of view (degrees across a 4:3 frame). */
   #firstPersonFov: number;
+  /** [Display] fNear1stPersonDistance: first person's own near plane (game units). */
+  readonly #firstPersonNear: number;
   /** The view of the last viewProjection (the first-person view looks along it). */
   readonly #view = new Float32Array(16);
 
@@ -709,6 +711,7 @@ export class Player implements Camera {
     this.#fovDegrees = ini.number('Display', 'fDefaultWorldFOV');
     this.#fovY = verticalFov(this.#fovDegrees);
     this.#firstPersonFov = ini.number('Display', 'fDefault1stPersonFOV');
+    this.#firstPersonNear = ini.number('Display', 'fNear1stPersonDistance');
     this.tween = new TweenCamera({
       rotAngle: ini.number('Camera', 'fTweenCamRotAngle'),
       rotSpeed: ini.number('Camera', 'fTweenCamRotSpeed'),
@@ -1726,7 +1729,14 @@ export class Player implements Camera {
    * world's, not this.
    */
   firstPersonViewProjection(aspect: number, out: Mat4 = new Float32Array(16)): Mat4 {
-    return firstPersonViewProjection(this.#view, this.#firstPersonFov, aspect, this.lensShift, out);
+    return firstPersonViewProjection(
+      this.#view,
+      this.#firstPersonFov,
+      aspect,
+      this.lensShift,
+      out,
+      this.#firstPersonNear,
+    );
   }
 
   /** Told of each user event the player presses (help messages wait for one). */

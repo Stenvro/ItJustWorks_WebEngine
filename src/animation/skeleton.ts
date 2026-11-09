@@ -195,6 +195,14 @@ export function qsMatrix(source: Float32Array, at: number, out: Float32Array, ou
   out[outAt + 15] = 1;
 }
 
+/** Scales a column-major 4x4 matrix's basis (its first three columns) in place. */
+function scaleBasis(matrix: Float32Array, at: number, scale: number): void {
+  if (scale === 1) return;
+  for (let i = 0; i < 11; i++) {
+    if (i % 4 !== 3) matrix[at + i] = (matrix[at + i] ?? 0) * scale;
+  }
+}
+
 /** out = a · b for column-major 4x4 matrices stored in arrays at offsets. */
 function multiplyAt(
   a: Float32Array,
@@ -240,10 +248,18 @@ export class ActorSkeleton {
   readonly boneOfNode: Int16Array;
   /** Node index by lower-case name. */
   readonly nodeByName: ReadonlyMap<string, number>;
+  /**
+   * Each node's own scale in the skeleton model (the female skeletons' hands 0.852, the rest
+   * 1): an animated node keeps it, the pose's scale applied on top (ActorPose.update).
+   */
+  readonly modelScales: Float32Array;
 
   constructor(rig: RigData, hkx: HkxSkeleton | undefined) {
     this.rig = rig;
     this.hkx = hkx;
+    this.modelScales = Float32Array.from(rig.names, (_, i) =>
+      Math.hypot(rig.local[i * 16] ?? 1, rig.local[i * 16 + 1] ?? 0, rig.local[i * 16 + 2] ?? 0),
+    );
     const nodeByName = new Map<string, number>();
     rig.names.forEach((name, i) => {
       const key = name.toLowerCase();
@@ -287,6 +303,14 @@ export class ActorPose {
    * (showBySlots); undefined: every node is shown.
    */
   hidden: Uint8Array | undefined = undefined;
+  /**
+   * Each node's own scale as the engine keeps it on the node: the skeleton model's
+   * (ActorSkeleton.modelScales) until set otherwise (setScale: a female actor's hands while
+   * she holds an animation object). The animation does not take it: an animated node's scale
+   * is its own times the pose's (inferred, TODO(M13): the female skeletons' hands keep their
+   * 0.852 under every clip, as the engine's rule for animation objects held in them assumes).
+   */
+  readonly scales: Float32Array;
   readonly #local = new Float32Array(16);
   readonly #parentSpace = new Float32Array(16);
   readonly #lag: LagBoneState | undefined;
@@ -294,6 +318,7 @@ export class ActorPose {
 
   constructor(skeleton: ActorSkeleton) {
     this.skeleton = skeleton;
+    this.scales = skeleton.modelScales.slice();
     this.worlds = new Float32Array(skeleton.nodeCount * 16);
     const lagBones = skeleton.rig.lagBones;
     this.#lag = lagBones ? new LagBoneState(lagBones, skeleton.rig.local) : undefined;
@@ -320,6 +345,11 @@ export class ActorPose {
       let sourceAt = node * 16;
       if (bones && bone >= 0 && (bone + 1) * TRANSFORM_FLOATS <= bones.length) {
         qsMatrix(bones, bone * TRANSFORM_FLOATS, local, 0);
+        // The node's own scale stays under the pose's.
+        scaleBasis(local, 0, this.scales[node] ?? 1);
+        source = local;
+        sourceAt = 0;
+      } else if (this.#rescaled(node, local)) {
         source = local;
         sourceAt = 0;
       }
@@ -356,13 +386,46 @@ export class ActorPose {
         continue;
       }
       const parent = rig.parents[node] ?? -1;
+      const own = this.#rescaled(node, this.#local);
+      const source = own ? this.#local : rig.local;
+      const at = own ? 0 : node * 16;
       if (parent < 0) {
-        this.worlds.set(rig.local.subarray(node * 16, node * 16 + 16), node * 16);
+        this.worlds.set(source.subarray(at, at + 16), node * 16);
       } else {
-        multiplyAt(this.worlds, parent * 16, rig.local, node * 16, this.worlds, node * 16);
+        multiplyAt(this.worlds, parent * 16, source, at, this.worlds, node * 16);
       }
     }
     this.version++;
+  }
+
+  /**
+   * Sets a node's own scale (by name; undefined: back to the skeleton model's). It shows from
+   * the next update. False if the skeleton has no such node.
+   */
+  setScale(name: string, scale: number | undefined): boolean {
+    const node = this.skeleton.nodeByName.get(name.toLowerCase());
+    if (node === undefined) return false;
+    this.scales[node] = scale ?? this.skeleton.modelScales[node] ?? 1;
+    return true;
+  }
+
+  /** A node's own scale now (by name), or undefined. */
+  scale(name: string): number | undefined {
+    const node = this.skeleton.nodeByName.get(name.toLowerCase());
+    return node === undefined ? undefined : this.scales[node];
+  }
+
+  /**
+   * A node the animation does not move whose own scale was set apart from the model's: its
+   * model transform at that scale into `out` (true); false: the model's transform holds.
+   */
+  #rescaled(node: number, out: Float32Array): boolean {
+    const scale = this.scales[node] ?? 1;
+    const model = this.skeleton.modelScales[node] ?? 1;
+    if (scale === model || model === 0) return false;
+    out.set(this.skeleton.rig.local.subarray(node * 16, node * 16 + 16));
+    scaleBasis(out, 0, scale / model);
+    return true;
   }
 
   /**

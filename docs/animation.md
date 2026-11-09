@@ -299,16 +299,27 @@ event sink). Behaviour, in our words:
   the entries of the arm states that end a carry), clears every prop of that actor at once.
 - The actor's 3D going (unloaded, made again) drops all of its entries.
 - A save keeps each entry (actor, object, shown or drawn); loading one asks for the load again,
-  and the draw if it was shown. TODO(M12): our saves keep them.
+  and the draw if it was shown. Ours do the same (WorldSave.animObjects, put back as each actor
+  is placed; an imported .ess's too).
 
 **Ours** (src/animation/anim-objects.ts, the list; src/shell/actor-anim-objects.ts, the models):
 the same list and rules. A prop is a model instance of its own placed every frame at its node's
 matrix (the body's placement times the node's pose), after the poses; its NIF controllers and
 particles play as a placed object's do. The player's go on the skeleton shown when the model
 comes in (`bodyShown`: the body, else the first-person arms) and stay there; while they hold
-one, `Game.DisablePlayerControls`' camera switch is off. Our poses take the hands' scale from
-the clips (1), so the female hand rule changes nothing here. TODO(M13): if the hands get the
-skeleton's 0.85, apply the rule.
+one, the camera switch is off (in the page and the headless simulation alike), apart from
+`Game.DisablePlayerControls`' own. A model without "Prn", or whose node the holder's skeleton
+lacks (inferred, TODO(M13)), is left unattached and never shows, drawn or not. The female hand
+rule: an animated node keeps the skeleton model's own scale, the pose's applied on top
+(`ActorPose.scales`; inferred, TODO(M13): the rule above needs the hands at 0.852 under every
+clip, and the vanilla clips' few scale tracks are 0 on hidden nodes, a killmove's Weapon or an
+idle's AnimObjectR, which a reset to the clip's scale would not tell apart); only the female
+skeletons' hands have a scale of their own (0.852, the first-person skeleton's 1). An object
+hung on a female actor's hand or under it (NPC R/L Hand, their magic nodes, AnimObjectR/L) sets
+both hands' scale to 1 while she holds it; the last such object going sets them back to the
+skeleton's own. tests/conformance/animation/animation-objects.test.ts holds the rules in the
+Bannered Mare (Hulda given a tankard, the player given one, a book read without its "Prn", a
+save made and loaded).
 
 The graph event dispatch ([Graph events](#graph-events)) calls
 `ActorAnimObjects.animObject(reference, 'load' | 'draw', editorId)` for the two events with
@@ -1397,7 +1408,12 @@ the morphs to the FaceGen head's shapes (rendering.md, Skinning).
   yaw turn the head bone over the graph's pose (BehaviorRuntime.headTurn; TODO(M13): the
   signs of FaceFX's head curves); creature lines
   (8 curves) set the creature's behavior graph's lip variables, which move its mouth
-  (ai.md, Talking).
+  (ai.md, Talking). The eight curves are the phonemes BigAah, DST, Eee, FV, K, L, R, Th in that
+  order (by name, as the people's 16 phonemes and 14 modifiers are ordered; the data bears it
+  out: Paarthurnax's "Hurt him while he is grounded!" has its one L curve at "while", none for
+  Th, its R first at "hurt"), each matched to the graph's variable naming its phoneme: the
+  dragons' and hagravens' LipBigAah ... LipTh, the rieklings' LipAA, LipDST, LipEE, LipFF, LipK,
+  LipL, LipR, LipTH (not the Damped copies, LipAcc or LipGain), whatever their order in the graph.
 - **Sandbox (debug only), Talk:** in the sandbox, the crosshair finds an actor along the
   activation pick (its controller, BIPED bodies or ragdoll the pick meets; one without
   collision within fActivatePickRadius of the line from its feet to its head) and "Talk" makes it say a random line of its voice type (NPC VTCK,
@@ -1405,10 +1421,19 @@ the morphs to the FaceGen head's shapes (rendering.md, Skinning).
 - Not applied: the TRI's SkinnyMorph (FaceGen heads are baked with the actor's weight:
   formats/esm.md, Actors) and the Races / CharGen morphs (baked by the Creation Kit).
 - **Eyes:** they look where the graph's look-at turned the eye bone (Head tracking, below),
-  by the look morphs (LookLeft/Right at 29°, LookUp/Down at 16°: measured on eyesmale.tri and
-  eyesfemale.tri; the engine's BSFaceGenAnimationData eyesHeading and eyesPitch), wandering by
-  a random offset in the range of the face's emotion (fEyeHeading/PitchMin/MaxOffsetEmotion*;
-  a new one every 1–3 s, TODO(M13)); a line's own looks join them. They turn to where they look
+  by the eye TRI's look morphs (the engine's BSFaceGenAnimationData eyesHeading and eyesPitch;
+  eyesmale, eyesfemale and the Khajiit's eyes carry LookLeft, LookRight, LookUp and LookDown,
+  the Argonian's and the child's none), a morph at full weight at 29° to the sides and 16° up
+  and down and held there beyond it. Inferred, TODO(M13): the engine's scale is not documented
+  and no setting gives it (the eyes read fTrackSpeed alone; the load order has no fTrackEye*
+  range, an earlier game's setting); the values are a rough estimate from the eyes' TRI, whose
+  look morphs are no rigid turn of the eyeball (measured as the centroid of an eye's vertices
+  about the centre of the sphere fitted to them they turn it some 11–25° to the sides and 9–18°
+  up and down, unevenly between the eyes). They wander by a random offset in the range of the
+  face's emotion (fEyeHeading/PitchMin/MaxOffsetEmotion*: Skyrim.esm's, read from the settings;
+  the three it does not set, the pitch min of anger and happiness and the pitch max of sadness,
+  are the engine's own, not documented: taken as 0, TODO(M13); a new offset every 1–3 s,
+  TODO(M13)); a line's own looks join them. They turn to where they look
   at most fTrackSpeed radians a second on each axis (observed in the original: the face's eye
   tracking; Skyrim.esm 5, the engine 2). fTrackDeadZoneXY and fTrackDeadZoneZ are registered by
   the original and never read (inert).
@@ -1549,7 +1574,7 @@ them by name (a variable keeps the first file's initial value). Each frame:
    tower wall's opening clip raises Begin at its local time 0: MQ101DragonAttack's stage 103
    waits for it; of the vanilla behavior files' 881 triggers at a clip's start, none fired before:
    NPCKillMoveStart 232, 2_KillMoveStart 163, InitiateEnd 62, BeginWeaponDraw 32, BeginWeaponSheathe
-   26, levers', gates' and traps' sounds); a syncing blender (flag 0x1) keeps a cycle of its own and plays everything it blends
+   26, levers', gates' and traps' sounds; [Clip triggers](#clip-triggers)); a syncing blender (flag 0x1) keeps a cycle of its own and plays everything it blends
    at that phase, advanced by the time over its children's weighted cycle (a clip's at its
    playback speed, a blender's its children's weighted); a syncing blender within one plays
    at the outer one's phase ([Syncing blenders](#syncing-blenders)); modifiers run:
@@ -1604,6 +1629,42 @@ weapAdj picks how far `weaponAdjustment.hkx` pushes the sheathed weapons out; th
 it from the armour (ARMA DNAM weapon adjust, f32 at 8): only body pieces vary it in the data
 (0.1–0.65; helmets and the rest are 0 or 1), so it is the cuirass's (slot 32; TODO(M13): not
 documented).
+
+### Clip triggers
+
+How a clip generator's time moves and which of its triggers and annotations a step raises
+(src/animation/clip-playback.ts; tests/conformance/animation/clips.test.ts). The vanilla graphs
+play 4924 clips once, 4613 looping, 435 by a variable (user controlled), one ping-pong (the tail
+aux bones' walk) and 91 at a negative speed.
+
+- A trigger's time is in the clip's cropped time, or from its end (`relativeToEndOfClip`); an
+  annotation's is its time in the animation less the clip's start crop.
+- A step passes the times from where the clip was (not included) to where it is (included), in
+  the direction it plays; each trigger or annotation raises once for every time the step passed
+  it (in the graph's order: the triggers, then the annotations). A clip's first step after it
+  became active takes in its start time.
+- Looping: a step over the cycle's end passes the rest of that cycle and the next one's start
+  (its time 0 included); a step longer than a cycle passes each cycle it covers. Played backward
+  it wraps from its start to its end the same way.
+- Ping-pong: at an end it turns; the step passes the way to the end and the way back (a trigger
+  just before the end raises twice in one step). A negative speed plays it the other way first.
+  Its root motion over a step is the net way from where it was to where it is (it retraces its
+  way at a turn, so the stretch up to the end and back cancels; never read as a loop over the
+  seam, which was a cycle's jump at a turn that ended short of where the step began).
+- User controlled: the step is from where the clip was to where its variable puts it, either
+  way.
+- In a syncing blender: forward from where the clip was to its phase (over the seam into the
+  next cycle). A phase stepping back a little as the blend's sync points shift passes nothing:
+  what lies behind it was passed already and is passed again as the phase moves on (a walk and
+  run blend's FootLeft and FootRight raise once a stride).
+- Inferred (TODO(M13): Havok's own rules, not documented): a clip at a negative speed starts at
+  its end (its start time counted from there), as the unequips that play the equip backward
+  (0_master's Stf_Unequip, the crossbow's), the riekling's strafes and the Dwemer domes', gates'
+  and Snow Elf doors' closing sequences need; its triggers keep their clip times (the staff
+  unequip's end trigger raises as it starts, its 0.2 s triggers 0.2 s before it ends). An
+  acyclic trigger (8 in vanilla: AOWoodPickUp's, AOBarTableIdle's) raises in a looping or
+  ping-pong clip's first cycle only. Before, a clip at a negative speed stood still at its
+  start and raised nothing but what lay there.
 
 ### Transitions
 

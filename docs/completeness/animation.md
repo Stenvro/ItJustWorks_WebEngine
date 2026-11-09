@@ -41,8 +41,8 @@ annotations, records) use it.
 | Idle conditions (functions) |   111 |  111 |    0 |
 | Actions (AACT)              |    71 |   68 |    3 |
 | Game settings (GMST)        |    20 |   20 |    0 |
-| Mechanics (by hand)         |    24 |   16 |    8 |
-| Total                       |  1146 | 1117 |   29 |
+| Mechanics (by hand)         |    27 |   18 |    9 |
+| Total                       |  1149 | 1119 |   30 |
 
 Round 1 wrote the sweep and this list. Built: the animations' SoundStop.<descriptor> and
 SoundRelease.<descriptor> (17 and 8 annotations: the bow's draw loop, WPNBowPullLPM, stops as
@@ -307,6 +307,10 @@ what fills it was not found).
 - [x] Faces: expressions, phonemes, blinks, the head's morphs (src/animation/face.ts).
 - [ ] Faces: the expression change rate.
 - [x] Lip sync (.lip, .fuz) with the dialogue.
+- [x] Faces: the emotions' eye offsets from the settings; a creature line's curves matched to its
+      graph's Lip variables by phoneme (tests/conformance/animation/faces.test.ts).
+- [ ] Faces: the engine's scale from an eye turn to a look morph's weight (ours an inferred
+      estimate from the eyes' TRI, 29° and 16°).
 - [x] Paired animations: the support's mark, its side to the clip's end, death limp.
 - [ ] Paired animations: events not routed per side.
 - [x] Kill moves (docs/animation.md, "Killmoves").
@@ -316,9 +320,14 @@ what fills it was not found).
       flight starts.
 - [x] Ragdolls: death, powered ragdolls, get-up, keyframed ragdolls.
 - [ ] The powered ragdoll's root (world-from-model mode); the paralysed's stiff fall.
-- [x] Animation objects (but the female hands' scale, the POV switch while one is held).
+- [x] Animation objects: the list, the female hands' scale while one is held (inferred: the
+      skeleton's own node scale stays under the clips), the POV switch off while the player holds
+      one, a model without "Prn" never shown, saves (tests/conformance/animation/animation-objects.test.ts).
 - [x] Ambient idles (but which idles skip the next PickNewIdle, the complex scene's wait).
 - [x] Weapons and aim, casting, horses, first person.
 - [ ] Graph state in saves: actors' graphs rebuilt from furniture and packages, not saved.
 - [x] Clips: compression, root motion, float tracks, annotations.
+- [x] Clip triggers and annotations raised as they are passed: looping cycles, ping-pong turns,
+      a negative speed played from the end, acyclic triggers (docs/animation.md, "Clip triggers";
+      inferred where Havok's rule is not documented).
 - [x] Sounds of animations: footsteps, SoundPlay, NPCSoundPlay, SoundStop, SoundRelease.

@@ -1276,6 +1276,33 @@ describe('transitions as Havok runs them', () => {
     expect(motion.yaw).toBeCloseTo(-0.5);
   });
 
+  it("moves a ping-pong clip's root by its net way across both turns, not a cycle's", () => {
+    // Ten units a second of clip time; the host reads a later start than end as a loop over its
+    // seam (as it does for looping clips), which a ping-pong turn must never be taken for.
+    const runtime = new BehaviorRuntime({
+      root: graph(clip('a', 3), []),
+      host: {
+        ...host({ a: animation(0, 1) }),
+        rootMotion: (_generator, from, to) => ({
+          translation: [0, 10 * (to >= from ? to - from : 1 - from + to), 0],
+          rotation: [0, 0, 0, 1],
+        }),
+      },
+      skeleton,
+    });
+    runtime.update(0);
+    runtime.update(0.99);
+    // The end turn: 0.99 up to 1 and back down to 0.995, 0.005 on net.
+    runtime.update(0.015);
+    expect(runtime.playing()[0]?.time).toBeCloseTo(0.995, 5);
+    expect(runtime.rootMotion().translation[1]).toBeCloseTo(0.05, 5);
+    // Down to 0.035, then the start turn: down to 0 and back up to 0.015, 0.02 back on net.
+    runtime.update(0.96);
+    runtime.update(0.05);
+    expect(runtime.playing()[0]?.time).toBeCloseTo(0.015, 5);
+    expect(runtime.rootMotion().translation[1]).toBeCloseTo(-0.2, 5);
+  });
+
   it('starts a state over that it blends back into while it still blends out of it', () => {
     const root = machine('Machine', [
       state(0, 'A', clip('a', 0), [transition(0, 1, { effect: effect(1) })]),
@@ -1400,6 +1427,22 @@ describe('syncing blenders', () => {
     expect(time('trot')).toBeCloseTo(0.25, 5);
   });
 
+  it("moves a ping-pong clip on over its blender's seam, as its phase loops (a tail's walk)", () => {
+    // Driven by a syncing blender's phase, a ping-pong clip loops with it and has no turn: over
+    // the seam it moves the little way on, not most of a cycle back.
+    const tail = syncBlend('Forward', 0, [[0, clip('walk', 3)]]);
+    const runtime = new BehaviorRuntime({
+      root: graph(tail, [], [{ name: 'Speed', initial: 0 }]),
+      host: { ...host({ walk: animation(0, 1) }), rootMotion: forward },
+      skeleton,
+    });
+    runtime.update(0);
+    runtime.update(0.99);
+    runtime.update(0.02);
+    expect(runtime.playing()[0]?.time).toBeCloseTo(0.01, 5);
+    expect(runtime.rootMotion().translation[1]).toBeCloseTo(0.02, 5);
+  });
+
   /**
    * Two clips with their sync point at 0.2 of the one and 0.6 of the other, blended 3:1: as the
    * blend goes towards the second, the cycle's sync point moves on and the clips' phase steps back.
@@ -1443,6 +1486,24 @@ describe('syncing blenders', () => {
     runtime.setVariable('Speed', 0.5);
     runtime.update(0.02);
     expect(Math.abs(runtime.rootMotion().translation[1])).toBeLessThan(0.2);
+  });
+
+  it('raises no trigger its phase steps back over, and each once as it moves on past it', () => {
+    // At the phase 0.35 clip a is at 0.25 and b at 0.65; the shift takes them back to 0.17 and
+    // 0.57, behind their triggers (0.2 and 0.6), which they passed already.
+    const runtime = shiftingBlend();
+    const syncLefts = (): number =>
+      runtime.takeRaised().filter((event) => event.name === 'SyncLeft').length;
+    runtime.update(0);
+    runtime.update(0.35);
+    expect(syncLefts()).toBe(2);
+    runtime.setVariable('Speed', 0.5);
+    runtime.update(0.02);
+    expect(runtime.playing().find((c) => c.animation === 'a')?.time).toBeCloseTo(0.17, 5);
+    expect(syncLefts()).toBe(0);
+    // On past them again: each once.
+    runtime.update(0.1);
+    expect(syncLefts()).toBe(2);
   });
 
   it('moves no stride when that step back crosses the loop’s seam', () => {

@@ -289,6 +289,8 @@ export const INI_DEFAULTS = {
     // Dynamic decals (a hit's blood on rigid shapes included) made in one frame at most.
     iMaxDecalsPerFrame: 100,
     fDefault1stPersonFOV: 80,
+    // First person's own near plane (src/render/first-person-view.ts).
+    fNear1stPersonDistance: 5,
     fDefaultWorldFOV: 80,
     // The settings menu's DDOF Intensity and Brightness: the settings and their sliders' ends.
     fDynamicDOFBlurMultiplier: 0.8,

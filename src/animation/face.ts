@@ -55,10 +55,15 @@ const LOOK_UP = MODIFIER_BASE + LIP_MODIFIERS.indexOf('LookUp');
 const LOOK_DOWN = MODIFIER_BASE + LIP_MODIFIERS.indexOf('LookDown');
 
 /**
- * How far the eyes turn at a look morph's full weight (radians): measured on the eyes' TRI
- * (eyesmale.tri, eyesfemale.tri: LookLeft and LookRight turn the eyeballs about 29° about
- * their centres, LookUp and LookDown about 16°). The engine turns the eyes by these morphs
- * (BSFaceGenAnimationData eyesHeading, eyesPitch); TODO(M13): its own scale is not documented.
+ * How far the eyes turn at a look morph's full weight (radians). The engine turns the eyes by
+ * the look morphs (BSFaceGenAnimationData eyesHeading, eyesPitch); a look beyond this holds the
+ * morph at full weight. Inferred, TODO(M13): the engine's own scale is not documented and no
+ * game setting gives it (the face's eye tracking reads fTrackSpeed alone; the fTrackEye* range
+ * settings are an earlier game's, absent from this one's load order). The values are a rough
+ * estimate from the eyes' TRI (eyesmale.tri, eyesfemale.tri), whose look morphs are no rigid
+ * turn of the eyeball: how far one turns the eye depends on how it is measured (the centroid
+ * of an eye's vertices about the centre of the sphere fitted to them turns some 11–25° to the
+ * sides and 9–18° up and down, unevenly between the two eyes).
  */
 export const EYE_MORPH_HEADING = (29 * Math.PI) / 180;
 export const EYE_MORPH_PITCH = (16 * Math.PI) / 180;
@@ -76,8 +81,9 @@ export interface EyeOffsets {
 }
 
 /**
- * Skyrim.esm's values; those it does not set (pitch min of anger and happiness, pitch max of
- * sadness) are the engine's built-in ones: TODO(M13), taken as 0.
+ * Skyrim.esm's values; those it does not set (the pitch min of anger and happiness, the pitch
+ * max of sadness) are the engine's built-in ones, not documented: TODO(M13), taken as 0
+ * (inferred: it keeps each range in order, sadness's -0.015 below it).
  */
 export const VANILLA_EYES: Readonly<Record<EyeEmotion, EyeOffsets>> = {
   Neutral: { headingMin: -0.05, headingMax: 0.1, pitchMin: -0.025, pitchMax: 0.1 },
@@ -86,6 +92,15 @@ export const VANILLA_EYES: Readonly<Record<EyeEmotion, EyeOffsets>> = {
   Happy: { headingMin: -0.05, headingMax: 0.1, pitchMin: 0, pitchMax: 0.1 },
   Sad: { headingMin: -0.05, headingMax: 0.1, pitchMin: -0.015, pitchMax: 0 },
 };
+
+/** The game setting of an emotion's eye offset bound: fEye<Heading|Pitch><Min|Max>OffsetEmotion<…>. */
+export function eyeOffsetSetting(
+  emotion: EyeEmotion,
+  axis: 'Heading' | 'Pitch',
+  bound: 'Min' | 'Max',
+): string {
+  return `fEye${axis}${bound}OffsetEmotion${emotion}`;
+}
 
 /** The emotion of an expression (FACE_EXPRESSIONS index) for the eyes' offsets. */
 function eyeEmotion(expression: number | undefined): EyeEmotion {
@@ -162,24 +177,50 @@ export const EMOTION_EXPRESSIONS: readonly (string | undefined)[] = [
   'DialoguePuzzled',
 ];
 
-/** The phoneme curves of a creature line (dragons, hagravens, rieklings). */
-export const CREATURE_LIP_CURVES = 8;
+/**
+ * The phonemes of a creature line's curves (dragons, hagravens, rieklings), in curve order: by
+ * name, as the people's 16 phonemes and 14 modifiers are ordered (LIP_PHONEMES, LIP_MODIFIERS).
+ * The data bears it out: in Paarthurnax's "Hurt him while he is grounded!"
+ * (cruniquepaarthurnax\mq206__000c64f9_1) the R curve rises first, at "hurt", the L curve
+ * once, at "while", and the Th curve never.
+ */
+export const CREATURE_LIP_PHONEMES = ['BigAah', 'DST', 'Eee', 'FV', 'K', 'L', 'R', 'Th'] as const;
+
+/** The phoneme curves of a creature line. */
+export const CREATURE_LIP_CURVES = CREATURE_LIP_PHONEMES.length;
+
+/** The rieklings' names of the phonemes their graph spells otherwise (LipAA, LipEE, LipFF). */
+const CREATURE_LIP_ALIASES: ReadonlyMap<string, string> = new Map([
+  ['aa', 'bigaah'],
+  ['ee', 'eee'],
+  ['ff', 'fv'],
+]);
 
 /**
  * The behavior graph variables a creature's lines move, in curve order: its graph's own
- * phoneme variables (dragons' and hagravens' LipBigAah, LipDST, LipEee, LipFV, LipK, LipL,
- * LipR, LipTh; rieklings' LipAA ... LipTH), which blend its mouth's phoneme poses — not its
- * damped copies or its settings (LipAcc, LipGain). Undefined: the graph has no lip-sync. The
- * curves' order is taken to be the variables' (both list the same eight phonemes; TODO(M13):
- * not documented).
+ * phoneme variables, which blend its mouth's phoneme poses, each matched to its curve by the
+ * phoneme it names (dragons' and hagravens' LipBigAah ... LipTh; rieklings' LipAA, LipDST,
+ * LipEE, LipFF, LipK, LipL, LipR, LipTH) — not their damped copies or the graph's settings
+ * (LipAcc, LipGain). Undefined: the graph does not name all eight (it has no lip-sync).
  */
 export function creatureLipVariables(
   variables: readonly { readonly name: string }[],
 ): string[] | undefined {
-  const names = variables
-    .map((variable) => variable.name)
-    .filter((name) => /^Lip/i.test(name) && !/Damped$|^LipAcc$|^LipGain$/i.test(name));
-  return names.length === CREATURE_LIP_CURVES ? names : undefined;
+  const byPhoneme = new Map<string, string>();
+  for (const { name } of variables) {
+    const match = /^Lip(.+)$/i.exec(name);
+    if (!match) continue;
+    const own = (match[1] ?? '').toLowerCase();
+    const phoneme = CREATURE_LIP_ALIASES.get(own) ?? own;
+    if (!byPhoneme.has(phoneme)) byPhoneme.set(phoneme, name);
+  }
+  const names: string[] = [];
+  for (const phoneme of CREATURE_LIP_PHONEMES) {
+    const name = byPhoneme.get(phoneme.toLowerCase());
+    if (name === undefined) return undefined;
+    names.push(name);
+  }
+  return names;
 }
 
 /** What a face shows, for the renderer: FACE_MORPHS weights, bumped `version` on change. */
@@ -407,7 +448,9 @@ export class FaceAnimation implements FaceWeights {
     weights[BLINK_LEFT] = Math.max(weights[BLINK_LEFT] ?? 0, blink);
     weights[BLINK_RIGHT] = Math.max(weights[BLINK_RIGHT] ?? 0, blink);
 
-    // The eyes: where the look turns them, by the look morphs (a line's own looks join them).
+    // The eyes: where the look turns them, by the look morphs (a line's own looks join them),
+    // a morph at full weight at its turn (EYE_MORPH_HEADING, EYE_MORPH_PITCH) and held there
+    // beyond it.
     const eyes = this.#eyes(dt);
     const look = (index: number, amount: number): void => {
       weights[index] = Math.max(weights[index] ?? 0, Math.min(1, Math.max(0, amount)));

@@ -1211,7 +1211,9 @@ own (`[Display] fNear1stPersonDistance`, 5 units), drawn into the nearest
 those instances carry `ModelInstance.firstPerson`; their draws get the
 `DRAW_FIRST_PERSON` flag (a bit the NiAlphaProperty flags leave unused) and are never culled.
 `objectVertex` (common.wgsl) projects them with `frame.firstPersonViewProj` (the player's view
-with first person's projection, src/render/first-person-view.ts) and moves their reversed-Z
+with first person's projection, src/render/first-person-view.ts: its field of view and near
+plane read from the INI, `fNear1stPersonDistance` among the INI defaults; checked in the
+headless simulation, tests/conformance/animation/actor-build.test.ts) and moves their reversed-Z
 depth linearly into the band `[0.99, 1]`. The player's controller keeps the eye farther than the
 world's near plane (`fNearDistance` 15) from any wall, and a wall at 15.15 units already has
 depth 0.99: the arms never sink into a wall, and still hide their own far sides (the band is

@@ -26,15 +26,19 @@ export function verticalFov(degrees: number): number {
   return 2 * Math.atan(Math.tan((degrees * Math.PI) / 360) * 0.75);
 }
 
-/** The first-person view-projection: `view` seen with first person's field of view (degrees). */
+/**
+ * The first-person view-projection: `view` seen with first person's field of view (degrees)
+ * and near plane ([Display] fNear1stPersonDistance).
+ */
 export function firstPersonViewProjection(
   view: Mat4,
   degrees: number,
   aspect: number,
   lensShift = 0,
   out: Mat4 = new Float32Array(16),
+  near = FIRST_PERSON_NEAR,
 ): Mat4 {
-  const projection = perspectiveReversedZ(verticalFov(degrees), aspect, FIRST_PERSON_NEAR);
+  const projection = perspectiveReversedZ(verticalFov(degrees), aspect, near);
   projection[8] = -lensShift;
   return multiply(projection, view, out);
 }
