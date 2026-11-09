@@ -4802,23 +4802,29 @@ export class ActorCombat implements CombatBridge {
 
   /**
    * The fights combat music weighs (src/audio/combat-music.ts): every live actor in combat
-   * hostile to the player, against the player and their combat group.
+   * hostile to the player, against the player and their combat group; the fights not against
+   * the player by their own combat groups, each weighed apart.
    */
   #musicInput(runtime: ScriptRuntime): CombatMusicInput {
     const feet = this.#play?.player.feet;
     const threats: CombatMusicThreat[] = [];
-    // What the fighters not against the player fight (each target once): their fight's odds.
-    const nearTargets = new Set<number>();
+    // What each group not against the player fights (each target once): its fight's odds.
+    const nearTargets = new Map<number, Set<number>>();
     const senses = this.#options.senses?.();
     for (const fighter of this.#fighters.values()) {
       if (fighter.player || fighter.state.life !== LifeState.alive) continue;
       if (!threatensPlayer(fighter.gear?.raceFlags2 ?? 0)) continue;
       const reference = fighter.reference;
       const targetsPlayer = fighter.target === PLAYER_REF;
+      const group = this.#brain.groupId(reference) ?? 0;
       if (!targetsPlayer) {
         if (this.#brain.combatState(reference) !== 1) continue;
         if (!this.#brain.hostile(reference, PLAYER_REF)) continue;
-        if (fighter.target !== undefined) nearTargets.add(fighter.target);
+        if (fighter.target !== undefined) {
+          const targets = nearTargets.get(group) ?? new Set<number>();
+          targets.add(fighter.target);
+          nearTargets.set(group, targets);
+        }
       }
       const at = this.#feet(fighter);
       threats.push({
@@ -4828,15 +4834,16 @@ export class ActorCombat implements CombatBridge {
         strength: this.#brain.strength(reference),
         detected: senses ? senses.detects(PLAYER_REF, reference) : true,
         boss: this.#boss(reference, runtime),
+        group,
       });
     }
-    let targetStrength = 0;
-    for (const target of nearTargets) targetStrength += this.#brain.strength(target);
-    return {
-      threats,
-      player: this.#brain.strength(PLAYER_REF),
-      ...(nearTargets.size > 0 && { nearTargets: targetStrength }),
-    };
+    const groupTargets = new Map<number, number>();
+    for (const [group, targets] of nearTargets) {
+      let strength = 0;
+      for (const target of targets) strength += this.#brain.strength(target);
+      groupTargets.set(group, strength);
+    }
+    return { threats, player: this.#brain.strength(PLAYER_REF), groupTargets };
   }
 
   /** Whether a reference is a boss (location reference type DOBJ LRTB); false until read. */

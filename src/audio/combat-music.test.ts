@@ -77,6 +77,45 @@ describe('combat music', () => {
     expect(lopsided.update(settings.updateTime, { ...near, nearTargets: 1500 })).toBe('none');
   });
 
+  it('weighs each combat group near the player apart', () => {
+    const player = 1000;
+    // Two fights near the player, each weaker than them: together they would pass the player's
+    // strength, apart neither does.
+    const a = threat({ targetsPlayer: false, strength: 600, group: 1 });
+    const b = threat({ targetsPlayer: false, strength: 600, group: 2 });
+    expect(combatMusicWanted({ threats: [a, b], player }, settings, false)).toBe('none');
+    // One of them strong enough: it counts on its own.
+    const strong = { ...b, strength: 1200 };
+    expect(combatMusicWanted({ threats: [a, strong], player }, settings, false)).toBe('combat');
+    // Each decides its own evenness by its own targets: guards against a mudcrab (group 2)
+    // stay out while a dragon against the guards (group 1, even) counts.
+    const dragon = threat({ targetsPlayer: false, strength: 1500, group: 1 });
+    const guards = threat({ targetsPlayer: false, strength: 1500, group: 2 });
+    const fights = {
+      threats: [dragon, guards],
+      player,
+      groupTargets: new Map([
+        [1, 1500],
+        [2, 50],
+      ]),
+    };
+    const music = new CombatMusic(settings);
+    music.update(0.1, fights);
+    expect(music.update(settings.groupThreatRatioTimer, fights)).toBe('combat');
+    const lopsided = new CombatMusic(settings);
+    const onlyGuards = { ...fights, threats: [guards] };
+    lopsided.update(0.1, onlyGuards);
+    expect(lopsided.update(settings.groupThreatRatioTimer, onlyGuards)).toBe('none');
+    // A second group forming later is decided after its own timer, not the first's.
+    const later = new CombatMusic(settings);
+    const first = { ...fights, threats: [guards] };
+    later.update(0.1, first);
+    later.update(settings.groupThreatRatioTimer * 2, first);
+    expect(later.playing).toBe('none');
+    expect(later.update(settings.updateTime, fights)).toBe('none');
+    expect(later.update(settings.groupThreatRatioTimer, fights)).toBe('combat');
+  });
+
   it('weighs a lone wolf against the player by the engine’s strength', () => {
     // A wolf: 40 health, its bite (5 unarmed × its strongest attack's 1.5), no armour.
     const wolf = actorStrength(40, strengthDamage(5, false, [{ damageMult: 1.5, bash: false }]));

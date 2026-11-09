@@ -278,7 +278,11 @@ fCombatMusicStopTime after the last fight with its finale; a fight not against t
 counts only once it is even: each combat group decides it once, fCombatMusicGroupThreatRatioTimer
 (1 s) after it forms, its targets' strength over its own between fCombatMusicGroupThreatRatioMin
 and Max (0.5 and 2, exclusive), so guards cutting down a mudcrab start nothing
-(fCombatMusicPlayerCombatStrengthCap is never read). Strength (the engine's, also its
+(fCombatMusicPlayerCombatStrengthCap is never read). The fighters against the player are
+weighed together (the targets of the player's own group); each combat group fighting near the
+player is weighed apart, its own evenness and its own strength against the player's, so two
+small fights near the player do not add up to one worth music (inferred from the per-group
+settings, TODO(M13): a check of the group the engine makes before the odds is not identified). Strength (the engine's, also its
 GetThreatRatio's): damage × health / (1 − the armour's reduction, at most 0.99), so a lone
 wolf does not start it for a new player but a pack does; `src/shell/actor-combat.ts` feeds it; its
 conditions' GetCombatTargetHasKeyword asking the player's foes, the boss music against dragons;

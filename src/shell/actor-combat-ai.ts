@@ -949,6 +949,11 @@ export class ActorCombatAi {
     return this.#groups.size(reference);
   }
 
+  /** The combat group an actor fights in (undefined: none). */
+  groupId(reference: number): number | undefined {
+    return this.#groups.groupOf(reference)?.id;
+  }
+
   /** An actor left the stage or died: its combat ends, and others' memory of it goes. */
   remove(reference: number): void {
     const mind = this.#minds.get(reference);
