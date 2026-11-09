@@ -19,6 +19,7 @@
 // - A quest a story manager node starts gets its script's OnStoryChangeLocation(akActor,
 //   akOldLocation, akNewLocation) (the game's Quest.pex; STORY_EVENTS in story-manager.ts).
 
+import fs from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   buildStoryTrees,
@@ -104,14 +105,91 @@ describe.skipIf(!hasGamedata())('story manager: Change Location (headless simula
     expect(actor).toEqual({ form: PLAYER_REF });
     expect(to).toEqual({ form: BANNERED_MARE_LOCATION });
   });
+});
 
-  it.todo(
+// Moves that raise no Change Location, from the data: Dragonsreach [000165A3] and its Jarl's
+// Quarters [00080C6A] are two cells of WhiterunDragonsreachLocation [0001F871] (their XLCN); the
+// player going from one to the other enters no other location. An NPC that a script moves to
+// another location (ObjectReference.MoveTo to the Bannered Mare) changes location
+// (TESActorLocationChangeEvent: its OnLocationChange), but the story manager's Change Location
+// is the player's alone (the engine raises it as it puts the player in a cell of another
+// location; observed in the original, docs/scripting.md "Story events").
+const DRAGONSREACH = 0x165a3;
+const JARLS_QUARTERS = 0x80c6a;
+const DRAGONSREACH_LOCATION = 0x1f871;
+
+describe.skipIf(!hasGamedata())('story manager: moves without Change Location (simulation)', () => {
+  let sim: Sim;
+  let upstairs = 0;
+  let movedAt = 0;
+  let mover = 0;
+  let locationUpstairs: number | undefined;
+
+  beforeAll(async () => {
+    sim = await openSim({ interior: DRAGONSREACH, hour: 10 });
+    await sim.step(2);
+    // One of the hall's actors with scripts (or an alias) to hear its OnLocationChange.
+    const heard = new Set(sim.scriptEvents().map((event) => event.target));
+    const actors = sim.actors().map((staged) => staged.reference);
+    mover = actors.find((actor) => actor !== PLAYER_REF && heard.has(actor)) ?? 0;
+    upstairs = sim.time;
+    await sim.openInterior(JARLS_QUARTERS);
+    await sim.step(2);
+    locationUpstairs = sim.runtime.state.playerLocation;
+    // A script moves it to the Bannered Mare (both cells out of the loaded area now).
+    const marker = sim.db.cellReferences(BANNERED_MARE)[0];
+    if (mover !== 0 && marker !== undefined) {
+      movedAt = sim.time;
+      await sim.native(sim.runtime.referenceHandle(mover), 'ObjectReference', 'MoveTo', [
+        sim.runtime.referenceHandle(marker),
+        0,
+        0,
+        0,
+        true,
+      ]);
+      await sim.step(2);
+    }
+  }, 300_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it(
     'raises no Change Location for a move between cells of one location (the engine raises it ' +
       'only between locations: CK, Change Location event)',
+    () => {
+      expect(locationUpstairs).toBe(DRAGONSREACH_LOCATION);
+      expect(
+        sim.events('actorLocationChange').filter((event) => event.actor === PLAYER_REF),
+      ).toEqual([{ actor: PLAYER_REF, from: undefined, to: DRAGONSREACH_LOCATION }]);
+      expect(sim.storyEvents('CLOC').filter((event) => event.at >= upstairs)).toEqual([]);
+      expect(
+        sim.scriptEvents({ event: 'OnLocationChange', target: PLAYER_REF, since: upstairs }),
+      ).toEqual([]);
+    },
   );
-  it.todo(
+
+  it(
     'raises Change Location for no actor but the player, while NPCs still get ' +
       'OnLocationChange (engine map: Script events, OnLocationChange for NPCs)',
+    () => {
+      expect(mover).not.toBe(0);
+      const moves = sim
+        .events('actorLocationChange')
+        .filter((event) => event.actor === mover && event.to === BANNERED_MARE_LOCATION);
+      expect(moves).toEqual([
+        { actor: mover, from: DRAGONSREACH_LOCATION, to: BANNERED_MARE_LOCATION },
+      ]);
+      const told = sim.scriptEvents({ event: 'OnLocationChange', target: mover, since: movedAt });
+      expect(told.length).toBeGreaterThan(0);
+      for (const event of told) {
+        expect(event.args).toEqual([
+          { form: DRAGONSREACH_LOCATION },
+          { form: BANNERED_MARE_LOCATION },
+        ]);
+      }
+      expect(sim.storyEvents('CLOC').filter((event) => event.forms.R1 !== PLAYER_REF)).toEqual([]);
+    },
   );
 });
 
@@ -216,55 +294,65 @@ const STORY_TYPES: Readonly<Record<string, { readonly event: string; readonly wh
   },
 };
 
-/** The types our engine raises, and where (docs/scripting.md "Story events"). */
-const RAISED: Readonly<Record<string, string>> = {
-  ADCR: 'crime-engine.ts',
-  ADIA: 'actor-talk.ts',
-  AHEL: 'the actors’ looks',
-  AIPL: 'the takes, the container and barter menus',
-  ARRT: 'the guards’ arrest',
-  ASSU: 'crime-engine.ts',
-  BRIB: 'nothing: the original never raises it',
-  CAST: 'casting-engine.ts',
-  CHRR: 'crime-engine.ts',
-  CRFT: 'crafting-menu.ts',
-  CURE: 'magic-engine.ts (Cure Disease)',
-  DEAD: 'the senses',
-  ESJA: 'crime-engine.ts',
-  INFC: 'magic-engine.ts (contractDisease)',
-  INTM: 'nothing: the original never raises it',
-  JAIL: 'crime-engine.ts',
-  PRFV: 'nothing: the original never raises it',
-  QSTR: 'StoryManager.questStart (Quest.Start, SetStage queue it)',
-  KILL: 'crime-engine.ts (checked in event-sources.test.ts)',
-  LEVL: 'progression-engine.ts',
-  LOCK: 'crime-engine.ts',
-  NVPE: 'casting-engine.ts, actor-engine.ts',
-  PFIN: 'crime-engine.ts',
-  REMP: 'the inventory’s drop',
-  SCPT: 'Keyword.SendStoryEvent',
-  SKIL: 'progression-engine.ts',
-  STIJ: 'crime-engine.ts',
-  TRES: 'crime-engine.ts',
+/**
+ * The types our engine raises, where, and the suite of tests/conformance/scripting that checks
+ * each in the simulation (docs/scripting.md "Story events"); CHECKED: this suite.
+ */
+const RAISED: Readonly<Record<string, { readonly by: string; readonly checked?: string }>> = {
+  ADCR: { by: 'crime-engine.ts', checked: 'story-events.test.ts' },
+  ADIA: { by: 'actor-talk.ts', checked: 'story-events.test.ts' },
+  AFAV: { by: 'story-events.ts (the activation)' },
+  AHEL: { by: 'the actors’ looks', checked: 'story-events.test.ts' },
+  AIPL: { by: 'the takes, the container and barter menus', checked: 'story-events.test.ts' },
+  ARRT: { by: 'the guards’ arrest', checked: 'story-events-world.test.ts' },
+  ASSU: { by: 'crime-engine.ts', checked: 'story-events.test.ts' },
+  BRIB: { by: 'nothing: the original never raises it', checked: 'story-events.test.ts' },
+  CAST: { by: 'casting-engine.ts', checked: 'story-events.test.ts' },
+  CHRR: { by: 'crime-engine.ts', checked: 'story-events.test.ts' },
+  CLOC: { by: 'story-events.ts (the player’s location change)' },
+  CRFT: { by: 'crafting-menu.ts', checked: 'story-events-world.test.ts' },
+  CURE: { by: 'magic-engine.ts (Cure Disease)', checked: 'story-events.test.ts' },
+  DEAD: { by: 'the senses', checked: 'story-events.test.ts' },
+  ESJA: { by: 'crime-engine.ts', checked: 'story-events.test.ts' },
+  FLAT: { by: 'nothing: the original never raises it' },
+  INFC: { by: 'magic-engine.ts (contractDisease)', checked: 'story-events-world.test.ts' },
+  INTM: { by: 'nothing: the original never raises it', checked: 'story-events.test.ts' },
+  JAIL: { by: 'crime-engine.ts', checked: 'story-events.test.ts' },
+  KILL: { by: 'crime-engine.ts', checked: 'event-sources.test.ts' },
+  LEVL: { by: 'progression-engine.ts', checked: 'story-events.test.ts' },
+  LOCK: { by: 'crime-engine.ts', checked: 'story-events-world.test.ts' },
+  NVPE: { by: 'casting-engine.ts, actor-engine.ts', checked: 'story-events.test.ts' },
+  PFIN: { by: 'crime-engine.ts', checked: 'story-events.test.ts' },
+  PRFV: { by: 'nothing: the original never raises it', checked: 'story-events.test.ts' },
+  QSTR: { by: 'StoryManager.questStart (Quest.Start, SetStage queue it)' },
+  REMP: { by: 'the inventory’s drop', checked: 'story-events.test.ts' },
+  SCPT: { by: 'Keyword.SendStoryEvent', checked: 'story-events.test.ts' },
+  SKIL: { by: 'progression-engine.ts', checked: 'story-events.test.ts' },
+  STIJ: { by: 'crime-engine.ts', checked: 'story-events.test.ts' },
+  TRES: { by: 'crime-engine.ts', checked: 'story-events-world.test.ts' },
 };
 
-/** The types the interaction cases of this suite check (CLOC above, AFAV and FLAT below). */
-const CHECKED = new Set(['CLOC', 'AFAV', 'FLAT']);
+/** The types the interaction cases of this suite check (CLOC above; AFAV, FLAT, QSTR below). */
+const CHECKED = new Set(['CLOC', 'AFAV', 'FLAT', 'QSTR']);
 /** The Whiterun gate guard's line as the player's persuasion succeeds (its fragment: Persuade). */
 const GATE_PERSUADED_INFO = 0xd1981;
+/** A Companions radiant keyword (CR01, CR02, CR12 start on its Script event). */
+const CR_AELA = 0x1cf17;
+/** A quest with no story event that does not run at a new game (Blind Cliff Cave's). */
+const DUN_BLIND_CLIFF_QST = 0x39b3b;
 
 describe('every story manager event type', () => {
-  for (const [type, { event, when }] of Object.entries(STORY_TYPES)) {
-    if (CHECKED.has(type)) continue;
-    const raised = RAISED[type];
-    const name = event ? ` (${event})` : '';
-    it.todo(
-      raised === undefined
-        ? `raises ${type}${name} as ${when}: not raised yet  [xEdit, Quest.pex]`
-        : `raises ${type}${name} as ${when}: raised by ${raised}, to check in the simulation  ` +
-            '[xEdit, Quest.pex]',
-    );
-  }
+  it('is raised by the engine (or by nothing, as in the original) and checked in a simulation case', () => {
+    expect(Object.keys(RAISED).sort()).toEqual(Object.keys(STORY_TYPES).sort());
+    for (const [type, { checked }] of Object.entries(RAISED)) {
+      if (CHECKED.has(type)) continue;
+      expect(checked, type).toBeDefined();
+      // The suite named raises it: its type or its OnStory event is in a case of it.
+      const text = fs.readFileSync(new URL(checked ?? '', import.meta.url), 'utf8');
+      const event = STORY_TYPES[type]?.event ?? type;
+      expect(text.includes(type) || text.includes(event), `${type} in ${checked ?? ''}`).toBe(true);
+    }
+  });
 });
 
 describe.skipIf(!hasGamedata())('the story manager’s events (data, headless simulation)', () => {
@@ -273,6 +361,9 @@ describe.skipIf(!hasGamedata())('the story manager’s events (data, headless si
   let counts = new Map<string, { nodes: number; quests: number }>();
   let talkedTo = 0;
   let talkedAt = 0;
+  let queuedAt = 0;
+  let wasRunning = true;
+  let started: unknown;
 
   beforeAll(async () => {
     sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
@@ -305,6 +396,20 @@ describe.skipIf(!hasGamedata())('the story manager’s events (data, headless si
       sim.activate(actor);
       await sim.step(1);
     }
+    // A script sends a story event (queued), then starts a quest that has no event: the start
+    // waits behind the event (Quest Start, QSTR).
+    wasRunning = sim.isRunning(DUN_BLIND_CLIFF_QST);
+    queuedAt = sim.time;
+    const player = sim.runtime.actorHandle(PLAYER_REF);
+    await sim.native(sim.runtime.formHandle(CR_AELA), 'Keyword', 'SendStoryEvent', [
+      null,
+      player,
+      null,
+      0,
+      0,
+    ]);
+    started = await sim.native(sim.runtime.formHandle(DUN_BLIND_CLIFF_QST), 'Quest', 'Start', []);
+    await sim.step(1);
   }, 600_000);
   afterAll(async () => {
     await sim.close();
@@ -342,6 +447,29 @@ describe.skipIf(!hasGamedata())('the story manager’s events (data, headless si
     expect(sent.filter((event) => event.alias === undefined).map((event) => event.args)).toEqual([
       [{ form: PLAYER_REF }],
     ]);
+  });
+
+  it('starts a quest a script starts at its turn in the story manager’s queue (QSTR); no node runs for it', () => {
+    expect(wasRunning).toBe(false);
+    expect(started).toBe(true);
+    expect(sim.isRunning(DUN_BLIND_CLIFF_QST)).toBe(true);
+    const records = sim.records(queuedAt);
+    const script = records.findIndex(
+      (record) => record.kind === 'story' && record.type === 'SCPT' && record.forms.K1 === CR_AELA,
+    );
+    const start = records.findIndex(
+      (record) =>
+        record.kind === 'game' &&
+        record.type === 'questStartStop' &&
+        record.event.quest === DUN_BLIND_CLIFF_QST &&
+        record.event.started,
+    );
+    expect(script).toBeGreaterThanOrEqual(0);
+    // Behind the event raised before it: the event is processed first.
+    expect(start).toBeGreaterThan(script);
+    // No story manager node answers a quest start: none starts a quest for one.
+    expect(counts.get('QSTR')).toBeUndefined();
+    expect(sim.storyEvents('QSTR').flatMap((event) => event.started)).toEqual([]);
   });
 
   it('raises no Flatter as a persuasion succeeds in dialogue (the original never raises it)', async () => {

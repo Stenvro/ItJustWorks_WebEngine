@@ -813,6 +813,17 @@ export interface AreaPlace {
 }
 
 /**
+ * The cell the attached area round a place is centred on: an interior by its cell, an exterior
+ * by its worldspace and grid (not by the cell id: a persistent reference outside reads as in its
+ * worldspace's persistent cell, the world shows the player in the grid cell they stand in).
+ */
+export function areaCentre(place: AreaPlace): string {
+  if (place.world === undefined) return `cell ${String(place.cell)}`;
+  const cell = (value: number): string => String(Math.floor(value / CELL_UNITS));
+  return `world ${String(place.world)} ${cell(place.position[0])},${cell(place.position[1])}`;
+}
+
+/**
  * Whether a place is in the attached area round the player: the player's interior cell, or in
  * the player's worldspace within the uGridsToLoad cells round the player's.
  */
@@ -1061,16 +1072,17 @@ export class ScriptRuntime implements VmHost {
   #index: PersistentIndex | undefined;
   readonly #keywordCache = new Map<number, Promise<number[]>>();
   readonly #cellLocations = new Map<number, Promise<number | undefined>>();
+  /**
+   * Where a script last moved the player to another area (`place`), and the area centre the
+   * world showed them in then (`from`), until the world shows them anywhere else: the attached
+   * area round the player is the one they are going to meanwhile (`#movedAcross`).
+   */
+  #playerArrival: { readonly place: AreaPlace; readonly from: string | undefined } | undefined;
   /** Per cell: the references its references activate (their XAPR names them), with delays. */
   readonly #activateChildren = new Map<
     number,
     Promise<Map<number, { readonly child: number; readonly delay: number }[]>>
   >();
-  /**
-   * Where a script sent the player, until the world has them there (#playerArea), and the cell
-   * the world had them in as they were sent (playerInCell).
-   */
-  #playerBound: { readonly place: AreaPlace; readonly from: number | undefined } | undefined;
   /** References found without scripts of their own as their cell attached (quiet). */
   readonly #scriptless = new Set<number>();
   /** The load order's activate children by parent, wherever they stand (read once: XAPR). */
@@ -2404,14 +2416,14 @@ export class ScriptRuntime implements VmHost {
     // Where it was (an actor's location may change: actor-locations.ts).
     const before = this.#placementSnapshot(state);
     // Where it was, for whether it moved into or out of the attached area (below).
-    const attachedBefore: AreaPlace | 'shown' | undefined =
-      cell === undefined
-        ? undefined
-        : this.world.livePlacement?.(reference)
-          ? 'shown'
-          : state.position && (state.cell !== undefined || state.world !== undefined)
-            ? { position: state.position, cell: state.cell, world: state.world }
-            : undefined;
+    const attachedBefore = cell === undefined ? undefined : this.#areaPlaceBefore(reference, state);
+    if (reference === PLAYER_REF && cell !== undefined) {
+      const place: AreaPlace = { position, cell, world };
+      const shown = this.#shownPlayer();
+      const from = shown && areaCentre(shown);
+      // Within the area the world shows them in, the world's place is already the right one.
+      this.#playerArrival = from === areaCentre(place) ? undefined : { place, from };
+    }
     // A reference taken into a container comes back out into the world.
     const taken = state.container;
     if (taken) {
@@ -2426,13 +2438,6 @@ export class ScriptRuntime implements VmHost {
     if (cell !== undefined) {
       state.cell = cell;
       state.world = world;
-      // The player on their way there (#playerArea) until the world has them there.
-      if (reference === PLAYER_REF) {
-        this.#playerBound = {
-          place: { position, cell, world },
-          from: this.world.livePlacement?.(PLAYER_REF)?.cell,
-        };
-      }
     }
     this.world.moved?.(reference);
     const grid = (at: Vec3): string =>
@@ -2479,41 +2484,87 @@ export class ScriptRuntime implements VmHost {
   }
 
   /**
-   * The world tells which cell it has the player in (every frame: GameSession). Once that is
-   * the cell a script sent them to (they arrived), or another than the one they were in as they
-   * were sent (the world took them on: they arrived and walked out, or took a load door), the
-   * world's place is theirs again for the attached area (#playerArea).
+   * Where a reference was before a move, for the attached area: shown by the world (in it), or
+   * where a script last put it; undefined: at its editor location (read then).
    */
-  playerInCell(cell: number): void {
-    const bound = this.#playerBound;
-    if (bound && (cell === bound.place.cell || cell !== bound.from)) this.#playerBound = undefined;
+  #areaPlaceBefore(reference: number, state: ReferenceState): AreaPlace | 'shown' | undefined {
+    if (this.world.livePlacement?.(reference)) return 'shown';
+    return state.position && (state.cell !== undefined || state.world !== undefined)
+      ? { position: state.position, cell: state.cell, world: state.world }
+      : undefined;
   }
 
   /**
-   * Where the player is for the attached area: where a script just sent them while they are on
-   * their way (the cell they arrive in attaches), else where the world has them (they walk
-   * through doors and over cell borders without a script: their state keeps a script's last
-   * move only), else where scripts last put them.
+   * The place the attached area is round: where a script just moved the player, until the
+   * world shows them anywhere but where they were (the cell they arrive in attaches); else where
+   * the world shows them. Before, the place a script last left the player in, kept in the game
+   * state: none until a script moved them, so no reference a script moved told OnAttachedToCell
+   * or OnDetachedFromCell, and a stale one once the player had walked on.
    */
   async #playerArea(): Promise<AreaPlace | undefined> {
-    const live = this.world.livePlacement?.(PLAYER_REF);
-    // As the world tells it every frame (playerInCell).
-    if (live?.cell !== undefined) this.playerInCell(live.cell);
-    if (this.#playerBound) return this.#playerBound.place;
-    if (live) return { position: live.position, cell: live.cell, world: live.world };
-    const placed = await this.placement(PLAYER_REF, false);
-    return placed && { position: placed.position, cell: placed.cell, world: placed.world };
+    this.#settlePlayerArrival();
+    return this.#playerArrival?.place ?? (await this.placement(PLAYER_REF));
+  }
+
+  /** Where the world shows the player now (undefined: nowhere, between places). */
+  #shownPlayer(): AreaPlace | undefined {
+    const shown = this.world.livePlacement?.(PLAYER_REF);
+    if (!shown || (shown.cell === undefined && shown.world === undefined)) return undefined;
+    return { position: shown.position, cell: shown.cell, world: shown.world };
+  }
+
+  /**
+   * The player's arrival is over once the world shows them in another area than the one they
+   * were in as the script moved them: where they arrived, or anywhere they went on to (through a
+   * door, walking). Each frame (`update`), so a move a script makes later is never read round a
+   * place the player has left. An exterior is compared by its worldspace and grid
+   * (`areaCentre`), never by the cell id.
+   */
+  #settlePlayerArrival(): void {
+    const arrival = this.#playerArrival;
+    if (!arrival) return;
+    const shown = this.#shownPlayer();
+    if (!shown) return;
+    // `from` is never the arrival's own area (`move`): any other area ends it.
+    if (areaCentre(shown) !== arrival.from) this.#playerArrival = undefined;
+  }
+
+  /**
+   * The world tells which cell it has the player in (every frame: GameSession). Once that is
+   * the cell a script sent them to, or the world shows them in another area than the one they
+   * were in as they were sent (they arrived, walked out or took a load door), the world's place
+   * is theirs again for the attached area (#playerArea).
+   */
+  playerInCell(cell: number): void {
+    if (this.#playerArrival?.place.cell === cell) this.#playerArrival = undefined;
+    this.#settlePlayerArrival();
   }
 
   moveToEditorLocation(reference: number): void {
     const state = this.state.reference(reference);
     const before = this.#placementSnapshot(state);
+    const attachedBefore = this.#areaPlaceBefore(reference, state);
     delete state.position;
     delete state.rotation;
     delete state.cell;
     delete state.world;
     this.world.moved?.(reference);
     if (before) this.actorLocations.moved(reference, before);
+    // Back where the plugin placed it: told as any move into or out of the attached area.
+    if (reference === PLAYER_REF) return;
+    this.detach(
+      (async () => {
+        const editor = await this.#editorPlacement(reference);
+        const cell = this.forms.db.cellOfReference(reference);
+        // Already there (never moved, or not shown and not moved by a script): no move.
+        if (!editor || attachedBefore === undefined) return;
+        await this.#movedAcross(reference, attachedBefore, {
+          position: editor.position,
+          cell,
+          world: cell === undefined ? undefined : this.forms.db.worldOfCell(cell),
+        });
+      })(),
+    );
   }
 
   /** Where scripts last put a reference (for its location before it moves again). */
@@ -2797,6 +2848,20 @@ export class ScriptRuntime implements VmHost {
    * ObjectReference.Activate: the engine's one activation (`activateRef`) by a script, the
    * default processing only if asked. Returns true, as the game's does for an activation it
    * took.
+   *
+   * A Parent Activate Only reference (XAPD bit 0) takes a script's Activate by any activator,
+   * as any other reference does (the crosshair and actors walking by are kept from it
+   * elsewhere: play-session.ts, actor-doors.ts). The vanilla scripts that activate such a
+   * reference name one of its activate parents (the puzzles' openMarker, doorMarker,
+   * portMarker, puzzleDoorActivator) or the reference itself: DLC2ApoBook3SeekerDoorScript's
+   * CheckDead has Apocrypha's seeker gates in DLC2Book03Dungeon open themselves
+   * (self.Activate(self)) once their room's seekers are dead, and TrapTriggerBase has trap
+   * linkers with Parent Activate Only (Dustman's Cairn's end controller, a lever's linker with
+   * 13 such children) activate themselves to set off their children. So a rule that took only
+   * a parent's Activate would shut those gates for good. TODO(M13): inferred; whether the
+   * engine refuses one by an activator that is neither a parent nor the reference itself is
+   * not known, so none is refused. The AI's, a follower's and the pilot's activations come
+   * through here too.
    */
   activate(
     reference: number,
@@ -3699,6 +3764,8 @@ export class ScriptRuntime implements VmHost {
   /** Every frame: the clocks move on (real seconds outside menus, game days). */
   update(realSeconds: number, gameDays: number): void {
     this.state.realTime += realSeconds;
+    // Whether the world has taken the player where a script sent them (the attached area).
+    this.#settlePlayerArrival();
     // The joints scripts made, as their references' bodies come back (a cell's collision goes
     // in over some frames; PhysicsWorld.joinBallAndSocket keeps one joint to two bodies).
     this.#sinceConstraints += realSeconds;
@@ -4247,6 +4314,8 @@ export class ScriptRuntime implements VmHost {
    */
   async loadGame(save: RuntimeSave, progress?: (what: string) => void): Promise<string[]> {
     const db = this.forms.db;
+    // A move of the player before the load is no arrival in the loaded game.
+    this.#playerArrival = undefined;
     this.#startDate = save.startDate;
     this.#startDays = save.startDays;
     await this.#findClockGlobals();

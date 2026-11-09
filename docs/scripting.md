@@ -476,7 +476,21 @@ worldspaces on screen:
   so tells its parent as the one who opened it (OnOpen). **Parent Activate Only** (XAPD, 1,037
   vanilla children): only its parents activate such a child; the crosshair offers it nothing and
   it is shut to actors walking by (Blind Cliff Cave's lever gate stayed open to every bandit
-  before). TODO(M13): whether the engine refuses a script's Activate on one too. The load
+  before). A script's Activate of one is taken whoever the activator is
+  (`ScriptRuntime.activate`, which the AI's, a follower's and the pilot's activations go through
+  too). The vanilla scripts that activate a Parent Activate Only reference name one of its
+  parents as the activator (highGateRuinsLeverPuzzle's openMarker for a trap door with no
+  scripts, bwcStatuePuzzle's doorMarker, soljundMasterScript's portMarker, the pillar puzzles'
+  puzzleDoorActivator) or the reference itself: DLC2ApoBook3SeekerDoorScript's CheckDead
+  (called from DLC2dunBook3SeekerScript's OnDeath) has three seeker gates of DLC2Book03Dungeon
+  [040142F3] (0403CF3F, 0403CF3E, 0403C34A, each with a parent of its own) open themselves
+  with `self.Activate(self)` once their room's seekers are dead, and TrapTriggerBase has
+  Parent Activate Only trap linkers (dunDustmansCairnEndController 0009AD96, 0002E98C under a
+  lever with 13 such children) activate themselves to set off their children. A rule that took
+  only a parent's Activate shut those gates for good. TODO(M13): inferred; whether the engine
+  refuses a script's Activate by one that is neither a parent nor the reference itself is not
+  known, so none is refused. `tests/conformance/scripting/script-events.test.ts` ("blocked and
+  taken activation"). The load
   order has 6,527 such pairs (5,691 children of 2,782 parents: 1,625 ambushes, 2,000-odd traps,
   default2StateActivator's doors and gates; `node tools/activate-children-audit.ts`); the
   runtime finds a parent's children in its own cell, its worldspace's persistent cell and the
@@ -707,12 +721,25 @@ stats go to every object registered for them. What each kind becomes:
 - **Moves across the attached area** (`ScriptRuntime.move`): the engine tells a reference
   whose parent cell changes between an attached cell and a detached one. Ours: a move to
   another cell (MoveTo, an actor walking away or back) between the attached area (the
-  player's interior cell, or the uGridsToLoad cells round the player's outside, where the
-  player is going if a script just moved them, until the world tells it has them in that cell
-  or in another than the one they were sent from: `playerInCell`, every frame; else where the
-  world has them) and the rest:
-  a ledger MoveTo'd to another cell and back, an innkeeper out through her door and in again. The player is always attached.
-  A cell attaching or detaching with its references is OnCellAttach / OnCellDetach instead.
+  player's interior cell, or the uGridsToLoad cells round the player's outside) and the rest:
+  a ledger MoveTo'd to another cell and back, an innkeeper out through her door and in again;
+  MoveToMyEditorLocation too. The area is round where the world shows the player, except
+  between a script's MoveTo of the player to another area and the first frame the world shows
+  them anywhere but the area they were in then: meanwhile round where the script sent them
+  (`ScriptRuntime.#playerArrival`, settled each `update` and as the world tells the player's
+  cell every frame, `playerInCell`, which also ends it once that is the cell they were sent to;
+  cleared on a load). Areas compare
+  as an interior's cell, or an exterior's worldspace and grid, never by the cell id: a
+  persistent marker outside reads as in its worldspace's persistent cell, the world shows the
+  player in the grid cell they stand in. The player is always attached. Before, the area was
+  read round where a script last left the player, none until one did, so no reference a
+  script moved was told either event. A cell attaching or detaching with its references is
+  OnCellAttach / OnCellDetach instead. TODO(M13): inferred that the engine reads the area
+  round the player's pending destination until the move is done.
+  `tests/conformance/scripting/script-events.test.ts` ("triggers, traps and moves": an item
+  sent with the player to Riften's front door, then moves after the player came back in from
+  outside and from the Ratway; "the attached area round the player": the same in the runtime
+  alone, the world's view of the player set frame by frame).
 - **Translations** (`ScriptRuntime.translate`): failed at once for a reference without its 3D,
   almost complete as it passes fRefTranslationAlmostDonePercent (0.9) of its way, complete at
   the end.
@@ -898,7 +925,12 @@ stop (OnTrapHitStop), with the trap body's velocity, the contact's place and the
 type; the initial-hit flag is false for these contacts. The scripts hear them only on living
 actors. The player's and the actors' controllers are checked each physics step
 (`PhysicsWorld.trapsTouching`). Of the 28 bases with a trap-hit script (TrapHitBase, HazardBase
-and the scripts extending them), 1,797 references.
+and the scripts extending them), 1,797 references. In the simulation
+(`tests/conformance/scripting/script-events.test.ts`): a spear trap's contact as the player
+lands on it, or a bear trap's jaws closing (they shove the player out), lasts shorter than the
+delay (start and stop only); lying on a spike bed (TrapWoodSpikeBed01, a phantom box on
+L_TRAP) is a lasting contact, told again (OnTrapHit) at the first physics step past each 500
+ms until the player is off it.
 
 A trap's trigger goes off by its script's state. PressurePlate (419 references) and the plain
 TrapTriggerBase triggers fire on the first step: Inactive's OnTriggerEnter goes to active, whose
