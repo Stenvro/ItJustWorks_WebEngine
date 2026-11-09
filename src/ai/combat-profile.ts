@@ -199,13 +199,15 @@ export async function weaponOptions(
     });
   }
   for (const { id, crossbow } of ranged) {
-    // Weighed with the best ammunition it carries for it (bestAmmo: what it takes up with it).
-    const shot = bestAmmo(ammo, crossbow);
-    if (!shot) continue;
+    // Only with ammunition for it (bestAmmo: what it takes up with it). Weighed by the bow's own
+    // damage, its arrows' left out: the score's mults and range curves are tuned on that, and
+    // with the arrows added an archer kept its bow well inside a sword's reach (docs/ai.md).
+    // TODO(M13): phase 5, whether the engine's score counts the ammunition.
+    if (!bestAmmo(ammo, crossbow)) continue;
     options.push({
       kind: 'ranged',
       id,
-      damage: await equipment.weaponDamage(actor, id, shot.damage),
+      damage: await equipment.weaponDamage(actor, id),
       range: held?.weapon === id && held.range > 0 ? held.range : shotRange,
       equipped: false,
     });

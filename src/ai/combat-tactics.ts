@@ -412,8 +412,9 @@ export interface CarriedAmmo {
 /**
  * The ammunition a bow (arrows: AMMO Non-Bolt) or a crossbow (bolts) shoots: the one of that kind
  * it carries (count above 0) that does the most damage (the engine's equip choice takes the best
- * arrows; docs/gameplay.md), the first of equals; undefined when it carries none. Weighed with
- * its equipment, so arrows run out and the next best are taken up.
+ * arrows; docs/gameplay.md), the first of equals; undefined when it carries none. Read again
+ * as its equipment is weighed, so arrows run out and the next best are taken up. The bow's
+ * score leaves the arrows' damage out (combat-profile.ts weaponOptions).
  */
 export function bestAmmo(
   carried: readonly CarriedAmmo[],

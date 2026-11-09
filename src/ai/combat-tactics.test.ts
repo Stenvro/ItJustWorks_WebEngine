@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { Fields } from '../formats/esm/fields.ts';
+import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
+import { AmmoFlag, WeaponType } from '../world/item-records.ts';
 import { COMBAT_AI_DEFAULTS, readCombatAiSettings } from './combat-ai.ts';
+import { weaponOptions } from './combat-profile.ts';
 import {
   CombatStyleFlag,
   CombatStyleRecordFlag,
@@ -225,6 +228,60 @@ describe('combat tactics: what it fights with', () => {
     expect(chooseEquipment([sword, bow], 400, archer, settings)?.id).toBe(2);
     // Face to face even the archer draws its sword.
     expect(chooseEquipment([sword, bow], 60, archer, settings)?.id).toBe(1);
+  });
+
+  it('weighs a bow by its own damage, so an archer draws its sword within a sword’s reach', async () => {
+    // A hunting bow (7) with iron arrows (8) in hand and an iron sword (8, reach 1) carried.
+    const items = new Map<number, unknown>([
+      [0x10, { type: 'WEAP', weapon: { weaponType: WeaponType.bow, flags2: 0, reach: 1 } }],
+      [0x20, { type: 'AMMO', ammoFlags: AmmoFlag.nonBolt, ammoDamage: 8 }],
+      [
+        0x30,
+        { type: 'WEAP', weapon: { weaponType: WeaponType.oneHandSword, flags2: 0, reach: 1 } },
+      ],
+    ]);
+    const base = new Map([
+      [0x10, 7],
+      [0x30, 8],
+    ]);
+    const runtime = (carried: [number, number][]): ScriptRuntime =>
+      ({
+        inventory: () => Promise.resolve(new Map(carried)),
+        gameSetting: () => Promise.resolve(undefined),
+        actors: { value: () => Promise.resolve({ current: 4 }) },
+        equipment: {
+          item: (form: number) => Promise.resolve(items.get(form)),
+          // What a shot does adds its ammunition's damage (EquipmentEngine.weaponDamage).
+          weaponDamage: (_actor: number, form: number, ammo = 0) =>
+            Promise.resolve((base.get(form) ?? 0) + ammo),
+        },
+      }) as unknown as ScriptRuntime;
+    const held = { weapon: 0x10, range: 4096, reach: 141 };
+    const options = (
+      await weaponOptions(
+        runtime([
+          [0x10, 1],
+          [0x20, 24],
+          [0x30, 1],
+        ]),
+        7,
+        held,
+      )
+    ).map((option) => ({
+      ...option,
+      equipped: option.id === 0x10,
+    }));
+    const heldBow = options.find((option) => option.id === 0x10);
+    expect(heldBow?.kind).toBe('ranged');
+    expect(heldBow?.damage).toBe(7);
+    // csHumanMissile (ranged 3.2, melee 0.83): it shoots from 400 units, and within the sword's
+    // reach (141) it draws the sword.
+    expect(chooseEquipment(options, 400, archer, settings)?.id).toBe(0x10);
+    expect(chooseEquipment(options, 120, archer, settings)?.id).toBe(0x30);
+    // Without arrows the bow is no option at all.
+    expect(
+      (await weaponOptions(runtime([[0x10, 1]]), 7, held)).some((option) => option.id === 0x10),
+    ).toBe(false);
   });
 
   it('leaves out what its style scores 0, and falls back to fists', () => {
