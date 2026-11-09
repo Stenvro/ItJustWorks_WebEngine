@@ -204,6 +204,48 @@ export function getsUpFirst(kind: EnginePackage): boolean {
   return !FROM_FURNITURE.has(kind);
 }
 
+// --- Feeding: Vampire Feed and Cannibal ------------------------------------------------------------
+
+/** The feeding packages (CommonLibSSE PACKAGE_TYPE kVampireFeed, kCannibal). */
+export type FeedingPackage = 'vampireFeed' | 'cannibal';
+
+/** What a feeding procedure does to the game: its start, whether it lasts, its end. */
+export interface Feeding {
+  /** It feeds now: GetVampireFeed (GetCannibal) holds, the feeding idle plays on the target. */
+  begin(): void;
+  /** Whether it still feeds (its graph's end, or its longest, ends it). */
+  feeding(): boolean;
+  /** It feeds no more (the package ended or was left). */
+  end(): void;
+}
+
+/** A feeding asks this often whether it is over (real seconds; ours). */
+const FEED_STEP = 0.1;
+
+/**
+ * Vampire Feed and Cannibal: the packages Actor.StartVampireFeed and Actor.StartCannibal make
+ * and put in front of the feeder's own (CommonLibSSE PACKAGE_TYPE kVampireFeed and kCannibal:
+ * created packages, as Avoid Player). The feeder gets up first (no feeding from furniture),
+ * turns to its target and feeds: the feeding idle plays on the target, and the package runs
+ * as long as the feeding lasts, ending with it. Inferred, TODO(M13): the procedures' own steps
+ * (turning to the target; no walk to it: the perks offer the feed within activation reach) and
+ * when the original ends them (ours: the feeder's clip's NPCVampireFeedEnd, else the longest
+ * feeding: natives/actor.ts).
+ */
+export function feedOn(feeding: Feeding): EngineRunner {
+  return async (run) => {
+    const here = run.body.position();
+    const there = run.target === undefined ? undefined : run.mind.livePosition?.(run.target);
+    if (here && there) run.body.face(headingTo(here, there));
+    feeding.begin();
+    try {
+      while (!run.stopped() && feeding.feeding()) await run.wait(FEED_STEP);
+    } finally {
+      feeding.end();
+    }
+  };
+}
+
 /** How long an actor looks at an object destroyed near it (real seconds; ours). */
 const REACT_SECONDS = 3;
 

@@ -365,7 +365,10 @@ export class ActorAi {
     runner: EngineRunner,
     target?: number,
   ): boolean {
-    return this.#actors.get(reference)?.packages.push(kind, runner, target) ?? false;
+    // The player while AI-driven runs them too (drivePlayer).
+    const packages =
+      reference === PLAYER_REF ? this.#player?.packages : this.#actors.get(reference)?.packages;
+    return packages?.push(kind, runner, target) ?? false;
   }
 
   /** The actor's package goes on (chosen again). */

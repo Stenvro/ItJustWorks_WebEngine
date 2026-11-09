@@ -108,9 +108,10 @@ describe('the engine’s own packages (no record holds them)', () => {
   // React To Destroyed Object, Get Up From Chair Or Bed, Steal Warning, Surface: their procedures
   // and starts, src/ai/engine-packages.test.ts (who starts React To Destroyed Object and its length
   // are inferred). Pickpocket Warning is never made, as in the original (its comment there).
-  // Vampire Feed and Cannibal: the natives StartVampireFeed and StartCannibal
-  // (src/scripting/runtime/engine-events.test.ts, tests/magic-world.int.test.ts); whether the
-  // original runs them as packages of its own was not read.
+  // Vampire Feed and Cannibal (CommonLibSSE kVampireFeed, kCannibal): created packages the
+  // natives StartVampireFeed and StartCannibal put in front of the feeder's own, running while the
+  // feeding lasts (src/ai/engine-packages.test.ts, src/scripting/runtime/engine-events.test.ts,
+  // tests/magic-world.int.test.ts); the player while not AI-driven feeds without one (TODO(M13)).
 
   // The movers' rule for one in the way (src/ai/avoidance.ts blockedByActor, which
   // src/shell/actor-movers.ts follows): after fMaxTimeBlockedByActors (observed in the original),

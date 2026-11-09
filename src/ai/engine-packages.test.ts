@@ -8,6 +8,7 @@ import {
   avoidsPlayer,
   awayFrom,
   Breath,
+  feedOn,
   followCommander,
   followSpot,
   followsUp,
@@ -267,6 +268,56 @@ describe('what starts Get Up and Surface', () => {
     stand?.();
     await tick(actor, 0.1);
     expect(actor.engine()).toBe('avoidPlayer');
+  });
+
+  it('runs Vampire Feed as a package in front of the feeder’s own while the feeding lasts', async () => {
+    let starts = 0;
+    const lasting: ProcedureRunner = async (run) => {
+      starts++;
+      while (!run.stopped()) await run.wait(1);
+      return 'failure';
+    };
+    let heading = 0;
+    let feeding = false;
+    const told: string[] = [];
+    const { actor } = packageActor(
+      [pack(1, procedure('lasting'))],
+      { lasting },
+      {
+        mind: { livePosition: () => [0, 100, 0] },
+        body: {
+          position: () => [0, 0, 0],
+          inFurniture: () => undefined,
+          face: (to) => {
+            heading = to ?? heading;
+          },
+        },
+      },
+    );
+    await tick(actor, 1);
+    const feed = feedOn({
+      begin: () => {
+        feeding = true;
+        told.push('begin');
+      },
+      feeding: () => feeding,
+      end: () => told.push('end'),
+    });
+    expect(actor.push('vampireFeed', feed, 0x400)).toBe(true);
+    await tick(actor, 0.1);
+    // Turned to its target, feeding: its own package set aside meanwhile.
+    expect(actor.engine()).toBe('vampireFeed');
+    expect(heading).toBeCloseTo(0, 6);
+    expect(told).toEqual(['begin']);
+    await tick(actor, 1);
+    expect(actor.engine()).toBe('vampireFeed');
+    // Its graph's feed end: the package ends, its own runs again.
+    feeding = false;
+    await tick(actor, 0.2);
+    expect(told).toEqual(['begin', 'end']);
+    expect(actor.engine()).toBeUndefined();
+    await tick(actor, 0.2);
+    expect(starts).toBe(2);
   });
 
   it('has a swimmer under water surface once its breath is short of the rise and a second', () => {

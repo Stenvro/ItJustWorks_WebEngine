@@ -183,4 +183,23 @@ describe('the events the runtime sends', () => {
       'OnVampireFeed 200 (400)',
     ]);
   });
+
+  it('puts the Vampire Feed and Cannibal packages on the feeder; one with no AI here feeds at once', async () => {
+    const { runtime: scripts } = runtime();
+    const put: string[] = [];
+    let accepts = true;
+    scripts.world.putCreatedPackage = (actor, kind, _runner, target) => {
+      put.push(`${kind} ${actor.toString(16)} on ${target?.toString(16)}`);
+      return accepts;
+    };
+    const actor = scripts.actorHandle(NPC);
+    await callNative(scripts, 'actor', 'startvampirefeed', actor, [scripts.actorHandle(VICTIM)]);
+    await callNative(scripts, 'actor', 'startcannibal', actor, [scripts.actorHandle(VICTIM)]);
+    expect(put).toEqual(['vampireFeed 200 on 400', 'cannibal 200 on 400']);
+    // The package feeds as it runs: not yet.
+    expect(scripts.state.actors.get(NPC)?.feeding).toBeUndefined();
+    accepts = false;
+    await callNative(scripts, 'actor', 'startvampirefeed', actor, [scripts.actorHandle(VICTIM)]);
+    expect(scripts.state.actors.get(NPC)?.feeding?.kind).toBe('vampire');
+  });
 });

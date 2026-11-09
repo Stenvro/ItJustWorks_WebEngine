@@ -45,6 +45,8 @@ import type { Talking } from './world-lines.ts';
 import { rumbleGamepad } from './gamepad-input.ts';
 import { inputPlatform, Platform } from '../ui/input-platform.ts';
 import { LookRequests, type HeadTrackKind } from '../ai/head-tracking.ts';
+import type { FeedingPackage } from '../ai/engine-packages.ts';
+import type { EngineRunner } from '../ai/package-runtime.ts';
 import { bodyOfNode, type PhysicsWorld, type PlacedCollision } from '../physics/physics-world.ts';
 
 /**
@@ -198,6 +200,13 @@ export interface ScriptView {
   pathTo?(actor: number, target: number, walkRun: number): Promise<boolean> | undefined;
   /** EvaluatePackage: the actor chooses its package again (`restart`: anew, as ScriptWorld). */
   evaluatePackage?(reference: number, restart?: boolean): void;
+  /** A created package in front of an actor's own (ScriptWorld.putCreatedPackage). */
+  putCreatedPackage?(
+    reference: number,
+    kind: FeedingPackage,
+    runner: EngineRunner,
+    target: number | undefined,
+  ): boolean;
   /** ForceAddRagdollToWorld: a dead actor's ragdoll in the world now (ActorStage.addRagdoll). */
   addRagdoll?(reference: number): Promise<void>;
   /** ForceRemoveRagdollFromWorld: an actor's ragdoll leaves the physics world. */
@@ -729,6 +738,18 @@ export class ScriptWorld implements WorldBridge {
 
   evaluatePackage(actor: number, restart = false): void {
     for (const view of this.#views) view.evaluatePackage?.(actor, restart);
+  }
+
+  /** A created package put on the actor by the view whose AI runs it (false: none does). */
+  putCreatedPackage(
+    actor: number,
+    kind: FeedingPackage,
+    runner: EngineRunner,
+    target: number | undefined,
+  ): boolean {
+    for (const view of this.#views)
+      if (view.putCreatedPackage?.(actor, kind, runner, target) === true) return true;
+    return false;
   }
 
   sittingRotation(radians: number): void {
