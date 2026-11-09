@@ -836,9 +836,11 @@ fFeedbackOnOffGainTimeMS 1000, fFeedbackTimeMS 10000). Their use is inferred fro
   go limp as before; a knocked-down actor's get-up keeps its motors.
 - **bAlwaysDriveRagdoll** ([Animation], 0): with it on, a living actor's ragdoll is driven by
   its graph as a dying one's is (the check of what the graph drives answers yes at once:
-  observed in the original): simulated where its graph's rigid body controls are active
-  (Hulda's are as she stands and leans at the Bannered Mare's counter), keyframed to the pose
-  where not; turned off, the living's bodies are keyframed again. The [Animation] and
+  observed in the original): simulated where its graph's rigid body controls are active,
+  keyframed to the pose where not (that some of Hulda's states as she stands and leans at the
+  Bannered Mare's counter have them active is expected, not yet seen in a run: the feedback case
+  in `tests/conformance/animation/ragdolls-death.test.ts` waits up to 20 s for one); turned
+  off, the living's bodies are keyframed again. The [Animation] and
   [RagdollAnim] settings are read each frame (the player's changes apply at once, the feedback's
   to a ragdoll already hit too).
 - **Feedback**: a blow that does not kill, on an actor whose ragdoll is driven with bodies

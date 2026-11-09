@@ -117,15 +117,16 @@ export class ActorAmbientIdles {
 
   /** The engine's PickNewIdleHandler. */
   pickNewIdle(reference: number): void {
-    this.flags.pickNewIdle(reference);
+    this.flags.pickNewIdle(reference, this.#clock);
   }
 
   /**
    * A specific idle was sent to an actor's graph (a package's, a script's PlayIdle, a line's):
-   * over an idle that plays, the PickNewIdle the stopped one raises is no request.
+   * over an idle that plays, the PickNewIdle the stopped one raises is no request (within
+   * SPECIFIC_IDLE_SKIP_WINDOW of it: src/ai/ambient-idles.ts).
    */
   specificIdle(reference: number): void {
-    this.flags.specificIdle(reference);
+    this.flags.specificIdle(reference, this.#clock);
   }
 
   /**

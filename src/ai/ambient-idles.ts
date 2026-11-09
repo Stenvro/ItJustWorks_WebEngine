@@ -27,7 +27,10 @@
 // camera (the views that show the player's own body standing or seated), never in first person
 // (seated in first person neither, though the camera's state is then furniture's); an idle that
 // plays counts as cut off once its actor moves (its package walks it, the player's keys), so a
-// specific idle after that skips no PickNewIdle.
+// specific idle after that skips no PickNewIdle; the skip a specific idle sets holds for
+// SPECIFIC_IDLE_SKIP_WINDOW (0.5 s) only: a later PickNewIdle is taken as the specific idle's own
+// end (a request), so that where the stopped idle raises none the skip does not swallow the end's
+// and leave the actor without ambient idles.
 //
 // Platform-independent: the caller values the gates and plays the action.
 
@@ -178,10 +181,20 @@ export function isComplexScene(actors: number, complexSceneActors: number): bool
   return actors >= complexSceneActors;
 }
 
+/**
+ * How long the skip a specific idle sets holds (seconds): the stopped idle's PickNewIdle comes as
+ * the graph takes the specific idle, a later one is the specific idle's own end (inferred,
+ * TODO(M13): the original's flag holds until the next PickNewIdle; ours bounds it so that a cut
+ * our graph raises no PickNewIdle for does not cost the actor its next idle).
+ */
+export const SPECIFIC_IDLE_SKIP_WINDOW = 0.5;
+
 /** One actor's ambient idle state. */
 interface AmbientIdleState {
   wants: boolean;
   skip: boolean;
+  /** The skip holds until then (seconds on the caller's clock; Infinity: until a PickNewIdle). */
+  skipUntil: number;
   /**
    * An idle plays on it (one it picked or a specific one), until its graph asks for another or
    * it moves off (inferred, TODO(M13)).
@@ -200,28 +213,44 @@ export class AmbientIdleFlags {
   #state(actor: number): AmbientIdleState {
     let state = this.#states.get(actor);
     if (!state) {
-      state = { wants: false, skip: false, playing: false, waitUntil: 0, waitComplex: false };
+      state = {
+        wants: false,
+        skip: false,
+        skipUntil: Infinity,
+        playing: false,
+        waitUntil: 0,
+        waitComplex: false,
+      };
       this.#states.set(actor, state);
     }
     return state;
   }
 
-  /** PickNewIdle (the engine's PickNewIdleHandler): the actor wants a new idle, unless skipped. */
-  pickNewIdle(actor: number): void {
+  /**
+   * PickNewIdle (the engine's PickNewIdleHandler): the actor wants a new idle, unless skipped
+   * (`now`: seconds on the caller's clock; a skip a specific idle set holds for
+   * SPECIFIC_IDLE_SKIP_WINDOW after it).
+   */
+  pickNewIdle(actor: number, now?: number): void {
     const state = this.#state(actor);
     // The idle that played has ended (or its graph's state asks for one).
     state.playing = false;
-    if (state.skip) state.skip = false;
-    else state.wants = true;
+    const skipped = state.skip && (now === undefined || now <= state.skipUntil);
+    state.skip = false;
+    if (!skipped) state.wants = true;
   }
 
   /**
    * A specific idle starts on the actor (a package's, a script's PlayIdle, a line's): over an
-   * idle that plays, the PickNewIdle the stopped one raises is skipped.
+   * idle that plays, the PickNewIdle the stopped one raises is skipped (`now`: seconds on the
+   * caller's clock: that PickNewIdle comes within SPECIFIC_IDLE_SKIP_WINDOW, inferred).
    */
-  specificIdle(actor: number): void {
+  specificIdle(actor: number, now?: number): void {
     const state = this.#state(actor);
-    if (state.playing) state.skip = true;
+    if (state.playing) {
+      state.skip = true;
+      state.skipUntil = now === undefined ? Infinity : now + SPECIFIC_IDLE_SKIP_WINDOW;
+    }
     state.playing = true;
   }
 
@@ -278,7 +307,14 @@ export class AmbientIdleFlags {
 
   /** The next PickNewIdle is skipped (a specific idle replaced one that was playing). */
   skipNext(actor: number): void {
-    this.#state(actor).skip = true;
+    const state = this.#state(actor);
+    state.skip = true;
+    state.skipUntil = Infinity;
+  }
+
+  /** Whether its next PickNewIdle is skipped (the "skip one" flag). */
+  skipping(actor: number): boolean {
+    return this.#states.get(actor)?.skip === true;
   }
 
   /** Whether the actor wants a new idle. */

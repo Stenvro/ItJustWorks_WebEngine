@@ -367,7 +367,15 @@ vanity camera, never in first person, seated either (where the camera's state is
 ActionIdle gives the player IdlePlayer standing, the chair idles seated: the people's tree
 leaves the player out of the others by GetIsID); an idle that plays counts as cut off once its
 actor moves off (its package walks it or paths, the player's keys move them: no PickNewIdle of
-its end comes), so a specific idle after that skips nothing. Not yet: the meal's gate. Seen in
+its end comes), so a specific idle after that skips nothing; the skip a specific idle sets
+holds for 0.5 s only (`SPECIFIC_IDLE_SKIP_WINDOW`): a later PickNewIdle is taken as the specific
+idle's own end, a request (the original's flag holds until the next PickNewIdle; ours is bounded
+so that a cut our graph raises no PickNewIdle for does not swallow the end's and leave the actor
+without ambient idles: in the headless simulation a script's IdleHDRight over a Bannered Mare
+guest's ambient idle brought no PickNewIdle until its own end, 24 s on). Not yet: the meal's
+gate; the seated player's chair idles (TODO(M13): seated, the player's body graph raises no
+PickNewIdle in the headless simulation, none in 60 s with bNeutralState 1, so they pick none
+there yet; `tests/conformance/animation/ambient-idles.test.ts`, the seated player's case fails). Seen in
 the headless simulation (the Bannered Mare at 20:00, 60 s): Hulda wiped the counter (IdleBarCounterWipe),
 Lucia put a hand on her hip (IdleHDRight), Saadia and Sinmir took MotionDrivenIdle (armed:
 IdleIfEquipped).
