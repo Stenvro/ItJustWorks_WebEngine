@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { parseVmad, PhaseFragmentFlag, referencedForms } from './vmad.ts';
+import {
+  parseVmad,
+  PhaseFragmentFlag,
+  referencedForms,
+  scriptAttached,
+  ScriptStatus,
+} from './vmad.ts';
 
 /** Little-endian byte builder for synthetic VMAD fields. */
 class Bytes {
@@ -154,6 +160,7 @@ describe('VMAD', () => {
         scripts: [
           {
             name: 'AliasScript',
+            status: 0,
             properties: [
               { name: 'Target', value: { type: 'object', value: { formId: 0x33, alias: -1 } } },
             ],
@@ -161,6 +168,24 @@ describe('VMAD', () => {
         ],
       },
     ]);
+  });
+
+  it('reads a script entry as removed by its status byte', () => {
+    const bytes = new Bytes().u16(5).u16(2).u16(4);
+    for (const [name, status] of [
+      ['Local', 0],
+      ['Inherited', 1],
+      ['Removed', 2],
+      ['InheritedAndRemoved', 3],
+    ] as const) {
+      bytes.wstring(name).u8(status).u16(0);
+    }
+    const vmad = parseVmad(bytes.data, 'REFR');
+    expect(vmad.scripts.filter(scriptAttached).map((entry) => entry.name)).toEqual([
+      'Local',
+      'Inherited',
+    ]);
+    expect(vmad.scripts[3]?.status).toBe(ScriptStatus.inheritedAndRemoved);
   });
 
   it("reads a scene's end fragment and its phases' fragments", () => {

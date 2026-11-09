@@ -1,6 +1,7 @@
 // The texts a quest shows (its name, its objectives) with their tags filled in, as the
 // Creation Kit's "Text Replacement" describes them: `<Alias=Name>` is the name of what fills the
-// quest's alias of that name (the alias's display name, ALDN, if it has one), `<Alias.ShortName=
+// quest's alias of that name (the alias's display name, ALDN, if it has one), `<Alias.Cap=Name>`
+// the same with a capital, `<Alias.ShortName=
 // Name>` its short name (an NPC's SHRT, else its name), `<Global=EditorId>` the value of one of
 // the quest's text display globals (QTGL) as a whole number; the pronouns of the actor that
 // fills an alias by its sex (`<Alias.Pronoun=Name>` he / she, `.PronounObj` him / her,
@@ -15,7 +16,7 @@ import { PLAYER_REF } from './forms.ts';
 import type { ScriptRuntime } from './runtime.ts';
 
 const TAG =
-  /<(Alias|Alias\.ShortName|Alias\.Pronoun(?:Obj|Pos|PosObj|Ref|Int)?|Alias\.Race|Global)=([^>]+)>/gi;
+  /<(Alias|Alias\.Cap|Alias\.ShortName|Alias\.Pronoun(?:Obj|Pos|PosObj|Ref|Int)?|Alias\.Race|Global)=([^>]+)>/gi;
 
 /** The pronoun tags' settings: sPronoun<kind>Male / sPronoun<kind>Female. */
 const PRONOUNS: Readonly<Record<string, string>> = {
@@ -29,6 +30,9 @@ const PRONOUNS: Readonly<Record<string, string>> = {
 
 /** How deep NPC templates are followed for a name (TPLT chains are short). */
 const TEMPLATE_DEPTH = 8;
+
+/** In an alias's display name, the name of what fills it ("Jarl <BaseName>"). */
+const BASE_NAME = /<BaseName>/i;
 
 /** `<BribeCost>`: what a bribe of the one spoken to takes. */
 const BRIBE_COST = /<BribeCost>/gi;
@@ -62,7 +66,9 @@ export async function questText(
             : lower === 'alias.race'
               ? await raceText(runtime, quest, name)
               : await aliasText(runtime, quest, name, lower === 'alias.shortname');
-      return value ?? whole;
+      if (value === undefined) return whole;
+      // `<Alias.Cap=Name>`: the name with a capital first letter (it opens a sentence).
+      return lower === 'alias.cap' ? value.charAt(0).toUpperCase() + value.slice(1) : value;
     }),
   );
   let index = 0;
@@ -136,12 +142,14 @@ async function aliasText(
   const wanted = aliasName.trim().toLowerCase();
   const alias = quest.aliases.find((entry) => entry.name.toLowerCase() === wanted);
   if (!alias) return undefined;
-  if (alias.displayName !== undefined && alias.displayName !== 0) {
+  const filled = runtime.state.quests.get(quest.formId)?.aliases.get(alias.id);
+  // A short name is the NPC's own (`Jarl <Alias.ShortName=Jarl>` is "Jarl Balgruuf", where the
+  // alias's display name is "Jarl <BaseName>"). TODO(M13): inferred from the texts of the data.
+  if (!short && alias.displayName !== undefined && alias.displayName !== 0) {
     const message = await runtime.forms.record(alias.displayName);
     const name = message?.text('FULL') ?? message?.text('DESC');
-    if (name) return name;
+    if (name) return filled === undefined ? name : withBaseName(runtime, name, filled);
   }
-  const filled = runtime.state.quests.get(quest.formId)?.aliases.get(alias.id);
   if (filled === undefined) return undefined;
   const name = alias.location
     ? ((await runtime.forms.record(filled))?.text('FULL') ?? '')
@@ -163,8 +171,23 @@ export async function referenceName(
   // (its display name, ALDN).
   const own = runtime.state.references.get(reference)?.displayName;
   if (own !== undefined) return own;
-  const aliased = runtime.aliasDisplayName(reference);
-  if (aliased !== undefined) return aliased;
+  const aliased = short ? undefined : runtime.aliasDisplayName(reference);
+  if (aliased !== undefined) return withBaseName(runtime, aliased, reference);
+  return baseName(runtime, reference, short);
+}
+
+/** A display name's `<BaseName>` filled in: the name of what it names, by its base. */
+async function withBaseName(
+  runtime: ScriptRuntime,
+  text: string,
+  reference: number,
+): Promise<string> {
+  if (!BASE_NAME.test(text)) return text;
+  return text.replace(BASE_NAME, await baseName(runtime, reference, false));
+}
+
+/** The name a reference's base gives it, an NPC's from its templates if it has none of its own. */
+async function baseName(runtime: ScriptRuntime, reference: number, short: boolean): Promise<string> {
   let base = await runtime.baseOf(reference);
   for (let depth = 0; base !== undefined && depth < TEMPLATE_DEPTH; depth++) {
     const record = await runtime.forms.record(base);

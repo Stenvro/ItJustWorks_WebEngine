@@ -401,10 +401,15 @@ describe.skipIf(!hasGamedata())("MQ203 Alduin's Wall", () => {
       expect(sim.package(esbern)?.id).toBe(
         await sim.formId('PACK', 'MQ203EsbernToKarthspireMarker1'),
       );
-      expect(await sim.until(() => lines.includes('MQ203KarthspireScene: #5 said'), 120)).toBe(
-        true,
-      );
-      expect(await sim.until(() => lines.includes('MQ203KarthspireScene: #6 said'), 60)).toBe(true);
+      // A Forsworn the two meet on the way, on a ledge none of them can reach, falls to the player
+      // (their fight pauses the scene, combatPause).
+      const said = (line: string): boolean => lines.includes(`MQ203KarthspireScene: ${line} said`);
+      for (let second = 0; second < 120 && !said('#5'); second += 2) {
+        await sim.step(2);
+        await fendOff(sim, party);
+      }
+      expect(said('#5')).toBe(true);
+      expect(await sim.until(() => said('#6'), 60)).toBe(true);
       afterArrival = await sim.save('MQ203 110');
     } finally {
       await sim.close();

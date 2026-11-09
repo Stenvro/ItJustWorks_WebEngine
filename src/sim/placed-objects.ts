@@ -59,7 +59,12 @@ function takeUnloadedGraph(session: GameSession, object: CellObject): SavedGraph
   const graphs = session.scriptsReady?.state.graphs;
   const graph = graphs?.get(object.reference);
   graphs?.delete(object.reference);
-  return graph;
+  // What was playing as it unloaded has played to its end by now: no times to go on from.
+  if (!graph?.sequences) return graph;
+  return {
+    ...graph,
+    sequences: { states: graph.sequences.states, variables: graph.sequences.variables },
+  };
 }
 
 /**

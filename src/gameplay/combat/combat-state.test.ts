@@ -194,6 +194,19 @@ describe('the combat state', () => {
     expect(state.killMove).toBe(true);
   });
 
+  it("ends a dragon's bite's victim's killmove at its NPCKillMoveEnd, not a leader's", () => {
+    const victim = newCombatState();
+    victim.paired = 'support';
+    victim.killMove = true;
+    expect(kinds(['NPCKillMoveEnd'], victim)).toEqual(['killmove-end']);
+    expect(victim.killMove).toBe(false);
+    const leader = newCombatState();
+    leader.paired = 'lead';
+    leader.killMove = true;
+    expect(kinds(['NPCKillMoveEnd'], leader)).toEqual([]);
+    expect(leader.killMove).toBe(true);
+  });
+
   it("ends its victim's killmove at its 2_KillMoveEnd", () => {
     const state = newCombatState();
     state.paired = 'support';

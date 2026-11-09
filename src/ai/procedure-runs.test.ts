@@ -318,6 +318,22 @@ describe('procedures', () => {
     expect(done).toEqual([]);
   });
 
+  it('find with Allow Already Held counts what the searcher carries; acquire passes it over', async () => {
+    const { run, done, found } = harness(new Map(), 2);
+    const held: PackageInput = { id: 4, type: 'Bool', value: { kind: 'bool', value: true } };
+    const mind = {
+      search: () => Promise.resolve([]),
+      searchHeld: () => Promise.resolve([]),
+      carried: () => Promise.resolve(0x888),
+    };
+    expect(await run('Find', [0, 1, 2, 4, 3], [NEAR_HOME, BEDS, FOUND_BED, held, STEAL], mind)).toBe(
+      'success',
+    );
+    expect(found.get(FOUND_BED.id)?.length).toBe(1);
+    expect(await run('Acquire', [2], [FOUND_BED], mind)).toBe('failure');
+    expect(done).toEqual([]);
+  });
+
   it('find gives up when its package stops', async () => {
     const { run } = harness(new Map(), 2);
     const search = (): Promise<number[]> => Promise.resolve([]);

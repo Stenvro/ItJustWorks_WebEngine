@@ -127,6 +127,36 @@ describe('object behavior graphs', () => {
     expect(graph.playing[0]?.sequence).toBe('autoplay');
   });
 
+  it('goes on from a save made while a sequence played, its text keys still to come', () => {
+    const before = new ObjectGraph(autoplay, sequences, 0);
+    before.send('stopeffect', 1);
+    before.update(1.2);
+    const saved = before.saveState();
+    expect(saved?.times).toHaveLength(1);
+    const after = new ObjectGraph(autoplay, sequences, 100);
+    const keys: string[] = [];
+    after.onEvent = (key) => keys.push(key);
+    if (saved) after.restoreState(saved, 100);
+    // AutoFadeOut had played 0.2 s of its 0.5: its "start" is not sent again, its "end" comes.
+    expect(after.playing[0]?.start).toBeCloseTo(99.8);
+    after.update(100.1);
+    expect(keys).toEqual([]);
+    after.update(100.4);
+    expect(keys).toEqual(['end']);
+  });
+
+  it('holds a state saved without times at its end, sending no keys', () => {
+    const before = new ObjectGraph(autoplay, sequences, 0);
+    before.send('stopeffect', 1);
+    const saved = before.saveState();
+    const after = new ObjectGraph(autoplay, sequences, 100);
+    const keys: string[] = [];
+    after.onEvent = (key) => keys.push(key);
+    if (saved) after.restoreState({ states: saved.states, variables: saved.variables }, 100);
+    after.update(200);
+    expect(keys).toEqual([]);
+  });
+
   it('takes wildcard transitions on events sent by name', () => {
     const graph = new ObjectGraph(autoplay, sequences, 0);
     expect(graph.send('stopeffect', 0.25)).toBe(true);

@@ -727,6 +727,14 @@ function waitsOn(path: readonly ProcedureBranch[]): boolean {
   return false;
 }
 
+/** Whether a branch holds a procedure whose success completes the package (FNAM 0x1). */
+function mayComplete(branch: ProcedureBranch | undefined): boolean {
+  if (!branch) return false;
+  return branch.type.toLowerCase() === 'procedure'
+    ? (branch.flags & 0x1) !== 0
+    : branch.children.some(mayComplete);
+}
+
 /** The branches from a tree's root down a way of child indices (SavedPackage.path). */
 function branchesAlong(root: ProcedureBranch, path: readonly number[]): ProcedureBranch[] {
   const branches = [root];
@@ -1405,6 +1413,12 @@ export class ActorPackages {
         // first child, the Sit template's search for a seat, while the Travel beside it, whose
         // success completes the package, had arrived, held Sit packages for ever: the last phases
         // of DialogueRiftenSS02Scene and IvarsteadSSScene.)
+        // A child done reports only that (see docs/ai.md, "When a package is complete"): with
+        // nothing after this branch in its tree the next update runs them again, so a completing
+        // procedure beside the one done goes on (ShoutFromPerch: its Sit is done at once on the
+        // perch it is on, its Shout then completes the package). TODO(M13): those without a
+        // completing procedure stop here, as the tree's run out ends its package for now.
+        const last = this.#lastInTree(running, branch);
         // (Its children run anew after a load: they share the running branches' list.)
         running.resume = undefined;
         const views: Running[] = branch.children.map(() => ({
@@ -1423,7 +1437,9 @@ export class ActorPackages {
           if (ended.result === 'skipped') continue;
           ran = true;
           // A procedure's success that completes the package ends it at once, whatever is left.
-          const now = !all || ended.result === 'complete' || ended.result === 'stopped';
+          const goesOn =
+            last && [...pending.keys()].some((i) => mayComplete(branch.children[i]));
+          const now = (!all && !goesOn) || ended.result === 'complete' || ended.result === 'stopped';
           if (!now) continue;
           views.forEach((view, i) => {
             if (i !== ended.i) view.cut = true;
@@ -1445,6 +1461,19 @@ export class ActorPackages {
       default:
         return 'skipped';
     }
+  }
+
+  /** Whether nothing runs after a branch running now: no later child, no branch that repeats. */
+  #lastInTree(running: Running, branch: ProcedureBranch): boolean {
+    let below = branch;
+    for (let depth = running.active.length - 1; depth >= 0; depth--) {
+      const above = running.active[depth];
+      if (!above || above === below) continue;
+      if ((above.branchFlags & BranchFlag.repeatWhenComplete) !== 0) return false;
+      if (above.type.toLowerCase() === 'sequence' && above.children.at(-1) !== below) return false;
+      below = above;
+    }
+    return (branch.branchFlags & BranchFlag.repeatWhenComplete) === 0;
   }
 
   async #procedure(

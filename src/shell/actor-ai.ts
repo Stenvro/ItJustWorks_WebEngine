@@ -667,8 +667,16 @@ export class ActorAi {
         return furniture.use(
           user,
           target,
-          (to, arrive, heading) =>
-            movers.travel(reference, to, 'walk', arrive, heading === undefined ? {} : { heading }),
+          (to, arrive, heading) => {
+            // A big actor's body keeps its middle from the spot (MQ301's Odahviing, held by the
+            // Dragonsreach trap's walls a few steps from where its enter begins): its body at
+            // the spot is there. TODO(M13): inferred; the engine's own measure is not known.
+            const large = (movers.raceSize(reference) ?? RaceSize.medium) >= RaceSize.large;
+            const near = large ? Math.max(arrive, movers.radius(reference) ?? arrive) : arrive;
+            const [x, y] = staged.position;
+            if (large && Math.hypot(to[0] - x, to[1] - y) <= near) return Promise.resolve(true);
+            return movers.travel(reference, to, 'walk', near, heading === undefined ? {} : { heading });
+          },
           face,
           types === undefined ? { activates: true } : { types, activates: true },
         );

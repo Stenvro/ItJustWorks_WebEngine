@@ -102,7 +102,7 @@ export function placedScriptGraph(
     (part): part is ScriptGraph => part !== undefined,
   );
   const save = (): SavedGraph | undefined => {
-    const sequences = graph?.saveState();
+    const sequences = graph?.saveState(clock());
     const skeletal = skeleton?.savePlacedState();
     return sequences || skeletal ? { sequences, skeleton: skeletal } : undefined;
   };

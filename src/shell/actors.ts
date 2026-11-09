@@ -956,12 +956,18 @@ export class ActorPlacer {
     );
     if (!look?.skeleton) return undefined;
     const session = this.#session;
-    // The dead run no packages.
-    const start =
+    // The dead run no packages. The disabled are not put where their packages have them on this
+    // cell's ground: one stands at its reference until a script enables it, and its packages take
+    // it on from there (MQ206's Hakon comes from where he is placed, across the trigger that wakes
+    // the dragon); one whose package has it in another space is away, as anyone. TODO(M13): inferred
+    // from that scene; the engine's own rule for where a disabled actor stands is not known.
+    const packaged =
       placedInCell.startsDead || options?.here === true
         ? undefined
         : await session.packageStart(placedInCell, look);
-    if (start?.kind === 'elsewhere') return undefined;
+    if (packaged?.kind === 'elsewhere') return undefined;
+    const disabled = (await session.scriptsReady?.isEnabled(placedInCell.reference)) === false;
+    const start = disabled ? undefined : packaged;
     const actor =
       start?.kind === 'at'
         ? await this.#atReference(placedInCell, start.reference, start.furniture)

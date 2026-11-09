@@ -67,6 +67,12 @@ export interface ObjectGraphState {
   readonly states: readonly number[];
   /** The variables scripts set: [index, value]. */
   readonly variables: readonly (readonly [number, number])[];
+  /**
+   * The active sequences' times (seconds played), in the order they are reached from the root: a
+   * sequence saved halfway goes on and still sends the text keys ahead of it. None in saves made
+   * before it, or of a state kept as a 3D unloaded: those played long ago.
+   */
+  readonly times?: readonly number[];
 }
 
 /** Seconds before a load a restored graph's sequences began: they have played to their ends. */
@@ -93,6 +99,8 @@ export class ObjectGraph {
   readonly #fading = new Map<SequenceLeaf, { start: number; fade: Fade }>();
   readonly #expressions = new Map<string, Expression | null>();
   #playing: PlayingSequence[] = [];
+  /** The clock as last told (saveState: how long the playing sequences have played). */
+  #now: number;
 
   /**
    * Starts the graph at `now`. `sequences`: the mesh's sequences by lower-case name.
@@ -107,6 +115,7 @@ export class ObjectGraph {
     this.#graph = graph;
     this.#sequences = sequences;
     this.#random = random;
+    this.#now = now;
     this.#activate(graph.root, now);
     this.#refresh();
   }
@@ -121,6 +130,7 @@ export class ObjectGraph {
 
   /** Advances to `now`: sends the text keys passed since the last update as events. */
   update(now: number): void {
+    this.#now = now;
     // Blends that ran their course: the old sequences stop, the new ones play in full.
     let ended = false;
     for (const [leaf, { fade }] of this.#fading) {
@@ -259,12 +269,14 @@ export class ObjectGraph {
 
   /**
    * What a save keeps of the graph (as the original saves an object's graph): the state of each
-   * active state machine, in the order they are reached from the root, and the variables
-   * scripts set. Undefined while nothing has moved it from where it started.
+   * active state machine, in the order they are reached from the root, how long each active
+   * sequence has played, and the variables scripts set. Undefined while nothing has moved it from
+   * where it started.
    */
-  saveState(): ObjectGraphState | undefined {
+  saveState(now: number = this.#now): ObjectGraphState | undefined {
     if (!this.#touched) return undefined;
     const states: number[] = [];
+    const times: number[] = [];
     const walk = (node: BehaviorGenerator | undefined): void => {
       if (!node) return;
       switch (node.kind) {
@@ -281,26 +293,39 @@ export class ObjectGraph {
         case 'modifier-generator':
           walk(node.generator);
           return;
+        case 'gamebryo-sequence': {
+          const leaf = this.#leaves.get(node);
+          times.push(leaf ? now - leaf.start : RESTORED_LONG_AGO);
+          return;
+        }
         default:
           return;
       }
     };
     walk(this.#graph.root);
-    return { states, variables: [...this.#values] };
+    return { states, variables: [...this.#values], times };
   }
 
   /**
    * A saved graph put back as it loads (`now`: the clock): its variables, then its machines in
-   * their saved states, whose sequences played long ago (a lever pulled stays down, a gate
-   * raised stays up) and send no text keys again.
+   * their saved states. Its sequences go on from their saved times, sending only the text keys
+   * still ahead of them (a word of power's "End", which its script waits for); without times they
+   * played long ago (a lever pulled stays down, a gate raised stays up).
    */
   restoreState(saved: ObjectGraphState, now: number): void {
     this.#values.clear();
     for (const [index, value] of saved.variables) this.#values.set(index, value);
     this.#deactivate(this.#graph.root);
     this.#fading.clear();
+    this.#now = now;
     const at = now - RESTORED_LONG_AGO;
-    this.#activate(this.#graph.root, at, { states: saved.states, next: 0 });
+    this.#activate(this.#graph.root, at, {
+      states: saved.states,
+      next: 0,
+      times: saved.times ?? [],
+      nextTime: 0,
+      now,
+    });
     for (const state of this.#leaves.values()) state.sent = now;
     this.#touched = true;
     this.#refresh();
@@ -322,6 +347,7 @@ export class ObjectGraph {
     });
     this.#deactivate(this.#graph.root);
     this.#fading.clear();
+    this.#now = now;
     this.#activate(this.#graph.root, now - RESTORED_LONG_AGO, {
       states: [],
       next: 0,
@@ -347,6 +373,10 @@ export class ObjectGraph {
       next: number;
       /** An original save's states by their machines' names (lower case), in place of states. */
       readonly byName?: ReadonlyMap<string, number>;
+      /** How long the sequences have played, in the order they are reached, as of `now`. */
+      readonly times?: readonly number[];
+      nextTime?: number;
+      readonly now?: number;
     },
   ): void {
     if (!node) return;
@@ -369,10 +399,15 @@ export class ObjectGraph {
       case 'modifier-generator':
         this.#activate(node.generator, time, saved);
         return;
-      case 'gamebryo-sequence':
+      case 'gamebryo-sequence': {
+        const index = saved?.nextTime ?? 0;
+        if (saved) saved.nextTime = index + 1;
+        const played = saved?.times?.[index];
+        const start = played !== undefined && saved?.now !== undefined ? saved.now - played : time;
         // Keys at the very start count: "sent" lies just before it.
-        this.#leaves.set(node, { start: time, sent: Number.NEGATIVE_INFINITY });
+        this.#leaves.set(node, { start, sent: Number.NEGATIVE_INFINITY });
         return;
+      }
       default:
         // Skeletal clips (hkbClipGenerator) run in the full runtime beside this one
         // (src/animation/animated-skeleton.ts); scripts reach both (src/shell/script-world.ts).

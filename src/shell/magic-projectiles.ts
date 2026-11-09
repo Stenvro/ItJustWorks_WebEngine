@@ -81,7 +81,7 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { HitImpact } from './combat-impacts.ts';
 import { MagicBeams } from './magic-beams.ts';
 import { MagicFlames, type FlameStream } from './magic-flames.ts';
-import { putBackGraph, startObjectGraph } from './object-graphs.ts';
+import { clock, putBackGraph, startObjectGraph } from './object-graphs.ts';
 import type { ObjectGraph } from '../animation/object-graph.ts';
 import type { SavedGraph } from '../animation/script-graphs.ts';
 import { alongMatrix, cellLight, type MagicFx } from './magic-fx.ts';
@@ -277,7 +277,7 @@ export class MagicProjectiles {
       ...(delivered.object !== undefined && { object: delivered.object }),
     });
     const graphOf = (graph: ObjectGraph | undefined): SavedGraph | undefined => {
-      const sequences = graph?.saveState();
+      const sequences = graph?.saveState(clock());
       return sequences && { sequences };
     };
     for (const flying of this.#flying) {
@@ -818,15 +818,23 @@ export class MagicProjectiles {
         delivered.caster,
         entry.pushed,
       );
+    // Each body at its point nearest the front's middle: a volume wider than the cone (the wind
+    // on the Throat of the World's path) is reached where the cone meets it. TODO(M13): the shape
+    // the original sweeps is not known; the data needs a volume met away from its middle.
+    const ahead: Vec3 = [
+      origin[0] + wave.direction[0] * front,
+      origin[1] + wave.direction[1] * front,
+      origin[2] + wave.direction[2] * front,
+    ];
     const objects =
-      physics?.objectsNear(origin, front, Layer.coneProjectile) ?? new Map<number, Vec3>();
+      physics?.objectsNear(origin, front, Layer.coneProjectile, ahead) ?? new Map<number, Vec3>();
     const shapes: [number, ActorShape][] = [
       ...[...targets].map(([reference, target]): [number, ActorShape] => [reference, target.shape]),
       ...[...objects]
         .filter(([reference]) => !targets.has(reference))
-        .map(([reference, middle]): [number, ActorShape] => [
+        .map(([reference, nearest]): [number, ActorShape] => [
           reference,
-          { feet: middle, height: 0, radius: 0 },
+          { feet: nearest, height: 0, radius: 0 },
         ]),
     ];
     for (const reference of sweepCone(wave, step, shapes)) {
@@ -844,17 +852,21 @@ export class MagicProjectiles {
         });
         continue;
       }
-      const middle = objects.get(reference);
-      if (!middle) continue;
-      // Seen from its apex: nothing else first on the way to the object's body.
-      const way: Vec3 = [middle[0] - origin[0], middle[1] - origin[1], middle[2] - origin[2]];
-      const first = physics?.raycast(origin, way, Math.hypot(...way), Layer.coneProjectile);
+      const nearest = objects.get(reference);
+      if (!nearest) continue;
+      // Seen from its apex: nothing else first on the way to the object's body, as for an actor
+      // (#blocked: a collision box hides nothing, L_SPELL passes it). Hidden now, it may be seen
+      // further on, the point the front is nearest moving with it.
+      const way: Vec3 = [nearest[0] - origin[0], nearest[1] - origin[1], nearest[2] - origin[2]];
+      const first = physics?.raycast(origin, way, Math.hypot(...way), Layer.spell);
       if (
         first &&
         first.owner?.reference !== reference &&
         first.owner?.reference !== delivered.caster
-      )
+      ) {
+        wave.reached.delete(reference);
         continue;
+      }
       await runtime.casting.deliver(delivered, reference, {
         facing: false,
         projectile: projectile.formId,

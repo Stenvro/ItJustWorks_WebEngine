@@ -5,7 +5,12 @@
 // (sounds, animations, UI) do nothing here and are listed as such. The running game has the
 // full native API on the live world: src/scripting/runtime/.
 
-import { parseVmad, type PropertyValue, type ScriptAttachments } from '../formats/esm/vmad.ts';
+import {
+  parseVmad,
+  scriptAttached,
+  type PropertyValue,
+  type ScriptAttachments,
+} from '../formats/esm/vmad.ts';
 import { GroupType, RecordFlag } from '../formats/esm/record.ts';
 import type { GameRecord, RecordDatabase } from '../world/record-db.ts';
 import type { AttachedScriptInfo, NativeCall, NativeFunction, VmHost } from './papyrus-vm.ts';
@@ -244,7 +249,7 @@ export class GameHost implements VmHost {
       target.alias >= 0
         ? (attachments.aliases.find((a) => a.alias === target.alias)?.scripts ?? [])
         : attachments.scripts;
-    return scripts.map((script) => ({
+    return scripts.filter(scriptAttached).map((script) => ({
       name: script.name,
       properties: new Map(
         script.properties.map((p) => [p.name.toLowerCase(), this.#value(record, p.value)]),

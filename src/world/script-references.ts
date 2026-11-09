@@ -80,7 +80,7 @@ function addScripts(
   for (const script of scripts) {
     const use = useOf(script);
     for (const property of script.properties) {
-      const forms = referencedForms({ name: script.name, properties: [property] });
+      const forms = referencedForms({ ...script, properties: [property] });
       for (const local of forms) {
         index.add(db.toGlobal(plugin, local), {
           record,

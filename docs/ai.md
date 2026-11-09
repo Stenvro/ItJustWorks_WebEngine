@@ -502,7 +502,10 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   have (the Sit template sits and waits; 19 of the 151 vanilla Simultaneous branches have it: `node tools/package-info.ts --simultaneous`). Ended by its first child
   alone before, the Sit template's search for a seat kept its package running after the Travel
   beside it, whose success completes the package, had arrived: DialogueRiftenSS02Scene and
-  IvarsteadSSScene never ended. A Random branch runs one that may run, at random. A procedure
+  IvarsteadSSScene never ended. With nothing after it in its tree (no later child above it, no branch
+  that repeats) a procedure beside the one done that may complete the package goes on, as the tree
+  has only run out (below): ShoutFromPerch on the perch its flier stands on has its Sit done at once
+  and its Shout, whose success completes it, still to come. A Random branch runs one that may run, at random. A procedure
   runs until it
   succeeds or fails; one whose success completes the package (FNAM 0x1) ends it; a branch that
   repeats when complete (PRCB 0x1) starts over.
@@ -585,8 +588,10 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   EatingRoot or DrinkingRoot by GetIsUsedItemType); LockDoors and UnlockDoors lock and unlock
   the load doors of their place (a door without a lock gets a novice one); Say says its topic,
   facing its target; ForceGreet waits at its place until the player comes into its trigger
-  area, goes to them and opens the conversation with its topic (one that could not, the player
-  busy, tries again after fAIForceGreetingTimer, 3 s, by its name: TODO(M13)); DialogueActivate talks to the
+  area and opens the conversation with its topic from where it stands, the way to the player
+  being the package's Travel before it (to its Forcegreet Distance: a dragon's 1200 is as near as
+  it comes; one that could not, the player busy, tries again after fAIForceGreetingTimer, 3 s, by
+  its name: TODO(M13)); DialogueActivate talks to the
   player from its place, and to another actor through a scene the story manager gives the two
   ([Conversations between actors](#conversations-between-actors)); KeepAnEyeOn watches its target in its observation area and pursues it
   in its pursuit area; Escort leads its target to the destination, waiting for it where it

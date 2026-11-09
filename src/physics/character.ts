@@ -1314,7 +1314,9 @@ export class CharacterBody {
   /** One fixed step: gravity, the wanted movement, sliding and stepping. Before world.step. */
   step(seconds: number): void {
     // Carried by what it stands on (#carrier): first by what that moved since its last step (a
-    // script set it there: TranslateTo, SetPosition), so the shape stands on it again.
+    // script set it there: TranslateTo, SetPosition), so the shape stands on it again. Not for a
+    // simulated body: where the solver left it differs from the step's forecast each time, and
+    // the shape put back on a basket kicked into a tumble, past every wall, ended under the floor.
     this.carriedTurn = 0;
     const carrier =
       this.#carrier?.body.isValid() === true && !this.swimming ? this.#carrier : undefined;
@@ -1323,7 +1325,12 @@ export class CharacterBody {
       at: carrier.body.translation(),
       turn: carrier.body.rotation(),
     };
-    if (carrier && carrierNow && !samePose(carrier.pose, carrierNow)) {
+    if (
+      carrier &&
+      carrierNow &&
+      carrier.body.bodyType() !== RAPIER.RigidBodyType.Dynamic &&
+      !samePose(carrier.pose, carrierNow)
+    ) {
       const to = carryPoint(carrier.pose, carrierNow, this.#body.translation());
       this.#body.setTranslation(to, true);
       this.#body.setNextKinematicTranslation(to);

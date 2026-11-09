@@ -27,6 +27,7 @@ import { craftingModel, workbenchOf } from '../../src/shell/crafting-models.ts';
 import { openBookUnseen } from '../../src/shell/book-reading.ts';
 import { fastTravelJourney, fastTravelWay } from '../../src/shell/fast-travel-journey.ts';
 import { giftModel } from '../../src/shell/gift-menu.ts';
+import { containerModel } from '../../src/shell/container-menu.ts';
 import { inventoryModel } from '../../src/shell/inventory-menu.ts';
 import {
   LockPick,
@@ -966,6 +967,38 @@ export class Sim {
   }
 
   /**
+   * The player reads a book from their inventory through the inventory menu's model (ItemSelect
+   * on its entry: scripts hear it as equipped, OnEquipped; an Elder Scroll's script takes it from
+   * there). False if they have none.
+   */
+  async readFromInventory(book: number): Promise<boolean> {
+    const model = inventoryModel(this.world.session, this.world.terminal, async (read) => {
+      await openBookUnseen(this.runtime, { book: read });
+    });
+    const entry = (await model.view()).entries.find((candidate) => candidate.formId === book);
+    if (!entry || !model.select) return false;
+    await this.#stepUntil(model.select(entry, 0));
+    return true;
+  }
+
+  /**
+   * The player takes an item out of a corpse or a container through the container menu's model
+   * (its entry, moved to them). False if it holds none of it.
+   */
+  async take(holder: number, item: number, count = 1): Promise<boolean> {
+    const inventory = inventoryModel(this.world.session, this.world.terminal, () =>
+      Promise.resolve(),
+    );
+    const model = containerModel(this.world.session, holder, inventory);
+    const entry = (await model.view()).entries.find(
+      (candidate) => candidate.formId === item && candidate.container === true,
+    );
+    if (!entry || !model.transfer) return false;
+    await this.#stepUntil(Promise.resolve(model.transfer(entry, count, true)));
+    return true;
+  }
+
+  /**
    * The player sells items to a merchant through the barter menu's model (bartermenu.swf's
    * ItemSelect on one of the player's entries: src/shell/barter-menu.ts), at the price it shows.
    * False if the merchant does not buy it.
@@ -1145,12 +1178,13 @@ export class Sim {
     const speaker = opened?.reference;
     if (speaker === undefined) return undefined;
     const engine = this.runtime.dialogue;
+    // In dialogue from before the greeting is chosen (src/shell/dialogue-menu.ts).
+    this.runtime.dialogueSpeaker = speaker;
     const greeting = await this.#drive(
       opened?.opening === undefined
         ? engine.greeting(speaker)
         : engine.topicLine(opened.opening, speaker),
     );
-    this.runtime.dialogueSpeaker = speaker;
     this.runtime.state.actor(speaker).talkedToPlayer = true;
     this.#conversation = { speaker, choices: [] };
     if (greeting) await this.#say(greeting, speaker);

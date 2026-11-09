@@ -384,6 +384,16 @@ export function graphEvent(state: CombatState, event: string, handler?: string):
         effects.push({ kind: 'killmove-end' });
       }
       break;
+    // A victim on its clip's first tracks says it without the prefix (the dragon's bite: the
+    // people's Paired_BiteGrapple raises NPCKillMoveEnd, its killer's side the 2_ events): its
+    // killmove ends there, and it dies by its killer. TODO(M13): inferred from the clips' events;
+    // no response file names NPCKillMoveEnd.
+    case 'npckillmoveend':
+      if (state.killMove && state.paired === 'support') {
+        state.killMove = false;
+        effects.push({ kind: 'killmove-end' });
+      }
+      break;
     case 'pairend':
     case '2_pairend':
       endPaired(state, effects);
