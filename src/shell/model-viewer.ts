@@ -42,6 +42,7 @@ import { roomIndexAt, type CellRoom } from '../world/cell-rooms.ts';
 import { cellSceneLighting, pointLights } from '../world/cell-lighting.ts';
 import {
   cellArrival,
+  cellReferences,
   doorDestination,
   loadCellData,
   objectModelKey,
@@ -212,6 +213,8 @@ export class ModelViewer {
   #loadToken = 0;
   /** The cell on screen, with everything needed to switch upgrades instantly. */
   #cell: CellView | undefined;
+  /** The cell whose data it holds (GameSession.cellData), until it shows another or none. */
+  #heldCell: number | undefined;
   /** The name of the interior cell being loaded, until the player stands in it. */
   #loading: string | undefined;
   /** The physics world and the player in the cell on screen. */
@@ -1266,6 +1269,9 @@ export class ModelViewer {
     // It resets if its time has come, before its references load (cell-reset.ts).
     await this.#session?.scriptsReady?.cellResets.attaching(formId);
     const loadedData = await (this.#session?.cellData(formId) ?? loadCellData(db, formId));
+    // Held while shown; the cell held before goes into its buffer (cell-buffer.ts).
+    this.#letCellGo();
+    if (this.#session) this.#heldCell = formId;
     // Its objects where the game left them (moved-objects.ts).
     const scripts = this.#session?.scriptsReady;
     const data = scripts
@@ -2218,14 +2224,17 @@ export class ModelViewer {
       if (token !== this.#loadToken || !cell) return;
       this.#refreshEnabled();
       const references = [
-        ...cell.data.objects.map((object) => object.reference),
-        // Triggers (activators with a primitive) hear who enters them.
-        ...cell.data.primitives.map((primitive) => primitive.reference),
+        // Triggers (activators with a primitive) hear who enters them; markers attach too.
+        ...cellReferences(cell.data),
         ...(this.#stage?.referencesIn(String(cell.data.cell.formId)) ?? []),
       ];
       const loaded = new Set(this.#loadedReferences());
       this.#scriptsAttached = true;
-      await runtime.cellAttached(references, (reference) => loaded.has(reference));
+      await runtime.cellAttached(
+        references,
+        (reference) => loaded.has(reference),
+        cell.data.cell.formId,
+      );
       for (const [reference, state] of runtime.state.references) {
         if (runtime.state.created.has(reference) && state.cell === cell.data.cell.formId) {
           await this.#showCreated(reference);
@@ -2236,7 +2245,14 @@ export class ModelViewer {
     }
   }
 
+  /** The cell whose data this viewer holds goes into its buffer (GameSession.cellData). */
+  #letCellGo(): void {
+    if (this.#heldCell !== undefined) this.#session?.cellLeft(this.#heldCell);
+    this.#heldCell = undefined;
+  }
+
   #releaseCell(): void {
+    this.#letCellGo();
     const cell = this.#cell;
     const runtime = this.#session?.scriptsReady;
     this.#scriptsAttached = false;
@@ -2248,8 +2264,7 @@ export class ModelViewer {
       runtime.detach(
         runtime.cellDetached(
           [
-            ...cell.data.objects.map((object) => object.reference),
-            ...cell.data.primitives.map((primitive) => primitive.reference),
+            ...cellReferences(cell.data),
             ...(this.#stage?.referencesIn(String(cell.data.cell.formId)) ?? []),
           ],
           (reference) => loaded.has(reference),

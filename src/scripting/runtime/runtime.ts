@@ -1065,6 +1065,10 @@ export class ScriptRuntime implements VmHost {
     number,
     Promise<Map<number, { readonly child: number; readonly delay: number }[]>>
   >();
+  /** Where a script sent the player, until the world has them there (#playerArea). */
+  #playerBound: AreaPlace | undefined;
+  /** References found without scripts of their own as their cell attached (quiet). */
+  readonly #scriptless = new Set<number>();
   /** The load order's activate children by parent, wherever they stand (read once: XAPR). */
   #farActivateChildren:
     Promise<Map<number, { readonly child: number; readonly delay: number }[]>> | undefined;
@@ -1378,35 +1382,50 @@ export class ScriptRuntime implements VmHost {
   async cellAttached(
     references: readonly number[],
     loaded: (reference: number) => boolean,
+    /** The cell (its form id), told with its full load. */
+    cell?: number,
   ): Promise<number[]> {
     const scripted: number[] = [];
     for (const reference of references) {
       if (await this.#hasScripts(reference)) scripted.push(reference);
+      else this.#scriptless.add(reference);
     }
     for (const reference of scripted) {
       if (this.#initialized.has(reference)) continue;
       this.#initialized.add(reference);
       await this.vm.startInitialize(this.referenceHandle(reference));
     }
-    // The hub tells it (the relay: OnCellAttach, OnLoad, OnCellLoad). TODO(M13): the engine
-    // tells every reference of the cell; ours those with scripts, their own or those of an
-    // alias that holds them (no other consumer yet): a world encounter's actor in a
-    // WEAliasScript alias counts itself in as it loads and out as it unloads.
+    // The hub tells every reference of the cell that it attached (TESCellAttachDetachEvent,
+    // observed in the original: with scripts or not, for every consumer of the event); the
+    // relay's OnCellAttach reaches those with scripts, their own or those of an alias that
+    // holds them (a world encounter's actor in a WEAliasScript alias counts itself in as it
+    // loads and out as it unloads: quiet).
+    for (const reference of references)
+      this.events.emit('cellAttachDetach', { reference, attached: true });
     const hearing = [
       ...scripted,
       ...references.filter(
         (reference) => !scripted.includes(reference) && this.#heldScripted(reference),
       ),
     ];
-    for (const reference of hearing)
-      this.events.emit('cellAttachDetach', { reference, attached: true });
     // Those its cell reset as it came back are told so (OnReset), after they attached.
     for (const reference of this.cellResets.takeResets(references))
       this.events.emit('reset', { reference });
+    // OnLoad, then once every object's 3D is in, OnCellLoad (TESCellFullyLoadedEvent: the
+    // cell and its references whose 3D is in). TODO(M13): the engine's OnLoad and its full
+    // load reach every reference too; ours those whose scripts hear them.
     const shown = hearing.filter((reference) => loaded(reference));
     for (const reference of shown) this.events.emit('objectLoaded', { reference, loaded: true });
-    this.events.emit('cellFullyLoaded', { cell: undefined, references: shown });
+    this.events.emit('cellFullyLoaded', { cell, references: shown });
     return scripted;
+  }
+
+  /**
+   * Whether a reference's scripts cannot hear its cell's events: it has none of its own (as
+   * its cell attached) and no alias holds it. The relay sends them only where they are heard.
+   */
+  quiet(reference: number): boolean {
+    return this.#scriptless.has(reference) && !this.#heldScripted(reference);
   }
 
   /**
@@ -1439,9 +1458,12 @@ export class ScriptRuntime implements VmHost {
       this.animationGraphUnloaded(reference);
     }
     for (const reference of references) {
-      if (!(await this.#hearsEvents(reference))) continue;
-      if (loaded(reference)) this.events.emit('objectLoaded', { reference, loaded: false });
+      const hears = await this.#hearsEvents(reference);
+      if (hears && loaded(reference))
+        this.events.emit('objectLoaded', { reference, loaded: false });
+      // Every reference of the cell is told it detached (as it attached: cellAttached).
       this.events.emit('cellAttachDetach', { reference, attached: false });
+      if (!hears) continue;
       // What it is no longer in: its trigger volumes are left behind, its traps' contacts end.
       this.triggerVolumes.forget(reference);
       this.trapHits.forget(reference);
@@ -2325,6 +2347,8 @@ export class ScriptRuntime implements VmHost {
     if (cell !== undefined) {
       state.cell = cell;
       state.world = world;
+      // The player on their way there (#playerArea) until the world has them there.
+      if (reference === PLAYER_REF) this.#playerBound = { position, cell, world };
     }
     this.world.moved?.(reference);
     const grid = (at: Vec3): string =>
@@ -2352,8 +2376,7 @@ export class ScriptRuntime implements VmHost {
     after: AreaPlace,
   ): Promise<void> {
     if (reference === PLAYER_REF) return;
-    // Where the player is going, if a script just moved them (the cell they arrive in attaches).
-    const player = await this.placement(PLAYER_REF, false);
+    const player = await this.#playerArea();
     if (!player) return;
     let from = before;
     if (from === undefined) {
@@ -2369,6 +2392,28 @@ export class ScriptRuntime implements VmHost {
     const was = from === 'shown' || inAttachedArea(from, player, this.gridsToLoad);
     const is = inAttachedArea(after, player, this.gridsToLoad);
     if (was !== is) this.events.emit('moveAttachDetach', { reference, attached: is });
+  }
+
+  /**
+   * Where the player is for the attached area: where a script just sent them while they are on
+   * their way (the cell they arrive in attaches), else where the world has them (they walk
+   * through doors and over cell borders without a script: their state keeps a script's last
+   * move only), else where scripts last put them.
+   */
+  async #playerArea(): Promise<AreaPlace | undefined> {
+    const live = this.world.livePlacement?.(PLAYER_REF);
+    const bound = this.#playerBound;
+    const here: AreaPlace | undefined = live && {
+      position: live.position,
+      cell: live.cell,
+      world: live.world,
+    };
+    // Arrived (in the cell they were sent to): the world's place from now on.
+    if (bound && here && inAttachedArea(here, bound, 1)) this.#playerBound = undefined;
+    if (this.#playerBound) return this.#playerBound;
+    if (here) return here;
+    const placed = await this.placement(PLAYER_REF, false);
+    return placed && { position: placed.position, cell: placed.cell, world: placed.world };
   }
 
   moveToEditorLocation(reference: number): void {

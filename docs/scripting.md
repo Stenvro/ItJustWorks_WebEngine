@@ -417,7 +417,13 @@ worldspaces on screen:
 
 - **Cells**: as a cell's references load, those with scripts get OnInit the first time (a
   non-persistent reference's scripts start with its cell), then OnCellAttach, OnLoad and
-  OnCellLoad; leaving, OnUnload and OnCellDetach. An actor runs the scripts of the NPC_ it
+  OnCellLoad; leaving, OnUnload and OnCellDetach. The hub tells every reference of the cell
+  that it attached and detached (TESCellAttachDetachEvent, observed in the original: every
+  reference, scripted or not; ours: its objects, primitives, markers, lights, sound markers,
+  decals and acoustic spaces, `cellReferences`, and its actors); the scripts hear it where
+  there are scripts (an editor marker's too: before, a cell's markers never attached, so a
+  temporary marker's scripts never started). The full load (TESCellFullyLoadedEvent:
+  OnCellLoad) names the cell. An actor runs the scripts of the NPC_ it
   takes them from (its leveled list's pick, a template's with the script flag), which is only
   known once it is resolved: a persistent actor whose base has no scripts of its own but whose
   script base has (MQ104's dragon: DragonActorScript from MQ104Dragon's template) starts them
@@ -466,7 +472,12 @@ worldspaces on screen:
   order has 6,527 such pairs (5,691 children of 2,782 parents: 1,625 ambushes, 2,000-odd traps,
   default2StateActivator's doors and gates; `node tools/activate-children-audit.ts`); the
   runtime finds a parent's children in its own cell, its worldspace's persistent cell and the
-  exterior cells round its place (6,369 of the 6,527; the other 158 lie farther off).
+  exterior cells round its place (6,369 of the 6,527), and a persistent parent's wherever they
+  stand (the other 158, every one of whose parents is persistent: Fort Neugrad's commander's
+  door wakes the bandit boss in Tamriel's persistent cell, its barracks doors the ambush
+  outside). TODO(M13): inferred (the engine keeps a parent's children on it as they load; a
+  persistent parent is always there); whether a child whose cell is not in memory is left out
+  in the original is not read.
   Bleak Falls Barrow's frostbite spider drops from its ceiling hole so as the player walks into
   the trigger by Arvel the Swift. **Another activator's default** (an actor a script's
   Activate names, an activate parent) is only what activating does to the object itself (a
@@ -687,7 +698,8 @@ stats go to every object registered for them. What each kind becomes:
   whose parent cell changes between an attached cell and a detached one. Ours: a move to
   another cell (MoveTo, an actor walking away or back) between the attached area (the
   player's interior cell, or the uGridsToLoad cells round the player's outside, where the
-  player is going if a script just moved them) and the rest. The player is always attached.
+  player is going if a script just moved them, else where the world has them) and the rest:
+  a ledger MoveTo'd to another cell and back, an innkeeper out through her door and in again. The player is always attached.
   A cell attaching or detaching with its references is OnCellAttach / OnCellDetach instead.
 - **Translations** (`ScriptRuntime.translate`): failed at once for a reference without its 3D,
   almost complete as it passes fRefTranslationAlmostDonePercent (0.9) of its way, complete at
@@ -777,12 +789,21 @@ times are whole game hours, 0 for never):
 - Alias display names (`ScriptRuntime.aliasDisplayName`): while an alias with a display name
   (ALDN: a message whose title names it) holds a reference, the reference is so named: the
   crosshair, the menus and the scripts' text replacement show it, until the alias lets go.
-- Cell buffers (`src/world/cell-buffer.ts`, `GameSession.cellData`): the cells used most
-  recently keep their data as the plugins make it, interiors and exteriors in buffers of their
-  own ([General] uInterior Cell Buffer 3, uExterior Cell Buffer 36: UESP's defaults), so going
-  back into a cell just left does not read its records again; the least recently used leaves
-  as a buffer fills. A buffered cell is detached like any other (OnCellDetach as it left, its
-  reset clock running); the game's changes to it live in GameState either way.
+- Cell buffers (`src/world/cell-buffer.ts` CellStore, `GameSession.cellData`): the cells the
+  player left lately keep their data as the plugins make it (their references), interiors and
+  exteriors in buffers of their own ([General] uInterior Cell Buffer 3, uExterior Cell Buffer
+  36: UESP's defaults), so going back into a cell just left does not read its records again;
+  the least recently left goes as a buffer fills. The cells of the loaded area are held, not
+  buffered (they take no room there): a cell goes into its buffer as the viewer lets it go
+  (`cellLeft`), after the cell gone into is taken up, so the inn left three houses ago is
+  still there. An exterior cell is made again when a persistent reference of its worldspace
+  came into it meanwhile (its persistent ones are part of its data). A buffered cell is
+  detached like any other (OnCellDetach as it left, its reset clock running); the game's
+  changes to it live in GameState either way. TODO(M13): the original's own handling of the
+  buffers is not read; the order they let cells go in is inferred.
+- The loaded grid (`src/world/loaded-grid.ts`): [General] uGridsToLoad cells a side round the
+  player's cell (5 built in), the INI's own where a player's sets it; the viewers and the
+  headless simulation alike, centred on the player, not a camera.
 - Moved objects (`src/shell/moved-objects.ts`): a cell leaving the loaded area notes where its
   moving objects are; a cell loading places its objects where the game left them, until its
   reset puts the non-persistent ones back. One pushed out of its exterior cell is of the cell it
