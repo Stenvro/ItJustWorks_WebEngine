@@ -127,6 +127,8 @@ export interface ActorFurnitureOptions {
    * side (src/shell/actor-combat.ts pairIdle).
    */
   readonly paired?: (actor: number, target: number, event: string) => void;
+  /** A specific idle (playIdle: a package's, a script's, a line's) was sent to an actor's graph. */
+  readonly specificIdle?: (actor: number) => void;
   /**
    * The height of the ground under a point (the world's physics, actors left out), if any
    * within reach: where one placed in its furniture as its cell loaded leaves to.
@@ -469,6 +471,7 @@ export class ActorFurniture {
     if (this.#uses.has(user.reference) && options.inFurniture !== true) return false;
     await this.#backIn(user, event);
     const sent = user.send(event);
+    if (sent) this.#options.specificIdle?.(user.reference);
     for (const dependent of options.dependents ?? []) dependent.send(event);
     const use = this.#uses.get(user.reference);
     if (sent && use && inside(use)) void this.#keepIn(user, use);

@@ -815,8 +815,44 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   of that frame as the target, the bones it names; `ActorBodies`): FullyRagdoll's 0 leaves it
   limp, matching the get-up's first pose (200) pulls its limbs toward it before the get-up
   blends from it; powered bodies are kept awake. TODO(M13): Havok's controller drives the
-  ragdoll's root by its world-from-model mode, not done; the paralysed's stiff fall; a dying
-  graph's powered bones (vanilla keeps them all keyframed: AnimateToRagdoll).
+  ragdoll's root by its world-from-model mode, not done; the paralysed's stiff fall. A dying
+  graph's powered bones: the engine's ragdoll drive, below.
+
+**The engine's ragdoll drive** (`src/physics/ragdoll-anim.ts`; [RagdollAnim] INI settings, the
+engine's built-in defaults, no shipped INI sets them): a hierarchy controller's control data
+(fHierarchyGain 0.17, fVelocityDamping 0, fAccelerationGain 1, fVelocityGain 0.6, fPositionGain
+0.05, fPositionMaxLinearVelocity 14, fPositionMaxAngularVelocity 18, fSnapGain 0.1,
+fSnapMaxLinearVelocity 3, fSnapMaxAngularVelocity 0.3, fSnapMaxLinearDistance 0.3,
+fSnapMaxAngularDistance 1: Havok's default gains; the snap's angular velocity limit is Havok's
+too, 0.3; the other limits are Havok's 1.4, 1.8, 0.3, 0.03 and 0.1 times ten) and the hits'
+feedback (bRagdollFeedback 1, fFeedbackImpulseMult 500, fFeedbackOnOffGain 0.3,
+fFeedbackOnOffGainTimeMS 1000, fFeedbackTimeMS 10000). Their use is inferred from their names
+(TODO(M13)):
+
+- **Powered bones**: a dying actor's ragdoll driven by its graph (after AddRagdollToWorld) whose
+  graph powers bones of it (force above 0) has those bones (all, when it names none) simulated
+  and pulled toward the pose by these gains, its keyframe bones modifiers' bones hard; no
+  vanilla dying graph does (AnimateToRagdoll keyframes). FullyRagdoll's force 0 lets the death
+  go limp as before; a knocked-down actor's get-up keeps its motors.
+- **bAlwaysDriveRagdoll** ([Animation], 0): with it on, a living actor's ragdoll is driven by
+  its graph as a dying one's is (the check of what the graph drives answers yes at once:
+  observed in the original): simulated where its graph's rigid body controls are active,
+  keyframed to the pose where not (that some of Hulda's states as she stands and leans at the
+  Bannered Mare's counter have them active is expected, not yet seen in a run: the feedback case
+  in `tests/conformance/animation/ragdolls-death.test.ts` waits up to 20 s for one); turned
+  off, the living's bodies are keyframed again. The [Animation] and
+  [RagdollAnim] settings are read each frame (the player's changes apply at once, the feedback's
+  to a ragdoll already hit too).
+- **Feedback**: a blow that does not kill, on an actor whose ragdoll is driven with bodies
+  simulated, pushes the body nearest where the blow landed (combat's hit point) by
+  fFeedbackImpulseMult along the blow (game units of momentum, made Havok's by dividing by the
+  world scale: 7.1 Havok units, about 1.4 m/s on a 5 kg forearm), and the drive's gains go to
+  fFeedbackOnOffGain of their own over fFeedbackOnOffGainTimeMS, stay there until fFeedbackTimeMS
+  after the hit, and come back over fFeedbackOnOffGainTimeMS. A further hit holds them down for
+  the full fFeedbackTimeMS from itself, going on down from where they are (no jump back up). The
+  feedback belongs to the drive: once the ragdoll is driven no more (a get-up over, the INI's
+  drive turned off, let go limp) it is gone, so a blow on a knocked-down actor's get-up yields
+  that get-up only.
 
 **The hierarchy controller** (`src/physics/keyframe-hierarchy.ts`: Havok's
 hkaKeyFrameHierarchyUtility, as its rigid body ragdoll controller runs it) drives a ragdoll's

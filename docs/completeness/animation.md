@@ -266,8 +266,11 @@ what fills it was not found).
       bFeedbackToGraphFromCharacterController, bFootIK, fBoneLODDistanceScale, fMaxTime,
       fMaxTimeToMarkSec, fMotionFeedback*, fMountDismountTimeout, fMoveLimitMass,
       fQuadrupedPitchMult, fUnsupportedGravMult, fWarmStartMaxTime,
-      iMinBonesToGenerateWhileSitting, uMaxNumPhysicsStepsPerUpdate, bUseSpeedSampler.
-      Taken to be of no effect here by their names (tools, threads, consoles, caches; their reads
+      iMinBonesToGenerateWhileSitting, uMaxNumPhysicsStepsPerUpdate, bUseSpeedSampler,
+      fSpecialIdlePickTime (the ambient idles' frame budget, read as microseconds: inferred).
+      [RagdollAnim]'s gains (fHierarchyGain ... fSnapMaxAngularDistance) and feedback
+      (bRagdollFeedback, fFeedback*): read, their use inferred (docs/physics.md, "The engine's
+      ragdoll drive"). Taken to be of no effect here by their names (tools, threads, consoles, caches; their reads
       not followed): bAlwaysSaveAllInfo,
       bDebugMultithreaded, bDisplayMarkWarning, bDrawAnimPoseInVDB, bHavokDebug,
       bInitiallyLoadAllClips, bLoadCollatedAnimTextData, bMultiThreadBoneUpdate,
@@ -278,7 +281,7 @@ what fills it was not found).
       turned by the actor's pitch (no effect at pitch 0; the movers' root motion is level);
       bEnableHavokHit (0) with fHavokHit*: off in the game; bFootIKFeedback (1), bForceJumpingFromGraph
       (0), bRandomizeGraphSeed (1), fIdleChangeClearTime (1), fWeaponChangeClearTime (0.5),
-      fSpecialIdlePickTime (250), fMaxFrameCounterDifferenceToConsiderVisible, the player's
+      fMaxFrameCounterDifferenceToConsiderVisible, the player's
       fPlayerCharacterDrawSheatheTimeout, fPlayerCharacterPowerAttackStartTime,
       fPlayerCharacterAttackIntroLength, fPlayerCharacterAttackComboStartFraction: each has one
       to three reads, not followed. TODO(M13). The physics' solver and character keys (fSD, fSE,

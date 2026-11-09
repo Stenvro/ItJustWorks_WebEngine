@@ -3083,6 +3083,9 @@ export class ActorCombat implements CombatBridge {
       if (weapon !== undefined && !hit.bash) await this.#siphonSoul(attackerRef, targetRef, weapon);
     } else if (!target.player) {
       this.#bark(targetRef, 'Hit', attackerRef);
+      // A ragdoll its graph drives yields to the blow where it landed ([RagdollAnim]
+      // bRagdollFeedback).
+      this.#options.bodies.feedback(targetRef, hit.direction, hit.point);
     }
   }
 

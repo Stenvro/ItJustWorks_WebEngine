@@ -22,6 +22,14 @@ import {
   type HierarchyControl,
 } from '../physics/keyframe-hierarchy.ts';
 import { Layer } from '../physics/collision-layers.ts';
+import {
+  drivenRagdollMode,
+  RagdollFeedback,
+  ragdollDrivenByGraph,
+  readRagdollAnimSettings,
+  scaledControl,
+  type RagdollAnimSettings,
+} from '../physics/ragdoll-anim.ts';
 import { RagdollPenetration } from '../physics/ragdoll-penetration.ts';
 import { HAVOK_SCALE, type CollisionBody, type CollisionData } from '../physics/collision-data.ts';
 import type { PhysicsWorld, PlacedBody, PlacedCollision } from '../physics/physics-world.ts';
@@ -103,7 +111,20 @@ interface ActorBody {
    * knocked-down actor getting up): undefined when not; `dynamic` while the graph's rigid
    * body controls drive bodies of it (#drive), `blend` the seconds since they began.
    */
-  driven: { dynamic: boolean; blend: number } | undefined;
+  driven: Driven | undefined;
+}
+
+/** A ragdoll in the world driven by its graph (ActorBody.driven). */
+interface Driven {
+  dynamic: boolean;
+  blend: number;
+  /** Driven by bAlwaysDriveRagdoll alone (its graph did not add it). */
+  always?: boolean;
+  /**
+   * The hits' feedback on it (src/physics/ragdoll-anim.ts): the drive's own, so it goes with
+   * the drive (inferred, TODO(M13)).
+   */
+  feedback?: RagdollFeedback;
 }
 
 export class ActorBodies {
@@ -122,9 +143,37 @@ export class ActorBodies {
   /** The dead whose ragdolls wait for the ground under them (#groundReady). */
   readonly #waiting = new Map<number, BodyHolder>();
 
+  /** Seconds of frames seen (the feedback's clock). */
+  #clock = 0;
+  /** [RagdollAnim]: the engine's own drive of a ragdoll in the world (read each frame). */
+  #ragdollAnim: RagdollAnimSettings = readRagdollAnimSettings();
+  /** [Animation] bDriveRagdollWithGraph and bAlwaysDriveRagdoll (read each frame). */
+  #driveIni = { driveWithGraph: true, alwaysDrive: false };
+
   constructor(session: GameSession, groundReady: (reference: number) => boolean = () => true) {
     this.#session = session;
     this.#groundReady = groundReady;
+    this.#readIni();
+  }
+
+  /** The INI's ragdoll settings now (the player's changes apply at once). */
+  #readIni(): void {
+    const { ini } = this.#session;
+    this.#ragdollAnim = readRagdollAnimSettings((key) => ini.number('RagdollAnim', key));
+    this.#driveIni = {
+      driveWithGraph: ini.number('Animation', 'bDriveRagdollWithGraph') !== 0,
+      alwaysDrive: ini.number('Animation', 'bAlwaysDriveRagdoll') !== 0,
+    };
+  }
+
+  /**
+   * Whether an actor's ragdoll is in the world driven by its graph (a dying graph's
+   * AnimateToRagdoll, a get-up; a living actor's with bAlwaysDriveRagdoll), and whether bodies
+   * of it are simulated now (the graph's controls drive them). Undefined: not driven.
+   */
+  driven(reference: number): { readonly dynamic: boolean } | undefined {
+    const driven = this.#bodies.get(reference)?.driven;
+    return driven && { dynamic: driven.dynamic };
   }
 
   /** The physics world of the play (undefined: none; the bodies go). */
@@ -185,7 +234,9 @@ export class ActorBodies {
    */
   frame(actors: Iterable<BodyHolder>, focus: Vec3 | undefined, seconds = 0): void {
     const physics = this.#physics;
+    this.#clock += seconds;
     if (!physics) return;
+    this.#readIni();
     for (const [reference, staged] of this.#waiting) {
       // Its bodies are made again if they went meanwhile (far off).
       if (this.#groundReady(reference)) void this.kill(staged);
@@ -221,9 +272,84 @@ export class ActorBodies {
         this.#free(entry);
         continue;
       }
+      // bAlwaysDriveRagdoll: a living actor's ragdoll is driven by its graph too (and no more
+      // once it is turned off).
+      const always = ragdollDrivenByGraph(this.#driveIni, false) && !staged.dead;
+      if (!entry.driven && always) entry.driven = { dynamic: false, blend: 0, always: true };
+      else if (entry.driven?.always === true && !always) {
+        this.driveRagdoll(staged.reference, false);
+      }
       if (entry.driven) this.#drive(entry, physics, seconds);
       else this.#follow(entry, physics, false, seconds);
     }
+  }
+
+  /**
+   * A hit on an actor whose ragdoll its graph drives ([RagdollAnim] bRagdollFeedback): the body
+   * nearest `point` (where the blow landed, game units; none: the first body) is pushed along
+   * `direction` by fFeedbackImpulseMult (game units of momentum, made Havok's: / HAVOK_SCALE),
+   * and the drive yields to it a while (src/physics/ragdoll-anim.ts). The struck body's node
+   * (undefined: none pushed, its ragdoll not driven with bodies simulated, or feedback off).
+   */
+  feedback(reference: number, direction: Vec3, point?: Vec3): string | undefined {
+    const entry = this.#bodies.get(reference);
+    const physics = this.#physics;
+    const driven = entry?.driven;
+    if (!entry || !physics || entry.articulation || driven?.dynamic !== true) return undefined;
+    driven.feedback ??= new RagdollFeedback();
+    const impulse = driven.feedback.hit(this.#clock, this.#ragdollAnim);
+    if (impulse <= 0) return undefined;
+    let struck = entry.bodies[0]?.body;
+    if (point) {
+      const at: Vec3 = [point[0] / HAVOK_SCALE, point[1] / HAVOK_SCALE, point[2] / HAVOK_SCALE];
+      let nearest = Infinity;
+      for (const { body } of entry.bodies) {
+        const d = distance(physics.bodyFrame(body).position, at);
+        if (d < nearest) {
+          nearest = d;
+          struck = body;
+        }
+      }
+    }
+    if (!struck) return undefined;
+    const length = Math.hypot(direction[0], direction[1], direction[2]) || 1;
+    const k = impulse / HAVOK_SCALE / length;
+    struck.body.applyImpulse(
+      { x: direction[0] * k, y: direction[1] * k, z: direction[2] * k },
+      true,
+    );
+    return struck.data.node;
+  }
+
+  /** The share of an actor's driven ragdoll's gains its hits' feedback leaves now (1: none). */
+  feedbackGain(reference: number): number {
+    return (
+      this.#bodies.get(reference)?.driven?.feedback?.gainScale(this.#clock, this.#ragdollAnim) ?? 1
+    );
+  }
+
+  /**
+   * An actor's bodies as they are now: each one's node, place (game units, world), velocity
+   * (Havok units a second) and mass (the checks').
+   */
+  bodyStates(reference: number): {
+    readonly node: string;
+    readonly at: Vec3;
+    readonly velocity: Vec3;
+    readonly mass: number;
+  }[] {
+    const entry = this.#bodies.get(reference);
+    if (!entry) return [];
+    return entry.bodies.map(({ body }) => {
+      const t = body.body.translation();
+      const v = body.body.linvel();
+      return {
+        node: body.data.node,
+        at: [t.x * HAVOK_SCALE, t.y * HAVOK_SCALE, t.z * HAVOK_SCALE],
+        velocity: [v.x, v.y, v.z],
+        mass: body.body.mass(),
+      };
+    });
   }
 
   /**
@@ -236,6 +362,8 @@ export class ActorBodies {
     if (!entry || entry.articulation) return;
     if (on) {
       entry.driven ??= { dynamic: false, blend: 0 };
+      // Added by its graph: driven whatever bAlwaysDriveRagdoll says.
+      entry.driven.always = false;
       return;
     }
     if (entry.driven?.dynamic && this.#physics) this.#physics.keyframe(entry.placed);
@@ -715,7 +843,13 @@ export class ActorBodies {
     const graph = entry.staged.placed.behavior;
     if (!driven || !graph) return;
     const rigid = graph.rigidBodyRagdoll();
-    const active = rigid !== undefined && graph.poweredRagdoll() === undefined;
+    const powered = graph.poweredRagdoll();
+    const mode = drivenRagdollMode({
+      rigid: rigid !== undefined,
+      poweredForce: powered?.maxForce,
+      dying: entry.staged.dead,
+    });
+    const active = mode !== 'follow';
     if (active !== driven.dynamic) {
       driven.dynamic = active;
       driven.blend = 0;
@@ -729,7 +863,7 @@ export class ActorBodies {
         physics.liftStill(entry.placed);
       } else physics.keyframe(entry.placed);
     }
-    if (!rigid || !active) {
+    if (!active) {
       this.#follow(entry, physics, false, seconds);
       return;
     }
@@ -738,14 +872,26 @@ export class ActorBodies {
     const keyframed = new Set(
       graph.ragdollBoneNames(graph.keyframedRagdollBones()).map((name) => name.toLowerCase()),
     );
-    const named = new Set(rigid.bones.map((name) => name.toLowerCase()));
-    const duration = rigid.durationToBlend;
+    // The graph's powered bones by the engine's [RagdollAnim] gains (inferred: ragdoll-anim.ts),
+    // else its rigid body controls, blended in over their durationToBlend.
+    const usePowered = mode === 'powered' && powered !== undefined;
+    const named = new Set(
+      (usePowered ? powered.bones : (rigid?.bones ?? [])).map((name) => name.toLowerCase()),
+    );
+    const duration = usePowered ? 0 : (rigid?.durationToBlend ?? 0);
     const weight = duration > 0 ? Math.min(1, driven.blend / duration) : 1;
+    const own = usePowered ? this.#ragdollAnim.control : rigid?.control;
+    if (!own) return;
+    // A hit's feedback: the drive yields to the push a while.
+    const control = scaledControl(
+      own,
+      driven.feedback?.gainScale(this.#clock, this.#ragdollAnim) ?? 1,
+    );
     const nodes = entry.pose.skeleton.rig.names;
     this.#steer(entry, physics, ({ node }) => {
       const name = (nodes[node] ?? '').toLowerCase();
       if (keyframed.has(name)) return { control: HARD_KEYFRAME, weight: 1 };
-      if (named.size === 0 || named.has(name)) return { control: rigid.control, weight };
+      if (named.size === 0 || named.has(name)) return { control, weight };
       return { control: HARD_KEYFRAME, weight: 1 };
     });
   }

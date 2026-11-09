@@ -428,6 +428,10 @@ export class ActorStage {
       paired: (actor, target, event) => {
         this.combat.pairIdle(actor, target, event);
       },
+      // A specific idle over one that plays: its stop's PickNewIdle is no request.
+      specificIdle: (actor) => {
+        this.ambientIdles.specificIdle(actor);
+      },
       ground: (at) => {
         const hit = this.#physics?.raycast(
           [at[0], at[1], at[2] - 1],
@@ -1006,6 +1010,26 @@ export class ActorStage {
         });
         return event;
       },
+      lifeOf: (reference) => this.lifeState(reference),
+      highProcess: (reference) => this.movers.inHighProcess(reference),
+      player: () => {
+        const view = options.player?.();
+        const user = options.seat?.()?.user;
+        if (!view?.avatar || !user) return undefined;
+        const seated = this.furniture.interaction(PLAYER_REF)?.state === 3;
+        const player = view.play.player;
+        return {
+          user,
+          camera: player.cameraState({ free: view.play.freeCamera, furniture: seated }),
+          pov: player.pov,
+          moving: Math.hypot(...player.character.velocity) > 0,
+        };
+      },
+      moving: (reference) => {
+        const motion = this.movers.motion(reference);
+        return motion !== undefined && (motion.moving || motion.pathing);
+      },
+      ...(options.processClock && { clock: options.processClock }),
     });
     this.graphEvents = new ActorGraphEvents({
       session: options.session,
@@ -1658,6 +1682,23 @@ export class ActorStage {
         reference,
       );
     }
+  }
+
+  /**
+   * An actor's life state (ACTOR_LIFE_STATE; undefined: not on the stage): dead once killed;
+   * restrained and unconscious as its scripts set it; else its fight's (bleeding out, essential
+   * down) or alive. TODO(M13): the dying state between (fDyingTimer, 2 s) is not told apart;
+   * what in the original reads it is not known here (tests/conformance/animation/
+   * ragdolls-death.test.ts).
+   */
+  lifeState(reference: number): number | undefined {
+    const staged = this.#actors.get(reference);
+    if (!staged) return undefined;
+    if (staged.dead) return LifeState.dead;
+    const state = this.#options.session.scriptsReady?.state.actors.get(reference);
+    if (state?.restrained === true) return LifeState.restrained;
+    if (state?.unconscious === true) return LifeState.unconscious;
+    return this.combat.lifeState(reference) ?? LifeState.alive;
   }
 
   /**
@@ -2857,7 +2898,7 @@ export class ActorStage {
     this.combat.frame(frame, this.#options.focus?.());
     this.knockdowns.frame(frame);
     this.graphEvents.frame(frame);
-    this.ambientIdles.frame(this.#options.focus?.());
+    this.ambientIdles.frame(this.#options.focus?.(), frame);
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
     this.updateObstacles(frame);
     this.#recell();
