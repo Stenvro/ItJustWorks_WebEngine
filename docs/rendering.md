@@ -1808,6 +1808,12 @@ steps a frame were not counted before):
 |                                                      | after  | 38.4 |             30 |     36.7 |     7 % |          1.63 |
 | the keep (stage 250, a run before the search shares) | after  |  178 |            177 |      5.7 |     0 % |               |
 
+A second run once the searches waiting longest took the frame's nodes first (and a search begun
+256 at least): Alduin's attack 46.4 fps over twelve windows (slowest 38.7, p95 22–28 ms in all
+but two, 1.3 physics steps a frame, 400–940 search nodes a frame, all within the 2,000); the cart
+ride, arrival and execution 59, 57 and 63 fps, with no searches in the cart ride's windows (the
+machine is shared: windows without the changed work vary by ±10 fps between runs).
+
 What is left (TODO(M13)): Alduin's attack is still 30–40 fps. Its actors (behavior graphs 4 ms,
 the movers' travels 4–6 ms with the searches' 2 ms share, combat 1.6 ms) and the physics at 1.5–2
 steps a frame are the largest parts; Rapier's own step (2–3 ms, ~450 active bodies: the actors'
