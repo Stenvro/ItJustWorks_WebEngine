@@ -487,7 +487,8 @@ the player in a runtime on the game data, `--audit` reads every record).
   onto the navmesh (Creation Kit "Magic Effect"): a summon's place (summonPlace) and the hazard a
   wall's burst leaves. Gory Visuals (19) is not used by the game (Creation Kit).
 - Conditions: the effect item's and the magic effect's, on the target ("target" runs on the
-  caster), evaluated as it is applied and about each second (TODO(M13): the engine's interval):
+  caster), evaluated as it is applied and each fActiveEffectConditionUpdateInterval (1 s, its
+  built-in default; observed in the original; the setting as it is each frame):
   while they fail the effect is inactive (it does nothing, its scripts finished; again active,
   they start anew). An effect at once whose conditions fail does nothing. A disease's
   GetRandomPercent conditions are its chance of being caught, not checked while it lasts.

@@ -54,6 +54,7 @@ import { effectItemCost } from '../../gameplay/magic/casting.ts';
 import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
 import { ActorValue, SKILL_COUNT } from '../../world/actor-values.ts';
 import { DefaultObjects } from '../../world/default-objects.ts';
+import type { GameSettings } from '../../world/game-settings.ts';
 import {
   EffectArchetype,
   EffectFlag,
@@ -162,10 +163,11 @@ const ACTOR_TYPE_NPC = 0x13794;
 const ACTOR_TYPE_UNDEAD = 0x13796;
 
 /**
- * How often lasting effects and conditions are looked at (seconds). TODO(M13): the engine's
- * interval for active effects' conditions is not documented.
+ * fActiveEffectConditionUpdateInterval's built-in default (observed in the original; no plugin
+ * of the load order sets it): how often active effects' conditions are looked at again
+ * (seconds). Lasting effects follow what actors have as often.
  */
-const PULSE_SECONDS = 1;
+const CONDITION_UPDATE_INTERVAL = 1;
 
 /** [General] fCloakEffectUpdateInterval's built-in default: how often cloaks reach (seconds). */
 const CLOAK_UPDATE_INTERVAL = 0.5;
@@ -249,8 +251,11 @@ export class MagicEngine {
   readonly #ending = new Set<string>();
   /** The value changes of effects that act each second, in order. */
   #changes: Promise<void> = Promise.resolve();
-  #pulseWait = 0;
+  /** Seconds since conditions were last looked at (the first frame looks at once). */
+  #sincePulse = Number.POSITIVE_INFINITY;
   #pulsing = false;
+  /** The game settings once read: the interval is the setting as it is each frame (setgs). */
+  #gameSettings: GameSettings | undefined;
   #cloakWait = 0;
   #cloaking = false;
   /** [General] fCloakEffectUpdateInterval (the session sets the INI's): cloaks reach this often. */
@@ -2068,8 +2073,8 @@ export class MagicEngine {
   /**
    * Every frame: effects last on (their durations count real seconds; game time passing in a
    * wait counts as the real seconds it stands for), those that act each second act, wards
-   * grow, those that ran out end; about each second lasting effects follow what actors have,
-   * conditions are looked at again and cloaks reach those near.
+   * grow, those that ran out end; each fActiveEffectConditionUpdateInterval lasting effects
+   * follow what actors have and conditions are looked at again; cloaks reach those near.
    */
   /**
    * What a save keeps (RuntimeSave.engines) beside the active effects themselves (GameState):
@@ -2169,9 +2174,19 @@ export class MagicEngine {
       this.#fadingSummons.delete(made);
       this.#runtime.world.enableChanged?.(made, false);
     }
-    this.#pulseWait -= seconds;
-    if (this.#pulseWait <= 0 && !this.#pulsing) {
-      this.#pulseWait = PULSE_SECONDS;
+    // Conditions are looked at again each fActiveEffectConditionUpdateInterval.
+    if (!this.#gameSettings)
+      this.#runtime.detach(
+        this.#runtime.gameSettingTable().then((table) => {
+          this.#gameSettings = table;
+        }),
+      );
+    this.#sincePulse += seconds;
+    const interval =
+      this.#gameSettings?.number('fActiveEffectConditionUpdateInterval') ??
+      CONDITION_UPDATE_INTERVAL;
+    if (this.#sincePulse >= interval && !this.#pulsing) {
+      this.#sincePulse = 0;
       this.#pulsing = true;
       this.#runtime.detach(
         this.#pulse().finally(() => {
