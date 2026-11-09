@@ -20,8 +20,6 @@ const CHARGEN_EXIT = 0xd19aa;
 /** MQ102B's Gerdur alias, and MQ102RalofGerdurScene (stage 35 starts it). */
 const GERDUR_ALIAS = 2;
 const GERDUR_SCENE = 0x27e56;
-/** Gerdur's topic that sets MQ102B 50 (as Alvor's sets MQ102A 50 on Hadvar's route). */
-const SUPPLIES = 'Do you have any supplies I could take?';
 /** WhiterunWorld and Dragonsreach (WhiterunDragonsreach). */
 const WHITERUN = 0x1a26f;
 const DRAGONSREACH = 0x165a3;
@@ -113,10 +111,20 @@ describe.skipIf(!hasGamedata())('MQ102 Before the Storm (Ralof’s route)', () =
       expect(sim.stageDone(MQ102B, 40)).toBe(true);
       expect(sim.stageDone(MQ102B, 47)).toBe(true);
       expect(sim.runtime.scenes.isPlaying(GERDUR_SCENE)).toBe(true);
-      // Gerdur greets the player: her topic sets MQ102B 50, and that MQ102 30.
-      expect(await sim.listen(gerdur, 60)).toContain(SUPPLIES);
-      await sim.choose(SUPPLIES);
-      sim.goodbye();
+      // Gerdur's force greet (MQ102GerdurForceGreet, topic MQ102GerdurHelpForcegreetTopic) is
+      // chosen while her ForceGreet package is current, so its info 9A039 holds:
+      // GetIsCurrentPackage(MQ102GerdurForceGreet) == 1, GetIsAliasRef(Gerdur), MQ102B 50 not
+      // done (9A036 needs 42 done too). 9A039 ("Here's a key to the house...") is an Invisible
+      // Continue: TIF__0009A039 opens her gift menu (her supplies) and sets MQ102B 42, whose
+      // fragment gives the player GerdursKey. It goes on through df023 ("There's something you
+      // could do for me...", Invisible Continue) to df01d ("The Jarl needs to know...",
+      // Goodbye): TIF__000DF01D sets MQ102B 50, whose fragment sets MQ102 30. The player picks
+      // no topic: the conversation ends by itself.
+      expect(await sim.listen(gerdur, 60)).toEqual([]);
+      expect(
+        sim.menus().some((menu) => menu.menu === 'Gift Menu' && menu.reference === gerdur),
+      ).toBe(true);
+      expect(sim.notices()).toContain("Key to Gerdur's House added");
       await sim.step(1);
       expect(sim.stageDone(MQ102B, 50)).toBe(true);
       expect(sim.stageDone(MQ102, 30)).toBe(true);
