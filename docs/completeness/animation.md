@@ -307,7 +307,8 @@ what fills it was not found).
 - [x] Look-at, direct-at (BSLookAtModifier, BSDirectAtModifier) and limb IK.
 - [ ] Foot IK: the narrow quadrupeds' (the formats' list).
 - [x] Faces: expressions, phonemes, blinks, the head's morphs (src/animation/face.ts).
-- [ ] Faces: the expression change rate.
+- [ ] Faces: the expression change rate (fExpressionChangePerSec and fExpressionStrengthAdd as
+      docs/animation.md, "Faces", describes; which strength scales it is inferred, TODO(M13)).
 - [x] Lip sync (.lip, .fuz) with the dialogue.
 - [x] Faces: the emotions' eye offsets from the settings; a creature line's curves matched to its
       graph's Lip variables by phoneme (tests/conformance/animation/faces.test.ts).
@@ -330,7 +331,11 @@ what fills it was not found).
 - [x] Animation objects: the list, the female hands' scale while one is held (inferred: the
       skeleton's own node scale stays under the clips), the POV switch off while the player holds
       one, a model without "Prn" never shown, saves (tests/conformance/animation/animation-objects.test.ts).
-- [x] Ambient idles (but which idles skip the next PickNewIdle, the complex scene's wait).
+- [x] Ambient idles (but which idles skip the next PickNewIdle, the complex scene's wait); the
+      meal's gate (an Eat package's eating step) and the seated request (settling in furniture at a
+      sit or lean marker asks for an idle: the player's chair idles in third person; getting up
+      cuts the idle that played and drops a wish only the settling raised), both inferred
+      (TODO(M13); docs/animation.md, "Ambient idles").
 - [x] Weapons and aim, casting, horses, first person.
 - [x] Graph state in saves: each actor's graph's states, clips' times, variables, events not
       handled yet, transitions and modifiers (docs/formats/save.md, "Animation graphs";

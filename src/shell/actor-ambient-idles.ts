@@ -52,6 +52,8 @@ export interface ActorAmbientIdlesOptions {
   readonly clock?: () => number;
   /** Whether an actor moves off now (its package walks it, it paths; undefined: never). */
   readonly moving?: (reference: number) => boolean;
+  /** Whether an actor is at its meal (an Eat package's eating step; undefined: never). */
+  readonly eating?: (reference: number) => boolean;
 }
 
 /** The player as its idle update sees it. */
@@ -79,6 +81,8 @@ export interface AmbientIdlePlayed {
 const HISTORY = 256;
 /** A furniture marker's animation type 2: a bed's (asleep in it). */
 const SLEEP_ANIMATION = 2;
+/** A furniture marker's animation type bits for sitting (1) and leaning (4). */
+const SIT_OR_LEAN_ANIMATION = 1 | 4;
 /** ActorInteraction state 3: in the furniture. */
 const IN_FURNITURE = 3;
 
@@ -93,6 +97,10 @@ export class ActorAmbientIdles {
   readonly #raceSizes = new Map<number, number>();
   /** Whether a package has idles of its own (PACK IDLA), by package, as read. */
   readonly #packageIdles = new Map<number, boolean>();
+  /** Those settled in their furniture (sitting or leaning in it) as of the last frame. */
+  readonly #settled = new Set<number>();
+  /** Those whose wish only their settling raised (no PickNewIdle and no idle since). */
+  readonly #seatedWish = new Set<number>();
 
   /** Seconds of frames seen (the idle wait timers' clock). */
   #clock = 0;
@@ -117,6 +125,7 @@ export class ActorAmbientIdles {
 
   /** The engine's PickNewIdleHandler. */
   pickNewIdle(reference: number): void {
+    this.#seatedWish.delete(reference);
     this.flags.pickNewIdle(reference, this.#clock);
   }
 
@@ -146,9 +155,11 @@ export class ActorAmbientIdles {
       if (this.flags.playing(actor.reference) && this.#options.moving?.(actor.reference) === true) {
         this.flags.moved(actor.reference);
       }
+      if (!actor.dead) this.#settle(actor.reference);
     }
     const player = this.#options.player?.();
     if (player?.moving === true) this.flags.moved(PLAYER_REF);
+    if (player) this.#settle(PLAYER_REF);
     if (!focus) return;
     const complex = isComplexScene(high, this.#complexSceneActors);
     const order = [...staged.keys()];
@@ -210,6 +221,7 @@ export class ActorAmbientIdles {
             return;
           }
           this.flags.played(reference, now, ambientIdleWait(this.#settings, complex), complex);
+          this.#seatedWish.delete(reference);
           this.played.push({ actor: reference, event, furniture });
           if (this.played.length > HISTORY) this.played.shift();
         },
@@ -222,6 +234,46 @@ export class ActorAmbientIdles {
 
   remove(reference: number): void {
     this.flags.remove(reference);
+    this.#settled.delete(reference);
+    this.#seatedWish.delete(reference);
+  }
+
+  /**
+   * One that settles in its furniture (its use reaches state 3, in it, at a marker whose
+   * animation type is sit or lean and not sleep) wants a new idle, as its seated state asks for
+   * one: the seated base states raise no PickNewIdle of their own (mt_behavior.hkx's
+   * ChairBaseVar1 loops and sets bNeutralState only; the chair idles raise it as they end), and
+   * the idle that played as it sat down was cut off without its end's (inferred, TODO(M13): the
+   * original's seated request; the player who sat down in first person picks the chair idles
+   * once seen in third).
+   *
+   * Getting up (the use leaves that state) cuts the idle that played, as moving off does: its
+   * graph leaves the seated states with no PickNewIdle of the idle's end, so a stale "playing"
+   * does not outlast the chair. A wish only the settling raised and nothing answered yet (the
+   * player seated in first person all along) is dropped with it: standing, a PickNewIdle asks
+   * for the next idle (inferred, TODO(M13)).
+   */
+  #settle(reference: number): void {
+    const using = this.#options.interaction(reference);
+    const type = using?.animationType ?? 0;
+    const settled =
+      using?.state === IN_FURNITURE &&
+      (type & SIT_OR_LEAN_ANIMATION) !== 0 &&
+      (type & SLEEP_ANIMATION) === 0;
+    if (!settled) {
+      if (this.#settled.delete(reference)) this.#getUp(reference);
+      return;
+    }
+    if (this.#settled.has(reference)) return;
+    this.#settled.add(reference);
+    if (!this.flags.wants(reference)) this.#seatedWish.add(reference);
+    this.flags.want(reference);
+  }
+
+  /** It leaves the seated state: the idle that played is cut; the settling's own wish dropped. */
+  #getUp(reference: number): void {
+    this.flags.moved(reference);
+    if (this.#seatedWish.delete(reference)) this.flags.drop(reference);
   }
 
   /** What the gates see of an actor (undefined: its race's size is still being read). */
@@ -235,9 +287,8 @@ export class ActorAmbientIdles {
       reach: ambientIdleDistance(boundRadius(staged), size, this.#settings),
       furniture: this.#furnitureState(staged.reference),
       packageIdles: this.#hasPackageIdles(this.#options.packageOf(staged.reference)),
-      // TODO(M13): observed in the original, an actor at its meal (an Eat package at its
-      // eating step) picks none; our Eat procedure's steps are not told apart here.
-      eating: false,
+      // At its meal (an Eat package's eating step: src/ai/procedure-runs.ts) it picks none.
+      eating: this.#options.eating?.(staged.reference) === true,
       life: this.#options.lifeOf?.(staged.reference) ?? AmbientIdleLife.alive,
     };
   }

@@ -1003,6 +1003,7 @@ export class ActorStage {
       furnitureOf: (reference) => this.furnitureOf(reference),
       interaction: (reference) => this.furniture.interaction(reference),
       packageOf: (reference) => this.ai.current(reference)?.id,
+      eating: (reference) => this.ai.eating(reference),
       playAction: (user, target, inFurniture) => {
         const runtime = options.session.scriptsReady;
         const handle =
