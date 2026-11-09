@@ -332,9 +332,10 @@ what fills it was not found).
       skeleton's own node scale stays under the clips), the POV switch off while the player holds
       one, a model without "Prn" never shown, saves (tests/conformance/animation/animation-objects.test.ts).
 - [x] Ambient idles (but which idles skip the next PickNewIdle, the complex scene's wait); the
-      meal's gate (an Eat package's eating step) and the seated request (settling in furniture
-      asks for an idle: the player's chair idles in third person), both inferred (TODO(M13);
-      docs/animation.md, "Ambient idles").
+      meal's gate (an Eat package's eating step) and the seated request (settling in furniture at a
+      sit or lean marker asks for an idle: the player's chair idles in third person; getting up
+      cuts the idle that played and drops a wish only the settling raised), both inferred
+      (TODO(M13); docs/animation.md, "Ambient idles").
 - [x] Weapons and aim, casting, horses, first person.
 - [x] Graph state in saves: each actor's graph's states, clips' times, variables, events not
       handled yet, transitions and modifiers (docs/formats/save.md, "Animation graphs";

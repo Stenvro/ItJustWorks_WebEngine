@@ -392,10 +392,17 @@ own (mt_behavior.hkx: ChairIdleBehavior starts ChairIdle3rdPerson or, by i1stPer
 ChairIdle1stPerson; ChairIdle3rdPerson's base, ChairBaseVar1, loops Chair_IdleBaseVar1 and only
 sets bNeutralState; its variants raise PickNewIdle as they end), and the idle that played as the
 actor sat down was cut off without its end's, so an actor or the player who settles in furniture
-(its use reaching sitting or leaning, not asleep) wants a new idle then. The player who sat down
-in first person keeps that wish until seen in third person, then picks the chair idles
-(`tests/conformance/animation/ambient-idles.test.ts`: the player seated at the Bannered Mare, the
-stage's idle update). Seen in
+(its use reaching state 3, in it, at a marker whose animation type has the sit (1) or lean (4)
+bit and not the sleep (2) bit; any furniture whose marker is so typed counts, a crafting station's
+included) wants a new idle then. The player who sat down in first person keeps that wish until
+seen in third person, then picks the chair idles. Getting up (the use leaving that state) cuts
+the idle that played, as moving off does (the graph leaves the seated states with no PickNewIdle
+of the idle's end), so a sandboxing actor who sat, took a chair idle and stood up keeps no stale
+"playing" (a script's idle after that skips nothing); a wish only the settling raised that
+nothing answered (no idle played, no PickNewIdle came: the player seated in first person all
+along) is dropped then, so standing the player waits for a PickNewIdle as before (both inferred,
+TODO(M13); `tests/conformance/animation/ambient-idles.test.ts`: the player seated at the
+Bannered Mare, the stage's idle update). Seen in
 the headless simulation (the Bannered Mare at 20:00, 60 s): Hulda wiped the counter (IdleBarCounterWipe),
 Lucia put a hand on her hip (IdleHDRight), Saadia and Sinmir took MotionDrivenIdle (armed:
 IdleIfEquipped).

@@ -30,9 +30,10 @@
 // specific idle after that skips no PickNewIdle; the skip a specific idle sets holds for
 // SPECIFIC_IDLE_SKIP_WINDOW (0.5 s) only: a later PickNewIdle is taken as the specific idle's own
 // end (a request), so that where the stopped idle raises none the skip does not swallow the end's
-// and leave the actor without ambient idles; one that settles in furniture (sitting or leaning)
-// wants a new idle then, the seated base states raising no PickNewIdle of their own
-// (src/shell/actor-ambient-idles.ts); the meal is an Eat package's eating step, from its food's
+// and leave the actor without ambient idles; one that settles in furniture (in it at a marker of
+// animation type sit or lean, not sleep) wants a new idle then, the seated base states raising no
+// PickNewIdle of their own, and getting up cuts the idle that played as moving off does and drops
+// a wish only the settling raised (src/shell/actor-ambient-idles.ts); the meal is an Eat package's eating step, from its food's
 // use until the meal is done (src/ai/procedure-runs.ts).
 //
 // Platform-independent: the caller values the gates and plays the action.

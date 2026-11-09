@@ -619,6 +619,70 @@ describe('the stage’s idle update: moving off (inferred: src/shell/actor-ambie
     expect(idles.flags.wants(NPC)).toBe(false);
   });
 
+  it('only a sit or lean marker settles: one of neither type, or with the sleep bit, does not', () => {
+    for (const type of [0, 8, 1 | 2, 4 | 2]) {
+      const use = using(3, type);
+      const { idles } = stage({ furnitureOf: () => CHAIR, interaction: () => use });
+      idles.frame([0, 0, 0], 0.1);
+      expect(idles.flags.wants(NPC), `animation type ${String(type)}`).toBe(false);
+    }
+    for (const type of [1, 4]) {
+      const use = using(3, type);
+      const { idles } = stage({ furnitureOf: () => CHAIR, interaction: () => use });
+      idles.frame([0, 0, 0], 0.1);
+      expect(idles.flags.wants(NPC), `animation type ${String(type)}`).toBe(true);
+    }
+  });
+
+  it('getting up cuts the chair idle that played (no stale "playing" once out of the chair)', async () => {
+    let use: ActorInteraction | undefined = using(3);
+    const { idles, tries } = stage({
+      furnitureOf: () => (use ? CHAIR : undefined),
+      interaction: () => use,
+      playAction: (user) => {
+        tries.push(user.reference);
+        return Promise.resolve('IdleChairShoulderFlex');
+      },
+    });
+    // Seated: the settling's wish brings a chair idle (its race read on the first frame).
+    for (let frame = 0; frame < 3 && tries.length === 0; frame++) {
+      idles.frame([0, 0, 0], 0.1);
+      await settle();
+    }
+    expect(tries).toEqual([NPC]);
+    expect(idles.flags.playing(NPC)).toBe(true);
+    expect(idles.flags.wants(NPC)).toBe(false);
+    // It gets up and stands still (no package walks it): the chair idle is cut.
+    use = using(4);
+    idles.frame([0, 0, 0], 0.1);
+    expect(idles.flags.playing(NPC)).toBe(false);
+    use = undefined;
+    idles.frame([0, 0, 0], 0.1);
+    expect(idles.flags.playing(NPC)).toBe(false);
+    // A script's idle after that plays over none: no skip swallows its end's PickNewIdle.
+    idles.specificIdle(NPC);
+    expect(idles.flags.skipping(NPC)).toBe(false);
+  });
+
+  it('getting up drops the wish only the settling raised; a PickNewIdle’s wish stays', () => {
+    let use: ActorInteraction | undefined;
+    const { idles } = stage({ interaction: () => use });
+    // Settled, no idle picked yet (the player seated in first person picks none), then up.
+    use = using(3);
+    idles.frame(undefined, 0.1);
+    expect(idles.flags.wants(NPC)).toBe(true);
+    use = undefined;
+    idles.frame(undefined, 0.1);
+    expect(idles.flags.wants(NPC)).toBe(false);
+    // Seated again; a PickNewIdle comes (a real request): getting up keeps that wish.
+    use = using(3);
+    idles.frame(undefined, 0.1);
+    idles.pickNewIdle(NPC);
+    use = undefined;
+    idles.frame(undefined, 0.1);
+    expect(idles.flags.wants(NPC)).toBe(true);
+  });
+
   it('at its meal (an Eat package eating) it picks none; after the meal it does', async () => {
     let eating = true;
     const { idles, tries } = stage({ eating: () => eating });
