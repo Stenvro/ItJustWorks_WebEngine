@@ -9,6 +9,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { itemGlow } from '../../../src/gameplay/magic/enchantment-glow.ts';
+import { animatedFrame } from '../../../src/shell/surface-particles.ts';
 import type { GpuScene } from '../../../src/render/scene-renderer.ts';
 import { PLAYER_REF } from '../../../src/scripting/runtime/forms.ts';
 import type { MagicEffectShown } from '../../../src/scripting/runtime/magic-engine.ts';
@@ -102,6 +103,39 @@ describe.skipIf(!hasGamedata())('the effects’ visuals across the load order (d
     expect(glow?.enchantment).toBe(enchantment);
     expect(glow?.shader).toBe(parseMagicEffect(effect).enchantShader);
     expect(glow?.shader).toBeDefined();
+  });
+
+  it('runs a Particle Animated shader’s particles through its atlas’s frames', async () => {
+    let animated = 0;
+    let steam: EffectShaderRecord | undefined;
+    for (const formId of db.formIdsOfType('EFSH')) {
+      const record = await db.get(formId);
+      if (!record) continue;
+      const shader = parseEffectShader(record);
+      if ((shader.flags & EffectShaderFlag.particleAnimated) === 0) continue;
+      animated++;
+      if (shader.editorId === 'SteamFXShader') steam = shader;
+    }
+    expect(animated).toBe(32);
+    // SteamFXShader (FXSteamThinAnim.dds, 8 × 8): it starts on any of its 64 frames, runs to
+    // the last at 150 (± 20) frames a second and loops from the first; its particles live 0.4 s.
+    expect(steam?.particles.animation).toEqual({
+      startFrame: 0,
+      startFrameVariation: 64,
+      endFrame: 63,
+      loopStartFrame: 0,
+      loopStartVariation: 0,
+      frameCount: 150,
+      frameCountVariation: 20,
+    });
+    expect(animatedFrame(0, 10, 0, 63, 150, 64)).toBe(10);
+    expect(animatedFrame(0.1, 10, 0, 63, 150, 64)).toBe(25);
+    // Past the end frame it goes on from the loop start frame.
+    expect(animatedFrame(0.4, 10, 0, 63, 150, 64)).toBe(70 - 64);
+    expect(animatedFrame(1, 0, 32, 63, 100, 64)).toBe(32 + ((100 - 64) % 32));
+    // An end past the atlas holds to its last frame; no frames a second, the start frame.
+    expect(animatedFrame(10, 3, 3, 200, 0, 32)).toBe(3);
+    expect(animatedFrame(10, 31, 31, 200, 5, 32)).toBe(31);
   });
 });
 
@@ -275,5 +309,4 @@ describe.skipIf(!hasGamedata())('the visuals in the sim', () => {
 
 describe('what the original shows that we do not yet', () => {
   it.todo('an effect shader’s holes (NAM7), addon models and ambient sound');
-  it.todo('Particle Animated’s frame runs in a membrane’s particles');
 });

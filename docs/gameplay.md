@@ -639,7 +639,10 @@ the player in a runtime on the game data, `--audit` reads every record).
   the birth rate (ramp up, full, ramp down, then the persistent count a second), moving off
   along the normal and with the shader's velocity and acceleration, sized by the two scale keys
   and coloured by the three colour keys over their lives, turning, in a frame of the texture's
-  atlas (TODO(M13): Particle Animated's frame runs), through the particle palette. TODO(M13):
+  atlas (with Particle Animated running through its frames: from its start frame, at its Frame
+  Count a second, looping back to its loop start frame after its end frame; TODO(M13): that the
+  count is frames a second is inferred from the vanilla shaders), through the particle palette.
+  TODO(M13):
   holes (NAM7), addon models (DEBR), the ambient sound.
 - Invisibility (src/gameplay/magic/invisibility.ts; observed in the original): an invisible
   actor is drawn veiled, dithered away as a distance fade is (the renderer's InstanceFade.veil),

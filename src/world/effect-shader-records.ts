@@ -112,11 +112,28 @@ export interface EffectShaderRecord {
     /** The texture's atlas: frames across and down. */
     readonly textureCountU: number;
     readonly textureCountV: number;
+    /**
+     * Particle Animated (xEdit "Particle Shader Animated"): the frame a particle starts on (and
+     * the variation above it), the last frame, the frame it loops back to (and its variation),
+     * and its frame count (frames a second; and its variation either way).
+     */
+    readonly animation: ParticleAnimation;
   };
   readonly addonModels: number | undefined;
   readonly ambientSound: number | undefined;
   /** Its colour's overall scale. */
   readonly colorScale: number;
+}
+
+/** EFSH DATA's Particle Shader Animated block (xEdit; u32 each, offsets 356 .. 380). */
+export interface ParticleAnimation {
+  readonly startFrame: number;
+  readonly startFrameVariation: number;
+  readonly endFrame: number;
+  readonly loopStartFrame: number;
+  readonly loopStartVariation: number;
+  readonly frameCount: number;
+  readonly frameCountVariation: number;
 }
 
 export function parseEffectShader(record: RecordSource): EffectShaderRecord {
@@ -200,6 +217,15 @@ export function parseEffectShader(record: RecordSource): EffectShaderRecord {
       rotationSpeedVariation: f32(240),
       textureCountU: u32(276),
       textureCountV: u32(280),
+      animation: {
+        startFrame: u32(356),
+        startFrameVariation: u32(360),
+        endFrame: u32(364),
+        loopStartFrame: u32(368),
+        loopStartVariation: u32(372),
+        frameCount: u32(376),
+        frameCountVariation: u32(380),
+      },
     },
     addonModels: form(244),
     ambientSound: form(308),
