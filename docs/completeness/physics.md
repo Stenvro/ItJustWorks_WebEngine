@@ -287,8 +287,10 @@ without the gas keyword's effect; TrapExplosiveGas: a fire hit sets it off).
 - [x] Physics damage (fPhysicsDamage1Mass ...).
 - [x] Physics damage to destructibles from the listener (no vanilla impact reaches it:
       PhysicsWorld.onHardContact, contactDamage; round 8).
-- [ ] Objects placed into what they lie on fall through it (92 of 69,455 in the interiors now, 712
-      rolling off: `tools/settle-audit.ts`). Round 7 read the original's warm start (docs/physics.md,
+- [ ] Objects placed into what they lie on fall through it (38 of the 64,248 that settle in the
+      interiors on 2026-11-09, 399 lifted, 511 rolling off: `tools/settle-audit.ts`; the weld's
+      support rule bounded by the push's depth and the lift took the Blue Palace's bucket off its
+      bed and kept Frostmere Crypt's linen pile on its stairs). Round 7 read the original's warm start (docs/physics.md,
       "What is placed"): nothing in it keeps a penetrating body from leaving through the far side;
       it settles 4 s at once and then deactivates every island. TODO(M13): that end (ours keeps
       simulating what still moves), and Havok's one-sided contacts with meshes (ours are
