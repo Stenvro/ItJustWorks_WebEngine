@@ -497,9 +497,11 @@ the player in a runtime on the game data, `--audit` reads every record).
   topic subtype, as an NPC hit has; the combat's talk.bark): the generic Hit topic (DIAL
   0x13EBB) begins with six grunts ("Agh!", "Oof!", "Nargh!", "Argh!", "Weergh!", "Yeagh!", each
   at GetRandomPercent <= 30), the only infos of it not barred from the player (the rest name
-  GetIsID Player == 0 or another speaker), voiced for the Player base's voice type
-  MaleEvenToned among others (TODO(M13): the player's voice stays the Player base's whatever the
-  race menu chose; the race's own default voice types, RACE VTCK by sex, are not yet theirs).
+  GetIsID Player == 0 or another speaker), voiced for every playable race's default voice types
+  (MaleEvenToned and the rest). The player speaks in the Player base's voice type
+  (MaleEvenToned) until the race menu has chosen, then in the chosen race's default voice for
+  the chosen sex (RACE VTCK: the male's, then the female's; ScriptRuntime.voiceType;
+  TODO(M13): inferred).
   Its rumble is the gamepad's, fRumblePainStrength (0.75) on both motors for fRumblePainTime
   (0.5 s), with the Vibration setting on (none of the three settings a GMST of the load order:
   the engine's built-in defaults). TODO(M13): inferred that every painful hit gives all three

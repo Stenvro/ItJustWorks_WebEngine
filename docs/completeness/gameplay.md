@@ -50,7 +50,8 @@ Round 2 built down:
   blur), their Hit line (the generic Hit topic's grunts, the only infos of it the player may
   say) and the pain rumble (src/gameplay/player-pain.ts, actor-combat.ts #hurtPlayer;
   TODO(M13): inferred that every painful hit gives all three, spaced by fPainDelay; the
-  player's voice stays the Player base's MaleEvenToned whatever the race menu chose); an arrow
+  player's voice is the chosen race's default voice for the chosen sex, RACE VTCK, after the
+  race menu: ScriptRuntime.voiceType); an arrow
   in the player sounds its impact's player sound (WPNImpactArrowVsFleshPLAYER, IPCT NAM1:
   src/audio/impacts.ts blowSound; TODO(M13): inferred from the editor ids).
 - Snap To Navmesh (MGEF 0x8, 92: every summon, the frost walls): the summon's place and a wall's

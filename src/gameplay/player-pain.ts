@@ -9,8 +9,9 @@
 //   engine picks it for them. The load order has it: the generic Hit topic (DIAL 0x13EBB) begins
 //   with six grunts, "Agh!", "Oof!", "Nargh!", "Argh!", "Weergh!", "Yeagh!" (each at
 //   GetRandomPercent <= 30, all but the first not for child voices), the only infos of that topic
-//   not barred from the player (the rest name GetIsID Player == 0 or another speaker), voiced for the Player base's
-//   voice type, MaleEvenToned, among others.
+//   not barred from the player (the rest name GetIsID Player == 0 or another speaker), voiced for the playable
+//   races' default voice types; the player says them in the voice their race and sex give
+//   (ScriptRuntime.voiceType).
 // - The rumble: fRumblePainStrength on both motors for fRumblePainTime seconds.
 // The impact's own sound on the player (an arrow's WPNImpactArrowVsFleshPLAYER) is the impact's:
 // src/audio/impacts.ts blowSound. The screen blood of a blow that bleeds:

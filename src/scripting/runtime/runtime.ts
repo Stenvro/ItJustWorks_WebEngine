@@ -2335,7 +2335,21 @@ export class ScriptRuntime implements VmHost {
     return record?.fields.all('XAPR').map((data) => record.formIdAt(data)) ?? [];
   }
 
+  /**
+   * An actor's voice type: its base's (VTCK; a talking activator's VNAM). The player's, once the
+   * race menu has chosen, is the chosen race's default voice for the chosen sex (RACE VTCK: the
+   * male's, then the female's); the Player base's own VTCK (MaleEvenToned) holds only until then.
+   * TODO(M13): inferred that the player's voice follows the race and sex chosen.
+   */
   async voiceType(reference: number): Promise<number | undefined> {
+    const appearance = reference === PLAYER_REF ? this.state.playerAppearance : undefined;
+    if (appearance) {
+      const race = await this.forms.record(appearance.race);
+      const vtck = race?.fields.first('VTCK');
+      const voice =
+        race && vtck && vtck.length >= 8 ? race.formIdAt(vtck, appearance.sex === 1 ? 4 : 0) : 0;
+      if (voice) return voice;
+    }
     const base = await this.baseOf(reference);
     const record = base === undefined ? undefined : await this.forms.record(base);
     return record?.formIdField(record.type === 'TACT' ? 'VNAM' : 'VTCK');
