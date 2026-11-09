@@ -19,7 +19,7 @@ import {
   type TargetCandidate,
 } from '../../../src/ai/combat-ai.ts';
 import { ObjectHandle } from '../../../src/scripting/values.ts';
-import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
+import { hasGamedata, loadSim, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 import { ENGINE } from './settings.ts';
 
 const settings = COMBAT_AI_DEFAULTS;
@@ -145,7 +145,7 @@ describe('target selection', () => {
 // Only a script's StartCombat (Papyrus) puts the Fixed selector on its target; the engine's own
 // fights (a summons taking up its commander's, guards answering a crime, a follower's attack
 // command, a package's) choose by the standard selector. A save keeps the fixed target with the
-// fight. Two bandits in the Bannered Mare, its patrons gone.
+// fight, through a save and a load. Two bandits in the Bannered Mare, its patrons gone.
 
 const BANNERED_MARE = 0x1605e;
 
@@ -182,7 +182,31 @@ describe.skipIf(!hasGamedata())('the Fixed selector is a script’s (headless si
     expect(combat.saveFight(engines)?.fixed).toBeUndefined();
   });
 
-  it('a save’s fight keeps its fixed target', () => {
+  // Through a real save and load: the loaded stage takes each saved fight up again (actor-stage
+  // #restoreCombat: startCombat with the save's confidence modifier, then resumeFight once the
+  // target is taken up), and the script's fight keeps its fixed target, the engine's has none.
+  it('a save’s fight keeps its fixed target through a save and a load  [CK StartCombat] (inferred)', async () => {
+    const bytes = await sim.save();
+    // One simulation at a time: the loaded one goes on for the case after this.
+    await sim.close();
+    sim = await loadSim(bytes);
+    const combat = sim.world.stage.combat;
+    for (let t = 0; t < 5; t += 0.25) {
+      await sim.step(0.25);
+      if (
+        combat.targetOf(scripts) === PLAYER_REF &&
+        combat.targetOf(engines) === PLAYER_REF &&
+        combat.saveFight(scripts)?.fixed !== undefined
+      )
+        break;
+    }
+    expect(combat.targetOf(scripts)).toBe(PLAYER_REF);
+    expect(combat.targetOf(engines)).toBe(PLAYER_REF);
+    expect(combat.saveFight(scripts)?.fixed).toBe(PLAYER_REF);
+    expect(combat.saveFight(engines)?.fixed).toBeUndefined();
+  }, 600_000);
+
+  it('resumeFight puts a saved fight’s fixed target back on the live fight', () => {
     const combat = sim.world.stage.combat;
     combat.resumeFight(engines, { fixed: PLAYER_REF });
     expect(combat.saveFight(engines)?.fixed).toBe(PLAYER_REF);
