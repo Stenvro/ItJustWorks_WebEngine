@@ -221,6 +221,11 @@ export interface ActorState {
   vehicle?: number;
   /** SetAlpha: how opaque it is drawn (0..1; none: 1). */
   alpha?: number;
+  /**
+   * The refraction an Invisibility effect drew it with as the effect last started or stopped
+   * (src/gameplay/magic/invisibility.ts invisibilityRefraction; none: 0).
+   */
+  refraction?: number;
   /** SetHeadTracking(false): its head tracks nothing. */
   headTrackingOff?: boolean;
   /** SetLookAt: what scripts have it look at, until ClearLookAt. */

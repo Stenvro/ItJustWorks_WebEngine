@@ -644,8 +644,17 @@ the player in a runtime on the game data, `--audit` reads every record).
 - Invisibility (src/gameplay/magic/invisibility.ts; observed in the original): an invisible
   actor is drawn veiled, dithered away as a distance fade is (the renderer's InstanceFade.veil),
   all but fInvisibilityMinRefraction (0.01); the player all but fMagicPlayerMinimumInvisibility
-  (0.1), the least of their alpha the engine keeps. TODO(M13): the refraction shimmer through the
-  actor (fInvisibilityMaxRefraction) and the engine's fade in and out.
+  (0.1), the least of their alpha the engine keeps. As the effect starts and as it stops, its
+  actor value's share s (value / 100, 0 to 1) sets the actor's refraction to
+  fInvisibilityMinRefraction + (1 - s) × (fInvisibilityMaxRefraction - min), none at 0
+  (invisibilityRefraction; vanilla Invisibility, No Magnitude, gives the value 1: 0.495 with
+  Skyrim.esm's 0.5); the stage draws the actor's lit shapes into the refraction buffer with that
+  strength besides (InstanceFade.refraction), bending the scene behind as refraction shapes do.
+  TODO(M13): not yet looked at in the browser; the engine's fade in and out.
+- Concussion (no vanilla effect; observed in the original): its effect adds nothing to every
+  effect's part (its scripts, visuals, sounds); fConcussionTimer is never read. TODO(M13):
+  Disguise (no vanilla effect) is not run yet: in the original it keeps the actor as the
+  player's disguise while it lasts and has its own detection check, not yet read.
 - Art objects (ARTO) hang on the actor's skeleton: the art model's nodes follow the bones of
   their names each frame, its skinned shapes with them.
 - Detect Life shows its hit shader (LifeDetected's particles, through walls) on the living

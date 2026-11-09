@@ -25,15 +25,15 @@ part is kept by hand against docs/gameplay.md and the conformance suites.
 | Part                               | Items | Done | Open | Open, unused |
 | ---------------------------------- | ----: | ---: | ---: | -----------: |
 | Perks (entry points, functions)    |   116 |  104 |   12 |           12 |
-| Magic effects (archetypes, flags)  |   104 |  101 |    3 |            3 |
+| Magic effects (archetypes, flags)  |   104 |  102 |    2 |            2 |
 | Spells, enchantments, potions      |    43 |   42 |    1 |            1 |
 | Shouts, skills (SHOU, WOOP, AVIF)  |    16 |   16 |    0 |            0 |
 | Crafting (FURN, COBJ)              |    26 |   25 |    1 |            1 |
 | Factions (FACT)                    |    40 |   40 |    0 |            0 |
 | Equipment (EQUP, ARMO, WEAP, AMMO) |    43 |   38 |    5 |            5 |
-| Game settings                      |   172 |  171 |    1 |            0 |
+| Game settings                      |   172 |  172 |    0 |            0 |
 | Mechanics (by hand)                |    20 |   20 |    0 |            0 |
-| Total                              |   580 |  557 |   23 |           22 |
+| Total                              |   580 |  559 |   21 |           21 |
 
 Round 1 wrote the sweep and this list, and built down Weapons Unequipped (the package takes the
 weapons from the actor's hands and does not give them back as the flag goes; observed in the
@@ -131,8 +131,7 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 
 ## Next biggest open items
 
-1. fInvisibilityMaxRefraction (0.5): the refraction shimmer is not drawn yet (rendering).
-2. Unused by the load order (mods only, 22): 11 perk entry points, trait, concussion, disguise,
+1. Unused by the load order (mods only, 21): 11 perk entry points, trait, disguise,
    enchant visuals, medicine, the workbench type None, two EQUP flags, three weapon flags 2.
 
 ## Mechanics (by hand)
@@ -220,14 +219,14 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 - [x] ranks (DATA: above 1) (27): src/scripting/runtime/perk-engine.ts: no vanilla entry belongs to a rank past the first (PRKE rank 0 in all), and a tree's ranks are its NNAM chain (Novice Locks: DATA 5, one record; the original's menu shows one rank); the count is the Creation Kit's
 - [ ] trait (0): unused by the load order (mods only)
 
-### Magic effect archetypes (45 of 47)
+### Magic effect archetypes (46 of 47)
 
 - [x] valueModifier (446), absorb (58), dualValueModifier (134), calm (22), demoralize (27), frenzy (13), disarm (6), commandSummoned (1), invisibility (13), darkness (0), nightEye (0), boundWeapon (9), summonCreature (81), detectLife (19), telekinesis (1), paralysis (29), reanimate (14), turnUndead (13), valueAndParts (0), accumulateMagnitude (3), peakValueModifier (332), rally (8), enhanceWeapon (4), banish (4), grabActor (1): src/gameplay/magic/effect-rules.ts
 - [x] script (351): src/scripting/runtime/magic-engine.ts: a Script effect does nothing but run its scripts (OnEffectStart, OnEffectFinish) and its actor value, as every effect does
 - [x] dispel (0), cureDisease (3), lock (0), open (0), soulTrap (4), werewolfFeed (1), cureParalysis (0), cureAddiction (0), curePoison (1), stagger (52), cloak (46), werewolf (2), slowTime (5), spawnHazard (13), etherealize (4), spawnScriptedRef (1), vampireLord (1): src/scripting/runtime/magic-engine.ts
 - [x] light (8): src/gameplay/magic/projectile-flight.ts
 - [x] guide (1): src/shell/actor-stage.ts
-- [ ] concussion (0): unused by the load order (mods only)
+- [x] concussion (0): src/scripting/runtime/magic-engine.ts: observed in the original, its effect adds nothing to what every effect does (its scripts, visuals and sounds); fConcussionTimer is registered and never read
 - [ ] disguise (0): unused by the load order (mods only)
 
 ### Magic effect flags (18 of 18)
@@ -388,7 +387,7 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 - [x] fLockpickSkillSweetSpotMult (1), fLockpickBrokenPicksMult (1), fLockpickSkillPartialPickMult (1), fLockpickSkillPartialPickBase (1): src/gameplay/lockpicking.ts
 - [x] iLockLevelMaxVeryEasy (1): a name built at run time
 
-### Settings: magic and shouts (45 of 46)
+### Settings: magic and shouts (46 of 46)
 
 - [x] fEnchantmentPointsMult (1), fEnchantmentEffectPointsMult (1): src/shell/inventory-menu.ts
 - [x] fEnchantingSkillFactor (1): src/gameplay/crafting.ts
@@ -403,7 +402,7 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 - [x] fMagicAreaScaleMin (1), fMagicAreaScaleMax (1): inert: registered by the original and never read (observed in the original): an earlier game's area scaling (docs/gameplay.md)
 - [x] fShoutTime2 (1), fShoutTime1 (1): src/scripting/runtime/casting-engine.ts
 - [x] fMagicGrabActorMinDistance (1), fMagicGrabActorThrowForce (1): src/shell/actor-combat.ts
-- [ ] fInvisibilityMaxRefraction (1): not read: the refraction shimmer through an invisible actor is not drawn yet (rendering: src/gameplay/magic/invisibility.ts dithers it)
+- [x] fInvisibilityMaxRefraction (1): src/gameplay/magic/invisibility.ts
 
 ### Settings: stats (7 of 7)
 

@@ -52,6 +52,11 @@ import {
   type EffectSettings,
 } from '../../gameplay/magic/effect-rules.ts';
 import { effectItemCost } from '../../gameplay/magic/casting.ts';
+import {
+  INVISIBILITY_DEFAULTS,
+  INVISIBILITY_SETTING_NAMES,
+  invisibilityRefraction,
+} from '../../gameplay/magic/invisibility.ts';
 import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
 import { ActorValue, SKILL_COUNT } from '../../world/actor-values.ts';
 import { DefaultObjects } from '../../world/default-objects.ts';
@@ -1098,6 +1103,7 @@ export class MagicEngine {
     const target = entry.target;
     if (isValueEffect(effect)) await this.#valueStart(entry, effect);
     if (effect.archetype === EffectArchetype.darkness) await this.#darken(entry, effect);
+    if (effect.archetype === EffectArchetype.invisibility) await this.#refract(entry, effect);
     await this.#archetypeStart(key, entry, effect);
     // The image space while it lasts on the player (Night Eye's, a poison's tint).
     if (target === PLAYER_REF && effect.imageSpaceModifier !== undefined)
@@ -1143,6 +1149,33 @@ export class MagicEngine {
     runtime.world.setAlpha?.(entry.target, alpha, false);
   }
 
+  /**
+   * Invisibility, as it starts and as it stops (observed in the original): after its actor
+   * value changed, the actor's refraction from that value (invisibilityRefraction): what the
+   * stage draws through its shapes.
+   */
+  async #refract(entry: ActiveEffectState, effect: MagicEffectRecord): Promise<void> {
+    const runtime = this.#runtime;
+    if (!(await runtime.actors.isActor(entry.target))) return;
+    const value =
+      effect.actorValue < 0
+        ? 0
+        : (await runtime.actors.value(entry.target, effect.actorValue)).current;
+    const refraction = invisibilityRefraction(value, {
+      minRefraction: await this.#setting(
+        INVISIBILITY_SETTING_NAMES.minRefraction,
+        INVISIBILITY_DEFAULTS.minRefraction,
+      ),
+      maxRefraction: await this.#setting(
+        INVISIBILITY_SETTING_NAMES.maxRefraction,
+        INVISIBILITY_DEFAULTS.maxRefraction,
+      ),
+    });
+    const state = runtime.state.actor(entry.target);
+    if (refraction > 0) state.refraction = refraction;
+    else delete state.refraction;
+  }
+
   /** It stops acting (it ends, or its conditions fail): all it did is taken back. */
   async #deactivate(key: string, entry: ActiveEffectState, ending: boolean): Promise<void> {
     const runtime = this.#runtime;
@@ -1150,6 +1183,7 @@ export class MagicEngine {
     entry.inactive = true;
     this.#takeBack(entry);
     if (effect?.archetype === EffectArchetype.darkness) await this.#darken(entry, effect);
+    if (effect?.archetype === EffectArchetype.invisibility) await this.#refract(entry, effect);
     if (effect?.archetype === EffectArchetype.peakValueModifier)
       this.#settlePeak(entry.target, entry.effect);
     if (effect) await this.#archetypeEnd(entry, effect, ending);
@@ -1540,8 +1574,10 @@ export class MagicEngine {
       case EffectArchetype.vampireLord:
         if (target === PLAYER_REF) runtime.beastForm = true;
         break;
-      // Cloaks act each cloak interval (#cloaks); Soul Trap as its target dies (died). Concussion,
-      // Telekinesis, Grab Actor, Light, Detect Life, Guide, Disguise,
+      // Cloaks act each cloak interval (#cloaks); Soul Trap as its target dies (died). Concussion
+      // (observed in the original: its effect adds nothing to every effect's part; no vanilla
+      // effect uses it; fConcussionTimer is never read), Telekinesis, Grab Actor, Light, Detect
+      // Life, Guide, Disguise (TODO(M13): the original's own Disguise part is not read yet),
       // Slow Time, Etherealize, Command Summoned, Script: their state is the effect itself
       // (aiState, timeMultiplier) and their scripts; what they show (lights, Detect Life's
       // shader, Clairvoyance's trail) the world's magicEffect shows (src/shell/actor-effects.ts).

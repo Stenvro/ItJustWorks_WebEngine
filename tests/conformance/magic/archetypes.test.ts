@@ -23,7 +23,10 @@ import {
   summonDistance,
   TARGET_VALUES,
 } from '../../../src/gameplay/magic/effect-rules.ts';
-import { invisibilityVeil } from '../../../src/gameplay/magic/invisibility.ts';
+import {
+  invisibilityRefraction,
+  invisibilityVeil,
+} from '../../../src/gameplay/magic/invisibility.ts';
 import {
   carriedByBody,
   sticksAsLight,
@@ -431,6 +434,28 @@ describe.skipIf(!hasGamedata())('Dispel and Light on actors (sim)', () => {
     expect(lit(first.reference)).toBe(0);
   }, 120_000);
 
+  it('Invisibility gives its actor a refraction from its value as it starts and stops', async () => {
+    // Observed in the original: min + (1 - value / 100) × (max - min); none at 0. Vanilla
+    // Invisibility (No Magnitude: the value 1) with Skyrim.esm's fInvisibilityMaxRefraction 0.5.
+    expect(invisibilityRefraction(0)).toBe(0);
+    expect(invisibilityRefraction(100)).toBeCloseTo(0.01, 9);
+    expect(invisibilityRefraction(150)).toBeCloseTo(0.01, 9);
+    expect(invisibilityRefraction(1, { minRefraction: 0.01, maxRefraction: 0.5 })).toBeCloseTo(
+      0.01 + 0.99 * 0.49,
+      9,
+    );
+    const { magic } = sim.runtime;
+    const spell = await magicItem('SPEL', 'Invisibility');
+    const victim = sim.actors().at(-2)?.reference ?? 0;
+    const refraction = (): number | undefined => sim.runtime.state.actors.get(victim)?.refraction;
+    expect(refraction()).toBeUndefined();
+    await magic.apply(spell, victim, { caster: victim });
+    expect(refraction()).toBeCloseTo(0.01 + 0.99 * 0.49, 6);
+    for (const [key, entry] of magic.effectsOn(victim))
+      if (entry.item === spell.formId) await magic.end(key);
+    expect(refraction()).toBeUndefined();
+  }, 120_000);
+
   it('Night Eye starts at magnitude 1; Darkness draws its actor at 1 - its value / 100', async () => {
     // Observed in the original; vanilla uses neither archetype (mods do).
     const { magic, actors } = sim.runtime;
@@ -620,7 +645,8 @@ describe('a Magelight on a moving body (inferred: carried as a stuck arrow is)',
 });
 
 describe('what the original’s archetypes do that ours do not yet', () => {
-  it.todo('Invisibility: the refraction shimmer through the actor (ours dithers it away)');
   // Summon Creature's search when its way is blocked: src/ai/pathfinding.test.ts (summonPlace).
-  it.todo('Disguise, Concussion: unused by vanilla, as the engine does them (no document says)');
+  it.todo(
+    'Disguise: unused by vanilla, as the engine does it (its start keeps the actor as the player’s disguise; its detection check is not read yet)',
+  );
 });
