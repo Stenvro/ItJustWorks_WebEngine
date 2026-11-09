@@ -18,10 +18,38 @@
 // - The engine's kill count (original, the ActorKill sink of the stats): a kill by the player counts
 //   in the combat stat its victim's race keywords name (src/scripting/runtime/stat-events.ts).
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { EventHub, type GameEventKind } from '../../../src/scripting/runtime/event-hub.ts';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import {
+  Music,
+  type MusicBus,
+  type MusicChange,
+  type MusicOutput,
+} from '../../../src/audio/music.ts';
+import type { SoundConditionContext } from '../../../src/audio/sound-conditions.ts';
+import type { PexInstruction } from '../../../src/formats/pex/pex.ts';
+import {
+  EventHub,
+  type GameEventKind,
+  type GameEvents,
+} from '../../../src/scripting/runtime/event-hub.ts';
+import { ScriptRuntime } from '../../../src/scripting/runtime/runtime.ts';
 import { SCRIPT_EVENTS } from '../../../src/scripting/runtime/script-events.ts';
 import { killStats } from '../../../src/scripting/runtime/stat-events.ts';
+import { ScriptLibrary } from '../../../src/scripting/script-library.ts';
+import type { Value } from '../../../src/scripting/values.ts';
+import { lockOpened, pickSetup } from '../../../src/shell/lock-picking.ts';
+import { MenuName, MenuStack } from '../../../src/ui/menu-stack.ts';
+import { Vfs } from '../../../src/vfs/vfs.ts';
+import { ActorValue } from '../../../src/world/actor-values.ts';
+import { readMapMarkers } from '../../../src/world/map-markers.ts';
+import { QuestFlag } from '../../../src/world/quest-records.ts';
+import { RecordDatabase } from '../../../src/world/record-db.ts';
+import {
+  MusicTypeFlag,
+  type MusicTrack,
+  type MusicType,
+} from '../../../src/world/sound-records.ts';
+import { openGameFolder } from '../../../tools/gamedata-path.ts';
 import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 /** Each ScriptEventSourceHolder source, and the hub kind that is it (undefined: none yet). */
@@ -168,31 +196,383 @@ describe('the event sources and the hub', () => {
   it.todo('ChestsLooted: Chests Looted  [CommonLibSSE, UESP]');
   it.todo('CriticalHit: Critical Strikes  [CommonLibSSE, UESP]');
   it.todo('DisarmedEvent: Weapons Disarmed  [CommonLibSSE, UESP]');
-  it.todo('DragonSoulsGained: Dragon Souls Collected  [CommonLibSSE, UESP]');
-  it.todo('ItemCrafted: Weapons Made, Armor Made, Potions Mixed, ...  [CommonLibSSE, UESP]');
-  it.todo(
+  withGame('DragonSoulsGained: Dragon Souls Collected  [CommonLibSSE, UESP]', (game) => {
+    const told = heard(game, 'dragonSoulGained');
+    game.actors.modify(PLAYER_REF, ActorValue.dragonSouls, 1);
+    // A soul spent (a word unlocked) is no soul gained.
+    game.actors.modify(PLAYER_REF, ActorValue.dragonSouls, -1);
+    expect(told).toEqual([{ souls: 1 }]);
+    expect(stat(game, 'Dragon Souls Collected')).toBe(1);
+  });
+  withGame(
+    'ItemCrafted: Weapons Made, Armor Made, Potions Mixed, ...  [CommonLibSSE, UESP]',
+    async (game) => {
+      const told = heard(game, 'itemCrafted');
+      const tracked = heard(game, 'trackedStats');
+      const give = (formId: number, count = 1) =>
+        game.addItem(PLAYER_REF, game.formHandle(formId), count, true);
+      // At a workbench (the crafting menu's recipe), a weapon and an armor.
+      await game.crafting.constructed(IRON_SWORD, 2);
+      await game.crafting.constructed(IRON_CUIRASS, 1);
+      // Improved at a grindstone.
+      await give(IRON_SWORD);
+      game.actors.setBase(PLAYER_REF, SMITHING, 40);
+      expect((await game.crafting.temper(PLAYER_REF, IRON_SWORD, undefined)).kind).toBe('improved');
+      // Enchanted, with an enchantment learned from an item.
+      await give(IRON_SWORD_OF_EMBERS);
+      await game.crafting.disenchant(PLAYER_REF, IRON_SWORD_OF_EMBERS);
+      await give(IRON_SWORD);
+      await give(SOUL_GEM_GRAND_FILLED);
+      const fire = [{ formId: FIRE_DAMAGE_BASE }];
+      const sword = await game.crafting.enchant(
+        PLAYER_REF,
+        IRON_SWORD,
+        undefined,
+        fire,
+        SOUL_GEM_GRAND_FILLED,
+      );
+      // Mixed: a potion, then a poison.
+      await give(WHEAT);
+      await give(BLUE_MOUNTAIN_FLOWER);
+      await give(NIGHTSHADE);
+      await give(DEATHBELL);
+      const potion = await game.crafting.brew(PLAYER_REF, [WHEAT, BLUE_MOUNTAIN_FLOWER]);
+      const poison = await game.crafting.brew(PLAYER_REF, [NIGHTSHADE, DEATHBELL]);
+      expect(told).toEqual([
+        { item: IRON_SWORD, count: 2, craft: 'constructed' },
+        { item: IRON_CUIRASS, count: 1, craft: 'constructed' },
+        { item: IRON_SWORD, count: 1, craft: 'improving' },
+        { item: sword, count: 1, craft: 'enchanting' },
+        { item: potion.made, count: potion.count, craft: 'alchemy' },
+        { item: poison.made, count: poison.count, craft: 'alchemy' },
+      ]);
+      expect(
+        [
+          'Weapons Made',
+          'Armor Made',
+          'Weapons Improved',
+          'Armor Improved',
+          'Magic Items Made',
+          'Potions Mixed',
+          'Poisons Mixed',
+        ].map((name) => stat(game, name)),
+      ).toEqual([2, 1, 1, 0, 1, potion.count, poison.count]);
+      // Told as tracked stats (AchievementsScript's Craftsmanship hears them).
+      expect(tracked.map((told) => told.stat)).toContain('Weapons Made');
+    },
+  );
+  withGame(
     'ItemHarvested: Ingredients Harvested, Nirnroots Found, Wings Plucked  [CommonLibSSE, UESP]',
+    async (game) => {
+      const told = heard(game, 'itemHarvested');
+      const flora = await game.harvest.flora(CHAURUS_EGG_SAC);
+      const growing = vi.spyOn(Math, 'random').mockReturnValue(0);
+      try {
+        await game.harvest.harvest(HULDA, CHAURUS_EGG_SAC);
+        await game.harvest.harvest(PLAYER_REF, CHAURUS_EGG_SAC_TOO);
+      } finally {
+        growing.mockRestore();
+      }
+      expect(told).toEqual([
+        { item: flora?.ingredient, harvester: HULDA },
+        { item: flora?.ingredient, harvester: PLAYER_REF },
+      ]);
+      // Only the player's harvest counts.
+      expect(stat(game, 'Ingredients Harvested')).toBe(1);
+      // Nirnroots and wings are the scripts' own counts: a nirnroot (an activator, not a
+      // flora) and a critter count them as they are taken.
+      for (const [script, counted] of [
+        ['nirnrootactivatorscript', 'Nirnroots Found'],
+        ['critter', 'Wings Plucked'],
+      ] as const) {
+        expect(await scriptIncrements(game, script)).toContain(counted);
+      }
+    },
   );
-  it.todo('ItemsPickpocketed: Pockets Picked, Items Pickpocketed  [CommonLibSSE, UESP]');
-  it.todo('LevelIncrease: the level-up achievements  [CommonLibSSE]');
-  it.todo('LocationCleared: Dungeons Cleared  [CommonLibSSE, UESP]');
-  it.todo('LocationDiscovery: Locations Discovered  [CommonLibSSE, UESP]');
-  it.todo('LocksPicked: Locks Picked  [CommonLibSSE, UESP]');
-  it.todo(
+  withGame(
+    'ItemsPickpocketed: Pockets Picked, Items Pickpocketed  [CommonLibSSE, UESP]',
+    async (game) => {
+      const told = heard(game, 'itemsPickpocketed');
+      await game.addItem(HULDA, game.formHandle(WHEAT), 3, true);
+      game.crime.random = () => 0;
+      expect(await game.crime.pickpocket(PLAYER_REF, HULDA, WHEAT, 2)).toBe(true);
+      expect(told).toEqual([{ item: WHEAT, count: 2 }]);
+      expect(stat(game, 'Pockets Picked')).toBe(1);
+      expect(stat(game, 'Items Pickpocketed')).toBe(2);
+    },
+  );
+  withGame('LevelIncrease: the level-up achievements  [CommonLibSSE]', async (game) => {
+    const told = heard(game, 'levelIncrease');
+    const tracked = heard(game, 'trackedStats');
+    await game.progression.advanceLevel();
+    expect(await game.progression.levelUp(ActorValue.health)).toBe(true);
+    expect(told).toEqual([{ level: 2 }]);
+    // Told as the tracked stat AchievementsScript's level achievements read (its value the
+    // level), and not kept: the journal lists no such stat.
+    expect(tracked).toContainEqual({ stat: 'Level Increases', value: 2 });
+    expect(game.stats.has('level increases')).toBe(false);
+    expect(await scriptStrings(game, 'achievementsscript')).toContain('Level Increases');
+  });
+  withGame('LocationCleared: Dungeons Cleared  [CommonLibSSE, UESP]', async (game) => {
+    const told = heard(game, 'locationCleared');
+    game.state.actor(BILEGULCH_BOSS).dead = true;
+    expect(await game.locationClearing.count(BILEGULCH_MINE_LOCATION, 1, true)).toBe(true);
+    expect(told).toEqual([{ location: BILEGULCH_MINE_LOCATION }]);
+    expect(stat(game, 'Dungeons Cleared')).toBe(1);
+  });
+  withGame('LocationDiscovery: Locations Discovered  [CommonLibSSE, UESP]', async (game) => {
+    const told = heard(game, 'locationDiscovery');
+    const markers = await readMapMarkers(game.forms.db);
+    const riverwood = markers.find((m) => m.world === TAMRIEL && m.name === 'Riverwood');
+    if (!riverwood) throw new Error('no Riverwood marker');
+    game.locationDiscovered(riverwood.reference, riverwood.world);
+    expect(told).toEqual([{ marker: riverwood.reference, world: TAMRIEL }]);
+    expect(game.mapMarkerVisible(riverwood.reference)).toBe(true);
+    expect(game.mapMarkerFastTravel(riverwood.reference)).toBe(true);
+    expect(stat(game, 'Locations Discovered')).toBe(1);
+  });
+  withGame('LocksPicked: Locks Picked  [CommonLibSSE, UESP]', async (game) => {
+    const told = heard(game, 'locksPicked');
+    const setup = await pickSetup(game, await game.gameSettingTable(), BELETHORS_STRONGBOX);
+    if (!setup) throw new Error('the strongbox cannot be picked');
+    await lockOpened(game, setup);
+    expect(told).toEqual([{ reference: BELETHORS_STRONGBOX }]);
+    expect(stat(game, 'Locks Picked')).toBe(1);
+  });
+  withGame(
     'ObjectiveState, QuestStatus: Quests Completed and the questline counts  [CommonLibSSE, UESP]',
+    async (game) => {
+      const statuses = heard(game, 'questStatus');
+      const states = heard(game, 'objectiveState');
+      const main = await questOfType(game, 1);
+      const misc = await questOfType(game, 6);
+      // A quest completed is told once: Quests Completed and its type's stat.
+      game.quests.complete(main);
+      game.quests.complete(main);
+      expect(statuses).toEqual([{ quest: main, completed: true }]);
+      await vi.waitFor(() => {
+        expect(stat(game, 'Main Quests Completed')).toBe(1);
+      });
+      expect(stat(game, 'Quests Completed')).toBe(1);
+      // A miscellaneous quest's objective: shown, then completed (QUEST_OBJECTIVE_STATE).
+      await callNative(game, misc, 'SetObjectiveDisplayed', [10, true]);
+      await callNative(game, misc, 'SetObjectiveCompleted', [10, true]);
+      expect(states).toEqual([
+        { quest: misc, objective: 10, old: 0, new: 1 },
+        { quest: misc, objective: 10, old: 1, new: 3 },
+      ]);
+      await vi.waitFor(() => {
+        expect(stat(game, 'Misc Objectives Completed')).toBe(1);
+      });
+      // A miscellaneous quest counts in neither; the completed main quest reset is taken back.
+      game.quests.complete(misc);
+      await game.quests.reset(main);
+      expect(statuses.slice(1)).toEqual([
+        { quest: misc, completed: true },
+        { quest: main, completed: false },
+      ]);
+      await vi.waitFor(() => {
+        expect(stat(game, 'Main Quests Completed')).toBe(0);
+      });
+      expect(stat(game, 'Quests Completed')).toBe(0);
+    },
   );
-  it.todo('ShoutAttack: Times Shouted  [CommonLibSSE, UESP]');
-  it.todo('SkillIncrease: Skill Increases  [CommonLibSSE, UESP]');
-  it.todo('SoulsTrapped: Souls Trapped  [CommonLibSSE, UESP]');
-  it.todo('SpellsLearned: Spells Learned  [CommonLibSSE, UESP]');
+  withGame('ShoutAttack: Times Shouted  [CommonLibSSE, UESP]', async (game) => {
+    const told = heard(game, 'shoutAttack');
+    const shout = UNRELENTING_FORCE;
+    for (const npc of [HULDA, PLAYER_REF]) {
+      if (npc === PLAYER_REF) {
+        const record = await game.casting.shout(shout);
+        for (const { word } of record?.words ?? []) game.wordsLearned.set(word, true);
+        await game.actors.addSpell(PLAYER_REF, shout);
+      }
+      expect(await game.equipment.equip(npc, shout)).toBe(true);
+      expect(await game.casting.beginShout(npc, true)).toBe('started');
+      expect(await game.casting.releaseShout(npc, 1)).toBeDefined();
+    }
+    expect(told).toEqual([
+      { actor: HULDA, shout },
+      { actor: PLAYER_REF, shout },
+    ]);
+    // Only the player's shouts count.
+    expect(stat(game, 'Times Shouted')).toBe(1);
+  });
+  withGame('SkillIncrease: Skill Increases  [CommonLibSSE, UESP]', async (game) => {
+    const told = heard(game, 'skillIncrease');
+    await game.progression.incrementSkill(SMITHING, 2);
+    expect(told).toEqual([{ skill: SMITHING }, { skill: SMITHING }]);
+    expect(stat(game, 'Skill Increases')).toBe(2);
+  });
+  withGame('SoulsTrapped: Souls Trapped  [CommonLibSSE, UESP]', async (game) => {
+    const told = heard(game, 'soulsTrapped');
+    const black = SOUL_GEM_BLACK;
+    for (const trapper of [HULDA, PLAYER_REF])
+      await game.addItem(trapper, game.formHandle(black), 1, true);
+    expect(await game.magic.trapSoul(HULDA, LYDIA)).toBe(true);
+    expect(await game.magic.trapSoul(PLAYER_REF, LYDIA)).toBe(true);
+    expect(told).toEqual([
+      { trapper: HULDA, target: LYDIA },
+      { trapper: PLAYER_REF, target: LYDIA },
+    ]);
+    // Only the player's catch counts.
+    expect(stat(game, 'Souls Trapped')).toBe(1);
+  });
+  withGame('SpellsLearned: Spells Learned  [CommonLibSSE, UESP]', async (game) => {
+    const told = heard(game, 'spellsLearned');
+    const fireball = FIREBALL;
+    const power = VOICE_DISARM;
+    expect(await game.actors.addSpell(HULDA, fireball)).toBe(true);
+    expect(await game.actors.addSpell(PLAYER_REF, fireball)).toBe(true);
+    expect(await game.actors.addSpell(PLAYER_REF, fireball)).toBe(false);
+    expect(await game.actors.addSpell(PLAYER_REF, power)).toBe(true);
+    // The player's new spell only (not another's, not one known, not a shout's word).
+    expect(told).toEqual([{ spell: fireball }]);
+    expect(stat(game, 'Spells Learned')).toBe(1);
+  });
 
   // The other sources the original has (original).
-  it.todo('BGSActorCellEvent: an actor (the player) entered or left a cell  [original]');
-  it.todo('BGSActorDeathEvent: an actor died (the player’s death handling)  [original]');
-  it.todo('PositionPlayerEvent: the player is put somewhere (a load, a teleport)  [original]');
-  it.todo('BeamProjectileImpactEvent: a beam projectile struck something  [original]');
-  it.todo('BSMusicEvent: the music system’s track changes  [original]');
-  it.todo('MenuOpenCloseEvent, MenuModeChangeEvent: menus open and close  [CommonLibSSE]');
+  withGame(
+    'BGSActorCellEvent: an actor (the player) entered or left a cell  [original]',
+    async (game) => {
+      const told = heard(game, 'actorCell');
+      game.actorLocations.inCell(PLAYER_REF, String(BANNERED_MARE), BANNERED_MARE);
+      game.actorLocations.inCell(PLAYER_REF, String(BANNERED_MARE), BANNERED_MARE);
+      // An NPC's cells are not told (the player is the source).
+      game.actorLocations.inCell(HULDA, String(BELETHORS), BELETHORS);
+      game.actorLocations.inCell(PLAYER_REF, String(BELETHORS), BELETHORS);
+      expect(told).toEqual([
+        { actor: PLAYER_REF, cell: BANNERED_MARE, entered: true },
+        { actor: PLAYER_REF, cell: BANNERED_MARE, entered: false },
+        { actor: PLAYER_REF, cell: BELETHORS, entered: true },
+      ]);
+      // As the world takes the player through a door (the headless simulation's view).
+      const sim = await playSim();
+      expect(sim.events('actorCell')).toContainEqual({
+        actor: PLAYER_REF,
+        cell: BANNERED_MARE,
+        entered: true,
+      });
+    },
+  );
+  withGame(
+    'BGSActorDeathEvent: an actor died (the player’s death handling)  [original]',
+    async (game) => {
+      const told = heard(game, 'actorDeath');
+      const deaths = heard(game, 'death');
+      await game.actors.kill(HULDA, PLAYER_REF);
+      await game.actors.kill(PLAYER_REF, HULDA);
+      // The player's death only, once, with the killer; every death is TESDeathEvent's.
+      expect(told).toEqual([{ actor: PLAYER_REF, killer: HULDA }]);
+      expect(deaths.filter((death) => death.dead).map((death) => death.actor)).toEqual([
+        HULDA,
+        PLAYER_REF,
+      ]);
+    },
+  );
+  withGame(
+    'PositionPlayerEvent: the player is put somewhere (a load, a teleport)  [original]',
+    async () => {
+      const sim = await playSim();
+      // The cell's opening put the player down in it.
+      expect(sim.events('positionPlayer').slice(0, 3)).toEqual([
+        { type: 'pre' },
+        { type: 'post' },
+        { type: 'finish' },
+      ]);
+      const at = await sim.position(PLAYER_REF);
+      if (!at) throw new Error('the player stands nowhere');
+      const before = sim.events('positionPlayer').length;
+      await sim.moveTo([at[0] + 64, at[1], at[2]]);
+      await sim.step(0.5);
+      expect(sim.events('positionPlayer').slice(before)).toEqual([
+        { type: 'pre' },
+        { type: 'post' },
+        { type: 'finish' },
+      ]);
+    },
+  );
+  withGame(
+    'BeamProjectileImpactEvent: a beam projectile struck something  [original]',
+    async () => {
+      const sim = await playSim();
+      const wolf = await sim.place(await sim.formId('NPC_', 'EncWolf'), PLAYER_REF);
+      const bolt = LIGHTNING_BOLT;
+      expect(await sim.cast(bolt, wolf)).toBe(true);
+      await sim.step(0.5);
+      const struck = sim.events('beamImpact').filter((impact) => impact.target === wolf);
+      expect(struck).toHaveLength(1);
+      expect(struck[0]?.caster).toBe(PLAYER_REF);
+      const projectile = await sim.runtime.forms.record(struck[0]?.projectile ?? 0);
+      expect(projectile?.type).toBe('PROJ');
+      // A missile (a firebolt) is no beam.
+      const missiles = sim.events('beamImpact').filter((impact) => impact.target !== wolf);
+      expect(missiles).toEqual([]);
+    },
+  );
+  it('BSMusicEvent: the music system’s track changes  [original]', async () => {
+    const changes: MusicChange[] = [];
+    const music = syntheticMusic();
+    music.listeners.add((change) => changes.push(change));
+    music.add(EXPLORE);
+    await playMusic(music, 0, 2);
+    // The type begins with its first track, then plays its second; dropped, nothing plays.
+    expect(changes).toEqual([{ type: EXPLORE, track: FIRST_TRACK }]);
+    await playMusic(music, 2, 12);
+    expect(changes.at(-1)).toEqual({ type: EXPLORE, track: SECOND_TRACK });
+    music.remove(EXPLORE);
+    await playMusic(music, 12, 13);
+    expect(changes.at(-1)).toEqual({ type: undefined, track: undefined });
+    // A change is told once.
+    expect(changes).toHaveLength(3);
+  }, 30_000);
+  withGame(
+    'MenuOpenCloseEvent, MenuModeChangeEvent: menus open and close  [CommonLibSSE]',
+    async (game) => {
+      // The menu stack is the source: each menu as it opens and closes; menu mode as the first
+      // menu that pauses the game opens and the last one closes.
+      const stack = new MenuStack();
+      const opened: string[] = [];
+      const modes: string[] = [];
+      stack.listeners.add((event) => opened.push(`${event.name} ${String(event.opening)}`));
+      stack.modeListeners.add((event) => modes.push(`${event.name} ${String(event.displayed)}`));
+      stack.open(MenuName.dialogue);
+      stack.open(MenuName.barter);
+      stack.open(MenuName.messageBox);
+      stack.close(MenuName.messageBox);
+      stack.close(MenuName.barter);
+      stack.close(MenuName.dialogue);
+      expect(opened).toEqual([
+        'Dialogue Menu true',
+        'BarterMenu true',
+        'MessageBoxMenu true',
+        'MessageBoxMenu false',
+        'BarterMenu false',
+        'Dialogue Menu false',
+      ]);
+      expect(modes).toEqual(['BarterMenu true', 'BarterMenu false']);
+      // The game's hub tells them, and the scripts registered for a menu hear it from there.
+      const told = heard(game, 'menuOpenClose');
+      const mode = heard(game, 'menuModeChange');
+      game.menuOpenClose(MenuName.journal, true);
+      game.menuModeChange(MenuName.journal, true);
+      expect(told).toEqual([{ menu: 'Journal Menu', opening: true }]);
+      expect(mode).toEqual([{ menu: 'Journal Menu', displayed: true }]);
+      // The session's menu stack is the hub's source (the headless simulation's).
+      const sim = await playSim();
+      const close = sim.world.session.menuStack.hold(MenuName.journal);
+      close();
+      expect(sim.events('menuOpenClose').slice(-2)).toEqual([
+        { menu: 'Journal Menu', opening: true },
+        { menu: 'Journal Menu', opening: false },
+      ]);
+      expect(sim.events('menuModeChange').slice(-2)).toEqual([
+        { menu: 'Journal Menu', displayed: true },
+        { menu: 'Journal Menu', displayed: false },
+      ]);
+    },
+  );
+  // The game data and the simulation these cases opened are let go before the next one opens.
+  afterAll(closeGames, 120_000);
 });
 
 // A wolf the player kills with a spell in the Bannered Mare: the one death is heard by the
@@ -248,3 +628,232 @@ describe.skipIf(!hasGamedata())('one happening, every sink (headless simulation)
     });
   });
 });
+
+// --- The running engine for the stats' and the player's sources -------------------------------
+// Each case plays in a game of its own on the game data (the engine without a world: those
+// sources' producers are the engine's own), or in a headless simulation of the Bannered Mare for
+// what the world tells (the player put down, a beam's flight, the session's menus).
+
+/** Skyrim.esm forms the cases use. */
+const IRON_SWORD = 0x12eb7;
+const IRON_CUIRASS = 0x12e49;
+/** EnchIronSwordFire01, "Iron Sword of Embers", and its base enchantment. */
+const IRON_SWORD_OF_EMBERS = 0x49bb8;
+const FIRE_DAMAGE_BASE = 0x10fb95;
+const SOUL_GEM_GRAND_FILLED = 0x2e4ff;
+const SOUL_GEM_BLACK = 0x2e500;
+const WHEAT = 0x4b0ba;
+const BLUE_MOUNTAIN_FLOWER = 0x77e1c;
+const NIGHTSHADE = 0x2f44c;
+const DEATHBELL = 0x516c8;
+const FIREBALL = 0x1c789;
+const LIGHTNING_BOLT = 0x2dd29;
+/** VoiceDisarm1: the Disarm shout's first word's spell (of the voice's type). */
+const VOICE_DISARM = 0x8bb27;
+const UNRELENTING_FORCE = 0x13e07;
+/** Two chaurus egg sacs (flora) in Alftand. */
+const CHAURUS_EGG_SAC = 0xaa981;
+const CHAURUS_EGG_SAC_TOO = 0xaa982;
+/** Hulda of the Bannered Mare; Lydia (her placed reference). */
+const HULDA = 0x1a66e;
+const LYDIA = 0xa2c94;
+/** Belethor's General Goods and its strongbox (a lock to pick). */
+const BELETHORS = 0x165b3;
+const BELETHORS_STRONGBOX = 0xea738;
+/** BilegulchMineLocation and its one boss. */
+const BILEGULCH_MINE_LOCATION = 0x19269;
+const BILEGULCH_BOSS = 0xef02b;
+const TAMRIEL = 0x3c;
+const SMITHING = ActorValue.firstSkill + 4;
+
+/** A case in a game of its own on the game data (skipped without it). */
+function withGame(name: string, test: (game: ScriptRuntime) => Promise<void> | void): void {
+  it.skipIf(!hasGamedata())(
+    name,
+    async () => {
+      const game = await newGame();
+      try {
+        await test(game);
+      } finally {
+        game.retire();
+      }
+    },
+    600_000,
+  );
+}
+
+let gameData:
+  | Promise<{ readonly vfs: Vfs; readonly db: RecordDatabase; readonly library: ScriptLibrary }>
+  | undefined;
+let simulation: Promise<Sim> | undefined;
+
+/** A new game (the engine on the game data, opened once for the cases). */
+async function newGame(): Promise<ScriptRuntime> {
+  gameData ??= (async () => {
+    const vfs = await Vfs.mount(openGameFolder());
+    const db = await RecordDatabase.open(vfs);
+    const library = new ScriptLibrary(async (name) => {
+      const path = `scripts\\${name}.pex`;
+      return vfs.has(path) ? vfs.read(path) : undefined;
+    });
+    return { vfs, db, library };
+  })();
+  const { db, library } = await gameData;
+  return new ScriptRuntime(db, library);
+}
+
+/** The Bannered Mare in a headless simulation (opened once for the cases). */
+function playSim(): Promise<Sim> {
+  simulation ??= (async () => {
+    const sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
+    await sim.step(1);
+    return sim;
+  })();
+  return simulation;
+}
+
+/** Lets go of the game data and the simulation. */
+async function closeGames(): Promise<void> {
+  const sim = simulation;
+  const data = gameData;
+  simulation = undefined;
+  gameData = undefined;
+  if (sim) await (await sim).close();
+  if (data) {
+    const { db, vfs } = await data;
+    await db.close();
+    await vfs.close();
+  }
+}
+
+/** Every event of a kind the hub tells from now on. */
+function heard<K extends GameEventKind>(game: ScriptRuntime, kind: K): GameEvents[K][] {
+  const told: GameEvents[K][] = [];
+  game.events.on(kind, (event) => {
+    told.push(event);
+  });
+  return told;
+}
+
+/** A misc stat's value. */
+function stat(game: ScriptRuntime, name: string): number {
+  return game.stats.get(name.toLowerCase()) ?? 0;
+}
+
+/** The first quest of a type (QUST DNAM) that may be reset (not run once). */
+async function questOfType(game: ScriptRuntime, type: number): Promise<number> {
+  for (const formId of game.forms.db.formIdsOfType('QUST')) {
+    const quest = await game.forms.quest(formId);
+    if (quest?.type === type && (quest.flags & QuestFlag.runOnce) === 0) return formId;
+  }
+  throw new Error(`no quest of type ${String(type)}`);
+}
+
+/** A Quest native called on a quest, as its script calls it. */
+async function callNative(
+  game: ScriptRuntime,
+  quest: number,
+  fn: string,
+  args: Value[],
+): Promise<void> {
+  const native = game.native('quest', fn.toLowerCase());
+  if (!native) throw new Error(`no native Quest.${fn}`);
+  await native({
+    vm: game.vm,
+    self: game.formHandle(quest),
+    args,
+    name: `quest.${fn.toLowerCase()}`,
+    latent: (promise) => promise,
+    where: () => '',
+  });
+}
+
+/** Every instruction of a script's code. */
+async function scriptCode(game: ScriptRuntime, name: string): Promise<PexInstruction[]> {
+  const script = await game.forms.db.script(name);
+  const code: PexInstruction[] = [];
+  for (const object of script?.objects ?? [])
+    for (const state of object.states) for (const fn of state.functions) code.push(...fn.code);
+  return code;
+}
+
+/** The strings a script's code names (the stats it compares, ...). */
+async function scriptStrings(game: ScriptRuntime, name: string): Promise<string[]> {
+  return (await scriptCode(game, name)).flatMap((instruction) =>
+    instruction.args.flatMap((arg) => (arg.kind === 'string' ? [arg.value] : [])),
+  );
+}
+
+/** The stats a script counts itself (Game.IncrementStat with a string). */
+async function scriptIncrements(game: ScriptRuntime, name: string): Promise<string[]> {
+  const stats: string[] = [];
+  for (const instruction of await scriptCode(game, name)) {
+    const callee = instruction.args[1];
+    if (instruction.op !== 'callstatic' || callee?.kind !== 'identifier') continue;
+    if (callee.name.toLowerCase() !== 'incrementstat') continue;
+    const counted = instruction.args.find((arg, i) => i >= 3 && arg.kind === 'string');
+    if (counted?.kind === 'string') stats.push(counted.value);
+  }
+  return stats;
+}
+
+/** A music type of two silent tracks played in order (5 s, then 100 s). */
+const EXPLORE = 0x100;
+const FIRST_TRACK = 0x101;
+const SECOND_TRACK = 0x102;
+
+function syntheticMusic(): Music {
+  const silent = (formId: number, duration: number): MusicTrack => ({
+    formId,
+    editorId: `Track${String(formId)}`,
+    type: 'silent',
+    duration,
+    fadeOut: 0,
+    file: undefined,
+    finale: undefined,
+    loop: undefined,
+    cuePoints: [],
+    conditions: [],
+    layers: [],
+  });
+  const tracks = new Map([
+    [FIRST_TRACK, silent(FIRST_TRACK, 5)],
+    [SECOND_TRACK, silent(SECOND_TRACK, 100)],
+  ]);
+  const type: MusicType = {
+    formId: EXPLORE,
+    editorId: 'Explore',
+    flags: MusicTypeFlag.maintainTrackOrder,
+    priority: 50,
+    ducking: 0,
+    fadeDuration: 0,
+    tracks: [FIRST_TRACK, SECOND_TRACK],
+  };
+  const bus: MusicBus = { fade: () => undefined, dispose: () => undefined };
+  const output: MusicOutput = {
+    musicType: (formId) => Promise.resolve(formId === EXPLORE ? type : undefined),
+    musicTrack: (formId) => Promise.resolve(tracks.get(formId)),
+    prepare: () => true,
+    play: () => undefined,
+    bus: () => bus,
+  };
+  const settings = { duckingSeconds: 1, unDuckingSeconds: 1, finaleFadeIn: 1, finaleFadeOut: 1 };
+  return new Music(output, settings, () => 0);
+}
+
+/** The music's frames from one time to another, half a second apart. */
+async function playMusic(music: Music, from: number, to: number): Promise<void> {
+  const context: SoundConditionContext = {
+    hour: 10,
+    weather: undefined,
+    raining: false,
+    interior: true,
+    swimming: false,
+    global: () => 0,
+  };
+  for (let now = from; now < to; now += 0.5) {
+    // The types and tracks load as promises do (a few turns of the queue).
+    for (let turn = 0; turn < 4; turn++) await Promise.resolve();
+    music.update(now, context);
+  }
+}

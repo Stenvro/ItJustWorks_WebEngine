@@ -723,8 +723,39 @@ stats go to every object registered for them. What each kind becomes:
   OnAnimationEventUnregistered (the source and the event's name, lowercase), as the Creation
   Kit describes it (it may register again on OnLoad).
 - Menus (SKSE's RegisterForMenu, UnregisterForMenu, UnregisterForAllMenus on Form, Alias and
-  ActiveMagicEffect): the menu stack's open and close (MenuOpenCloseEvent) reach the scripts
-  registered for that menu as OnMenuOpen and OnMenuClose with its name.
+  ActiveMagicEffect): the menu stack's open and close (MenuOpenCloseEvent, the hub's
+  `menuOpenClose`) reach the scripts registered for that menu as OnMenuOpen and OnMenuClose
+  with its name. The game going into menu mode and out of it is `menuModeChange`
+  (MenuModeChangeEvent: as the first menu that pauses the game opens, with its name, and as
+  the last one closes; TODO(M13): menu mode being those menus open is inferred).
+
+**The stats' sources** (the singletons the misc stats hear, each a hub kind told once where
+the engine raises it; `stat-events.ts` counts them): `itemCrafted` (ItemCrafted: a workbench's
+recipe made, `crafting-models.ts` through `CraftingEngine.constructed`; an item improved,
+enchanted or a potion mixed, the crafting engine), `itemHarvested` (a flora's produce picked,
+`harvest-engine.ts`), `itemsPickpocketed` (a pocket picked, the crime engine), `levelIncrease`
+(the level-up menu's choice, `ProgressionEngine.levelUp`: told on as the tracked stat Level
+Increases with the new level, which AchievementsScript's level achievements read, and not kept),
+`locationDiscovery` (a map marker discovered, `ScriptRuntime.locationDiscovered` from the
+compass), `locksPicked` (`lock-picking.ts`), `objectiveState` (an objective's state changing,
+QUEST_OBJECTIVE_STATE 0 to 5, the Quest natives), `questStatus` (a quest completed, or a
+completed quest reset, `quests.ts`), `skillIncrease` (each skill level the player gains),
+`soulsTrapped` (any trapper's catch; the player's counts) and `spellsLearned` (the player's new
+spell, not a power or a shout's word); `dragonSoulGained`, `shoutAttack` and `locationCleared` as
+before. Nirnroots Found and Wings Plucked are the scripts' own counts (NirnrootACTIVATORScript,
+critter).
+
+**The player's sources** (PlayerCharacter is their source in the original): `actorCell`
+(BGSActorCellEvent: the cell the view has the player in changing, the one left told before the
+one entered: `ActorLocations.inCell`), `actorDeath` (BGSActorDeathEvent: the player's death with
+the killer, beside the world's death handling: `ActorEngine.kill`) and `positionPlayer`
+(PositionPlayerEvent: `pre` as the player's move begins, a play's arrival or a teleport within
+it, `post` and `finish` once they stand on its ground: `PlaySession`; TODO(M13): the original's
+two phases around the packages' update between them are not told, and what parts `post` from
+`finish` is inferred). Besides them `beamImpact` (BeamProjectileImpactEvent: a beam projectile,
+Sparks or Lightning Bolt, that met an actor or a surface, as its impact is about to act:
+`magic-projectiles.ts`) and `music` (BSMusicEvent: the music system's track changing, the type
+playing and its track, none for silence: `Music.listeners`, relayed by the session).
 
 `tools/script-events.ts` lists each event's declarations in the base scripts and the scripts
 of the load order that handle it. `PapyrusVm.handled` (debugging) hears every handler that
