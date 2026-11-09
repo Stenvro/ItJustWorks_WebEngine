@@ -674,6 +674,9 @@ export class ActorCombatAi {
   readonly #groups = new CombatGroups();
   readonly #reactions = new Map<string, { value: number | undefined; read: number }>();
   readonly #reacting = new Set<string>();
+  /** Pairs that fight as members of one Special Combat faction (CrimeEngine.specialCombat). */
+  readonly #special = new Map<string, { value: boolean; read: number }>();
+  readonly #specialReading = new Set<string>();
   readonly #profiles = new CombatProfiles();
   readonly #health = new Map<
     number,
@@ -940,6 +943,7 @@ export class ActorCombatAi {
     this.#groups.clear();
     this.#locations.clear();
     this.#reactions.clear();
+    this.#special.clear();
     this.#health.clear();
     this.#levels.clear();
     this.#zones.clear();
@@ -1504,6 +1508,8 @@ export class ActorCombatAi {
       if (fighter.reference === mind.reference) continue;
       const target = this.#fightTarget(fighter, views);
       if (target === undefined) continue;
+      // A brawl's or a sparring match's fight is theirs alone: no one joins either side.
+      if (this.#specialCombat(fighter.reference, target)) continue;
       if (fighter.reference === reference && target !== mind.reference) {
         // `other` attacks `target`: help the victim; guards help any innocent (the crime
         // itself, its bounty and the guards' arrest: src/shell/actor-crime.ts).
@@ -4466,6 +4472,34 @@ export class ActorCombatAi {
         .finally(() => this.#reacting.delete(key));
     }
     return kept?.value;
+  }
+
+  /**
+   * Whether two fight as members of one Special Combat faction (CrimeEngine.specialCombat), read
+   * as reactions are (kept a while; false until read).
+   */
+  #specialCombat(actor: number, other: number): boolean {
+    const key =
+      actor < other ? `${String(actor)}:${String(other)}` : `${String(other)}:${String(actor)}`;
+    const kept = this.#special.get(key);
+    const runtime = this.#options.session.scriptsReady;
+    if (
+      runtime &&
+      (!kept || this.#clock - kept.read > REACTION_SECONDS) &&
+      !this.#specialReading.has(key)
+    ) {
+      this.#specialReading.add(key);
+      void runtime.crime
+        .specialCombat(actor, other)
+        .then((value) => {
+          this.#special.set(key, { value, read: this.#clock });
+        })
+        .catch(() => {
+          this.#special.set(key, { value: false, read: this.#clock });
+        })
+        .finally(() => this.#specialReading.delete(key));
+    }
+    return kept?.value === true;
   }
 
   #refreshProfile(mind: Mind, runtime: ScriptRuntime): void {

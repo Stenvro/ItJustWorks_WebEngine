@@ -1260,8 +1260,24 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
   MQ101's TemporaryFriendsFaction, its own friend while the opening's Imperials and
   Stormcloaks walk Helgen together, is set neutral to itself at stage 270 (SetEnemy(itself,
   true, true)) so that Ralof and the keep's Imperials fight; as allies by the shared faction,
-  Ralof stood by while both soldiers fought the player alone. `attacksOnSight(aggression, reaction)`: aggressive actors attack enemies, very
-  aggressive neutrals too, frenzied anyone. TODO(M13): the engine's precedence.
+  Ralof stood by while both soldiers fought the player alone. Of the factions with two or more
+  members, 172 name a reaction to themselves (148 ally, 20 friend) and 496 name none, among
+  them CreatureFaction (901 members: the wolves and bears are no allies by it), the crime and
+  town factions and IsGuardFaction. `attacksOnSight(aggression, reaction)`: aggressive actors
+  attack enemies, very aggressive neutrals too, frenzied anyone. TODO(M13): the engine's
+  precedence.
+- Special Combat (FACT DATA 0x2; `CrimeEngine.specialCombat`): two actors who are both members
+  of such a faction fight a fight that is theirs alone: a blow or a kill between them is no
+  crime (no assault, no murder, no alarm), and no one takes up their fight on either side (the
+  combat AI's assistance and the guards' help for the innocent skip it). The 13 factions with
+  the flag hold the fights the game sets up between those who are otherwise no enemies: the
+  brawl (DGIntimidateFaction), sparring (MQBladesSparringFaction, MQSovngardeSparringFaction),
+  the Companions' training and single combat, duels with the player (WESpecialCombatFaction,
+  WIPlayerEnemySpecialCombatFaction, C06PlayerWolfSpecialCombatFaction,
+  DLC1WE08SpecialCombatFaction); 8 of them name no reaction to themselves, so the flag alone
+  sets their members apart. TODO(M13): inferred from these uses and the editor's description
+  of the flag (members fight each other without others joining in); what else the engine gates
+  by it is not documented.
 - Relationships (RELA) and their association types (ASTP: HasAssociationType,
   HasFamilyRelationship by ASTP DATA 0x1, HasParentRelationship).
 - Favor: a gift's worth (its value; TODO(M13)) is ShowGiftMenu's favor points, which raise the

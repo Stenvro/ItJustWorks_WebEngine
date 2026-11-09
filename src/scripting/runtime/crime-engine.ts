@@ -847,6 +847,8 @@ export class CrimeEngine {
   async assault(attacker: number, victim: number): Promise<Crime | undefined> {
     const runtime = this.#runtime;
     if (victim === attacker) return undefined;
+    // A brawl's or a sparring match's blow (specialCombat): no crime, no alarm.
+    if (await this.specialCombat(attacker, victim)) return undefined;
     // An actor's first blow on one not hostile to it: an NPC crime (no bounty) its witnesses
     // and the guards answer. Not a guard's (observed in the original: its blows are no crime),
     // and one pair's only once, so a stray swing does not grow into an endless brawl.
@@ -902,6 +904,7 @@ export class CrimeEngine {
   async murder(killer: number, victim: number): Promise<Crime | undefined> {
     if (victim === killer) return undefined;
     if ((await this.reaction(victim, killer)) === 'hostile') return undefined;
+    if (await this.specialCombat(killer, victim)) return undefined;
     const faction = await this.victimCrimeFaction(victim);
     if (faction === undefined) return undefined;
     // An NPC's kill is a murder where its fight was its own assault: it struck first one not
@@ -1571,6 +1574,32 @@ export class CrimeEngine {
       crimeHostile: other === PLAYER_REF && (await this.#crimeHostile(actor, mine, alarmed)),
       scriptHostile: runtime.state.actors.get(actor)?.combatTargets?.includes(other) === true,
     });
+  }
+
+  /**
+   * Whether two actors fight as members of one Special Combat faction (FACT DATA flag 0x2, both
+   * members: rank 0 or more): a fight that is theirs alone. Such a faction holds the fights the
+   * game sets up between those who are otherwise no enemies: the brawl (DGIntimidateFaction),
+   * sparring (MQBladesSparringFaction, MQSovngardeSparringFaction), the Companions' single
+   * combat (CompanionsSingleCombatFaction), a duel with the player (WESpecialCombatFaction,
+   * WIPlayerEnemySpecialCombatFaction); 8 of the 13 name no reaction to themselves, so it is
+   * the flag alone that sets them apart. A blow or a kill between them is no crime, and no one
+   * takes up their fight on either side (the combat AI's assistance and the guards': src/shell/
+   * actor-combat-ai.ts). TODO(M13): inferred from the factions' uses and the editor's
+   * description of the flag (members fight each other without others joining in); what else the
+   * engine gates by it is not documented.
+   */
+  async specialCombat(actor: number, other: number): Promise<boolean> {
+    if (actor === other) return false;
+    const { actors } = this.#runtime;
+    const mine = await actors.factionsOf(actor);
+    const theirs = await actors.factionsOf(other);
+    for (const [faction, rank] of mine) {
+      if (rank < 0 || (theirs.get(faction) ?? -1) < 0) continue;
+      const record = await actors.faction(faction);
+      if (((record?.flags ?? 0) & CrimeFlag.specialCombat) !== 0) return true;
+    }
+    return false;
   }
 
   async #crimeHostile(
