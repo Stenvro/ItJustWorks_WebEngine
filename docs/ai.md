@@ -185,7 +185,7 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   moved actors' and walkers' together, take at most 2,000 nodes of a frame (about 2 ms at most; a
   search gives way before the node past its share, and counts every node it took, the island's
   flooded triangles and the nearest point's squares and triangles among them: those cost less
-  than a search node, 0.2–0.6 µs each against about 1 µs); most end within a
+  than a search node, 0.1–0.6 µs each against about 1 µs); most end within a
   few dozen and give their path in the frame they began. A long one goes on in the next frames,
   its actor going on as it went meanwhile (its last request kept). The frame's nodes go first to
   the searches going on from earlier frames, but they leave 512 of them to the searches' first
