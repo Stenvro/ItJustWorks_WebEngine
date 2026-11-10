@@ -903,6 +903,39 @@ describe('PathSearch', () => {
     expect(second.result?.points.at(-1)?.[0]).toBeCloseTo(4000, 0);
   });
 
+  it('floods only its own stretch for a search begun off the island being made', () => {
+    // A 60 by 60 field (7,200 triangles) whose island a long search begins, and a 3 by 3 one
+    // apart from it (a tower's top): a search there to a goal off it floods its 18 triangles, not
+    // the field first, and has its way in the share it began.
+    const squares: [number, number][] = [];
+    for (let x = 0; x < 60; x++) for (let y = 0; y < 60; y++) squares.push([x, y]);
+    const top: [number, number][] = [];
+    for (let x = 0; x < 3; x++) for (let y = 70; y < 73; y++) top.push([x, y]);
+    const set = setOf([gridMesh(1, squares), gridMesh(2, top)]);
+    const long = new PathSearch(set, [50, 50, 0], [150, 7150, 0], { radius: 10 });
+    long.run(1488);
+    expect(long.done).toBe(false);
+    const off = new PathSearch(set, [150, 7150, 0], [3000, 3000, 0], { radius: 10 });
+    off.run(1488);
+    expect(off.done).toBe(true);
+    expect(off.taken).toBeLessThan(100);
+    expect(off.result?.complete).toBe(false);
+    expect(off.result?.points.at(-1)?.[1]).toBeCloseTo(7000, 0);
+    // The long search goes on as it would alone, to the field's point nearest its goal.
+    while (!long.done) long.run(1488);
+    expect(long.result?.complete).toBe(false);
+    expect(long.result?.points.at(-1)?.[1]).toBeCloseTo(6000, 0);
+    const alone = new PathSearch(
+      setOf([gridMesh(1, squares), gridMesh(2, top)]),
+      [50, 50, 0],
+      [150, 7150, 0],
+      { radius: 10 },
+    );
+    alone.run(Infinity);
+    expect(long.taken).toBe(alone.taken);
+    expect(long.result).toEqual(alone.result);
+  });
+
   it('finds a nearest point exact, and cheaper, for a goal near one asked before', () => {
     // A 20 by 20 field and goals above and beyond its east edge, the second in the first's grid
     // square (a dragon flown on a little): the triangle kept for the first bounds the look.

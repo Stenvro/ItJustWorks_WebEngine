@@ -180,9 +180,11 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   triangles every 64 of its nodes; the flood goes outward from where it began, so a goal near is
   found on it early) until its goal is found on the island (it goes on alone) or the island is
   whole without it (the search is let go for the way to the nearest point); one to a goal off
-  every navmesh, or that ended short first, makes it at once. A set makes one island at a time:
-  a search whose triangle the island being made has not reached yet makes that one on first, so
-  searches begun together flood a stretch of navmesh once. The nearest point looks at the grid's
+  every navmesh, or that ended short first, makes it at once. A search whose triangle no island
+  has reached yet begins its own flood there, and where two floods meet they are one island from
+  then on (each goes on outward from where it is), so searches begun together on a stretch of
+  navmesh flood it once, and one begun on a stretch of its own (a tower top, a ledge) floods only
+  that, in the share it began, while the exterior's island is still being made. The nearest point looks at the grid's
   squares outward from the goal's (each square and each triangle tested a node; about 100 for a
   goal 1,500 units above or beside the island). The island keeps the last 64 it found by the
   goal's grid square: the same goal is answered at once, and another in that square (soldiers

@@ -415,8 +415,8 @@ function* searchSteps(
   // finding its nearest point take from the search's share like its nodes and give way with it.
   // The search goes first: a way it finds within ISLAND_AFTER nodes (most) needs no island, so
   // a short way gives its path in the share it began, whether the island is made or not. One
-  // that runs on makes the island beside it (ISLAND_NODES every ISLAND_EVERY nodes; the island
-  // being made is shared by all searches: growIsland) until the goal is found on it (the search
+  // that runs on makes the island beside it (ISLAND_NODES every ISLAND_EVERY nodes; floods begun
+  // on one stretch join where they meet: growIsland) until the goal is found on it (the search
   // goes on alone) or the island is whole without it (the search is let go). A goal off every
   // navmesh is reached by no search: its island is made at once.
   // The verdict: the goal on the start's island ('on'), off it (the island), or not known yet.
