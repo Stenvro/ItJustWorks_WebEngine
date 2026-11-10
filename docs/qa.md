@@ -139,10 +139,12 @@ second outside a load: over more than 60 units in a frame a fling (`player flung
 it, and the four fastest simulated bodies within 400 units, each with its reference and base);
 over 8 to 60 a jump of the feet (`feet jump`, once a second at most: its parts across and up,
 the frame's length, grounded or not, what carried it, the bot's keys and its last line). In the
-Ralof run of 2026-11-10 every such jump (42) was nearly all up or down (8 to 25 units, at most 6
-across) in a 5-6 ms frame, at the places the bot was stuck pressing and jumping (a table's edge,
-the portcullis MQ101KeepGate2Ref): the character's step up and its settling down onto the floor,
-which a frame that short makes read as 1,500 units a second; none was carried.
+nine opening runs of 2026-11-10 (both sides) there were 236 such jumps: 229 more up or down than
+across (at most 51 units, at most 20 across), mostly in 5-6 ms frames, at the places the bot was
+stuck pressing and jumping (a table's edge, the portcullises): the character's step up and its
+settling down onto the floor, which a frame that short makes read as 1,500 units a second. Four
+were on a portcullis (MQ101KeepGate1Ref, MQ101KeepGate2Ref: keyframed), none on a simulated body;
+no fling and no carry held to its limit was logged.
 
 `opening-ralof` and `opening-hadvar` (not in a run without names) are the same opening with the bot on one side
 (`window.__qaSide`): of the current targets it takes that guide and the keep marker by them (Ralof
