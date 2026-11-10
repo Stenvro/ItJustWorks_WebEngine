@@ -1856,6 +1856,18 @@ through this run (the execution's windows, with no searches in them, 39–51 fps
 the fourth run; the attack's 24–40 against 51–62; 1.2–2.5 physics steps a frame, as frames were
 longer).
 
+A sixth run with floods begun apart joining where they meet (a search on a stretch of navmesh of
+its own floods only that, docs/ai.md, "Paths"): within Alduin's attack (eleven windows, the
+follow bot stuck on the inn's upper floor the whole time, off any navmesh, as in the three runs
+before the fifth: the attack never ended) the most search nodes in a frame were 22, 1,488, 22, 11,
+162, 24, 1,488, 12, 31, 162 and 1,488 (p99 4, 1,488, 5, 8, 56, 5, 1,488, 10, 31, 14, 1,488). The
+three windows at the cap are one actor's each time, e4919's two searches of 2,300–2,500 nodes
+that reach their goal (no island in them); the soldier ff000867 searched once, 41 nodes, in the
+first. The search code is under the profile's threshold in every window. The frame rate is again
+not comparable: the machine was busier still (the execution's windows 32–45 fps against 39–52 in
+the fifth run), and in the attack the physics took 2.3–3 steps a frame (its cap of 3 in five
+windows; Rapier 14–26 ms a frame against 10–12) with 127–211 bodies awake, at 19–30 fps.
+
 What is left (TODO(M13)): Alduin's attack is still below 60 fps (55 over the fourth run's
 windows, 47 over the third's, the slowest 42). Its actors (behavior graphs 4 ms, the movers'
 travels, combat 1.6 ms) and the physics at 1.0–1.4 steps a frame are the largest parts; Rapier's own step (2–3 ms) has no symbols
