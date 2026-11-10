@@ -287,7 +287,11 @@ async function main(): Promise<void> {
   await page.eval(
     `(() => { const k = window.__kf; const c = k.V().actorStage.combat; const orig = c.attack.bind(c);
       c.attack = async (r, a, m) => { const s0 = r === 0x14 ? c.combatState(0x14) : undefined; const before = s0 && { attack: s0.attack, staggered: s0.staggered, recoiling: s0.recoiling, blocking: s0.blocking, weapon: s0.weapon, life: s0.life, paired: s0.paired, knock: s0.knock }; const res = await orig(r, a, m); if (r === 0x14) k.att.push([Math.round(performance.now() - k.t0), a, res, res ? undefined : before]); return res; };
-      k.blockSeen = 0; setInterval(() => { if (c.combatState(0x14)?.blocking) k.blockSeen++; }, 100);
+      k.blockSeen = 0; setInterval(() => { const s = c.combatState(0x14); if (s?.blocking) k.blockSeen++;
+        // A block held: what the player's state was through it (blockHold), every 100 ms.
+        if (k.blockHold && s) { const p = k.V().player; k.blockHold.push([s.attack, s.staggered, s.recoiling, s.knock, s.blocking, p.character.grounded, p.motion.sprinting].map(Number).join('')); } }, 100);
+      const block = c.block.bind(c);
+      c.block = async (r, on) => { const res = await block(r, on); if (r === 0x14 && on && k.blockHold) k.blockAsks.push(res); return res; };
       return true; })()`,
   );
 
@@ -299,8 +303,17 @@ async function main(): Promise<void> {
   let quietSince = 0;
   let swings = 0;
   let tutorials = 0;
-  /** Each block held, and whether the guard went up while it was. */
-  const blocks: { midSwing: boolean; raised: boolean }[] = [];
+  /**
+   * Each block held, whether the guard went up while it was, the player's states through it
+   * (every 100 ms: attack state, staggered, recoiling, knock, blocking, grounded, sprinting, as
+   * digits) and the graph's answers to the blocks asked (true: taken).
+   */
+  const blocks: {
+    midSwing: boolean;
+    raised: boolean;
+    states: string[];
+    asks: boolean[];
+  }[] = [];
   let shots = 0;
   const foesSeen = new Set<number>();
   const keepUntil = Date.now() + 18 * 60_000;
@@ -405,12 +418,21 @@ async function main(): Promise<void> {
             await mouse('mouseReleased', 'left');
             await sleep(150);
           }
-          const before = await page.eval<number>(`window.__kf.blockSeen ?? 0`);
+          const before = await page.eval<number>(
+            `(() => { const k = window.__kf; k.blockHold = []; k.blockAsks = []; return k.blockSeen ?? 0; })()`,
+          );
           await mouse('mousePressed', 'right');
           await sleep(900);
           await mouse('mouseReleased', 'right');
-          const after = await page.eval<number>(`window.__kf.blockSeen ?? 0`);
-          blocks.push({ midSwing, raised: after > before });
+          const held = await page.eval<{ seen: number; states: string[]; asks: boolean[] }>(
+            `(() => { const k = window.__kf; const r = { seen: k.blockSeen ?? 0, states: k.blockHold ?? [], asks: k.blockAsks ?? [] }; k.blockHold = undefined; return r; })()`,
+          );
+          blocks.push({
+            midSwing,
+            raised: held.seen > before,
+            states: [...new Set(held.states)],
+            asks: held.asks,
+          });
         } else {
           await mouse('mousePressed', 'left');
           await sleep(80);
@@ -444,6 +466,24 @@ async function main(): Promise<void> {
   }
   log(`outcome: ${outcome}`);
   await page.eval(`(window.__kf.stop(), true)`);
+  // A block held through a jump (won, the weapon still out): pressed, then Space, still held
+  // for 2.5 s; the guard must be up after the landing.
+  let jumpBlock: { states: string[]; asks: boolean[]; upAtEnd: boolean } | undefined;
+  if (outcome.startsWith('won')) {
+    await sleep(1500);
+    await page.eval(
+      `(() => { const k = window.__kf; k.blockHold = []; k.blockAsks = []; return true; })()`,
+    );
+    await mouse('mousePressed', 'right');
+    await sleep(400);
+    await page.key('Space');
+    await sleep(2500);
+    jumpBlock = await page.eval<{ states: string[]; asks: boolean[]; upAtEnd: boolean }>(
+      `(() => { const k = window.__kf; const r = { states: [...new Set(k.blockHold ?? [])], asks: k.blockAsks ?? [], upAtEnd: k.V().actorStage.combat.combatState(0x14)?.blocking === true }; k.blockHold = undefined; return r; })()`,
+    );
+    await mouse('mouseReleased', 'right');
+    log(`a block held through a jump: ${JSON.stringify(jumpBlock)}`);
+  }
   await page.screenshot(path.join(OUT, 'end.jpg'));
   const result = await page.eval(
     `(async () => { const k = window.__kf; const rt = k.rt(); const f = k.frames.slice(-6000).sort((a, b) => a - b);
@@ -467,7 +507,7 @@ async function main(): Promise<void> {
   );
   fs.writeFileSync(
     path.join(OUT, 'keep-fight.json'),
-    JSON.stringify({ outcome, fights: fought, blocks, result }, null, 1),
+    JSON.stringify({ outcome, fights: fought, blocks, jumpBlock, result }, null, 1),
   );
   log(JSON.stringify({ outcome, fights: fought }));
   cdp.close();

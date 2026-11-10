@@ -23,8 +23,10 @@ for regressions.
   tutorials that come up (the low health one) with E, and stops at MQ101 300 (won) or the
   player's death. `keep-fight.json`: the outcome, every blow from MQ101 150 on (the courtyard
   and the fight), who fought the player in the courtyard, the player's attack actions with the
-  state of each refused one, each block held and whether the guard went up, the menus and the
-  frame times. Vite 5204 and Chrome 9404 by default. Since the page reloads as its sources
+  state of each refused one, each block held and whether the guard went up (with the player's
+  states through it and the graph's answer to each block asked), a block held through a jump
+  once the fight is won (`jumpBlock`: the guard up after the landing), the menus and the frame
+  times. Vite 5204 and Chrome 9404 by default. Since the page reloads as its sources
   change, no edit of `src/` may happen while it runs.
 
 ## Running it
