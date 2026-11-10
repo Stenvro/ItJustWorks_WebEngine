@@ -253,9 +253,9 @@ var QA_RIDE_NAV = engineDev.world.#navmeshes;
 })()`;
 
 /**
- * The follow bot (in the page): it walks the player to the nearest target of the active quests'
- * shown objectives (the compass's quest marker: "Follow Ralof", "Follow Hadvar", the keep's
- * door), along the navmesh (src/ai/pathfinding.ts), through the load door on the way when the
+ * The follow bot (in the page): it walks the player to the current marker of the running quests'
+ * shown objectives (of the targets that hold, the nearest of the objective shown last: Ralof,
+ * Hadvar, the keep's doors; a guide in a scene who calls the player first), along the navmesh (src/ai/pathfinding.ts), through the load door on the way when the
  * target is in another space; a guide near enough is waited for, and walked past once they
  * stand still a while. A target that is a place, reached with nothing moving on for 6 s, leads
  * on to the objective's next target (the way a player goes on: the burning inn's marker, then
@@ -360,13 +360,13 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
           if (reference === undefined) continue;
           const holds = target.conditions.length === 0 || (await rt.conditionsHold(target.conditions, rt.referenceHandle(reference), undefined, { quest: formId }));
           const placement = await rt.placement(reference);
-          if (placement) found.push({ quest: formId, objective: objective.index, order, holds, reference, placement });
+          if (placement) found.push({ quest: formId, objective: objective.index, shown: state.shown ?? 0, order, holds, reference, placement });
         }
       }
     }
     return found;
   };
-  const say = (text) => { bot.log.push(Math.round(performance.now() / 1000) + ' ' + text); if (bot.log.length > 200) bot.log.shift(); };
+  const say = (text) => { bot.log.push(Math.round(performance.now() / 1000) + ' ' + text); if (bot.log.length > 800) bot.log.shift(); };
   const events = (code) => W.player?.eventsOfKey(code) ?? [];
   const hold = (code, down) => {
     const player = W.player; if (!player) return;
@@ -388,11 +388,21 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
       const d = same ? Math.hypot(t.placement.position[0] - at.position[0], t.placement.position[1] - at.position[1]) : 1e9;
       return { t, d, same };
     };
+    // The current objective's marker, as a player reads the compass: of the targets that hold,
+    // those of the objective shown last (MQ101's "Make your way to the Keep" shows one of its
+    // four as MQ101DragonAttack's stage stands: Ralof, the inn, Hadvar, the courtyard), the
+    // nearest of them (the two keep doors of "Enter the Keep").
     let best;
+    const latest = Math.max(-1, ...targets.filter((t) => t.holds && !bot.skip?.has(t.reference)).map((t) => t.shown));
     for (const t of targets) {
-      if (!t.holds || bot.skip?.has(t.reference)) continue;
+      if (!t.holds || bot.skip?.has(t.reference) || t.shown !== latest) continue;
       const m = measure(t);
       if (!best || m.d < best.d) best = m;
+    }
+    const chosen = best ? best.t.quest.toString(16) + ' objective ' + best.t.objective + ' target ' + best.t.reference.toString(16) : 'none';
+    if (chosen !== bot.chosen) {
+      bot.chosen = chosen;
+      say('marker: ' + chosen + ' (of ' + targets.map((t) => t.objective + ':' + t.reference.toString(16) + (t.holds ? '' : ' off')).join(', ') + ')');
     }
     // No target shown (MQ101DragonAttack's stage 192: Hadvar ran ahead into his trigger and
     // waits by the street's, which the player sets walking in): a player follows the guide
@@ -400,6 +410,26 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
     if (!best && bot.lastGuide !== undefined && W.actorStage?.get(bot.lastGuide)) {
       const placement = await rt.placement(bot.lastGuide);
       if (placement) best = measure({ quest: 0, objective: -1, order: 0, holds: true, reference: bot.lastGuide, placement });
+    }
+    // The guide calls the player in a scene ("Come here, let me get those bindings off": MQ101's
+    // keep scenes wait for the player within 100 units of Ralof or Hadvar while the marker is on
+    // the way out): a player goes to them first, once for each stage of the marker's quest.
+    let called = false;
+    if (best && bot.lastGuide !== undefined && best.t.reference !== bot.lastGuide && W.actorStage?.get(bot.lastGuide) && rt.scenes.sceneOf(bot.lastGuide) !== undefined) {
+      const key = best.t.quest + ':' + (rt.state.quests.get(best.t.quest)?.stage ?? 0);
+      const placement = await rt.placement(bot.lastGuide);
+      const m = placement && measure({ quest: best.t.quest, objective: -1, order: 0, holds: true, reference: bot.lastGuide, placement });
+      if (m && m.same && bot.metGuide !== key) {
+        // By him, it stays while he talks (25 s: the keep's scenes speak three lines before
+        // their phase that waits for the player near).
+        if (m.d < 100 && bot.byGuide?.key !== key) { bot.byGuide = { key, since: performance.now() }; say('by the guide at stage ' + key); }
+        if (bot.byGuide?.key === key && performance.now() - bot.byGuide.since > 25000) { bot.metGuide = key; say('the guide talked: on to the marker'); }
+        else {
+          if (bot.calledBy !== key) { bot.calledBy = key; say('the guide is in a scene: to him first (' + key + ')'); }
+          best = m;
+          called = true;
+        }
+      }
     }
     if (!best) { bot.goal = undefined; bot.path = []; return; }
     // A place reached (no guide) where nothing moves on for a while: a player goes on the way
@@ -447,7 +477,7 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
     // him), 160 units on the far side; the place holds while the guide stays.
     const g = best.t.placement.position;
     if (bot.pass && (bot.pass.guide !== bot.guide || Math.hypot(g[0] - bot.pass.from[0], g[1] - bot.pass.from[1]) > 64)) bot.pass = undefined;
-    if (!bot.pass && best.same && bot.guide !== undefined && bot.waitSince !== undefined && now - bot.waitSince > 15000) {
+    if (!bot.pass && !called && best.same && bot.guide !== undefined && bot.waitSince !== undefined && now - bot.waitSince > 15000) {
       const dx = g[0] - at.position[0]; const dy = g[1] - at.position[1]; const l = Math.hypot(dx, dy) || 1;
       const point = nav?.nearest?.([g[0] + (dx / l) * 160, g[1] + (dy / l) * 160, g[2]], 96);
       if (point) {
@@ -490,14 +520,46 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
         say('the way is shut at ' + at.map(Math.round).join(',') + ': round it');
       }
     }
-    const found = onNav ? paths.findPath(nav, feet, goal, { radius: 24, blocked: bot.blocked }) : undefined;
+    // Off the navmesh by a little (it keeps an actor's radius off the walls: by the tower's wall
+    // the player stood 60 units off it), the way starts from its nearest point at that height,
+    // not straight through the wall.
+    // One across a wall is no start (by the tower the nearest point was inside it): of the
+    // nearest points round the player, the nearest with nothing at chest height between.
+    let snap;
+    if (!onNav && nav?.nearest) {
+      const physics = viewer().play?.physics;
+      const clear = (p) => {
+        if (!physics) return true;
+        const from = [feet[0], feet[1], feet[2] + 50];
+        const d = [p[0] - feet[0], p[1] - feet[1], p[2] + 50 - from[2]];
+        const l = Math.hypot(...d);
+        return l < 1 || !physics.raycast(from, d.map((v) => v / l), l, Layer.charController, undefined, 0x14);
+      };
+      const seen = [];
+      for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+        const p = nav.nearest([feet[0] + dx * 64, feet[1] + dy * 64, feet[2]], 160);
+        if (p) seen.push(p);
+      }
+      seen.sort((a, b) => Math.hypot(a[0] - feet[0], a[1] - feet[1]) - Math.hypot(b[0] - feet[0], b[1] - feet[1]));
+      snap = seen.find(clear);
+    }
+    const start = onNav ? feet : snap;
+    const found = start ? paths.findPath(nav, start, goal, { radius: 24, blocked: bot.blocked }) : undefined;
     const changed = !bot.goal || Math.hypot(goal[0] - bot.goal[0], goal[1] - bot.goal[1]) > 64;
     bot.goal = goal;
-    bot.path = found && found.points.length > 1 ? found.points.slice(1).map((p) => [...p]) : [goal];
+    bot.path = found && found.points.length > 1 ? (snap ? [[...snap]] : []).concat(found.points.slice(1).map((p) => [...p])) : [goal];
+    // How far the way goes (a guide near across a wall is not near: Ralof inside the tower, the
+    // player outside it).
+    bot.pathLength = undefined;
+    if (found?.complete) {
+      let length = start ? Math.hypot(found.points[0][0] - start[0], found.points[0][1] - start[1]) : 0;
+      for (let i = 1; i < found.points.length; i++) length += Math.hypot(found.points[i][0] - found.points[i - 1][0], found.points[i][1] - found.points[i - 1][1]);
+      bot.pathLength = length;
+    }
     // A way over the navmesh far longer than the straight line to a goal not above: a player
     // jumps down (Helgen's tower: the hole Alduin broke, onto the inn's roof, while the navmesh
     // leads down the stairs to the door the quest has shut).
-    if (found && !bot.door && goal[2] <= feet[2] + 50) {
+    if (found && !bot.door && at.world !== undefined && goal[2] < feet[2] - 150) {
       let length = 0;
       for (let i = 1; i < found.points.length; i++) length += Math.hypot(found.points[i][0] - found.points[i - 1][0], found.points[i][1] - found.points[i - 1][1]);
       const straight = Math.hypot(goal[0] - feet[0], goal[1] - feet[1]);
@@ -538,7 +600,8 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
     const toGoal = Math.hypot(goal[0] - feet[0], goal[1] - feet[1]);
     // A guide near: wait for them to lead on (after a while closer still: a trigger by them).
     const near = bot.waitSince !== undefined && now - bot.waitSince > 8000 ? 90 : 220;
-    if (guide && toGoal < near && Math.abs(goal[2] - feet[2]) < 150) { bot.release(); bot.still = 0; bot.waitSince ??= now; return; }
+    const reachable = bot.pathLength === undefined || bot.pathLength < near * 1.6;
+    if (guide && toGoal < near && reachable && Math.abs(goal[2] - feet[2]) < 150) { bot.release(); bot.still = 0; bot.waitSince ??= now; return; }
     if (!guide || toGoal > 300) bot.waitSince = undefined;
     // At the door: face it and use it.
     if (bot.door !== undefined && toGoal < 110) {
@@ -597,6 +660,76 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
     requestAnimationFrame(turn);
   };
   requestAnimationFrame(turn);
+  return 'started';
+})()`;
+
+/**
+ * The guides' watch (in the page): once a second, for Ralof and Hadvar, the package that runs
+ * (editor id), its procedure, whether the AI holds it (a reaction), the reaction and the scene,
+ * logged as it changes, and where they stand every 10 s; MQ101's and MQ101DragonAttack's stages
+ * as they change; every actor that reacts to a dead body (with how far the body lies); the
+ * player's capsule while it is not grounded for more than 2 s. Its lines are `__qaGuides.log`.
+ */
+export const GUIDE_WATCH = `(async () => {
+  if (window.__qaGuides) return 'running';
+  const GUIDES = { 0x2bf9e: 'Ralof', 0x2bfa2: 'Hadvar' };
+  const QUESTS = { 0x3372b: 'MQ101', 0xd0593: 'DragonAttack' };
+  const watch = { log: [], last: new Map(), reacting: new Map(), names: new Map(), stages: new Map(), airSince: undefined, airLogged: 0 };
+  window.__qaGuides = watch;
+  const say = (text) => { watch.log.push(Math.round(performance.now() / 1000) + ' ' + text); if (watch.log.length > 600) watch.log.shift(); };
+  const viewer = () => (engineDev.world.play ? engineDev.world : engineDev.viewer);
+  const name = async (rt, id) => {
+    if (id === undefined) return '-';
+    if (!watch.names.has(id)) watch.names.set(id, (await rt.forms.record(id))?.editorId || id.toString(16));
+    return watch.names.get(id);
+  };
+  const round = (p) => p ? p.map(Math.round).join(',') : '-';
+  let ticks = 0;
+  watch.timer = setInterval(async () => {
+    try {
+      const rt = engineDev.play()?.session.scriptsReady;
+      const stage = viewer().actorStage;
+      if (!rt || !stage) return;
+      ticks++;
+      for (const [id, label] of Object.entries(QUESTS)) {
+        const q = rt.state.quests.get(Number(id));
+        const now = q ? q.stage + (q.running ? '' : ' (stopped)') : 'none';
+        if (watch.stages.get(id) !== now) { watch.stages.set(id, now); say(label + ' stage ' + now); }
+      }
+      for (const [id, label] of Object.entries(GUIDES)) {
+        const ref = Number(id);
+        const staged = stage.get(ref);
+        const running = stage.ai.current(ref);
+        const line = !staged ? 'not on the stage' : [
+          'package ' + (await name(rt, running?.id)),
+          'procedure ' + (running?.procedure ?? '-'),
+          stage.ai.held(ref) ? 'HELD' : 'not held',
+          'reaction ' + (stage.senses.reacting(ref) ?? 'none'),
+          'scene ' + (await name(rt, rt.scenes.sceneOf(ref))),
+        ].join(', ');
+        if (watch.last.get(ref) !== line) { watch.last.set(ref, line); say(label + ': ' + line + ' at ' + round(staged?.position)); }
+        else if (staged && ticks % 10 === 0) say(label + ' at ' + round(staged.position));
+      }
+      // Every actor reacting to a dead body (new ones).
+      for (const ref of stage.ai.running()) {
+        const kind = stage.senses.reacting(ref);
+        const was = watch.reacting.get(ref);
+        if (kind === was) continue;
+        watch.reacting.set(ref, kind);
+        if (kind === 'corpse' || was === 'corpse') say('corpse reaction ' + (kind === 'corpse' ? 'begins' : 'ends') + ': ' + (await name(rt, ref)) + ' [' + ref.toString(16) + '] at ' + round(stage.get(ref)?.position) + ' (package ' + (await name(rt, stage.ai.current(ref)?.id)) + ')');
+      }
+      const player = viewer().player;
+      if (player) {
+        const grounded = player.character.grounded;
+        const now = performance.now();
+        if (grounded) watch.airSince = undefined;
+        else {
+          watch.airSince ??= now;
+          if (now - watch.airSince > 2000 && now - watch.airLogged > 5000) { watch.airLogged = now; say('the player is not grounded for ' + Math.round((now - watch.airSince) / 1000) + ' s at ' + round(player.feet)); }
+        }
+      }
+    } catch (e) { say('watch failed: ' + e.message); }
+  }, 1000);
   return 'started';
 })()`;
 
@@ -1164,6 +1297,7 @@ QA_PLAY.player.teleport([${String(x)}, ${String(y)}, ${String(z)}], Math.PI / 2)
         raced?: boolean;
         stage?: number;
         bot?: boolean;
+        watching?: boolean;
         inside?: number;
         escaped?: number;
         since?: number;
@@ -1178,6 +1312,13 @@ QA_PLAY.player.teleport([${String(x)}, ${String(y)}, ${String(z)}], Math.PI / 2)
         await sleepMs(3000);
         ctx.note('race menu: finished as a player would');
         await finishRaceMenu(ctx);
+      }
+      // The guides watched from the dragon's arrival on (their packages, reactions and scenes;
+      // the corpse reactions round them).
+      if (now.stage >= 100 && state.watching !== true) {
+        state.watching = true;
+        await ctx.page.eval(GUIDE_WATCH, 30000);
+        ctx.note('the guides are watched');
       }
       if (now.stage >= 160 && !now.driven && state.bot !== true) {
         state.bot = true;
@@ -1211,6 +1352,13 @@ QA_PLAY.player.teleport([${String(x)}, ${String(y)}, ${String(z)}], Math.PI / 2)
         )
         .catch(() => undefined);
       for (const line of log ?? []) ctx.note(`bot: ${line}`);
+      const guides = await ctx.page
+        .eval<string[] | undefined>(
+          `(() => { const w = window.__qaGuides; if (!w) return undefined; clearInterval(w.timer); return w.log; })()`,
+          10000,
+        )
+        .catch(() => undefined);
+      for (const line of guides ?? []) ctx.note(`guides: ${line}`);
     },
   },
 ];

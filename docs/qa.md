@@ -82,13 +82,22 @@ answer the Survival Mode box with No, set the hour and weather, wait until the a
 have settled, then watch for 3 minutes.
 
 The follow bot (in the page, `FOLLOW_BOT` in `tools/qa-scenarios.ts`) reads the targets of the running
-quests' shown objectives as the compass does (`questTargets`, but also for a quest the journal
-has not made the active one: MQ101 is not), finds a navmesh path (`findPath`) to the nearest and
-steers the player by `Player.yaw` and the Forward control. It drives the viewer that plays now, as
+quests' shown objectives as the compass does (`questTargets`, also for a quest the journal has
+not made active), and follows the current marker as a player reads it: of the targets whose
+conditions hold, those of the objective shown last, the nearest of them (MQ101's "Make your way
+to the Keep" marks one of Ralof, the inn, Hadvar and the courtyard as MQ101DragonAttack's stage
+stands; "Enter the Keep" marks both keep doors). Before, it took the nearest target of any
+shown objective. It logs each marker it takes (`marker: ...`), finds a navmesh path
+(`findPath`) to it and steers the player by `Player.yaw` and the Forward control. Off the
+navmesh by a little (the navmesh keeps an actor's radius off the walls), its way starts from the
+nearest navmesh point round it with nothing at chest height between (by Helgen's tower the
+nearest point was inside the tower, through its wall, and the bot walked into the wall for
+good). It drives the viewer that plays now, as
 the monitors pick it: the world viewer outside, the model viewer in an interior (its player, actor
 stage, navmeshes and physics). Before, it read only the world viewer and stood still from the
 keep's door on. It waits when the guide is within 220
-units (after 8 s it closes in to 90: a trigger may be by them; after 15 s of a guide standing
+units and its way there is not much longer (a guide across a wall is not near: Ralof inside the
+tower, the player outside it) (after 8 s it closes in to 90: a trigger may be by them; after 15 s of a guide standing
 still it walks on 160 units past them, into the room they lead to: Ralof in Helgen's tower, the
 stage-25 strip beyond him), uses the load door toward a target in another space
 (`firstDoorToward`, aiming and pressing Activate), and when stuck steps left, right or back
@@ -100,8 +109,13 @@ conditions do not hold yet, as a player goes on the way the objective leads (MQ1
 way to the Keep" shows the burning inn's marker until stage 120 of MQ101DragonAttack; then
 Hadvar). With no target shown at all it follows the guide it followed last while that one is
 about (MQ101DragonAttack's stage 192: Hadvar ran ahead into his trigger and waits by the
-street's, which only the player sets). A target that is a load door here, or a place with one within 400 units across (MQ101's "Enter the Keep" markers by the keep's doors), it walks to and uses; one whose way it found shut twice and is stuck on again it leaves for another shown target (the Stormcloak keep door's street is shut to one who came with Hadvar). A navmesh way far longer than the straight line (twice it and 300 more) to a goal not
-above is left for the straight line, as a player jumps down (from the tower's broken wall onto
+street's, which only the player sets). A guide it followed who is in a scene in the same space
+is gone to first, once for each stage of the marker's quest, and stood by for 25 s (not walked
+past) before the marker (MQ101's keep scenes speak three lines, then wait with a looping "come
+here" line until the player is within 100 units of Ralof or Hadvar, while the marker is on the
+way out). A target that is a load door here, or a place with one within 400 units across (MQ101's "Enter the Keep" markers by the keep's doors), it walks to and uses; one whose way it found shut twice and is stuck on again it leaves for another shown target (the Stormcloak keep door's street is shut to one who came with Hadvar). A navmesh way far longer than the straight line (twice it and 300 more) to a goal more than
+150 units below, outside, is left for the straight line (in the keep it walked into a wall for
+eight minutes toward the escape's marker, 650 units down), as a player jumps down (from the tower's broken wall onto
 the inn, while the navmesh leads down the stairs to the door the quest has shut). It counts as
 on the navmesh only where a triangle is near its feet' height (under the inn's upper floor
 lies the ground floor's, 300 units down). Off the navmesh with navmesh below, it goes straight
@@ -112,7 +126,12 @@ neighbours; a drop is 150 units or more), the drop landing nearest the goal on n
 way on to it (a hole in the inn's floor nearer the marker leads into a room that rubble
 shuts). The scenario ends a minute
 after MQ101 reaches stage 900 (out of the keep), or when MQ101's stage stands 8 minutes (the
-opening stalled, or the bot got nowhere). Its log goes into the report's notes.
+opening stalled, or the bot got nowhere). Its log goes into the report's notes, with the
+guides' watch (`GUIDE_WATCH`, from MQ101 stage 100 on): once a second Ralof's and Hadvar's
+package (editor id), procedure, whether their AI is held for a reaction, the reaction and the
+scene, logged as they change, and where they stand every 10 s; MQ101's and MQ101DragonAttack's
+stages; every actor that begins or ends a reaction to a dead body; the player's capsule while
+it is not grounded for more than 2 s.
 
 ## The monitors in the page
 
