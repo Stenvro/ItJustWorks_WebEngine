@@ -7,6 +7,7 @@ import {
   animationRate,
   boneLeftBound,
   shownAhead,
+  shownProgress,
   startObjectSkeleton,
   type AnimatedSkeleton,
   type AnimationRate,
@@ -198,6 +199,93 @@ describe('object skeletons', () => {
       for (let i = 0; i < 8; i++) expect(lag(1 + i * FRAME)).toBeLessThanOrEqual(FRAME);
     });
 
+    it('keeps graphs one event reaches together in step while one reads its clip (animateInStep with a rate)', () => {
+      // Found in review 2026-11-10: at Helgen's block the headsman's and the guard's chop clips
+      // came 0.18 s after the prisoner's in the browser at about 11 frames a second; the
+      // prisoner's chop ran ahead and his head flew before the axe was down. In the simulation
+      // with both read late, the prisoner's came first and his graph went on alone for a frame.
+      // `own`: how long the prisoner's own clip is read (0: it is there).
+      // `reads`: how long the headsman's clip is read; `near`: the prisoner updated every frame.
+      const run = (
+        together: boolean,
+        at: number,
+        frame: number,
+        own = 0,
+        reads = 0.18,
+        near = false,
+      ): number => {
+        let clock = 0;
+        let readFrom = Infinity;
+        let ownFrom = Infinity;
+        const reading = {
+          clip: (name: string) =>
+            name === 'still' ? still : clock >= readFrom ? swing : undefined,
+          clipLoading: (name: string) => name === 'chop' && clock < readFrom,
+          behavior: () => undefined,
+        };
+        const read = {
+          clip: (name: string) => (name === 'still' ? still : clock >= ownFrom ? swing : undefined),
+          clipLoading: (name: string) => name === 'chop' && clock < ownFrom,
+          behavior: () => undefined,
+        };
+        const spec = (host: SkeletalGraph['host']): SkeletalGraph => ({
+          ...graph,
+          root: { name: 'chop', events: ['Chop'], variables: [], root: machine },
+          host,
+        });
+        const headsman = startObjectSkeleton(nodes, spec(reading), () => 0.5)?.skeleton;
+        const prisoner = startObjectSkeleton(nodes, spec(read), () => 0.5)?.skeleton;
+        if (!headsman || !prisoner) throw new Error('no skeleton');
+        // Both behind the camera: updated every 0.25 s, their poses blended between.
+        const rate = (animated: AnimatedSkeleton): AnimationRate => ({
+          interval: near && animated === prisoner ? 0 : 0.25,
+          interpolate: true,
+          slop: 0.25,
+        });
+        let told = false;
+        let worst = 0;
+        for (let i = 0; i * frame < 4; i++) {
+          clock = i * frame;
+          if (!told && clock >= at) {
+            told = true;
+            readFrom = clock + reads;
+            ownFrom = clock + own;
+            prisoner.behavior?.sendEvent('Chop');
+            headsman.behavior?.sendEvent('Chop');
+          }
+          if (together) animateInStep([prisoner, headsman], clock, rate);
+          else animateSkeletons([prisoner, headsman], clock, rate);
+          // Once both have started: how far apart their clips' times are (graph time ahead or
+          // not, the clip moves the blade 10 units a second).
+          const [p, h] = [prisoner, headsman].map((one) => {
+            const playing = one.behavior?.playing().find(({ animation }) => animation === 'chop');
+            return playing?.time;
+          });
+          const lead = (prisoner.time ?? clock) - (headsman.time ?? clock);
+          if (told && clock > at + 0.6 && p !== undefined && h !== undefined)
+            worst = Math.max(worst, Math.abs(p - h - lead));
+        }
+        return worst;
+      };
+      for (const frame of [1 / 60, 0.09, 0.14]) {
+        for (let i = 0; i < 5; i++) {
+          const at = 1 + i * 0.047;
+          expect(run(false, at, frame)).toBeGreaterThan(0.1);
+          expect(run(true, at, frame), `${String(frame)} at ${String(at)}`).toBeLessThan(1e-6);
+          expect(run(true, at, frame, 0.1), `both read, ${String(frame)}`).toBeLessThan(1e-6);
+        }
+      }
+      // Below 10 frames a second, the prisoner updated every frame (each frame cut to 0.1 s) and
+      // the headsman ahead (his whole frames): apart, his chop runs on from the prisoner's.
+      for (const frame of [0.14, 0.2]) {
+        for (let i = 0; i < 3; i++) {
+          const at = 1 + i * 0.047;
+          expect(run(false, at, frame, 0, 0, true)).toBeGreaterThan(0.1);
+          expect(run(true, at, frame, 0, 0, true), `near, ${String(frame)}`).toBeLessThan(1e-6);
+        }
+      }
+    });
+
     it('a far graph loses no time to a clip still being read', () => {
       for (let i = 0; i < 8; i++) expect(lag(1 + i * FRAME, 4 * FRAME)).toBeLessThanOrEqual(FRAME);
     });
@@ -244,6 +332,29 @@ describe('object skeletons', () => {
       expect(run(false)).toBeGreaterThan(5 * FRAME);
       expect(run(true)).toBeLessThan(1e-6);
     });
+  });
+
+  it('tells how far the pose shown has run: slower than the clock where long frames are cut', () => {
+    const near = startObjectSkeleton(nodes, graph, () => 0.5)?.skeleton;
+    const far = startObjectSkeleton(nodes, graph, () => 0.5)?.skeleton;
+    if (!near || !far) throw new Error('no skeleton');
+    const rate = (animated: AnimatedSkeleton): AnimationRate => ({
+      interval: animated === far ? 0.25 : 0,
+      interpolate: true,
+      slop: 0.25,
+    });
+    expect(shownProgress(near)).toBeUndefined();
+    // 60 frames a second: both shown as the clock runs (the far one blending between updates);
+    // the clip moves the blade 10 units a second, so the pose shown is where its progress says.
+    for (let i = 0; i <= 60; i++) animateSkeletons([near, far], i / 60, rate);
+    for (const one of [near, far]) {
+      expect(shownProgress(one)).toBeCloseTo(1, 2);
+      expect((one.pose.worlds[2 * 16 + 12] ?? 0) / 10).toBeCloseTo(shownProgress(one) ?? 0, 3);
+    }
+    // 4 frames a second: the near one's updates are cut to 0.1 s, its animation runs 0.1 a frame.
+    for (let i = 1; i <= 8; i++) animateSkeletons([near], 1 + i * 0.25, rate);
+    expect(shownProgress(near)).toBeCloseTo(1.8, 3);
+    expect((near.pose.worlds[2 * 16 + 12] ?? 0) / 10).toBeCloseTo(1.8, 3);
   });
 
   it('moves on every frame at the clock’s pace across the updates of a far graph', () => {

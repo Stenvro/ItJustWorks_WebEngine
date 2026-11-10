@@ -425,6 +425,32 @@ animated objects alike.
   the player knelt, ended its enter after the body's and dropped the block's chop, sent as the
   body's graph would take it. TODO(M13): inferred; how the original keeps them together while
   clips are read is not known.
+- **Graphs that go together in step.** Ours: an actor's graph and its dependents'
+  (AddDependentAnimatedObjectReference: Helgen's block sends the prisoner's chop to the headsman
+  and the guard), and the graphs of those one piece of furniture holds together (the block holds
+  the three through the chop; its HeadChopBlockHookupSCRIPT removes the dependents 2 s after it
+  plays the chop, some 9.8 s before the prisoner's clip raises Decapitate), are kept in step the
+  same way (`animateInStep` with the stage's rates): each
+  told an event hears it at once, so the clips it starts are known to be still being read before
+  any of them moves on; while one reads, the others stand at the clock (the time they ran ahead
+  is dropped) and keep their poses; all go on in the update the clip comes in. They are updated
+  every frame, all of them, so none runs ahead of the others and a frame cut to MAX_STEP is cut
+  alike. Updated apart, in the browser with the processor slowed (about 9 and 11 frames a second)
+  the headsman's and the guard's chop clips, read only as the first prisoner was beheaded, came
+  0.18 to 0.19 s after the prisoner's: his chop ran ahead, his head flew before the axe was down,
+  its flight bent by the axe still swinging, and in one of two runs it went over the basket's rim.
+  Below 10 frames a second (the simulation at 4 to 7 a second) the headsman, behind the camera
+  and updated ahead, ran his whole frames while the prisoner, updated every frame as his
+  Decapitate came near, ran 0.1 s of each: the axe was 0.37 s on, rising again, and the head flew
+  up and 180 to 270 units off. TODO(M13): inferred.
+- **How far a pose has run.** Ours: each skeleton keeps how far its graph has run (its updates'
+  steps) and how far the pose it shows has (`shownProgress`: a far graph's blend's share of its
+  update). It runs with the clock except where a frame longer than MAX_STEP had its update cut
+  (below 10 frames a second the animation runs slower than the clock): a killer's swing is read
+  over 0.1 s of it, not of the clock ("Dismemberment" below; `SwingTrail`). Read over the clock
+  at 4 frames a second in the browser, the headsman's axe came into the blow at 12 units a second
+  (it comes down at 390), bent aside by where it stopped, and the head went 207 units from the
+  basket.
 - **Not past a trigger.** The interval is cut to just short (half a frame) of the next trigger or
   annotation a playing clip passes (the engine walks the active clips' triggers), so that what
   the clips raise (a footstep, a sound) is raised at its moment, not up to a quarter of a second

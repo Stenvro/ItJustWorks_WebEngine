@@ -13,7 +13,7 @@
 // blood art (NAM7) sprays from it for fDecapitateBloodTime. A dismembered actor placed again
 // (its cell loaded again) is cut again as it appears, the head falling from the neck.
 
-import { shownAhead } from '../animation/animated-skeleton.ts';
+import { shownAhead, shownProgress } from '../animation/animated-skeleton.ts';
 import { ActorPose } from '../animation/skeleton.ts';
 import {
   decapitationLaunch,
@@ -417,16 +417,23 @@ export class ActorDismemberment {
     }
   }
 
+  /**
+   * Where the weapons of those who may strike are, by how far each one's animation has run as
+   * shown (shownProgress: below 10 frames a second it runs slower than the clock) and by the clock.
+   */
   #followSwings(): void {
     for (const actor of this.#options.striking?.() ?? []) {
       const at = this.#weaponOf(actor);
-      if (!at) continue;
+      const body = this.#options.body(actor);
+      // Its graph has run (the pose the weapon is read from is its own).
+      const progress = body && shownProgress(body.placed);
+      if (!at || progress === undefined) continue;
       let trail = this.#swings.get(actor);
       if (!trail) {
         trail = new SwingTrail();
         this.#swings.set(actor, trail);
       }
-      trail.record(this.#clock, at);
+      trail.record(progress, at, this.#clock);
     }
     for (const [actor, trail] of this.#swings)
       if (trail.latest < this.#clock) this.#swings.delete(actor);
@@ -703,13 +710,14 @@ export class ActorDismemberment {
   }
 
   /**
-   * How the killer's weapon came into a blow (SwingTrail); undefined: it is not known to have
-   * moved.
+   * How the killer's weapon came into a blow (SwingTrail): over the last SWING_SECONDS of its
+   * animation before the blow's moment; undefined: it is not known to have moved.
    */
   #swingInto(blow: Blow | undefined): Vec3 | undefined {
     const trail = blow?.killer === undefined ? undefined : this.#swings.get(blow.killer);
     if (!blow || !trail) return undefined;
-    const time = blow.time ?? this.#clock;
+    const time = trail.timeAt(blow.time ?? this.#clock);
+    if (time === undefined) return undefined;
     const to = trail.at(time);
     const from = trail.at(time - SWING_SECONDS);
     if (!to || !from || to.time <= from.time) return undefined;

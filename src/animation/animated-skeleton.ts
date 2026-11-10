@@ -98,6 +98,42 @@ interface Interpolation {
 
 const interpolations = new WeakMap<AnimatedSkeleton, Interpolation>();
 
+/** Skeletons that heard their events in animateInStep: their next update counts them told. */
+const heardAhead = new WeakSet<AnimatedSkeleton>();
+
+/**
+ * How far a skeleton's graph has run (the sum of its updates' steps), how far the pose it shows
+ * has, and where the blend it shows began.
+ */
+interface Progress {
+  graph: number;
+  shown: number;
+  from: number;
+}
+
+const progresses = new WeakMap<AnimatedSkeleton, Progress>();
+
+function progressOf(animated: AnimatedSkeleton): Progress {
+  let progress = progresses.get(animated);
+  if (!progress) {
+    progress = { graph: 0, shown: 0, from: 0 };
+    progresses.set(animated, progress);
+  }
+  return progress;
+}
+
+/**
+ * How far into its animation the pose a skeleton shows is (seconds its graph has run, as shown:
+ * between two updates of a far graph, the blend's share of the update's step), on no clock but
+ * its own; undefined: its graph has not run. It runs with the clock, except where a frame longer
+ * than MAX_STEP had its update cut (below 10 frames a second the animation runs slower than the
+ * clock), and while its graph is held (animateInStep): what is read off the pose over a stretch of
+ * its animation (a weapon's swing) is read over this.
+ */
+export function shownProgress(animated: AnimatedSkeleton): number | undefined {
+  return progresses.get(animated)?.shown;
+}
+
 /**
  * The update a skeleton's graph ran ahead in whose pose it shows at once (not interpolated: an
  * actor the camera does not see), from the graph's time before it to its time after (the pose it
@@ -145,7 +181,9 @@ export function animateSkeletons(
     const frame = state ? Math.max(0, seconds - state.frame) : 0;
     if (state) state.frame = seconds;
     const midway = state?.interpolating === true && seconds < state.until;
-    const told = rate !== undefined && behavior?.eventsWaiting === true;
+    // Told an event since its last update (animateInStep may have had it hear the event already).
+    const told =
+      rate !== undefined && (heardAhead.delete(animated) || behavior?.eventsWaiting === true);
     // Between two updates of a graph that ran ahead: its pose blends on.
     if (state && midway && !told && animated.time !== undefined) {
       if (behavior && state.shown) {
@@ -153,6 +191,8 @@ export function animateSkeletons(
         blendPoses(state.before, behavior.pose, t, state.blended);
         animated.pose.update(state.blended);
         animated.pose.showBySlots(behavior);
+        const progress = progressOf(animated);
+        progress.shown = progress.from + (progress.graph - progress.from) * t;
       }
       continue;
     }
@@ -202,6 +242,8 @@ export function animateSkeletons(
       if (behavior) {
         animated.pose.update(behavior.pose);
         animated.pose.showBySlots(behavior);
+        const progress = progressOf(animated);
+        progress.shown = progress.graph;
       }
       continue;
     }
@@ -221,6 +263,8 @@ export function animateSkeletons(
       interpolations.set(animated, interpolation);
     }
     interpolation.before.set(shown ?? behavior.pose);
+    const progress = progressOf(animated);
+    progress.from = shown ? progress.shown : progress.graph;
     const span = Math.max(0, seconds + interval - time);
     const dt = Math.min(Math.max(MAX_STEP, 2 * interval), span);
     animated.time = seconds + interval;
@@ -241,8 +285,10 @@ export function animateSkeletons(
         (seconds - interpolation.from) / Math.max(1e-6, interpolation.until - interpolation.from);
       blendPoses(interpolation.before, behavior.pose, t, interpolation.blended);
       animated.pose.update(interpolation.blended);
+      progress.shown = progress.from + (progress.graph - progress.from) * t;
     } else {
       animated.pose.update(behavior.pose);
+      progress.shown = progress.graph;
     }
     animated.pose.showBySlots(behavior);
   }
@@ -262,20 +308,87 @@ export function animateSkeletons(
  * where the body's graph left its enter with that clip at 1.41 s and the first-person graph's
  * stood at 1.13 s). Behind, the first-person graph dropped IdleExecutionerChop_Player when it was
  * sent as the body's graph would take it, and the view on its camera node stayed level and turned
- * away through the execution. TODO(M13): inferred; how the original keeps an actor's graphs
- * together while their clips are read is not known.
+ * away through the execution.
+ *
+ * Given a `rate` (actors on the stage whose graphs go together: a reference and its dependents,
+ * AddDependentAnimatedObjectReference, and those one furniture holds), all are updated every frame (none runs
+ * ahead, a long frame is cut alike for all), each told an event hears it first, so that the clips
+ * it starts are known to be still being read before any of them moves on; one held stands at the
+ * clock (it drops the time it ran ahead and shows the pose it has), and all go on in the update
+ * the clip comes in. Returns those held this frame (their graphs did not move: no root motion). Updated apart, at Helgen's block the prisoner's chop ran ahead of his headsman's and
+ * his guard's, whose clips (read only as the first prisoner was beheaded) came 0.18 to 0.19 s
+ * later in the browser with the processor slowed (about 9 and 11 frames a second): the axe had
+ * not come down as the head flew, the head's flight was bent by the axe still swinging, and it
+ * went over the basket's rim. TODO(M13): inferred; how the original keeps graphs together while
+ * their clips are read is not known.
  */
-export function animateInStep(skeletons: readonly AnimatedSkeleton[], seconds: number): void {
+export function animateInStep(
+  skeletons: readonly AnimatedSkeleton[],
+  seconds: number,
+  rate?: (animated: AnimatedSkeleton) => AnimationRate,
+): readonly AnimatedSkeleton[] {
+  if (rate !== undefined) return animateTogether(skeletons, seconds, rate);
   const waiting = skeletons.filter((animated) => animated.behavior?.awaitingClips === true);
   if (waiting.length === 0) {
     animateSkeletons(skeletons, seconds);
-    return;
+    return [];
   }
+  const held: AnimatedSkeleton[] = [];
   for (const animated of skeletons) {
     if (waiting.includes(animated) || animated.time === undefined) continue;
     animated.time = Math.max(animated.time, seconds);
+    held.push(animated);
   }
   animateSkeletons(waiting, seconds);
+  return held;
+}
+
+/** animateInStep given a rate: the stage's actors one event reaches together. */
+function animateTogether(
+  skeletons: readonly AnimatedSkeleton[],
+  seconds: number,
+  rate: (animated: AnimatedSkeleton) => AnimationRate,
+): readonly AnimatedSkeleton[] {
+  // Each told an event hears it now (as animateSkeletons has one told midway hear it: from the
+  // clock's last frame), so that what it started, its clips still being read, is known.
+  for (const animated of skeletons) {
+    if (animated.behavior?.eventsWaiting !== true || animated.time === undefined) continue;
+    const state = interpolations.get(animated);
+    if (state?.interpolating === true && seconds < state.until)
+      animated.time = Math.min(animated.time, state.frame);
+    step(animated, 0);
+    heardAhead.add(animated);
+  }
+  // Those whose clips are still being read now (one read since its last update plays in this one).
+  const reading = skeletons.filter((animated) => animated.behavior?.readingClips === true);
+  // Updated every frame, all of them, so that they step alike: none runs ahead of the others, and
+  // a frame cut to MAX_STEP is cut for all. Below 10 frames a second, the headsman updated ahead
+  // (behind the camera) ran his whole frames while his prisoner, updated every frame as his
+  // Decapitate came near, ran 0.1 s of each: the axe was 0.37 s on, rising again, as the head
+  // flew (in the simulation at 4 to 7 frames a second).
+  const alike = (animated: AnimatedSkeleton): AnimationRate => ({ ...rate(animated), interval: 0 });
+  if (reading.length === 0) {
+    animateSkeletons(skeletons, seconds, alike);
+    return [];
+  }
+  // The ones reading are updated (their time passes, not their clips'); the others are held, those
+  // whose clips came meanwhile too: all go on together in the update after the last one comes.
+  animateSkeletons(reading, seconds, alike);
+  const others = skeletons.filter((animated) => !reading.includes(animated));
+  // Held at the clock: what an event started in it starts from the clock when it goes on, as in
+  // the one it waits for (updated every frame while its clip is read). It shows the pose it has.
+  const held: AnimatedSkeleton[] = [];
+  for (const animated of others) {
+    if (animated.time === undefined) continue;
+    animated.time = seconds;
+    const state = interpolations.get(animated);
+    if (state) {
+      state.frame = seconds;
+      state.interpolating = false;
+    }
+    held.push(animated);
+  }
+  return held;
 }
 
 /** One update of a skeleton's graph (and its face) by `dt`; what it raised goes out. */
@@ -287,6 +400,7 @@ function step(animated: AnimatedSkeleton, dt: number, span = dt): void {
   // follow where the graph's look-at turned the eye bone (by the face's look morphs).
   if (animated.face) behavior.headTurn = animated.face.headRotation;
   behavior.update(dt);
+  progressOf(animated).graph += dt;
   animated.face?.lookWith(behavior.eyes());
   // Footsteps and SoundPlay events sound through onEvents (src/shell/actor-sounds.ts), the
   // systems hear theirs there too (combat's hits, casts); scripts hear theirs through

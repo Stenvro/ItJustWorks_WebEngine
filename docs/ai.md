@@ -964,7 +964,9 @@ KillActor; a graph's KillActor kills its actor; Decapitate takes the prisoner's 
 (docs/animation.md, "Dismemberment"). The event reaches all three graphs in one frame
 (`ActorFurniture.playIdle`), and a graph updated less often for being far from the camera hears it
 at once (docs/animation.md, "How often graphs update"): the three clips run in step, the axe coming
-down as the head goes.
+down as the head goes. The prisoner and his dependents (AddDependentAnimatedObjectReference), and
+the three the block holds, are updated together every frame and kept in step while one of them
+still reads its chop clip (`animateInStep`; docs/animation.md, "Graphs that go together in step").
 
 The player at the block (observed in the original): driven by AI from stage 70
 (SetPlayerAIDriven(True) in its fragment) to stage 140, they step up in line

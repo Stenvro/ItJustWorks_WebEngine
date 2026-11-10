@@ -60,6 +60,18 @@ const LOKIR_RUN_END: Vec3 = [15986, -82424, 8256];
 const HEAD_BASKET = 0x10fb27;
 /** ARMO DecapitatedHead: the decapitation armor of the playable races. */
 const DECAPITATED_HEAD = 0xdb5d0;
+/** The behavior project of the human characters (DefaultMale; women's clips beside its own). */
+const CHARACTER_PROJECT = 'meshes\\actors\\character\\defaultmale.hkx';
+/** KYWD isExecutioner: the headsman at a chopping block. */
+const IS_EXECUTIONER = 0x70c0a;
+/** Seconds the headsman's and the guard's chop clips came after the prisoner's in the browser. */
+const CHOP_READ = 0.19;
+/** The browser's last frames before the blow with the processor slowed (seconds, about 11 a second). */
+const BROWSER_FRAMES = [0.0834, 0.0889, 0.1, 0.0834, 0.0778, 0.1056, 0.0723, 0.1167] as const;
+/** The same with the processor slowed further (about 4 a second). */
+const BROWSER_SLOW_FRAMES = [
+  0.239, 0.2389, 0.2501, 0.2445, 0.1945, 0.2501, 0.3389, 0.2612,
+] as const;
 /** CrateOpen01's bound (radius 46 about its centre, 19 up) at the basket's scale. */
 const BASKET_REACH = 30;
 /** The packages that walk the player (driven by AI) up in line and to the block. */
@@ -514,6 +526,126 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
     } finally {
       await sim.close();
     }
+  }, 600_000);
+
+  // Found in review 2026-11-10: in the browser with the processor slowed the first prisoner's head
+  // went over the basket's rim: at about 11 frames a second, the camera turned from the block, in
+  // one of two runs (28 units from its middle); at about 10, facing it, 1127 units off; at about 4,
+  // 207 off. The headsman's and the guard's chop clips, read only as he was beheaded, came 0.18
+  // to 0.19 s after his own: his chop ran ahead of theirs. Below 10 frames a second the headsman,
+  // updated ahead, ran his whole frames while the prisoner, updated every frame as his Decapitate
+  // came near, ran 0.1 s of each. Either way the axe was not down as his Decapitate came, and
+  // the head's flight was bent by the axe still swinging or rising again. And read over 0.1 s of
+  // the clock at 4 frames a second, the axe's swing was a fraction of its stretch down, bent aside
+  // by where it stopped. The three graphs one event reaches (his and his dependents':
+  // AddDependentAnimatedObjectReference) go together now (animateInStep), and the swing is read
+  // over the axe's animation (shownProgress). The browser's frames and late reads are copied here.
+  async function headAtTheBlock(
+    frames: readonly number[],
+    lateRead: boolean,
+  ): Promise<{ out: number; up: number; apart: number }> {
+    if (!ridersOff) throw new Error('no save');
+    const sim = await loadSim(ridersOff);
+    try {
+      const prisoner = aliasRef(sim, MQ101, FIRST_PRISONER_ALIAS);
+      for (let t = 0; t < 200 && !sim.stageDone(MQ101, 85); t += 0.25) await sim.step(0.25);
+      expect(sim.stageDone(MQ101, 85)).toBe(true);
+      // The executioner's and the guard's chop clips are still being read CHOP_READ seconds
+      // after their graphs first ask for them (both sexes' clips: the guard is a woman).
+      let now = 0;
+      const looks = sim.world.session.animation;
+      const project = await looks.behaviors(CHARACTER_PROJECT);
+      expect(project).toBeDefined();
+      const asked = new Map<string, number>();
+      if (project && lateRead) {
+        for (const female of [false, true]) {
+          const host = looks.host(project, female);
+          const clip = host.clip.bind(host);
+          const loading = host.clipLoading.bind(host);
+          const late = (animation: string): boolean => {
+            if (!/AOExecution(erChop|GuardChop)\.hkx$/i.test(animation)) return false;
+            const key = animation.toLowerCase();
+            if (!asked.has(key)) asked.set(key, now);
+            return now - (asked.get(key) ?? now) < CHOP_READ;
+          };
+          // Its read starts as it is first asked for, as in the browser (the clip is being read
+          // from then until it is there).
+          host.clip = (animation) => {
+            const binding = clip(animation);
+            return late(animation) ? undefined : binding;
+          };
+          host.clipLoading = (animation) => late(animation) || loading(animation);
+        }
+      }
+      const stage = sim.world.stage;
+      const basket = await sim.position(HEAD_BASKET);
+      if (!basket) throw new Error('no basket');
+      const turnAway = (): void => {
+        const eye = sim.world.player.eye;
+        sim.world.look(Math.atan2(basket[0] - eye[0], basket[1] - eye[1]) + Math.PI);
+      };
+      let executioner: number | undefined;
+      for (const user of stage.furniture.usersOf(stage.furnitureOf(prisoner) ?? 0)) {
+        if (user !== prisoner && (await sim.runtime.hasKeyword(user, IS_EXECUTIONER)))
+          executioner = user;
+      }
+      expect(executioner).toBeDefined();
+      // Where on its graph's clock an actor's chop began (its graph's time less its clip's).
+      const chopFrom = (reference: number | undefined, clip: RegExp): number | undefined => {
+        const actor = reference === undefined ? undefined : sim.actor(reference);
+        const playing = actor?.placed.behavior
+          ?.playing()
+          .find(({ animation }) => clip.test(animation));
+        const time = actor?.placed.time;
+        return playing && time !== undefined ? time - playing.time : undefined;
+      };
+      let apart = 0;
+      let frame = 0;
+      for (let t = 0; t < 120 && stage.dismemberment.headAt(prisoner) === undefined; frame++) {
+        const step = frames[frame % frames.length] ?? 0.1;
+        turnAway();
+        await sim.step(step, step);
+        t += step;
+        now = t;
+        const theirs = chopFrom(executioner, /AOExecutionerChop\.hkx$/i);
+        const his = chopFrom(prisoner, /AOExecutioneeChop\.hkx$/i);
+        if (theirs !== undefined && his !== undefined)
+          apart = Math.max(apart, Math.abs(his - theirs));
+      }
+      expect(stage.dismemberment.headAt(prisoner), 'the head off').toBeDefined();
+      if (lateRead) expect(asked.size, 'the chop clips were read late').toBeGreaterThan(0);
+      for (let i = 0; i < 50; i++) {
+        const step = frames[(frame + i) % frames.length] ?? 0.1;
+        await sim.step(step, step);
+      }
+      const lying = stage.dismemberment.headAt(prisoner);
+      return {
+        out: Math.hypot((lying?.[0] ?? 0) - basket[0], (lying?.[1] ?? 0) - basket[1]),
+        up: (lying?.[2] ?? 0) - basket[2],
+        apart,
+      };
+    } finally {
+      await sim.close();
+    }
+  }
+
+  it('drops the head in the basket at 11 frames a second, the headsman’s chop read late (stage 85 to 90)', async () => {
+    expect(ridersOff).toBeDefined();
+    if (!ridersOff) return;
+    const { out, up, apart } = await headAtTheBlock(BROWSER_FRAMES, true);
+    expect(out, 'the head lies in the basket').toBeLessThan(15);
+    expect(Math.abs(up)).toBeLessThan(20);
+    // The two chops began together on their graphs' clocks.
+    expect(apart, 'the chops in step').toBeLessThan(0.02);
+  }, 600_000);
+
+  it('drops the head in the basket at 4 frames a second (stage 85 to 90)', async () => {
+    expect(ridersOff).toBeDefined();
+    if (!ridersOff) return;
+    const { out, up, apart } = await headAtTheBlock(BROWSER_SLOW_FRAMES, false);
+    expect(out, 'the head lies in the basket').toBeLessThan(15);
+    expect(Math.abs(up)).toBeLessThan(20);
+    expect(apart, 'the chops in step').toBeLessThan(0.02);
   }, 600_000);
 
   it('follows Ralof into the tower and up it, and jumps through the inn’s roof (dragon attack 20 to 120)', async () => {

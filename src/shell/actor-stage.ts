@@ -18,7 +18,10 @@ import { RAGDOLL_FALL_SHARE } from '../gameplay/falling.ts';
 import { actorFell } from './time-flow.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import {
+  animateInStep,
   animateSkeletons,
+  type AnimatedSkeleton,
+  type AnimationRate,
   animationRate,
   animationRateSettings,
   boneLeftBound,
@@ -2743,6 +2746,57 @@ export class ActorStage {
     if (this.combat.paired(PLAYER_REF)) yield PLAYER_REF;
   }
 
+  /**
+   * The skeletons whose graphs go together, to be kept in step (animateInStep): a reference and
+   * its dependents (AddDependentAnimatedObjectReference: Helgen's block sends the prisoner's chop
+   * to the headsman and the guard), and those one piece of furniture holds together (the block
+   * holds the three through the chop: its script removes the dependents 2 s after it plays the
+   * chop, 9.8 s before the prisoner's clip raises Decapitate), those of them here to animate. The
+   * player's graphs go with their avatar (src/shell/player-avatar.ts). TODO(M13): inferred that
+   * the original keeps a furniture's users together.
+   */
+  #inStep(): PlacedActor[][] {
+    const sets: number[][] = [];
+    for (const [reference, dependents] of this.#dependents) sets.push([reference, ...dependents]);
+    const byFurniture = new Map<number, number[]>();
+    for (const reference of this.#actors.keys()) {
+      if (!this.furniture.holds(reference)) continue;
+      const furniture = this.furniture.interaction(reference)?.furniture;
+      if (furniture === undefined) continue;
+      const users = byFurniture.get(furniture);
+      if (users) users.push(reference);
+      else byFurniture.set(furniture, [reference]);
+    }
+    for (const users of byFurniture.values()) if (users.length > 1) sets.push(users);
+    if (sets.length === 0) return [];
+    // Sets that share an actor are one group.
+    const groupOf = new Map<number, Set<number>>();
+    for (const set of sets) {
+      let group = new Set<number>();
+      for (const reference of set) {
+        const other = groupOf.get(reference);
+        if (other && other !== group) {
+          for (const one of group) other.add(one);
+          for (const one of other) groupOf.set(one, other);
+          group = other;
+        }
+        group.add(reference);
+        groupOf.set(reference, group);
+      }
+    }
+    const animating = new Set(this.#animating());
+    const groups: PlacedActor[][] = [];
+    for (const group of new Set(groupOf.values())) {
+      const placed: PlacedActor[] = [];
+      for (const reference of group) {
+        const one = this.#actors.get(reference)?.placed;
+        if (one && animating.has(one)) placed.push(one);
+      }
+      if (placed.length > 1) groups.push(placed);
+    }
+    return groups;
+  }
+
   /** The dependents of a reference that are here to animate (actors, the player). */
   dependentUsers(reference: number): FurnitureUser[] {
     const users: FurnitureUser[] = [];
@@ -2914,38 +2968,56 @@ export class ActorStage {
     for (const staged of this.#actors.values())
       if (staged.scene) scenes.set(staged.placed, staged.scene);
     const port = this.#options.renderer.scene;
-    animateSkeletons(
-      this.#animating(),
-      seconds,
+    const rate =
       view &&
-        ((animated) => {
-          const placed = animated as PlacedActor;
-          const world = placed.instances[0]?.world;
-          const rate = animationRate(
-            world ? [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0] : view.position,
-            view,
-            settings,
-            // The skeleton's scale (its placement's): a large creature's LOD comes nearer.
-            world ? Math.hypot(world[0] ?? 0, world[1] ?? 0, world[2] ?? 0) || 1 : 1,
+      ((animated: AnimatedSkeleton): AnimationRate => {
+        const placed = animated as PlacedActor;
+        const world = placed.instances[0]?.world;
+        const wanted = animationRate(
+          world ? [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0] : view.position,
+          view,
+          settings,
+          // The skeleton's scale (its placement's): a large creature's LOD comes nearer.
+          world ? Math.hypot(world[0] ?? 0, world[1] ?? 0, world[2] ?? 0) || 1 : 1,
+        );
+        const scene = scenes.get(placed);
+        if (!scene || !port.seen) return wanted;
+        const seen = fliesByRace(placed.look.raceFlags) || port.seen(scene);
+        if (seen) return { ...wanted, seen };
+        const first = placed.pose.skeleton.hkx?.bones[0]?.name;
+        const bone = first === undefined ? undefined : placed.pose.world(first);
+        const bound = scene.bound;
+        const rootAway =
+          world !== undefined &&
+          bone !== undefined &&
+          bound !== null &&
+          boneLeftBound(
+            transformPoint(world, [bone[12] ?? 0, bone[13] ?? 0, bone[14] ?? 0]),
+            bound,
           );
-          const scene = scenes.get(placed);
-          if (!scene || !port.seen) return rate;
-          const seen = fliesByRace(placed.look.raceFlags) || port.seen(scene);
-          if (seen) return { ...rate, seen };
-          const first = placed.pose.skeleton.hkx?.bones[0]?.name;
-          const bone = first === undefined ? undefined : placed.pose.world(first);
-          const bound = scene.bound;
-          const rootAway =
-            world !== undefined &&
-            bone !== undefined &&
-            bound !== null &&
-            boneLeftBound(
-              transformPoint(world, [bone[12] ?? 0, bone[13] ?? 0, bone[14] ?? 0]),
-              bound,
-            );
-          return { ...rate, seen, rootAway };
-        }),
+        return { ...wanted, seen, rootAway };
+      });
+    // Those one event reaches together are kept in step (animateInStep); held, their graphs did
+    // not move them.
+    const groups = this.#inStep();
+    const together = new Set(groups.flat());
+    animateSkeletons(
+      groups.length === 0
+        ? this.#animating()
+        : [...this.#animating()].filter((placed) => !together.has(placed)),
+      seconds,
+      rate,
     );
+    if (groups.length > 0) {
+      const stagedOf = new Map<AnimatedSkeleton, StagedActor>();
+      for (const staged of this.#actors.values()) stagedOf.set(staged.placed, staged);
+      for (const group of groups) {
+        for (const held of animateInStep(group, seconds, rate)) {
+          const staged = stagedOf.get(held);
+          if (staged) times.set(staged, staged.placed.time);
+        }
+      }
+    }
     // Their bodies follow the poses (the dead's poses their bodies, the dead player's too).
     // The knocked down that begin to get up are stood where their get-up was matched.
     this.knockdowns.afterAnimate();

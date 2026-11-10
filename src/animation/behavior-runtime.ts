@@ -766,8 +766,8 @@ export class BehaviorRuntime {
   readonly #mirror: MirroredSkeleton | undefined;
   /** The turn its rotate-character modifiers make in this update (radians, counter-clockwise). */
   #rotating = 0;
-  /** How many clips this update asked for are still being read. */
-  #awaitingClips = 0;
+  /** The clips this update asked for that were still being read. */
+  readonly #awaitingClips: string[] = [];
   /** It has made a pose. */
   #posed = false;
   /** The project's default event mode of blending transitions (EVENT_MODE). */
@@ -1581,7 +1581,15 @@ export class BehaviorRuntime {
    * until it is there (#advanceClip).
    */
   get awaitingClips(): boolean {
-    return this.#awaitingClips > 0;
+    return this.#awaitingClips.length > 0;
+  }
+
+  /**
+   * Whether a clip its last update asked for is still being read now (awaitingClips, asked again
+   * of the host: one read since will play in the next update).
+   */
+  get readingClips(): boolean {
+    return this.#awaitingClips.some((animation) => this.#host.clipLoading?.(animation) === true);
   }
 
   /**
@@ -1749,13 +1757,13 @@ export class BehaviorRuntime {
     if (!pose) return;
     this.#footIkControls = undefined;
     this.#eyes = undefined;
-    this.#awaitingClips = 0;
+    this.#awaitingClips.length = 0;
     const generated = this.#generate(this.#root, 0);
     // A clip it needs is still being read (a landing's, first played on the stairs), or nothing
     // it plays gives a pose (17 clips vanilla graphs name are in no archive): it holds the pose it
     // had rather than show what is missing at the reference pose (a T-pose). The first pose it
     // ever makes has nothing to hold. TODO(M13): what the original shows for a clip it never has.
-    if ((this.#awaitingClips > 0 || !generated) && this.#posed) {
+    if ((this.#awaitingClips.length > 0 || !generated) && this.#posed) {
       this.forceOneUpdate = true;
       return;
     }
@@ -4634,7 +4642,7 @@ export class BehaviorRuntime {
     const t = blendCurve(transition.curve, transition.elapsed / transition.duration);
     const to = this.#generate(transition.to.generator, depth + 1);
     const toPose = to && this.#own(to, depth + 1);
-    const awaiting = this.#awaitingClips;
+    const awaiting = this.#awaitingClips.length;
     const source = transition.from;
     const from =
       source.kind === 'state'
@@ -4645,7 +4653,7 @@ export class BehaviorRuntime {
     if (!from) return toPose && this.#own(toPose, depth);
     if (!toPose) {
       // What it blends from plays on until the state's clip is there.
-      this.#awaitingClips = awaiting;
+      this.#awaitingClips.length = awaiting;
       return this.#own(from, depth);
     }
     const out = this.#buffer(depth);
@@ -4677,7 +4685,8 @@ export class BehaviorRuntime {
   #generateClip(node: Clip, depth: number): Generated | undefined {
     const binding = this.#host.clip(node.animation);
     if (!binding) {
-      if (this.#host.clipLoading?.(node.animation) === true) this.#awaitingClips++;
+      if (this.#host.clipLoading?.(node.animation) === true)
+        this.#awaitingClips.push(node.animation);
       return undefined;
     }
     const state = this.#clips.get(node);
