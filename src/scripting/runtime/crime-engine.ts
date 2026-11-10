@@ -34,6 +34,7 @@ import {
   type SpeechSides,
 } from '../../gameplay/crime.ts';
 import {
+  factionTies,
   overlooksCrime,
   rankFromFavor,
   reaction as regard,
@@ -1561,28 +1562,18 @@ export class CrimeEngine {
     if (actor === other) return 'friend';
     const mine = await actors.factionsOf(actor);
     const theirs = await actors.factionsOf(other);
-    const factionReactions: number[] = [];
-    let sameFaction = false;
-    for (const [faction, rank] of mine) {
-      if (rank < 0) continue;
-      if (
-        !sameFaction &&
-        (theirs.get(faction) ?? -1) >= 0 &&
-        (await actors.factionReaction(faction, faction)) === undefined &&
-        (((await actors.faction(faction))?.flags ?? 0) & CrimeFlag.specialCombat) === 0
-      ) {
-        sameFaction = true;
-      }
-      for (const [otherFaction, otherRank] of theirs) {
-        if (otherRank < 0) continue;
-        const value = await actors.factionReaction(faction, otherFaction);
-        if (value !== undefined) factionReactions.push(value);
-      }
-    }
+    const ties = await factionTies(
+      {
+        factionReaction: (faction, to) => actors.factionReaction(faction, to),
+        specialCombat: async (faction) =>
+          (((await actors.faction(faction))?.flags ?? 0) & CrimeFlag.specialCombat) !== 0,
+      },
+      mine,
+      theirs,
+    );
     const aggression = (await actors.value(actor, ActorValue.aggression)).current;
     return regard({
-      factionReactions,
-      sameFaction,
+      ...ties,
       relationshipRank: await actors.relationshipRank(actor, other),
       frenzied: aggression >= 3,
       crimeHostile: other === PLAYER_REF && (await this.#crimeHostile(actor, mine, alarmed)),

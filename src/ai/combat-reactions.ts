@@ -6,25 +6,33 @@
 // Callers ask `reactionsOf(runtime).reaction(actor, other)`: the rules below that crime does not
 // weigh (summons and the commanded, the player's teammates, those attacked on sight), then crime
 // and factions' `runtime.crime.reaction` (factions, relationships, frenzy, bounties and guards:
-// src/scripting/runtime/crime-engine.ts). `combatReaction` keeps all of the rules on its own
-// (without crime) for tests and tools. The rules, most plausible where undocumented (TODO(M13)):
+// src/scripting/runtime/crime-engine.ts). `combatReaction` (tests and tools) asks the same
+// rules of plain facts, with the factions' and relationships' rule of the running game
+// (src/gameplay/factions.ts `reaction` and `factionTies`, as CrimeEngine.reaction) and without
+// frenzy, a script's combat or guards. The rules, most plausible where undocumented (TODO(M13)):
 //
 // - one's summons, reanimated and commanded actors (the magic system's commander) are its allies
 //   and share its reactions; the player's teammates are the player's allies and each other's;
 // - one that scripts set to be attacked on sight (SetAttackActorOnSight) is everyone's enemy;
-// - a relationship (RELA, SetRelationshipRank) other than acquaintance or rival decides: ally
-//   (3) and lover (4) ally, friend and confidant (1, 2) friend, foe and worse (−2 .. −4) enemy;
-// - else the factions: the combat reactions (FACT XNAM: 0 neutral, 1 enemy, 2 ally, 3 friend;
-//   scripts' SetAlly / SetEnemy over them) of each faction the actor is a member of (rank 0 or
-//   more) towards each faction the other is a member of, the closest bond winning (ally, then
-//   friend, then enemy, then neutral). Vanilla factions list themselves (BanditFaction: ally
-//   to BanditFaction), so faction-mates are not allies by themselves. Where the actor's factions
-//   name none of the other's, the other's towards the actor's count. A crime faction set as the
-//   player's enemy (SetPlayerEnemy) is an enemy faction to the player.
+// - else factions and relationships (docs/gameplay.md, "Factions and reactions"): a relationship
+//   (RELA, SetRelationshipRank) of enemy or worse, or a faction of the actor set as the player's
+//   enemy (SetPlayerEnemy) towards the player: an enemy; a relationship of friend or better, or
+//   a friend combat reaction: a friend; an ally reaction, or a shared faction: an ally; an enemy
+//   reaction: an enemy; else neutral. The combat reactions are those (FACT XNAM: 0 neutral,
+//   1 enemy, 2 ally, 3 friend; scripts' SetAlly / SetEnemy over them) of each faction the actor
+//   is a member of (rank 0 or more) towards each faction the other is a member of; the other's
+//   factions towards the actor's do not count. A faction both are in that names a reaction to
+//   itself counts by that reaction as any other pair of their factions, its membership adding
+//   nothing (BanditFaction: its own ally; MQ101TemporaryFriendsFaction: its own friend, neutral
+//   from MQ101 stage 270); one that names none makes its members allies unless it is Special
+//   Combat (FACT DATA 0x2: the town, crime and guard factions name none). TODO(M13): the
+//   precedence is inferred.
 //
 // Platform-independent.
 
 import { RaceFlag2 } from './race-combat-records.ts';
+import { factionTies, reaction as regard, type FactionFacts } from '../gameplay/factions.ts';
+import { CrimeFlag } from '../gameplay/crime.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 
@@ -37,11 +45,9 @@ export const FightReaction = {
 } as const;
 
 /** What reactions are made of (the running game's factions, relationships and effects). */
-export interface ReactionFacts {
+export interface ReactionFacts extends FactionFacts {
   /** The factions an actor is in, with its rank (−1: listed, not a member yet). */
   factionsOf(actor: number): Promise<ReadonlyMap<number, number>>;
-  /** A faction's combat reaction to another (FightReaction), if it names it. */
-  factionReaction(faction: number, other: number): Promise<number | undefined>;
   /** A crime faction scripts set as the player's enemy (SetPlayerEnemy). */
   playerEnemy(faction: number): boolean;
   /** GetRelationshipRank: 4 lover .. 0 acquaintance .. −4 archnemesis. */
@@ -65,101 +71,6 @@ export function threatensPlayer(raceFlags2: number): boolean {
   return (raceFlags2 & RaceFlag2.nonHostile) === 0;
 }
 
-/** How bonds rank against each other when an actor's factions disagree: the closest wins. */
-const BOND = [1, 2, 4, 3] as const;
-
-/** The closer of two reactions (ally, then friend, then enemy, then neutral). */
-export function closerBond(a: number, b: number): number {
-  return (BOND[b] ?? 0) > (BOND[a] ?? 0) ? b : a;
-}
-
-/** A relationship rank's reaction (undefined: acquaintances and rivals leave it to factions). */
-export function relationshipReaction(rank: number): number | undefined {
-  if (rank >= 3) return FightReaction.ally;
-  if (rank >= 1) return FightReaction.friend;
-  if (rank <= -2) return FightReaction.enemy;
-  return undefined;
-}
-
-/** How `actor` regards `other` (FightReaction). */
-export async function combatReaction(
-  facts: ReactionFacts,
-  actor: number,
-  other: number,
-): Promise<number> {
-  return reactionWith(facts, actor, other, 0);
-}
-
-async function reactionWith(
-  facts: ReactionFacts,
-  actor: number,
-  other: number,
-  depth: number,
-): Promise<number> {
-  if (actor === other) return FightReaction.ally;
-  // Summons and the commanded: their commander's allies, with its reactions.
-  const mine = facts.commander(actor);
-  const theirs = facts.commander(other);
-  if (mine === other || theirs === actor || (mine !== undefined && mine === theirs)) {
-    return FightReaction.ally;
-  }
-  if (depth < 2) {
-    if (mine !== undefined) return reactionWith(facts, mine, other, depth + 1);
-    if (theirs !== undefined) return reactionWith(facts, actor, theirs, depth + 1);
-  }
-  // The player and their teammates.
-  const team = (reference: number): boolean =>
-    reference === PLAYER_REF || facts.teammate(reference);
-  if (team(actor) && team(other) && (facts.teammate(actor) || facts.teammate(other))) {
-    return FightReaction.ally;
-  }
-  if (facts.attackedOnSight(other)) return FightReaction.enemy;
-  const related = relationshipReaction(await facts.relationshipRank(actor, other));
-  if (related !== undefined) return related;
-  const [own, others] = await Promise.all([facts.factionsOf(actor), facts.factionsOf(other)]);
-  const found = await factionsReaction(facts, own, others, other === PLAYER_REF);
-  if (found !== undefined) return found;
-  return (
-    (await factionsReaction(facts, others, own, actor === PLAYER_REF)) ?? FightReaction.neutral
-  );
-}
-
-/** The closest bond any of `own` factions has to any of `others` (undefined: none named). */
-async function factionsReaction(
-  facts: ReactionFacts,
-  own: ReadonlyMap<number, number>,
-  others: ReadonlyMap<number, number>,
-  towardsPlayer: boolean,
-): Promise<number | undefined> {
-  let found: number | undefined;
-  for (const [faction, rank] of own) {
-    if (rank < 0) continue;
-    if (towardsPlayer && facts.playerEnemy(faction)) {
-      found = found === undefined ? FightReaction.enemy : closerBond(found, FightReaction.enemy);
-    }
-    for (const [other, otherRank] of others) {
-      if (otherRank < 0) continue;
-      const reaction = await facts.factionReaction(faction, other);
-      if (reaction === undefined) continue;
-      found = found === undefined ? reaction : closerBond(found, reaction);
-    }
-  }
-  return found;
-}
-
-/** The facts of the running game (src/scripting/runtime). */
-export function reactionFacts(runtime: ScriptRuntime): ReactionFacts {
-  return {
-    factionsOf: (actor) => runtime.actors.factionsOf(actor),
-    factionReaction: (faction, other) => runtime.actors.factionReaction(faction, other),
-    playerEnemy: (faction) => runtime.state.factions.get(faction)?.playerEnemy === true,
-    relationshipRank: (a, b) => runtime.actors.relationshipRank(a, b),
-    teammate: (actor) => runtime.state.actors.get(actor)?.playerTeammate === true,
-    commander: (actor) => runtime.magic.commander(actor),
-    attackedOnSight: (actor) => runtime.state.actors.get(actor)?.attackOnSight === true,
-  };
-}
-
 /** A reaction by name, as crime and factions (M11) give it. */
 export type ReactionName = 'hostile' | 'neutral' | 'ally' | 'friend';
 
@@ -177,6 +88,79 @@ export function fightReaction(name: ReactionName): number {
   }
 }
 
+/**
+ * How `actor` regards `other` (FightReaction) by plain facts: the combat-only rules, then the
+ * factions' and relationships' rule of the running game (factionTies and reaction, as
+ * CrimeEngine.reaction weighs them; without frenzy, a script's combat or guards).
+ */
+export async function combatReaction(
+  facts: ReactionFacts,
+  actor: number,
+  other: number,
+): Promise<number> {
+  const name = await combatOnly(facts, actor, other, 0, async (from, to) => {
+    const [mine, theirs] = await Promise.all([facts.factionsOf(from), facts.factionsOf(to)]);
+    let crimeHostile = false;
+    if (to === PLAYER_REF) {
+      for (const [faction, rank] of mine) {
+        if (rank >= 0 && facts.playerEnemy(faction)) crimeHostile = true;
+      }
+    }
+    return regard({
+      ...(await factionTies(facts, mine, theirs)),
+      relationshipRank: await facts.relationshipRank(from, to),
+      crimeHostile,
+    });
+  });
+  return fightReaction(name);
+}
+
+/**
+ * The rules crime does not weigh: one's summons and the commanded are its allies and share its
+ * reactions, the player's teammates are the player's allies and each other's, one attacked on
+ * sight is everyone's enemy; else `rest` (crime and factions').
+ */
+async function combatOnly(
+  facts: ReactionFacts,
+  actor: number,
+  other: number,
+  depth: number,
+  rest: (actor: number, other: number) => Promise<ReactionName>,
+): Promise<ReactionName> {
+  if (actor === other) return 'ally';
+  // Summons and the commanded: their commander's allies, with its reactions.
+  const mine = facts.commander(actor);
+  const theirs = facts.commander(other);
+  if (mine === other || theirs === actor || (mine !== undefined && mine === theirs)) return 'ally';
+  if (depth < 2) {
+    if (mine !== undefined) return combatOnly(facts, mine, other, depth + 1, rest);
+    if (theirs !== undefined) return combatOnly(facts, actor, theirs, depth + 1, rest);
+  }
+  // The player and their teammates.
+  const team = (reference: number): boolean =>
+    reference === PLAYER_REF || facts.teammate(reference);
+  if (team(actor) && team(other) && (facts.teammate(actor) || facts.teammate(other))) {
+    return 'ally';
+  }
+  if (facts.attackedOnSight(other)) return 'hostile';
+  return rest(actor, other);
+}
+
+/** The facts of the running game (src/scripting/runtime). */
+export function reactionFacts(runtime: ScriptRuntime): ReactionFacts {
+  return {
+    factionsOf: (actor) => runtime.actors.factionsOf(actor),
+    factionReaction: (faction, other) => runtime.actors.factionReaction(faction, other),
+    specialCombat: async (faction) =>
+      (((await runtime.actors.faction(faction))?.flags ?? 0) & CrimeFlag.specialCombat) !== 0,
+    playerEnemy: (faction) => runtime.state.factions.get(faction)?.playerEnemy === true,
+    relationshipRank: (a, b) => runtime.actors.relationshipRank(a, b),
+    teammate: (actor) => runtime.state.actors.get(actor)?.playerTeammate === true,
+    commander: (actor) => runtime.magic.commander(actor),
+    attackedOnSight: (actor) => runtime.state.actors.get(actor)?.attackOnSight === true,
+  };
+}
+
 /** What the combat AI asks of crime and factions (M11's `runtime.crime`, by the same name). */
 export interface ActorReactions {
   /** How `actor` regards `other`. */
@@ -190,35 +174,12 @@ export function reactionsOf(runtime: ScriptRuntime): ActorReactions {
   let reactions = known.get(runtime);
   if (!reactions) {
     const facts = reactionFacts(runtime);
-    reactions = { reaction: (actor, other) => withCrime(runtime, facts, actor, other, 0) };
+    const crime = (actor: number, other: number): Promise<ReactionName> =>
+      runtime.crime.reaction(actor, other);
+    reactions = { reaction: (actor, other) => combatOnly(facts, actor, other, 0, crime) };
     known.set(runtime, reactions);
   }
   return reactions;
-}
-
-/** The commander, teammate and attacked-on-sight rules (reactionWith's), else crime's. */
-async function withCrime(
-  runtime: ScriptRuntime,
-  facts: ReactionFacts,
-  actor: number,
-  other: number,
-  depth: number,
-): Promise<ReactionName> {
-  if (actor === other) return 'ally';
-  const mine = facts.commander(actor);
-  const theirs = facts.commander(other);
-  if (mine === other || theirs === actor || (mine !== undefined && mine === theirs)) return 'ally';
-  if (depth < 2) {
-    if (mine !== undefined) return withCrime(runtime, facts, mine, other, depth + 1);
-    if (theirs !== undefined) return withCrime(runtime, facts, actor, theirs, depth + 1);
-  }
-  const team = (reference: number): boolean =>
-    reference === PLAYER_REF || facts.teammate(reference);
-  if (team(actor) && team(other) && (facts.teammate(actor) || facts.teammate(other))) {
-    return 'ally';
-  }
-  if (facts.attackedOnSight(other)) return 'hostile';
-  return runtime.crime.reaction(actor, other);
 }
 
 /** FightReaction of how `actor` regards `other` in the running game (reactionsOf). */

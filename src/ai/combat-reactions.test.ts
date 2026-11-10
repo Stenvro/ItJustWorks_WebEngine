@@ -1,12 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import {
-  closerBond,
   combatReaction,
   FightReaction,
   fightReaction,
   isGuardClass,
-  relationshipReaction,
   threatensPlayer,
   type ReactionFacts,
 } from './combat-reactions.ts';
@@ -22,6 +20,19 @@ const FOLLOWER = 0x400;
 const SUMMON = 0x500;
 const PRISONER = 0x600;
 const PRISONER_FACTION = 0xf4;
+// Two townsfolk of a town faction that names no reaction to itself (TownWhiterunFaction).
+const CITIZEN = 0x700;
+const TOWN_FACTION = 0xf5;
+// Two sparring partners of a Special Combat faction that names none (MQBladesSparringFaction).
+const SPARRER = 0x800;
+const SPARRING_FACTION = 0xf6;
+// The keep: a Stormcloak and an Imperial of a faction neutral to itself (MQ101's
+// TemporaryFriendsFaction from stage 270), their civil war factions enemies.
+const STORMCLOAK = 0x900;
+const IMPERIAL = 0xa00;
+const TEMPORARY_FRIENDS = 0xf7;
+const SONS_FACTION = 0xf8;
+const IMPERIAL_FACTION = 0xf9;
 
 /** A small world: factions, their XNAM reactions, relationships, teammates, summons. */
 function facts(more: Partial<ReactionFacts> = {}): ReactionFacts {
@@ -40,6 +51,24 @@ function facts(more: Partial<ReactionFacts> = {}): ReactionFacts {
         [BANDIT_FACTION, -1],
       ]),
     ],
+    [CITIZEN, new Map([[TOWN_FACTION, 0]])],
+    [CITIZEN + 1, new Map([[TOWN_FACTION, 0]])],
+    [SPARRER, new Map([[SPARRING_FACTION, 0]])],
+    [SPARRER + 1, new Map([[SPARRING_FACTION, 0]])],
+    [
+      STORMCLOAK,
+      new Map([
+        [TEMPORARY_FRIENDS, 0],
+        [SONS_FACTION, 0],
+      ]),
+    ],
+    [
+      IMPERIAL,
+      new Map([
+        [TEMPORARY_FRIENDS, 0],
+        [IMPERIAL_FACTION, 0],
+      ]),
+    ],
   ]);
   const reactions = new Map<string, number>([
     [`${BANDIT_FACTION}:${BANDIT_FACTION}`, FightReaction.ally],
@@ -47,10 +76,14 @@ function facts(more: Partial<ReactionFacts> = {}): ReactionFacts {
     [`${WOLF_FACTION}:${PLAYER_FACTION}`, FightReaction.enemy],
     [`${WOLF_FACTION}:${BANDIT_FACTION}`, FightReaction.enemy],
     [`${WOLF_FACTION}:${PRISONER_FACTION}`, FightReaction.friend],
+    [`${TEMPORARY_FRIENDS}:${TEMPORARY_FRIENDS}`, FightReaction.neutral],
+    [`${SONS_FACTION}:${IMPERIAL_FACTION}`, FightReaction.enemy],
+    [`${IMPERIAL_FACTION}:${SONS_FACTION}`, FightReaction.enemy],
   ]);
   return {
     factionsOf: (actor) => Promise.resolve(factions.get(actor) ?? new Map()),
     factionReaction: (faction, other) => Promise.resolve(reactions.get(`${faction}:${other}`)),
+    specialCombat: (faction) => Promise.resolve(faction === SPARRING_FACTION),
     playerEnemy: () => false,
     relationshipRank: () => Promise.resolve(0),
     teammate: (actor) => actor === FOLLOWER,
@@ -69,27 +102,41 @@ describe('combat reactions', () => {
     expect(await combatReaction(world, BANDIT, PRISONER)).toBe(FightReaction.friend);
   });
 
-  it('lets the closest bond win, and the other side speak when one says nothing', async () => {
+  it('reads the actor’s own factions, a friend before an enemy', async () => {
     // The wolf: an enemy to bandits, a friend to prisoners; the prisoner is both a prisoner
     // and (not yet a member: rank −1) a bandit.
     expect(await combatReaction(facts(), WOLF, PRISONER)).toBe(FightReaction.friend);
-    // The bandit names no wolf faction; the wolf's view of bandits counts.
-    expect(await combatReaction(facts(), BANDIT, WOLF)).toBe(FightReaction.enemy);
-    expect(closerBond(FightReaction.enemy, FightReaction.ally)).toBe(FightReaction.ally);
-    expect(closerBond(FightReaction.friend, FightReaction.ally)).toBe(FightReaction.ally);
-    expect(closerBond(FightReaction.neutral, FightReaction.enemy)).toBe(FightReaction.enemy);
+    // The bandit's factions name no wolf faction: the wolf's view of bandits is the wolf's.
+    expect(await combatReaction(facts(), BANDIT, WOLF)).toBe(FightReaction.neutral);
+    expect(await combatReaction(facts(), WOLF, BANDIT)).toBe(FightReaction.enemy);
+  });
+
+  it('makes a shared faction’s members allies as crime does, unless it names itself', async () => {
+    const world = facts();
+    // A faction that names no reaction to itself: its members are allies.
+    expect(await combatReaction(world, CITIZEN, CITIZEN + 1)).toBe(FightReaction.ally);
+    // Special Combat: not by its membership.
+    expect(await combatReaction(world, SPARRER, SPARRER + 1)).toBe(FightReaction.neutral);
+    // One neutral to itself adds nothing: their civil war factions' enmity decides.
+    expect(await combatReaction(world, STORMCLOAK, IMPERIAL)).toBe(FightReaction.enemy);
+    expect(await combatReaction(world, IMPERIAL, STORMCLOAK)).toBe(FightReaction.enemy);
   });
 
   it('lets a relationship decide over the factions', async () => {
-    const world = facts({
-      relationshipRank: (a, b) => Promise.resolve(a === WOLF && b === PLAYER_REF ? 3 : 0),
+    const rank = (value: number): ReactionFacts =>
+      facts({
+        relationshipRank: (a, b) => Promise.resolve(a === WOLF && b === PLAYER_REF ? value : 0),
+      });
+    // Friend or better: a friend, over the wolf faction's enmity (as crime's reaction).
+    expect(await combatReaction(rank(3), WOLF, PLAYER_REF)).toBe(FightReaction.friend);
+    expect(await combatReaction(rank(1), WOLF, PLAYER_REF)).toBe(FightReaction.friend);
+    // An acquaintance or a rival: the factions decide.
+    expect(await combatReaction(rank(-1), WOLF, PLAYER_REF)).toBe(FightReaction.enemy);
+    // Enemy or worse: an enemy, whatever the factions.
+    const enemies = facts({
+      relationshipRank: (a, b) => Promise.resolve(a === BANDIT && b === PLAYER_REF ? -3 : 0),
     });
-    expect(await combatReaction(world, WOLF, PLAYER_REF)).toBe(FightReaction.ally);
-    expect(relationshipReaction(4)).toBe(FightReaction.ally);
-    expect(relationshipReaction(1)).toBe(FightReaction.friend);
-    expect(relationshipReaction(0)).toBeUndefined();
-    expect(relationshipReaction(-1)).toBeUndefined();
-    expect(relationshipReaction(-3)).toBe(FightReaction.enemy);
+    expect(await combatReaction(enemies, BANDIT, PLAYER_REF)).toBe(FightReaction.enemy);
   });
 
   it('makes teammates and summons the player’s allies, with the player’s reactions', async () => {

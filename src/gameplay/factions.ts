@@ -89,6 +89,52 @@ export function reaction(inputs: ReactionInputs): Reaction {
   return 'neutral';
 }
 
+/** What the ties between two actors' factions are read from (the running game's factions). */
+export interface FactionFacts {
+  /**
+   * A faction's combat reaction to another (CombatReaction: a script's SetAlly / SetEnemy, else
+   * XNAM), if it names one.
+   */
+  factionReaction(faction: number, other: number): Promise<number | undefined>;
+  /** Whether a faction is Special Combat (FACT DATA 0x2). */
+  specialCombat(faction: number): Promise<boolean>;
+}
+
+/**
+ * The ties between an actor's factions and another's (each faction to its rank; −1: listed,
+ * not a member yet), as `reaction` weighs them: the combat reactions of each of the actor's
+ * factions towards each of the other's (`factionReactions`; a faction both are in that names a
+ * reaction to itself among them as any other pair), and whether they share a faction that names
+ * no reaction to itself and is not Special Combat (`sameFaction`). The one rule of the running
+ * game's reactions (CrimeEngine.reaction) and of the combat AI's tests and tools
+ * (combatReaction).
+ */
+export async function factionTies(
+  facts: FactionFacts,
+  mine: ReadonlyMap<number, number>,
+  theirs: ReadonlyMap<number, number>,
+): Promise<Pick<ReactionInputs, 'factionReactions' | 'sameFaction'>> {
+  const factionReactions: number[] = [];
+  let sameFaction = false;
+  for (const [faction, rank] of mine) {
+    if (rank < 0) continue;
+    if (
+      !sameFaction &&
+      (theirs.get(faction) ?? -1) >= 0 &&
+      (await facts.factionReaction(faction, faction)) === undefined &&
+      !(await facts.specialCombat(faction))
+    ) {
+      sameFaction = true;
+    }
+    for (const [other, otherRank] of theirs) {
+      if (otherRank < 0) continue;
+      const value = await facts.factionReaction(faction, other);
+      if (value !== undefined) factionReactions.push(value);
+    }
+  }
+  return { factionReactions, sameFaction };
+}
+
 /**
  * Whether an actor of an aggression attacks one it regards so on sight (Creation Kit: the
  * Aggression actor value: 0 unaggressive, 1 aggressive attacks enemies, 2 very aggressive
