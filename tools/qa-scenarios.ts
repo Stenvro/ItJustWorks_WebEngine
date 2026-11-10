@@ -274,13 +274,22 @@ var QA_PLAY = engineDev.world.#play;
   const { Layer } = await import('/src/physics/collision-layers.ts');
   const W = engineDev.world;
   const nav = QA_NAV;
-  // The bot's own ways, searched as a travel's are (its island made, a goal off it gone to by the
-  // island's nearest point) but at once, and not counted with the game's searches (the frame
-  // profile's search nodes a frame, tools/qa-perf.ts): the bot stands in for the player.
+  // The bot's own ways, searched as a travel's are (a goal off its island gone to by the island's
+  // nearest point) but at once, and not counted with the game's searches (the frame profile's
+  // search nodes a frame, tools/qa-perf.ts): the bot stands in for the player. Its islands are
+  // its own (made over a lookup of its own, the islands being kept per lookup), so the game's
+  // searches find none it made and make theirs, counted, as they would without it.
+  const botNav = {
+    navmesh: (formId) => nav?.navmesh(formId),
+    locate: (point) => nav?.locate(point),
+    nearest: (point, reach) => nav?.nearest?.(point, reach),
+  };
+  window.__qaBotTaken = 0;
   const botPath = (from, to, options) => {
     const before = paths.pathSearchStats.taken;
-    const search = new paths.PathSearch(nav, from, to, options);
+    const search = new paths.PathSearch(botNav, from, to, options);
     search.run(Infinity);
+    window.__qaBotTaken += search.taken;
     paths.pathSearchStats.taken = before;
     return search.result;
   };
