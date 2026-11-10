@@ -368,6 +368,20 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
     return found;
   };
   const say = (text) => { bot.log.push(Math.round(performance.now() / 1000) + ' ' + text); if (bot.log.length > 800) bot.log.shift(); };
+  // Each load door's journey asked for and each interior loaded, with who asked (the page's
+  // call stack): a door taken twice, a place loaded twice at once, shows here.
+  const caller = () => (new Error().stack ?? '').split('\\n').slice(3, 6).map((l) => l.trim().replace(/^at /, '').replace(/\\(?https?:\\/\\/[^/]+\\//, '').replace(/\\?[^:]*:/, ':').replace(/\\)$/, '')).join(' < ');
+  for (const view of [engineDev.world, engineDev.viewer]) {
+    if (view.__qaWatched) continue;
+    view.__qaWatched = true;
+    const travel = view.onTravel;
+    if (travel) view.onTravel = (teleport) => { say('door journey asked to ' + teleport.position.map(Math.round).join(',') + ' (' + caller() + ')'); return travel(teleport); };
+  }
+  if (!engineDev.viewer.__qaShowCell) {
+    const viewer = engineDev.viewer; const show = viewer.showCell.bind(viewer);
+    viewer.__qaShowCell = true;
+    viewer.showCell = (...args) => { say('interior ' + args[0].toString(16) + ' loads (' + caller() + ')'); return show(...args); };
+  }
   const events = (code) => W.player?.eventsOfKey(code) ?? [];
   const hold = (code, down) => {
     const player = W.player; if (!player) return;
@@ -421,11 +435,14 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
     // the way out): a player goes to them first, once for each stage of the marker's quest.
     let called = false;
     // Inside only: outside, by the tower's hole, Ralof's scene walked him on as the player came
-    // to him, and the two went down the tower together instead of on to the inn's roof.
-    if (best && at.world === undefined && bot.lastGuide !== undefined && best.t.reference !== bot.lastGuide && W.actorStage?.get(bot.lastGuide) && rt.scenes.sceneOf(bot.lastGuide) !== undefined) {
+    // to him, and the two went down the tower together instead of on to the inn's roof. The
+    // guide is the one followed last, else whichever of Ralof (2bf9e) and Hadvar (2bfa2) is here
+    // in a scene: a bot that followed Hadvar to Ralof's door meets Ralof inside.
+    const sceneGuide = at.world === undefined ? [bot.lastGuide, 0x2bf9e, 0x2bfa2].find((g) => g !== undefined && W.actorStage?.get(g) && rt.scenes.sceneOf(g) !== undefined) : undefined;
+    if (best && sceneGuide !== undefined && best.t.reference !== sceneGuide) {
       const key = best.t.quest + ':' + (rt.state.quests.get(best.t.quest)?.stage ?? 0);
-      const placement = await rt.placement(bot.lastGuide);
-      const m = placement && measure({ quest: best.t.quest, objective: -1, order: 0, holds: true, reference: bot.lastGuide, placement });
+      const placement = await rt.placement(sceneGuide);
+      const m = placement && measure({ quest: best.t.quest, objective: -1, order: 0, holds: true, reference: sceneGuide, placement });
       if (m && m.same && bot.metGuide !== key) {
         // By him, it stays while he talks (25 s: the keep's scenes speak three lines before
         // their phase that waits for the player near).
@@ -803,9 +820,10 @@ export const GUIDE_WATCH = `(async () => {
   }, 1000);
   // The carry watch, each frame: what carried the player (CharacterBody.carriedBy) whenever a
   // simulated body's carry was held to its limit, and whenever the player's feet go faster than
-  // 1500 units a second over more than 60 units (a small push out of a wall in a short frame is
-  // none; a load or a teleport, 3000 units or more in the frame, is none either), with
-  // the carrier's reference and base and the simulated bodies near.
+  // 1500 units a second (a load or a teleport, 3000 units or more in the frame, is none): over
+  // more than 60 units a fling, with the carrier's reference and base and the simulated bodies
+  // near; over 8 to 60, a jump of the feet, with its parts across and up, the bot's keys and what
+  // it did last (once a second at most), so that one is told apart from the other.
   let lastFeet; let lastTime = performance.now();
   const describeOwner = async (rt, owner) => {
     if (!owner) return 'none';
@@ -828,6 +846,12 @@ export const GUIDE_WATCH = `(async () => {
       }
       if (rt && feet && lastFeet && dt > 0 && viewer().loading === undefined) {
         const d = Math.hypot(feet[0] - lastFeet[0], feet[1] - lastFeet[1], feet[2] - lastFeet[2]);
+        if (d / dt > 1500 && d > 8 && d <= 60 && now - (watch.jumpLogged ?? 0) > 1000) {
+          watch.jumpLogged = now;
+          const bot = window.__qaBot;
+          const across = Math.hypot(feet[0] - lastFeet[0], feet[1] - lastFeet[1]);
+          say('feet jump ' + Math.round(d) + ' in a frame of ' + Math.round(dt * 1000) + ' ms (across ' + Math.round(across) + ', up ' + Math.round(feet[2] - lastFeet[2]) + ') at ' + round(feet) + ', grounded ' + player.character.grounded + ', carried by ' + (by ? await describeOwner(rt, by.owner) : 'nothing') + ', keys ' + ([...(bot?.held ?? [])].join('+') || 'none') + ', bot last: ' + (bot?.log.at(-1) ?? '-'));
+        }
         if (d / dt > 1500 && d > 60 && d < 3000) {
           const physics = viewer().play?.physics;
           const near = [];
@@ -1437,6 +1461,80 @@ QA_PLAY.player.teleport([${String(x)}, ${String(y)}, ${String(z)}], Math.PI / 2)
   },
   openingScenario('opening'),
   openingScenario('opening-ralof', 'ralof'),
+  openingScenario('opening-hadvar', 'hadvar'),
+  {
+    // Found 2026-11-10: a load door used again while its place loaded (the world runs on behind
+    // the loading screen: an automatic door come near again, a press) was taken a second time,
+    // and a place loaded again while its first load still placed its actors left those actors
+    // off the stage for good. Here the keep is loaded twice at once (the second as the first
+    // places its actors): the keep's own actors, Gunjar's body among them, are on the stage
+    // after both. Then the way out (HelgenKeeptoExterior01REF's journey) is asked twice: one
+    // journey is taken.
+    name: 'keep-loaded-twice',
+    description:
+      "Helgen's keep (coc HelgenKeep01): the keep loaded twice at once, Gunjar's body and the keep's dead on the stage after; then its door out used twice, one journey taken.",
+    start: { kind: 'coc', cell: 'HelgenKeep01' },
+    bootSeconds: 300,
+    seconds: 240,
+    tick: async (ctx) => {
+      const state = ctx.state as { step?: number; since?: number };
+      const step = state.step ?? 0;
+      const STAGED = `(() => { const s = engineDev.viewer.actorStage; const all = [...(s?.all() ?? [])]; return JSON.stringify({ gunjar: s?.get(0xb1694) !== undefined, actors: all.length, dead: all.filter((a) => a.placed.actor.startsDead).length, placing: s?.placing === true, loading: engineDev.viewer.loading ?? null }); })()`;
+      const settled = async (): Promise<string | undefined> => {
+        const now = await ctx.page.eval<string>(STAGED, 20000);
+        const parsed = JSON.parse(now) as {
+          placing: boolean;
+          loading: string | null;
+          actors: number;
+        };
+        // Settled: nothing loading or being placed, and the stage filled (or a minute gone).
+        const waited = Date.now() - (state.since ?? 0) > 60000;
+        return parsed.placing || parsed.loading !== null || (parsed.actors === 0 && !waited)
+          ? undefined
+          : now;
+      };
+      if (Date.now() - (state.since ?? 0) < 10000) return false;
+      if (step === 0) {
+        const now = await settled();
+        if (!now) return false;
+        ctx.note(`as loaded: ${now}`);
+        const second = await ctx.page.eval<boolean>(
+          `(async () => { const v = engineDev.viewer; const at = { position: [-300, 4300, 400], heading: 0 }; void v.showCell(0x5de24, at); const until = performance.now() + 60000; while (v.actorStage?.placing !== true && performance.now() < until) await new Promise((r) => setTimeout(r, 5)); const placing = v.actorStage?.placing === true; void v.showCell(0x5de24, at); return placing; })()`,
+          70000,
+        );
+        ctx.note(
+          `the keep loaded twice at once (the second ${second ? 'while the first placed its actors' : 'after the first placed none'})`,
+        );
+        state.step = 1;
+        state.since = Date.now();
+        return false;
+      }
+      if (step === 1) {
+        const now = await settled();
+        if (!now) return false;
+        ctx.note(`after the loads: ${now}`);
+        const { gunjar } = JSON.parse(now) as { gunjar: boolean };
+        ctx.note(gunjar ? "Gunjar's body is on the stage" : "Gunjar's body is NOT on the stage");
+        // The door out (HelgenKeeptoExterior01REF: to AutoLoadDoor01 25fae outside), used twice.
+        await ctx.page.eval(
+          `(() => { let n = 0; for (const v of [engineDev.world, engineDev.viewer]) { const key = v === engineDev.world ? 'open' : 'showCell'; const load = v[key].bind(v); v[key] = (...a) => { n++; return load(...a); }; } window.__qaJourneys = () => n; const t = { door: 0x25fae, position: [15759.7, -77882.9, 8222], rotation: [0, 0, 2.8] }; engineDev.viewer.onTravel(t); engineDev.viewer.onTravel(t); return true; })()`,
+          20000,
+        );
+        ctx.note('the door out used twice');
+        state.step = 2;
+        state.since = Date.now();
+        return false;
+      }
+      const loading = await ctx.page.eval<boolean>(
+        '(engineDev.world.loading ?? engineDev.viewer.loading) !== undefined || engineDev.play().session.loading',
+        5000,
+      );
+      if (loading && Date.now() - (state.since ?? 0) < 120000) return false;
+      const journeys = await ctx.page.eval<number>('window.__qaJourneys()', 5000);
+      ctx.note(`places loaded for the two uses: ${String(journeys)}`);
+      return true;
+    },
+  },
 ];
 
 /**

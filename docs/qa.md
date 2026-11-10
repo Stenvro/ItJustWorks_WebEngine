@@ -135,13 +135,18 @@ stages; every actor that begins or ends a reaction to a dead body; the player's 
 it is not grounded for more than 2 s. Each frame it also watches what carries the player
 (`CharacterBody.carriedBy`): a simulated body whose carry was held to its limit (`carry held:`,
 its reference, base, mass and speed), and the player's feet going faster than 1,500 units a
-second over more than 60 units in a frame, outside a load (in a short frame a push of ten units
-out of a wall already reads as that speed) (`player flung`: what carried it, and the four fastest simulated bodies
-within 400 units, each with its reference and base).
+second outside a load: over more than 60 units in a frame a fling (`player flung`: what carried
+it, and the four fastest simulated bodies within 400 units, each with its reference and base);
+over 8 to 60 a jump of the feet (`feet jump`, once a second at most: its parts across and up,
+the frame's length, grounded or not, what carried it, the bot's keys and its last line). In the
+Ralof run of 2026-11-10 every such jump (42) was nearly all up or down (8 to 25 units, at most 6
+across) in a 5-6 ms frame, at the places the bot was stuck pressing and jumping (a table's edge,
+the portcullis MQ101KeepGate2Ref): the character's step up and its settling down onto the floor,
+which a frame that short makes read as 1,500 units a second; none was carried.
 
-`opening-ralof` (not in a run without names) is the same opening with the bot on Ralof's side
-(`window.__qaSide`): of the current targets it takes Ralof and the Stormcloaks' keep marker
-(dunCGObjectiveKeepDoorRalofREF), as a player picks that door of "Enter the Keep with Hadvar or
+`opening-ralof` and `opening-hadvar` (not in a run without names) are the same opening with the bot on one side
+(`window.__qaSide`): of the current targets it takes that guide and the keep marker by them (Ralof
+and dunCGObjectiveKeepDoorRalofREF, or Hadvar and his), as a player picks that door of "Enter the Keep with Hadvar or
 Ralof"; without a side it takes the nearest (Hadvar's, each time). A target that is a container
 or a dead actor (MQ101's "Find some equipment", the warden's chest; "Loot Gunjar's body") it
 walks to, faces and opens with Activate; the scenario then takes all in the container menu (R),
@@ -152,7 +157,16 @@ what the crosshair's pick meets, where the target's posed body lies, the camera 
 Activate is allowed; a target not on the actor stage logs its game state once (reference state,
 dead, corpse pose, placement, the dead actors that are on the stage). Each use of a door logs
 what the crosshair is on
-(its reference and verb), how far the door is, and the door's lock or blocked activation.
+(its reference and verb), how far the door is, and the door's lock or blocked activation. Each
+load door's journey asked (`door journey asked`) and each interior loaded (`interior ... loads`)
+is logged with the page's call stack. Inside, a guide in a scene who waits for the player
+(MQ101's keep scenes: "Come here, let me get those bindings off") is gone to first: the guide
+followed last, else Ralof or Hadvar, whichever is there in a scene (a bot that followed Hadvar to
+Ralof's door meets Ralof inside).
+
+`keep-loaded-twice` loads Helgen's keep twice at once (the second as the first places its
+actors) and checks that the keep's own actors, Gunjar's body among them, are on the stage after
+both; then it uses the keep's door out twice and counts the places loaded (one).
 
 ## The monitors in the page
 
