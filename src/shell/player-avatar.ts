@@ -19,7 +19,7 @@ import {
 import { driveOf } from '../ai/movement-drive.ts';
 import { MovementCatalog } from '../ai/movement-types.ts';
 import type { MovementType } from '../world/movement.ts';
-import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
+import { animateInStep, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { multiply, type Vec3 } from '../render/math.ts';
 import type { RigData } from '../animation/skeleton.ts';
 import type { RenderPort } from '../render/render-port.ts';
@@ -587,7 +587,8 @@ export class PlayerAvatar {
     // the view in third person. Only the body's: the first-person arms are placed pitched with
     // the view already (FirstPersonBody.place), and their graph's own twist would turn them twice.
     body.behavior?.setVariable('Pitch', (this.#player.pitch * 180) / Math.PI);
-    animateSkeletons(skeletons, this.#clock);
+    // Kept in step: one whose clip is still being read holds the other (animateInStep).
+    animateInStep(skeletons, this.#clock);
     // Knocked down it lies (and gets up) where it is placed.
     if (this.knocked) return;
     // The body stands on the player's feet, facing its own way: where the camera has them

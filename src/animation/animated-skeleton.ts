@@ -248,6 +248,36 @@ export function animateSkeletons(
   }
 }
 
+/**
+ * Moves the skeletons of one actor whose graphs go together (the player's first-person one and
+ * their body's: both hear every event sent to the player), kept in step: one is not updated
+ * while another of them waits for a clip still being read in its last update (BehaviorRuntime.
+ * awaitingClips: that clip's time does not pass); its time does not pass either and it keeps its
+ * pose. All take the frame an event reaches them, and the frame the clip is there.
+ *
+ * Updated apart, the graph whose clip was there ran ahead of the other. At Helgen's block the
+ * body's clips had been read for the prisoner and the first-person graph's were read only as the
+ * player knelt. In the browser the first-person graph waited for its AOExecutioneeEnter clip for
+ * a frame (0.05 s at 60 frames a second; 0.3 s with the processor slowed to about 11 a second,
+ * where the body's graph left its enter with that clip at 1.41 s and the first-person graph's
+ * stood at 1.13 s). Behind, the first-person graph dropped IdleExecutionerChop_Player when it was
+ * sent as the body's graph would take it, and the view on its camera node stayed level and turned
+ * away through the execution. TODO(M13): inferred; how the original keeps an actor's graphs
+ * together while their clips are read is not known.
+ */
+export function animateInStep(skeletons: readonly AnimatedSkeleton[], seconds: number): void {
+  const waiting = skeletons.filter((animated) => animated.behavior?.awaitingClips === true);
+  if (waiting.length === 0) {
+    animateSkeletons(skeletons, seconds);
+    return;
+  }
+  for (const animated of skeletons) {
+    if (waiting.includes(animated) || animated.time === undefined) continue;
+    animated.time = Math.max(animated.time, seconds);
+  }
+  animateSkeletons(waiting, seconds);
+}
+
 /** One update of a skeleton's graph (and its face) by `dt`; what it raised goes out. */
 function step(animated: AnimatedSkeleton, dt: number, span = dt): void {
   animated.face?.update(dt);

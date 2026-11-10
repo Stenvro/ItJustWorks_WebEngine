@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AnimationBinding, HkxSkeleton } from '../formats/hkx/animation.ts';
 import { identity } from '../render/math.ts';
 import {
+  animateInStep,
   animateSkeletons,
   animationRate,
   boneLeftBound,
@@ -199,6 +200,49 @@ describe('object skeletons', () => {
 
     it('a far graph loses no time to a clip still being read', () => {
       for (let i = 0; i < 8; i++) expect(lag(1 + i * FRAME, 4 * FRAME)).toBeLessThanOrEqual(FRAME);
+    });
+
+    it('keeps one actor’s graphs in step while one of them reads its clip (animateInStep)', () => {
+      // Found in review 2026-11-10: the player's first-person graph read its block clips as the
+      // player knelt, the body's had them: updated apart, the first-person graph ended its enter
+      // later and dropped the chop sent as the body's graph would take it.
+      const run = (together: boolean): number => {
+        let clock = 0;
+        let readFrom = Infinity;
+        const reading = {
+          clip: (name: string) =>
+            name === 'still' ? still : clock >= readFrom ? swing : undefined,
+          clipLoading: (name: string) => name === 'chop' && clock < readFrom,
+          behavior: () => undefined,
+        };
+        const read = {
+          clip: (name: string) => (name === 'still' ? still : swing),
+          behavior: () => undefined,
+        };
+        const spec = (host: SkeletalGraph['host']): SkeletalGraph => ({
+          ...graph,
+          root: { name: 'chop', events: ['Chop'], variables: [], root: machine },
+          host,
+        });
+        const first = startObjectSkeleton(nodes, spec(reading), () => 0.5)?.skeleton;
+        const body = startObjectSkeleton(nodes, spec(read), () => 0.5)?.skeleton;
+        if (!first || !body) throw new Error('no skeleton');
+        let worst = 0;
+        for (let frame = 0; frame < 120; frame++) {
+          clock = frame * FRAME;
+          if (frame === 30) {
+            readFrom = clock + 6 * FRAME;
+            first.behavior?.sendEvent('Chop');
+            body.behavior?.sendEvent('Chop');
+          }
+          if (together) animateInStep([first, body], clock);
+          else animateSkeletons([first, body], clock);
+          if (frame > 40) worst = Math.max(worst, Math.abs(bladeX(first) - bladeX(body)) / 10);
+        }
+        return worst;
+      };
+      expect(run(false)).toBeGreaterThan(5 * FRAME);
+      expect(run(true)).toBeLessThan(1e-6);
     });
   });
 

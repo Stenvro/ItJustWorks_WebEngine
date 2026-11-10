@@ -418,6 +418,13 @@ animated objects alike.
   started up to two intervals apart: Helgen's headsman chopped 7 to 14 frames behind his prisoner,
   by where in his 0.117 s interval the event came. TODO(M13): inferred from graphs told together
   being authored in step; what the original does with an event between two updates is not read.
+- **One actor's graphs in step.** Ours: the player's first-person graph and their body's hear
+  every event together and are updated together (`animateInStep`):
+  while one waits for a clip still being read, the other is not updated (its time does not pass,
+  it keeps its pose). Updated apart, the first-person graph, reading Helgen's block clips only as
+  the player knelt, ended its enter after the body's and dropped the block's chop, sent as the
+  body's graph would take it. TODO(M13): inferred; how the original keeps them together while
+  clips are read is not known.
 - **Not past a trigger.** The interval is cut to just short (half a frame) of the next trigger or
   annotation a playing clip passes (the engine walks the active clips' triggers), so that what
   the clips raise (a footstep, a sound) is raised at its moment, not up to a quarter of a second

@@ -10,13 +10,16 @@
 import { describe, expect, it } from 'vitest';
 import { KnockState } from '../src/gameplay/combat/combat-state.ts';
 import { transformPoint } from '../src/render/math.ts';
-import { CAMERA_NODE } from '../src/shell/first-person-body.ts';
+import type { BehaviorRuntime } from '../src/animation/behavior-runtime.ts';
+import { CAMERA_NODE, FIRST_PERSON_PROJECT } from '../src/shell/first-person-body.ts';
 import { rideModes, rideState } from '../src/shell/hud-elements.ts';
 import { hasGamedata, loadSim, openSim, PLAYER_REF, type Sim } from './helpers/sim.ts';
 
 type Vec3 = [number, number, number];
 
 const MQ101 = 0x3372b;
+/** Seconds the first-person block enter's clip is still being read in the low-frame-rate case. */
+const READ_LATE = 0.5;
 /** MQ101DragonAttack: the town under Alduin's attack (the tower, the inn, the way to the keep). */
 const DRAGON_ATTACK = 0xd0593;
 /** MQ101Cart1HorseREF and the second cart's horse, the one the player rides behind. */
@@ -419,10 +422,12 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
   // player's graph, put back in Executionee_State by the block's instant enter, was still in
   // AOExecutioneeEnter, which does not take it: it was dropped, and the player stood at the block
   // as Alduin came, looking off and the view level. Found in review 2026-11-09: held until the
-  // body's graph would take it, it was sent while the first-person graph, 0.3 s behind (measured
-  // in the browser at about 10 frames a second), was still in its AOExecutioneeEnter: the
-  // first-person graph dropped it, and the view stayed in the kneeling idle's, level and facing
-  // away from the tower, while the body lay on the block.
+  // body's graph would take it, it was sent while the first-person graph, which read its block
+  // clips only as the player knelt and so ended its AOExecutioneeEnter later (in the browser with
+  // the processor slowed), was still in it: the first-person graph dropped it, and the view stayed
+  // in the kneeling idle's, level and facing away from the tower, while the body lay on the block.
+  // Found in review 2026-11-10: the two graphs are kept in step (animateInStep), the late read
+  // copied here as it happens.
   it('lays the player on the block at 7 frames a second, the view on the camera node (stage 80 to 100)', async () => {
     expect(ridersOff).toBeDefined();
     if (!ridersOff) return;
@@ -434,21 +439,32 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
       const avatar = sim.world.playerView?.avatar;
       const body = avatar?.body;
       expect(body).toBeDefined();
-      // The first-person graph 0.3 s behind the body's into the block's enter, as in the browser
-      // (here it ends its AOExecutioneeEnter a frame after the body's): its first three updates
-      // in AOExecutioneeEnter pass no time, as for a clip still being read.
-      const first = avatar?.firstPerson?.behavior;
-      if (first) {
-        const update = first.update.bind(first);
-        let held = 0;
-        first.update = (dt: number): void => {
-          const entering = first.states().some(({ state }) => state === 'AOExecutioneeEnter.hkx');
-          if (entering && held < 3) {
-            held++;
-            update(0);
-          } else update(dt);
+      // The first-person block clips read late, as in the browser with the processor slowed: the
+      // body's were read for the prisoner before, the first-person graph's only as the player
+      // kneels. Its AOExecutioneeEnter clip is still being read for READ_LATE seconds after the
+      // graph first asks for it (in the browser at about 10 frames a second, about half a second).
+      const looks = sim.world.session.animation;
+      const project = await looks.behaviors(FIRST_PERSON_PROJECT);
+      expect(project).toBeDefined();
+      let now = 0;
+      if (project && body) {
+        const host = looks.host(project, body.look.female);
+        const clip = host.clip.bind(host);
+        const loading = host.clipLoading.bind(host);
+        let asked: number | undefined;
+        const late = (animation: string): boolean => {
+          if (!/AOExecutioneeEnter/i.test(animation)) return false;
+          asked ??= now;
+          return now - asked < READ_LATE;
         };
+        host.clip = (animation) => (late(animation) ? undefined : clip(animation));
+        host.clipLoading = (animation) => late(animation) || loading(animation);
       }
+      // The frame each of the player's graphs left AOExecutioneeEnter: in step, the same.
+      const entered = (graph: BehaviorRuntime | undefined): boolean =>
+        graph?.states().some(({ state }) => state === 'AOExecutioneeEnter.hkx') === true;
+      const left: (number | undefined)[] = [undefined, undefined];
+      const wasIn = [false, false];
       // How long before their updates' ends the player's body graph raised its clips' events.
       const late: number[] = [];
       const heard = body?.onEvents;
@@ -459,13 +475,21 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
         };
       let chopped = false;
       for (let t = 0; t < 300 && !sim.stageDone(MQ101, 100); t += frame) {
+        now = t;
         await sim.step(frame, frame);
+        [avatar?.body.behavior, avatar?.firstPerson?.behavior].forEach((graph, index) => {
+          const inEnter = entered(graph);
+          if (wasIn[index] && !inEnter) left[index] ??= t;
+          wasIn[index] = inEnter;
+        });
         chopped ||= [avatar?.body.behavior, avatar?.firstPerson?.behavior].every(
           (graph) =>
             graph?.states().some(({ state }) => state === 'AOExecutioneeChop_1stPerson') === true,
         );
       }
       expect(sim.stageDone(MQ101, 100)).toBe(true);
+      expect(left[0], 'the body left its enter').toBeDefined();
+      expect(left[1], 'the first-person graph left its enter with the body').toBe(left[0]);
       expect(chopped, "the player's head on the block before Alduin comes").toBe(true);
       // The view follows the first-person camera node through the chop to the block's idle: down
       // to the block (the eye at the head's height on it) and up to the tower as Alduin comes.
