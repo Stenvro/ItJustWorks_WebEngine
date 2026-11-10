@@ -134,7 +134,10 @@ keeps the values it loads; UESP's names kept for the numbers):
   bShowTutorials on, and never shown again; one entry, 252, in both saves: the journal's
   tutorial, HBJL, which the journal shows as it first opens, as it did to save); a byte set
   as a Miscellaneous quest's objective is first shown, after
-  which the Miscellaneous objectives count among the objectives shown; the last used lists; a
+  which the Miscellaneous objectives count among the objectives shown (0 in both saves, made
+  before any; imported, a 0 while a miscellaneous objective is shown is taken as the journal's
+  "show miscellaneous objectives" switched off, `GameState.miscObjectivesActive`: inferred,
+  TODO(M13)); the last used lists; a
   byte, the journal's other pages switched off (Game.DisablePlayerControls' abJournalTabs, as
   IsJournalControlsEnabled reads it: 1 in both saves); then the help part (Message.
   ShowAsHelpMessage's): its entries (the input event, the text, the seconds shown (none or
