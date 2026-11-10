@@ -66,6 +66,21 @@ describe('a script idle held in furniture', () => {
     expect(clock.waits).toBe(6);
   });
 
+  it('waits for the other graphs a moment once the body’s graph would take it', async () => {
+    const clock = counted();
+    const held = await holdIdle({
+      takes: () => false,
+      bodyTakes: () => clock.waits >= 5,
+      using: () => true,
+      latest: () => true,
+      seconds: 4,
+      wait: clock.wait,
+    });
+    expect(held).toBe('body');
+    // From the fifth wait on the body's graph would take it; three more (0.3 s) for the others.
+    expect(clock.waits).toBe(8);
+  });
+
   it('ends with the actor’s use of its furniture', async () => {
     const clock = counted();
     const held = await holdIdle({

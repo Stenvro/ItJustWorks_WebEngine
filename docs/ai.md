@@ -824,13 +824,19 @@ Actors use furniture as the engine's furniture handling does, as far as the data
   still on its way into the state's idle: at 10 frames a second the block's
   IdleExecutionerChop_Player came during AOExecutioneeEnter, 0.4 s after the instant enter put
   the player's graph back, and was dropped. The player has two graphs, the body's and the
-  first-person one (each that names the event is waited for): in the browser at about 10 frames a
-  second the first-person graph ended its AOExecutioneeEnter 0.3 s after the body's, and the chop,
-  sent as the body's graph would take it, was dropped by the first-person graph alone; the view,
-  on its camera node, stayed in the kneeling idle's while the body lay on the block. A later
-  script idle for the actor supersedes one still held (that one is not sent: the two would play
-  out of order). TODO(M13): how the engine keeps a graph in its furniture (an enter it holds
-  until the graph takes it).
+  first-person one, kept in step (`animateInStep`: while one waits for a clip still being read,
+  the other is not updated). Updated apart, the first-person graph, which read its block clips
+  only as the player knelt (the body's were read for the prisoner), ended its AOExecutioneeEnter
+  later than the body's in the browser with the processor slowed; the chop, sent as the body's
+  graph would take it, was dropped by the first-person graph alone, and the view, on its camera
+  node, stayed in the kneeling idle's while the body lay on the block. A held idle also waits for
+  each of the player's graphs that names its event, but at most 0.3 s once the body's would take
+  it (one the first-person graph names and never takes in that state is not held the 4 s). The
+  script idles for an actor go in the order PlayIdle was called (each takes its turn as it is
+  called and waits for the one before to be sent, held or found to play nothing): a later one
+  supersedes one still held (that one is not sent: the two would play out of order), one that
+  plays nothing does not. TODO(M13): how the engine keeps a graph in its furniture (an enter it
+  holds until the graph takes it).
 - **Getting up: the graph says when** (observed in the original). The engine does not end
   a use by a timer: it answers the events a graph raises with the handlers
   `meshes\responses\actorresponse.txt` names (`playercharacterresponse.txt` for the player,

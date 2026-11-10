@@ -210,36 +210,54 @@ const KEEP_IN_SECONDS = 0.7;
 const BACK_IN_SECONDS = 4;
 /** A held script idle's graphs are asked again after this (seconds). */
 const HOLD_POLL_SECONDS = 0.1;
+/**
+ * A held script idle the actor's body graph would take waits this long at most for its other
+ * graphs (the player's first-person one) to take it too (seconds). Kept in step
+ * (animateInStep), they are at most a frame apart; one that names the event but would not take
+ * it in that state does not hold the idle the whole BACK_IN_SECONDS. TODO(M13): inferred.
+ */
+const OTHER_GRAPHS_SECONDS = 0.3;
 
 /**
  * How a script's idle held for an actor in furniture ended: its graphs would take it ('taken'),
- * the actor's use ended ('ended': its graph is its own again and decides), a later script idle
+ * its body's graph would and its other graphs did not come to it within OTHER_GRAPHS_SECONDS
+ * ('body': it is sent), the actor's use ended ('ended': its graph is its own again and decides), a later script idle
  * for the actor came ('superseded': this one is not sent), or the wait ran out ('timeout': it is
  * sent, and its graphs take it or not).
  */
-export type HeldIdle = 'taken' | 'ended' | 'superseded' | 'timeout';
+export type HeldIdle = 'taken' | 'body' | 'ended' | 'superseded' | 'timeout';
 
 /**
  * Holds a script's idle until its actor's graphs would take it (`takes`), at most `seconds`,
  * asking every HOLD_POLL_SECONDS (`wait`: real time in the page): while `using` (the actor's use
  * of its furniture goes on) and `latest` (no later script idle came for the actor). A later idle
- * wins over one still held, so the two never play out of order.
+ * wins over one still held, so the two never play out of order. With `bodyTakes` (its body's
+ * graph alone would take it), the other graphs are waited for OTHER_GRAPHS_SECONDS at most.
  */
 export async function holdIdle(hold: {
   readonly takes: () => boolean;
+  readonly bodyTakes?: () => boolean;
   readonly using: () => boolean;
   readonly latest: () => boolean;
   readonly seconds: number;
   readonly wait?: (seconds: number) => Promise<void>;
 }): Promise<HeldIdle> {
   const wait = hold.wait ?? sleep;
+  let body: number | undefined;
   for (let waited = 0; ; waited += HOLD_POLL_SECONDS) {
     if (!hold.latest()) return 'superseded';
     if (!hold.using()) return 'ended';
     if (hold.takes()) return 'taken';
+    body = hold.bodyTakes?.() === true ? (body ?? waited) : undefined;
+    if (body !== undefined && waited - body >= OTHER_GRAPHS_SECONDS - 1e-9) return 'body';
     if (waited >= hold.seconds - 1e-9) return 'timeout';
     await wait(HOLD_POLL_SECONDS);
   }
+}
+
+/** Whether an actor's graphs would all take an event now (FurnitureUser.wouldTake). */
+function takesNow(user: FurnitureUser, event: string): boolean {
+  return user.wouldTake?.(event) ?? user.placed.behavior?.wouldHandle(event) === true;
 }
 
 /**
@@ -309,8 +327,16 @@ export class ActorFurniture {
    */
   readonly #looping = new Map<number, { readonly idle: number; readonly until: number }>();
   readonly #loopRandom = seededRandom(0x1d1e);
-  /** Each actor's latest script idle (its number): an earlier one still held for it drops. */
+  /**
+   * Each actor's latest script idle that has its event (its number, drawn as playIdle was
+   * called): an earlier one still held for it drops.
+   */
   readonly #latestIdle = new Map<number, number>();
+  /**
+   * Each actor's last script idle until it settles (it is sent, held or plays nothing): the
+   * next one waits for it, so they go in the order the scripts called them.
+   */
+  readonly #idleTurns = new Map<number, Promise<void>>();
   #idles = 0;
 
   constructor(options: ActorFurnitureOptions) {
@@ -489,38 +515,70 @@ export class ActorFurniture {
       readonly dependents?: readonly FurnitureUser[];
     } = {},
   ): Promise<boolean> {
+    // Its turn is taken as it is called: PlayIdle comes here without waiting (the scripts' native
+    // returns at once), and what each call looks up takes its own time (a parent idle's children,
+    // their conditions). A later call that found its idle first went before an earlier one, or
+    // an earlier one superseded it while it was held. Each waits for the one before to settle.
+    const actor = user.reference;
+    const ticket = ++this.#idles;
+    const before = this.#idleTurns.get(actor);
+    let settle = (): void => undefined;
+    const settled = new Promise<void>((resolve) => (settle = resolve));
+    this.#idleTurns.set(actor, settled);
+    try {
+      const event = await this.#scriptIdleEvent(user, idle, target, options.inFurniture === true);
+      await before;
+      // One that plays nothing is not the script's last word: one held before it goes on.
+      if (event === undefined) return false;
+      this.#latestIdle.set(actor, ticket);
+      if (this.#holdsIdle(user, event)) {
+        // Held, it lets the next one go on, which supersedes it.
+        settle();
+        await this.#backIn(user, event, ticket);
+      }
+      if (this.#latestIdle.get(actor) !== ticket) return false;
+      this.#latestIdle.delete(actor);
+      const sent = user.send(event);
+      for (const dependent of options.dependents ?? []) dependent.send(event);
+      const use = this.#uses.get(actor);
+      if (sent && use && inside(use)) void this.#keepIn(user, use);
+      if (sent && target !== undefined && event.toLowerCase().startsWith('pa_'))
+        this.#options.paired?.(actor, target, event);
+      return sent;
+    } finally {
+      settle();
+      if (this.#idleTurns.get(actor) === settled) this.#idleTurns.delete(actor);
+    }
+  }
+
+  /** The event a script's idle sends an actor (playIdle), if any. */
+  async #scriptIdleEvent(
+    user: FurnitureUser,
+    idle: number,
+    target: number | undefined,
+    inFurniture: boolean,
+  ): Promise<string | undefined> {
     const runtime = this.#options.session.scriptsReady;
     const tree = await this.#tree();
     const record = tree.idles.get(idle);
-    if (!runtime || !record) return false;
+    if (!runtime || !record) return undefined;
     const subject = new ObjectHandle(user.reference, 'actor');
     const context = target === undefined ? {} : { target: runtime.referenceHandle(target) };
     if (!(await runtime.conditionsHold(record.conditions, subject, undefined, context))) {
-      return false;
+      return undefined;
     }
     let event = record.event;
     if (event === undefined) {
       const graph = await this.#graphKey(user);
-      if (graph === undefined) return false;
+      if (graph === undefined) return undefined;
       const child = await tree.resolveAsync(idle, graph, (candidate) =>
         runtime.conditionsHold(candidate.conditions, subject, undefined, context),
       );
       event = child?.event;
     }
-    if (event === undefined) return false;
-    if (this.#uses.has(user.reference) && options.inFurniture !== true) return false;
-    const ticket = ++this.#idles;
-    this.#latestIdle.set(user.reference, ticket);
-    const held = await this.#backIn(user, event, ticket);
-    if (this.#latestIdle.get(user.reference) === ticket) this.#latestIdle.delete(user.reference);
-    if (held === 'superseded') return false;
-    const sent = user.send(event);
-    for (const dependent of options.dependents ?? []) dependent.send(event);
-    const use = this.#uses.get(user.reference);
-    if (sent && use && inside(use)) void this.#keepIn(user, use);
-    if (sent && target !== undefined && event.toLowerCase().startsWith('pa_'))
-      this.#options.paired?.(user.reference, target, event);
-    return sent;
+    if (event === undefined) return undefined;
+    if (this.#uses.has(user.reference) && !inFurniture) return undefined;
+    return event;
   }
 
   /**
@@ -1046,17 +1104,31 @@ export class ActorFurniture {
    */
   async #backIn(user: FurnitureUser, event: string, ticket: number): Promise<HeldIdle> {
     const use = this.#uses.get(user.reference);
-    const graph = user.placed.behavior;
-    const takes = (): boolean =>
-      user.wouldTake?.(event) ?? user.placed.behavior?.wouldHandle(event) === true;
-    if (!use || !inside(use) || !graph || takes()) return 'taken';
-    if (graph.variable('bAnimationDriven') === 0) await this.#restore(user);
+    if (!use) return 'ended';
+    if (user.placed.behavior?.variable('bAnimationDriven') === 0) await this.#restore(user);
     return holdIdle({
-      takes,
+      takes: () => takesNow(user, event),
+      ...(user.wouldTake && {
+        bodyTakes: () => user.placed.behavior?.wouldHandle(event) === true,
+      }),
       using: () => this.#uses.get(user.reference) === use,
       latest: () => this.#latestIdle.get(user.reference) === ticket,
       seconds: BACK_IN_SECONDS,
     });
+  }
+
+  /**
+   * Whether a script's idle is held (#backIn): its actor is in furniture and its graphs would
+   * not take it now.
+   */
+  #holdsIdle(user: FurnitureUser, event: string): boolean {
+    const use = this.#uses.get(user.reference);
+    return (
+      use !== undefined &&
+      inside(use) &&
+      user.placed.behavior !== undefined &&
+      !takesNow(user, event)
+    );
   }
 
   async #keepIn(user: FurnitureUser, use: Use): Promise<void> {
