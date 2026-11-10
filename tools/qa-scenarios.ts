@@ -441,7 +441,15 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
     // guide is the one followed last, else whichever of Ralof (2bf9e) and Hadvar (2bfa2) is here
     // in a scene: a bot that followed Hadvar to Ralof's door meets Ralof inside.
     const sceneGuide = at.world === undefined ? [bot.lastGuide, 0x2bf9e, 0x2bfa2].find((g) => g !== undefined && W.actorStage?.get(g) && rt.scenes.sceneOf(g) !== undefined) : undefined;
-    if (best && sceneGuide !== undefined && best.t.reference !== sceneGuide) {
+    // A target to loot here comes first (the scene waits for it: MQ101's "Find some equipment"
+    // while Hadvar walks about the room).
+    const lootable = async (t) => {
+      if (!here(t.placement) || bot.looted?.has(t.reference)) return false;
+      const baseId = await rt.baseOf(t.reference);
+      const type = baseId !== undefined ? (await rt.forms.record(baseId))?.type : undefined;
+      return type === 'CONT' || (type === 'NPC_' && (await rt.actors.isDead(t.reference)));
+    };
+    if (best && sceneGuide !== undefined && best.t.reference !== sceneGuide && !(await lootable(best.t))) {
       const key = best.t.quest + ':' + (rt.state.quests.get(best.t.quest)?.stage ?? 0);
       const placement = await rt.placement(sceneGuide);
       const m = placement && measure({ quest: best.t.quest, objective: -1, order: 0, holds: true, reference: sceneGuide, placement });
@@ -520,13 +528,9 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
     // does; the scenario takes all in the container menu (R) and closes it, and the player then
     // wears what it took (lootEquip).
     bot.loot = undefined;
-    if (best.same && !bot.looted?.has(best.t.reference)) {
-      const baseId = await rt.baseOf(best.t.reference);
-      const type = baseId !== undefined ? (await rt.forms.record(baseId))?.type : undefined;
-      if (type === 'CONT' || ((type === 'NPC_') && (await rt.actors.isDead(best.t.reference)))) {
-        bot.loot = best.t.reference;
-        bot.guide = undefined;
-      }
+    if (best.same && (await lootable(best.t))) {
+      bot.loot = best.t.reference;
+      bot.guide = undefined;
     }
     if (bot.guide !== undefined) bot.lastGuide = bot.guide;
     // A target that is a load door here (MQ101's "Enter the Keep": the keep's doors) is used
@@ -559,11 +563,50 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
       const dx = g[0] - at.position[0]; const dy = g[1] - at.position[1]; const l = Math.hypot(dx, dy) || 1;
       const point = nav?.nearest?.([g[0] + (dx / l) * 160, g[1] + (dy / l) * 160, g[2]], 96);
       if (point) {
-        bot.pass = { guide: bot.guide, from: [...g], point: [...point] };
+        bot.pass = { guide: bot.guide, from: [...g], point: [...point], since: now };
         say('the guide waits: on past it to ' + point.map(Math.round).join(','));
       }
     }
     if (bot.pass) goal = [...bot.pass.point];
+    // Past him 20 s and still he stays (MQ101DragonAttack: Hadvar waits by the street's trigger,
+    // which the player sets walking in): a player walks into the trigger near him that waits for
+    // them and whose scripts name a quest with scenes, the nearest first, each once.
+    if (bot.pass && now - bot.pass.since > 20000) {
+      const key = bot.pass.guide + '@' + bot.pass.from.map(Math.round).join(',');
+      bot.passGates ??= new Map();
+      if (!bot.passGates.has(key)) {
+        bot.passGates.set(key, 'pending');
+        const found = [];
+        for (const trigger of viewer().play?.physics.triggersNear([...bot.pass.from], 1500) ?? []) {
+          const waits = await playerTrigger(rt, trigger);
+          if (!waits) continue;
+          let scened = false;
+          for (const form of waits.names) {
+            const record = await rt.forms.record(form);
+            if (record?.type === 'SCEN' || (record?.type === 'QUST' && (await rt.sceneHost.scenesOf(form)).length > 0)) scened = true;
+          }
+          const where = scened ? await rt.placement(trigger) : undefined;
+          if (where) found.push({ trigger, at: [...where.position] });
+        }
+        bot.passGates.set(key, found);
+        say('triggers by the waiting guide that wait for the player: ' + (found.map((t) => t.trigger.toString(16)).join(', ') || 'none'));
+      }
+      const gates = bot.passGates.get(key);
+      if (Array.isArray(gates)) {
+        bot.walkedInto ??= new Set();
+        for (const t of gates) if (rt.triggerVolumes.inside(t.trigger).has(0x14)) bot.walkedInto.add(t.trigger);
+        let gate;
+        for (const t of gates) {
+          if (bot.walkedInto.has(t.trigger)) continue;
+          const d = Math.hypot(t.at[0] - at.position[0], t.at[1] - at.position[1]);
+          if (!gate || d < gate.d) gate = { ...t, d };
+        }
+        if (gate) {
+          if (bot.gate !== gate.trigger) { bot.gate = gate.trigger; say('into the trigger ' + gate.trigger.toString(16) + ' at ' + gate.at.map(Math.round).join(',')); }
+          goal = [...gate.at];
+        }
+      }
+    }
     if (!best.same) {
       const door = compass.firstDoorToward(await play.session.routeMap(), at, best.t.placement);
       if (!door) { bot.goal = undefined; bot.path = []; return; }
@@ -670,7 +713,10 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
       bot.lootMenu = bot.loot;
       say('container menu of ' + bot.loot.toString(16) + ' open');
     }
-    if (!player || !rt || rt.controls.aiDriven || play.session.menuMode || W.loading !== undefined) { bot.release(); return; }
+    // Behind a loading screen (session.loading: the place left still runs, its viewer not
+    // loading yet) a player does nothing: before, the bot walked and pressed on there, asking
+    // the door's journey again every press.
+    if (!player || !rt || rt.controls.aiDriven || play.session.menuMode || play.session.loading || W.loading !== undefined) { bot.release(); return; }
     const now = performance.now();
     if (!bot.planning && now - bot.lastPlan > 1500) {
       bot.planning = true; bot.lastPlan = now;
@@ -819,7 +865,7 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
       let why = '';
       if (bot.stuckCount % 10 === 1) {
         const under = viewer().play?.physics.pick([feet[0], feet[1], feet[2] + 40], [0, 0, -1], 120, 5, Layer.charController, player.character.collider);
-        why = ' (allows Forward ' + player.allows?.('Forward') + ', Jump ' + player.allows?.('Jump') + ', disabled controls ' + (player.disabledControls?.() ?? 0) + ', grounded ' + player.character.grounded + ', under ' + (under ? (under.owner?.kind ?? '?') + ' ' + (under.owner?.reference?.toString(16) ?? '') + ' at ' + Math.round(under.distance) : 'nothing') + ', AI driven ' + rt.controls.aiDriven + ')';
+        why = ' (allows Forward ' + player.allows?.('Forward') + ', Jump ' + player.allows?.('Jump') + ', disabled controls ' + (player.disabledControls?.() ?? 0) + ', grounded ' + player.character.grounded + ', under ' + (under ? (under.owner?.kind ?? '?') + ' ' + (under.owner?.reference?.toString(16) ?? '') + ' at ' + Math.round(under.distance) : 'nothing') + ', AI driven ' + rt.controls.aiDriven + ', pilot ' + (player.pilot !== undefined) + ', animation motion ' + JSON.stringify(player.animationMotion?.() ?? null) + ', burden ' + JSON.stringify(player.burden?.() ?? null) + ', weapon drawn ' + player.weaponDrawn?.() + ', mount ' + player.mount?.() + ', held keys ' + [...bot.held].join('+') + ', velocity ' + JSON.stringify(player.character.velocity?.map?.(Math.round) ?? null) + ')';
       }
       say('stuck at ' + feet.map(Math.round).join(',') + ': ' + { KeyA: 'step left', KeyD: 'step right', KeyS: 'back off' }[move] + (bot.stuckCount % 2 === 0 ? ', jump' : '') + why);
     }

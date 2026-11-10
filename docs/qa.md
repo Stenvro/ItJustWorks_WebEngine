@@ -166,10 +166,19 @@ dead, corpse pose, placement, the dead actors that are on the stage). Each use o
 what the crosshair is on
 (its reference and verb), how far the door is, and the door's lock or blocked activation. Each
 load door's journey asked (`door journey asked`) and each interior loaded (`interior ... loads`)
-is logged with the page's call stack. Inside, a guide in a scene who waits for the player
+is logged with the page's call stack. Behind a loading screen (`session.loading`: the place
+left still runs while the next loads) the bot does nothing. Before, it pressed on: Hadvar's keep
+door (91a00) took the first press (the journey asked, the keep loading at once) and every later
+press, Activate refused, fell in the keep's 20 s load; that was the "18 s of presses" of an earlier
+run, and on Ralof's side the automatic door asked nine journeys while the keep loaded, one taken.
+A target to loot comes before a guide in a scene. Inside, a guide in a scene who waits for the player
 (MQ101's keep scenes: "Come here, let me get those bindings off") is gone to first: the guide
 followed last, else Ralof or Hadvar, whichever is there in a scene (a bot that followed Hadvar to
-Ralof's door meets Ralof inside).
+Ralof's door meets Ralof inside). A guide who walks on is followed (MQ101KeepScene2B escorts the
+player down the stairs); once he has stood 25 s it walks into the trigger within 1,200 units of
+him that waits for the player and whose scripts name the marker's quest. Outside, past a guide
+who still stays 20 s, it walks into a trigger within 1,500 units of him that waits for the player
+and names a quest with scenes.
 
 `keep-loaded-twice` loads Helgen's keep twice at once (the second as the first places its
 actors) and checks that the keep's own actors, Gunjar's body among them, are on the stage after
