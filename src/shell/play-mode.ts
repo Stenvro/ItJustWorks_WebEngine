@@ -179,7 +179,6 @@ export class PlayMode {
   #startMenu: Menu | undefined;
   /** The intro plays once (not on returning to the main menu). */
   #introPlayed = false;
-  #loadingMenu: Menu | undefined;
   #mist: MistMenu | undefined;
   #loadingScreens: Promise<LoadingScreen[]> | undefined;
   #hud: HudController | undefined;
@@ -565,7 +564,7 @@ export class PlayMode {
       : session.resetStates(place === undefined);
     this.#loadingText = '';
     this.#mist?.showMist();
-    await this.#openLoadingMenu();
+    const loading = await this.#openLoadingMenu();
     const runtime = await this.#runtimeStarting();
     // The dialogue is read while the world loads: the first conversation need not wait for it.
     runtime.detach(runtime.dialogue.prepare());
@@ -575,7 +574,7 @@ export class PlayMode {
     const screen = await this.#pickLoadingScreen(runtime);
     if (screen) {
       this.#loadingText = screen.text;
-      this.#loadingMenu?.invoke('_root.Menu_mc.refreshLoadingText');
+      loading.invoke('_root.Menu_mc.refreshLoadingText');
       await this.#mist?.showLoadingScreen(screen);
     }
     // The world loads with the scripts and the clock standing still (the opening goes on once
@@ -587,11 +586,9 @@ export class PlayMode {
     } finally {
       session.loading = false;
     }
-    const loading = this.#loadingMenu;
-    loading?.invoke('_root.Menu_mc.FadeOutMenu');
+    loading.invoke('_root.Menu_mc.FadeOutMenu');
     await wait(FADE_OUT_MS);
-    if (loading) this.#host.close(loading);
-    this.#loadingMenu = undefined;
+    this.#host.close(loading);
     this.#mist?.hide();
     this.#mist = undefined;
     // A loaded game's sky and music as they were saved.
@@ -1016,7 +1013,20 @@ export class PlayMode {
    * A journey behind the loading menu and a loading screen (a load door, fast travel), the HUD
    * away: `go` takes the player there; the screen goes once the place has loaded.
    */
-  async loadingScreen(go: () => Promise<void>): Promise<void> {
+  loadingScreen(go: () => Promise<void>): Promise<void> {
+    // One journey at a time, each behind a loading menu of its own: a second one asked while one
+    // loads (a load door activated twice) goes once the first is there. Run side by side, the
+    // second's loading menu took the place of the first's, which the first then closed: the
+    // second's stayed open for good, over the game.
+    const journey = this.#journeys.then(() => this.#journey(go));
+    this.#journeys = journey.catch(() => undefined);
+    return journey;
+  }
+
+  /** The journeys asked for, one after the other (loadingScreen). */
+  #journeys: Promise<void> = Promise.resolve();
+
+  async #journey(go: () => Promise<void>): Promise<void> {
     const session = this.#session;
     const runtime = session.scriptsReady;
     let leave: ((pointer?: boolean) => void) | undefined = this.#enterMenuMode();
@@ -1025,12 +1035,13 @@ export class PlayMode {
     // The world goes at once (the loading screen's mist and model come as they load).
     const unblack = MistMenu.blackout(this.#renderer);
     let mist: MistMenu | undefined;
+    let loading: Menu | undefined;
     try {
       mist = await MistMenu.show(session, this.#renderer, false, true);
       mist.showMist();
       const screen = runtime && (await this.#pickLoadingScreen(runtime));
       this.#loadingText = screen?.text ?? '';
-      await this.#openLoadingMenu();
+      loading = await this.#openLoadingMenu();
       if (screen) await mist.showLoadingScreen(screen);
       // The place loads behind the loading menu: the player is put down in it (physics runs),
       // the scripts and the clock stand still, and the player's controls wait (the mouse stays
@@ -1042,11 +1053,9 @@ export class PlayMode {
       await this.#world.settled();
     } finally {
       session.loading = false;
-      const loading = this.#loadingMenu;
       loading?.invoke('_root.Menu_mc.FadeOutMenu');
       await wait(FADE_OUT_MS);
       if (loading) this.#host.close(loading);
-      this.#loadingMenu = undefined;
       mist?.hide();
       unblack();
       unstack();
@@ -1453,13 +1462,13 @@ export class PlayMode {
   }
 
   /** The loading menu, its text the loading screen's. */
-  async #openLoadingMenu(): Promise<void> {
+  async #openLoadingMenu(): Promise<Menu> {
     // The loading screen's mist whooshes in (UILoadscreenMist, the engine's).
     void this.#session.sounds().then((sounds) => sounds.playInterface('UILoadscreenMist'));
     const runtime = this.#session.scriptsReady;
     const level = runtime ? await runtime.actors.level(PLAYER_REF) : 1;
     const progress = runtime ? (await runtime.progression.levelProgress()) * 100 : 0;
-    this.#loadingMenu = await this.#host.open('loadingmenu.swf', {
+    return this.#host.open('loadingmenu.swf', {
       depth: DEPTH.loadingMenu,
       interactive: false,
       handlers: {
@@ -1493,7 +1502,6 @@ export class PlayMode {
     this.#host.dispose();
     this.#stopPlatform();
     this.#startMenu = undefined;
-    this.#loadingMenu = undefined;
   }
 
   /** The game's menus, HUD and menu mode go (Play ends, or the game goes back to its menu). */

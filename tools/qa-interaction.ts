@@ -13,6 +13,8 @@
 // - interaction-jump-block (WhiterunBreezehome, an interior): an axe drawn, a block held through a
 //   jump is up again after the landing; a jump, then a swing the graph takes. Found 2026-11-10 in
 //   Helgen Keep: indoors every jump left the body's graph in JumpFallState on the ground.
+// - interaction-two-journeys (WhiterunBreezehome): a second journey behind the loading screen
+//   asked while the first loads: one loading menu at a time, and none left open after.
 
 import type { Scenario, ScenarioContext } from './qa-scenarios.ts';
 
@@ -212,6 +214,34 @@ await wait(2);
 out;
 `;
 
+/**
+ * In the page (repl mode): two journeys behind the loading screen asked one after the other while
+ * the first still loads (a load door activated twice): the loading menus open meanwhile and after.
+ */
+const TWO_JOURNEYS = `
+var play = engineDev.play();
+var wait = (s) => new Promise((done) => setTimeout(done, s * 1000));
+var loadingMenus = () => [...play.host.menus].filter((m) => m.movie === 'loadingmenu.swf').length;
+for (let i = 0; i < 20; i++) {
+  const box = [...play.host.menus].find((x) => x.movie === 'messagebox.swf');
+  if (box) {
+    box.received('buttonPress', [0, 1]);
+    break;
+  }
+  await wait(0.5);
+}
+await wait(1);
+var first = play.loadingScreen(() => wait(2));
+await wait(0.5);
+var second = play.loadingScreen(() => wait(0.5));
+var most = 0;
+var watching = setInterval(() => { most = Math.max(most, loadingMenus()); }, 50);
+await Promise.all([first, second]);
+await wait(1.5);
+clearInterval(watching);
+({ most, after: loadingMenus(), loading: play.session.loading });
+`;
+
 export const INTERACTION: readonly Scenario[] = [
   {
     name: 'interaction-prompts',
@@ -308,6 +338,25 @@ export const INTERACTION: readonly Scenario[] = [
       if (!out.landed) await fail(ctx, `after a jump the graph stayed in ${out.graphAfterJump}`);
       if (!out.swing || !out.graphInSwing.includes('Attack'))
         await fail(ctx, `a swing after a jump was not taken: ${out.graphInSwing}`);
+    }),
+  },
+  {
+    name: 'interaction-two-journeys',
+    description:
+      'WhiterunBreezehome: a second journey behind the loading screen asked while the first loads: one loading menu at a time, none left.',
+    start: { kind: 'coc', cell: 'WhiterunBreezehome' },
+    hour: 10,
+    bootSeconds: 240,
+    seconds: 5,
+    finish: checked(async (ctx) => {
+      const out = await ctx.page.eval<{ most: number; after: number; loading: boolean }>(
+        TWO_JOURNEYS,
+        120000,
+        true,
+      );
+      ctx.note(`two journeys: ${JSON.stringify(out)}`);
+      if (out.most > 1) await fail(ctx, `${String(out.most)} loading menus were open at once`);
+      if (out.after > 0) await fail(ctx, `${String(out.after)} loading menus stayed open`);
     }),
   },
 ];
