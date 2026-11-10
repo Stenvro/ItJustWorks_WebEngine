@@ -147,7 +147,11 @@ or a dead actor (MQ101's "Find some equipment", the warden's chest; "Loot Gunjar
 walks to, faces and opens with Activate; the scenario then takes all in the container menu (R),
 closes it (Tab), and the player wears the armor and one weapon it carries and does not wear yet,
 each as the inventory menu equips a selected entry (`EquipmentEngine.toggle`: MQ101PlayerScript's
-OnObjectEquipped sets stages 256 and 258). Each use of a door logs what the crosshair is on
+OnObjectEquipped sets stages 256 and 258). While the crosshair finds nothing at what it loots it pitches lower and higher in turn and logs
+what the crosshair's pick meets, where the target's posed body lies, the camera and whether
+Activate is allowed; a target not on the actor stage logs its game state once (reference state,
+dead, corpse pose, placement, the dead actors that are on the stage). Each use of a door logs
+what the crosshair is on
 (its reference and verb), how far the door is, and the door's lock or blocked activation.
 
 ## The monitors in the page

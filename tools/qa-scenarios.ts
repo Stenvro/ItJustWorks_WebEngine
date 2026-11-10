@@ -671,6 +671,15 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
         }
         tap('KeyE');
         say('open ' + bot.loot.toString(16) + ' (crosshair on ' + (aimed?.reference?.toString(16) ?? 'nothing') + seen + ')');
+        // Not on the stage: what the game state has for it (once).
+        if (!aimed && !W.actorStage?.get(bot.loot) && bot.lootState !== bot.loot) {
+          bot.lootState = bot.loot;
+          const ref = bot.loot;
+          void rt.placement(ref, false).then((at) => {
+            const staged = [...(W.actorStage?.all() ?? [])].filter((s) => s.placed.actor.startsDead || s.dead).map((s) => s.reference.toString(16));
+            say('not staged ' + ref.toString(16) + ': reference state ' + JSON.stringify(rt.state.references.get(ref) ?? null) + ', actor dead ' + rt.state.actors.get(ref)?.dead + ', corpse ' + JSON.stringify(rt.state.actors.get(ref)?.corpse ?? null)?.slice(0, 120) + ', placement ' + JSON.stringify(at ?? null) + ', dead on the stage ' + staged.join(' '));
+          });
+        }
       }
       return;
     }
