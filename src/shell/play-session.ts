@@ -755,6 +755,10 @@ export class PlaySession {
   #noticeTimer: ReturnType<typeof setTimeout> | undefined;
   /** What the crosshair rests on. */
   #target: Activatable | undefined;
+  /** What the crosshair rests on, as Activate would take it (for the log and QA). */
+  get crosshairTarget(): Activatable | undefined {
+    return this.#target;
+  }
   #favorShown = false;
   readonly #perks: PerkActivation | undefined;
   /** Set Activate Label's verb of the reference the crosshair rests on (null: none). */

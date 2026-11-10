@@ -270,6 +270,7 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
 (async () => {
   if (window.__qaBot) return 'running';
   const compass = await import('/src/shell/compass.ts');
+  const actors = await import('/src/shell/actors.ts');
   const paths = await import('/src/ai/pathfinding.ts');
   const { Layer } = await import('/src/physics/collision-layers.ts');
   // Interiors play in the model viewer, the world outside in the world viewer (as the monitors
@@ -637,7 +638,7 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
         bot.usedDoor = now;
         // What the crosshair is on as it presses, and whether the door is locked: a door that
         // takes several presses says why.
-        const aimed = (() => { try { return play.#target; } catch { return undefined; } })();
+        const aimed = viewer().play?.crosshairTarget;
         const ref = rt.state.references.get(bot.door); const lock = ref && (ref.locked || ref.activationBlocked) ? { locked: ref.locked, level: ref.lockLevel, blocked: ref.activationBlocked } : undefined;
         tap('KeyE');
         say('use door ' + bot.door.toString(16) + ' (crosshair on ' + (aimed?.reference?.toString(16) ?? 'nothing') + (aimed?.verb ? ' "' + aimed.verb + '"' : '') + ', ' + Math.round(toGoal) + ' units off' + (lock ? ', lock ' + JSON.stringify(lock) : '') + ')');
@@ -650,11 +651,26 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
       const dz = goal[2] + 30 - (feet[2] + 120);
       bot.aim = goal;
       player.pitch = Math.atan2(dz, Math.max(1, toGoal));
+      // The crosshair on nothing: a player looks about for it, lower and higher in turn.
+      bot.lootTries = bot.lootFor === bot.loot ? (bot.lootTries ?? 0) : 0;
+      bot.lootFor = bot.loot;
+      player.pitch += [0, -0.25, 0.25, -0.5, 0.5][Math.floor(bot.lootTries / 2) % 5];
       if (now - (bot.usedLoot ?? 0) > 2500) {
         bot.usedLoot = now;
-        const aimed = (() => { try { return play.#target; } catch { return undefined; } })();
+        bot.lootTries++;
+        const aimed = viewer().play?.crosshairTarget;
+        // What the pick meets (the crosshair's ray: from the camera along the view), and where
+        // the target's posed body lies, while the crosshair is on nothing.
+        let seen = '';
+        if (!aimed) {
+          const play = viewer().play;
+          const staged = W.actorStage?.get(bot.loot);
+          const hit = play?.physics.pick(player.position, player.forward, 250, 5, Layer.itemPicker, player.character.collider);
+          const body = staged?.placed ? [actors.actorFeet(staged.placed), actors.headPosition(staged.placed)].map((p) => p.map(Math.round).join(',')).join(' to ') : 'not staged';
+          seen = ', pick meets ' + (hit ? (hit.owner?.kind ?? '?') + ' ' + (hit.owner?.reference?.toString(16) ?? '') + ' at ' + Math.round(hit.distance) : 'nothing') + ', body ' + body + (staged ? ', dead ' + staged.dead : '') + ', camera ' + player.position.map(Math.round).join(',') + ' pitch ' + player.pitch.toFixed(2) + ', allows Activate ' + player.allows?.('Activate');
+        }
         tap('KeyE');
-        say('open ' + bot.loot.toString(16) + ' (crosshair on ' + (aimed?.reference?.toString(16) ?? 'nothing') + ')');
+        say('open ' + bot.loot.toString(16) + ' (crosshair on ' + (aimed?.reference?.toString(16) ?? 'nothing') + seen + ')');
       }
       return;
     }

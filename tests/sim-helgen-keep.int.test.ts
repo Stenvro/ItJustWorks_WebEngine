@@ -200,6 +200,7 @@ describe.skipIf(!hasGamedata())('MQ101 in Helgen Keep', () => {
       // The player keeps by Ralof (within the 100 units his "wait for the player" phase asks)
       // and loots Gunjar when he says to (stage 255).
       let looted = false;
+      let activateBack = false;
       for (let second = 0; second < 150 && !sim.stageDone(MQ101, 270); second++) {
         await sim.step(1);
         const near = await sim.distance(ralof, PLAYER_REF);
@@ -210,12 +211,17 @@ describe.skipIf(!hasGamedata())('MQ101 in Helgen Keep', () => {
           await sim.moveTo([at[0] + (me[0] - at[0]) * k, at[1] + (me[1] - at[1]) * k, at[2] + 10]);
         }
         if (!looted && sim.stageDone(MQ101, 255)) {
+          // Phase 10 ("Setstage 240 - enable all player controls") came first: its completion
+          // fragment sets 240, whose fragment gives the player every control back, Activate
+          // among them (phase 10's start took it away).
+          activateBack = sim.stageDone(MQ101, 240) && sim.runtime.controls.activate;
           const [x, y, z] = sim.actor(GUNJAR)?.position ?? [0, 0, 0];
           await sim.moveTo([x + 80, y, z + 10]);
           await sim.step(0.5);
           looted = sim.activate(GUNJAR);
         }
       }
+      expect(activateBack).toBe(true);
       expect(looted).toBe(true);
       // The soldier pulled the inner lever, the gate opened (phase 25's condition), and the
       // fight's phase ended (its fragment sets 270), with the player never seated anywhere.
