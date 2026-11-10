@@ -7,6 +7,7 @@ import { parseScene } from '../../../ai/scene-records.ts';
 import { GroupType } from '../../../formats/esm/record.ts';
 import { ObjectHandle } from '../../values.ts';
 import { globalValue } from '../condition-values.ts';
+import { MISC_QUEST_TYPE } from '../journal.ts';
 import type { ScriptRuntime } from '../runtime.ts';
 import { countObjectiveCompleted } from '../stat-events.ts';
 import { bool, formOf, int, num, object, str, type Register } from './args.ts';
@@ -105,9 +106,14 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
     // original's save at MQ101 stage 180 has MQ101 active, which no script of the load order
     // sets (Quest.SetActive), and the one at stage 70, before its first objective, does not.
     // TODO(M13): inferred that a quest the player made inactive is made active again by its
-    // next objective.
-    if (displayed && !entry.displayed) state.quest(self.formId).active = true;
+    // next objective. A miscellaneous quest (type 6) follows the player's one choice for them
+    // all instead (the journal's ToggleShowMiscObjectives: GameState.miscObjectivesActive).
+    const newlyShown = displayed && !entry.displayed;
     entry.displayed = displayed;
+    if (newlyShown) {
+      const misc = (await forms.quest(self.formId))?.type === MISC_QUEST_TYPE;
+      if (!misc || state.miscObjectivesActive) state.quest(self.formId).active = true;
+    }
     return null;
   });
   // A shown objective's completion and failure are announced too; a completion is counted in

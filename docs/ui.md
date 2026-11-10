@@ -900,11 +900,15 @@ the selected entry's `description` (the latest journal text the quest's stages c
 entries' CNAM) and `objectives` (`{text, active, completed, failed}`, newer first; for
 MISCELLANEOUS every miscellaneous objective not done, with its quest's `formID`).
 `ToggleQuestActiveStatus(formID, instance)` turns a quest active or not (several may be) and
-answers its new state. A quest becomes active by itself as an objective of it is newly shown
+answers its new state; `ToggleShowMiscObjectives(active)` does it for the miscellaneous ones,
+one choice for them all that the game state keeps (`GameState.miscObjectivesActive`, saved).
+A quest becomes active by itself as an objective of it is newly shown
 (`Quest.SetObjectiveDisplayed`; observed in the original's saves: MQ101 is active at stage 180,
 though no script sets it so, and not at stage 70, before its first objective), so a new quest's
-markers are on the compass at once (MQ101's "Make your way to the Keep": Ralof, then Hadvar);
-TODO(M13): inferred that this also makes a quest the player turned off active again; `ToggleShowMiscObjectives(active)` does it for the miscellaneous ones.
+markers are on the compass at once (MQ101's "Make your way to the Keep": Ralof, then Hadvar).
+A miscellaneous quest does so only while the miscellaneous objectives are shown: turned off,
+they stay off as new ones come. TODO(M13): inferred that this also makes a quest the player
+turned off active again.
 
 Stats: `updateStats` is answered with every statistic as name, value, category and an unused
 field (`src/gameplay/misc-stats.ts`: the game's stats in the journal's order and categories,
