@@ -135,7 +135,8 @@ stages; every actor that begins or ends a reaction to a dead body; the player's 
 it is not grounded for more than 2 s. Each frame it also watches what carries the player
 (`CharacterBody.carriedBy`): a simulated body whose carry was held to its limit (`carry held:`,
 its reference, base, mass and speed), and the player's feet going faster than 1,500 units a
-second outside a load (`player flung`: what carried it, and the four fastest simulated bodies
+second over more than 60 units in a frame, outside a load (in a short frame a push of ten units
+out of a wall already reads as that speed) (`player flung`: what carried it, and the four fastest simulated bodies
 within 400 units, each with its reference and base).
 
 `opening-ralof` (not in a run without names) is the same opening with the bot on Ralof's side

@@ -641,7 +641,7 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
         const aimed = viewer().play?.crosshairTarget;
         const ref = rt.state.references.get(bot.door); const lock = ref && (ref.locked || ref.activationBlocked) ? { locked: ref.locked, level: ref.lockLevel, blocked: ref.activationBlocked } : undefined;
         tap('KeyE');
-        say('use door ' + bot.door.toString(16) + ' (crosshair on ' + (aimed?.reference?.toString(16) ?? 'nothing') + (aimed?.verb ? ' "' + aimed.verb + '"' : '') + ', ' + Math.round(toGoal) + ' units off' + (lock ? ', lock ' + JSON.stringify(lock) : '') + ')');
+        say('use door ' + bot.door.toString(16) + ' (crosshair on ' + (aimed?.reference?.toString(16) ?? 'nothing') + (aimed?.verb ? ' ' + JSON.stringify(aimed.verb) : '') + ', ' + Math.round(toGoal) + ' units off' + (lock ? ', lock ' + JSON.stringify(lock) : '') + ', allows Activate ' + player.allows?.('Activate') + ')');
       }
       return;
     }
@@ -794,7 +794,8 @@ export const GUIDE_WATCH = `(async () => {
   }, 1000);
   // The carry watch, each frame: what carried the player (CharacterBody.carriedBy) whenever a
   // simulated body's carry was held to its limit, and whenever the player's feet go faster than
-  // 1500 units a second (not through a load or a teleport: under 3000 units in the frame), with
+  // 1500 units a second over more than 60 units (a small push out of a wall in a short frame is
+  // none; a load or a teleport, 3000 units or more in the frame, is none either), with
   // the carrier's reference and base and the simulated bodies near.
   let lastFeet; let lastTime = performance.now();
   const describeOwner = async (rt, owner) => {
@@ -818,7 +819,7 @@ export const GUIDE_WATCH = `(async () => {
       }
       if (rt && feet && lastFeet && dt > 0 && viewer().loading === undefined) {
         const d = Math.hypot(feet[0] - lastFeet[0], feet[1] - lastFeet[1], feet[2] - lastFeet[2]);
-        if (d / dt > 1500 && d < 3000) {
+        if (d / dt > 1500 && d > 60 && d < 3000) {
           const physics = viewer().play?.physics;
           const near = [];
           physics?.world.forEachRigidBody((body) => {
