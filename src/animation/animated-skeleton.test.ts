@@ -335,6 +335,36 @@ describe('object skeletons', () => {
     expect(moments[0]).toBeCloseTo(0.3, 3);
   });
 
+  it('gives a clip annotation its lateness on the clock where a long frame was cut', () => {
+    // Found in review 2026-11-09: below 10 frames a second a frame's update is cut to 0.1 s and
+    // the event's lateness was told in seconds of that cut step: at 5 frames a second the
+    // annotation half way through the update came out 0.05 s before the frame's end, not 0.1.
+    const struck: AnimationBinding = {
+      ...swing,
+      animation: { ...swing.animation, annotations: [{ time: 0.15, text: 'HitFrame' }] },
+    };
+    const object = startObjectSkeleton(
+      nodes,
+      {
+        ...graph,
+        root: { ...graph.root, events: ['HitFrame'] },
+        host: { clip: () => struck, behavior: () => undefined },
+      },
+      () => 0.5,
+    );
+    if (!object) throw new Error('no skeleton');
+    const { skeleton } = object;
+    const late: number[] = [];
+    skeleton.onEvents = (events) => {
+      for (const event of events) if (event.name === 'HitFrame') late.push(event.late ?? 0);
+    };
+    // Frames of 0.2 s, each update cut to 0.1 s: the graph passes 0.15 half way through the
+    // update from 0.1 to 0.2, which stands for the frame from 0.2 to 0.4 on the clock.
+    for (let frame = 0; frame <= 4; frame++) animateSkeletons([skeleton], frame * 0.2);
+    expect(late).toHaveLength(1);
+    expect(late[0]).toBeCloseTo(0.1, 6);
+  });
+
   it('tells the update an unseen graph ran ahead in, whose pose it shows at once', () => {
     const object = startObjectSkeleton(nodes, graph, () => 0.5);
     if (!object) throw new Error('no skeleton');

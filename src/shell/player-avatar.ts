@@ -81,7 +81,10 @@ export class PlayerAvatar {
   readonly #motion: InstanceMotion;
   readonly #world: Float32Array;
   #bodyYaw: number;
-  /** The avatar's own clock (s): the game's, and real time while it animates in a menu. */
+  /**
+   * The avatar's own clock (s): the game's at the player's pace, and real time while it animates
+   * in a menu; its graphs' updates take at most animateSkeletons' cut of a long frame.
+   */
   #clock = 0;
   #last: { readonly seconds: number; readonly real: number } | undefined;
   /** Its movement, as the graphs' variables and events (shared with the NPCs). */
@@ -566,7 +569,11 @@ export class PlayerAvatar {
     // real time.
     const step = !last ? 0 : this.animatesInMenus ? real - last.real : seconds - last.seconds;
     const dt = Math.min(MAX_STEP, Math.max(0, step));
-    this.#clock += dt;
+    // The clock runs the whole step: the graphs' updates are cut to MAX_STEP by animateSkeletons
+    // as before, which counts an event's lateness on the clock (GraphEvent.late: a blow's moment,
+    // BlowMoment). Cut here, below 10 frames a second an update looked as if it covered only
+    // MAX_STEP of the frame and the lateness came out short.
+    this.#clock += Math.max(0, step);
     this.stepped = dt;
     if (!this.seated && !this.knocked) this.#drive(dt);
     const body = this.#made.body;

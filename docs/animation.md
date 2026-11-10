@@ -1157,7 +1157,11 @@ in the update that passes it and tells how long before that update's end it fell
 (`GraphEvent.late`, at most about a frame where the update is held short of its clips' next
 event: [How often graphs update](#how-often-graphs-update)). The blow's moment is the update's end
 on the animation clock less that (`BlowMoment`; the player's body runs on its avatar's own clock,
-so only the lateness is taken, its update ending at the frame's clock). Where the actor is shown
+so only the lateness is taken, its update ending at the frame's clock). The lateness is in
+seconds of the clock: a frame longer than `animateSkeletons`' cut (0.1 s, below 10 frames a
+second) has its graph stepped by the cut, and the event's share of that step is put on the whole
+frame (inferred, TODO(M13)); the player's avatar clock runs the whole frame too, at the player's
+pace. Where the actor is shown
 as the clock runs, the blow waits for the clock and takes the pose between the two frames shown
 around its moment; where its graph ran ahead and is shown at once (unseen, not interpolated), it
 takes the pose between the one shown before that update and the one after (the graph's at the

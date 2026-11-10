@@ -449,6 +449,14 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
           } else update(dt);
         };
       }
+      // How long before their updates' ends the player's body graph raised its clips' events.
+      const late: number[] = [];
+      const heard = body?.onEvents;
+      if (body)
+        body.onEvents = (events) => {
+          for (const event of events) if (event.late !== undefined) late.push(event.late);
+          heard?.(events);
+        };
       let chopped = false;
       for (let t = 0; t < 300 && !sim.stageDone(MQ101, 100); t += frame) {
         await sim.step(frame, frame);
@@ -473,6 +481,12 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
         sim.world.player.eye[2] - sim.world.player.feet[2],
         'the eye on the block',
       ).toBeLessThan(70);
+      // The lateness is on the clock: up to the whole frame, not the 0.1 s step it was cut to.
+      // Found in review 2026-11-09: the avatar's clock was cut to 0.1 s too, and the lateness
+      // came out short below 10 frames a second.
+      expect(late.length).toBeGreaterThan(20);
+      expect(Math.max(...late)).toBeGreaterThan(0.1 + 1e-6);
+      expect(Math.max(...late)).toBeLessThanOrEqual(frame + 1e-6);
     } finally {
       await sim.close();
     }

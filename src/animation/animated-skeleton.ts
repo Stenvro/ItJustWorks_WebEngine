@@ -196,10 +196,9 @@ export function animateSkeletons(
       interval > (1 + wanted.slop) * frame;
     if (!ahead) {
       if (state) state.interpolating = false;
-      const dt =
-        animated.time === undefined ? 0 : Math.min(MAX_STEP, Math.max(0, seconds - animated.time));
+      const span = animated.time === undefined ? 0 : Math.max(0, seconds - animated.time);
       animated.time = Math.max(seconds, animated.time ?? seconds);
-      step(animated, dt);
+      step(animated, Math.min(MAX_STEP, span), span);
       if (behavior) {
         animated.pose.update(behavior.pose);
         animated.pose.showBySlots(behavior);
@@ -222,7 +221,8 @@ export function animateSkeletons(
       interpolations.set(animated, interpolation);
     }
     interpolation.before.set(shown ?? behavior.pose);
-    const dt = Math.min(Math.max(MAX_STEP, 2 * interval), Math.max(0, seconds + interval - time));
+    const span = Math.max(0, seconds + interval - time);
+    const dt = Math.min(Math.max(MAX_STEP, 2 * interval), span);
     animated.time = seconds + interval;
     // Its pose before is its graph's at the time its graph had, a little behind the clock when the
     // last interval ended between frames: the blend runs from then, so the pose moves on this
@@ -233,7 +233,7 @@ export function animateSkeletons(
     interpolation.until = seconds + interval;
     interpolation.interpolating = true;
     interpolation.shown = wanted.interpolate;
-    step(animated, dt);
+    step(animated, dt, span);
     // It shows the pose the clock has it at on the way from the pose it had; not interpolated
     // (unseen), the pose ahead at once.
     if (wanted.interpolate) {
@@ -249,7 +249,7 @@ export function animateSkeletons(
 }
 
 /** One update of a skeleton's graph (and its face) by `dt`; what it raised goes out. */
-function step(animated: AnimatedSkeleton, dt: number): void {
+function step(animated: AnimatedSkeleton, dt: number, span = dt): void {
   animated.face?.update(dt);
   const behavior = animated.behavior;
   if (!behavior) return;
@@ -261,7 +261,17 @@ function step(animated: AnimatedSkeleton, dt: number): void {
   // Footsteps and SoundPlay events sound through onEvents (src/shell/actor-sounds.ts), the
   // systems hear theirs there too (combat's hits, casts); scripts hear theirs through
   // onScriptEvents (RegisterForAnimationEvent).
-  const raised = behavior.takeRaised();
+  // An event's lateness in seconds of the clock: where a long frame's update was cut to
+  // MAX_STEP (`span`, the clock's time it stands for, is longer than `dt`), the graph's share of
+  // its step is put on the span. TODO(M13): inferred that the engine's cut frame keeps its
+  // events' places on the frame so.
+  const taken = behavior.takeRaised();
+  const raised =
+    span > dt && dt > 0
+      ? taken.map((event) =>
+          event.late === undefined ? event : { ...event, late: (event.late * span) / dt },
+        )
+      : taken;
   if (raised.length > 0) {
     animated.onEvents?.(raised);
     animated.onScriptEvents?.(raised);
