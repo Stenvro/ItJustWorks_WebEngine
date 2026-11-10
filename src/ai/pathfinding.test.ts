@@ -846,6 +846,98 @@ describe('PathSearch', () => {
     expect(other.taken).toBeLessThan(200);
   });
 
+  it('gives a short way in its first share on a field whose island is not made yet', () => {
+    // A 40 by 40 field (3,200 triangles), its island never made: a way of a few triangles is
+    // searched first, the island's flood never waited for.
+    const squares: [number, number][] = [];
+    for (let x = 0; x < 40; x++) for (let y = 0; y < 40; y++) squares.push([x, y]);
+    const set = setOf([gridMesh(1, squares)]);
+    for (const [from, to] of [
+      [
+        [50, 50, 0],
+        [250, 50, 0],
+      ],
+      [
+        [3950, 3950, 0],
+        [3750, 3950, 0],
+      ],
+    ] as [Point, Point][]) {
+      const search = new PathSearch(set, from, to, { radius: 10 });
+      search.run(256);
+      expect(search.done).toBe(true);
+      expect(search.result?.complete).toBe(true);
+      expect(search.taken).toBeLessThan(30);
+    }
+  });
+
+  it('floods one island for searches begun together on it, wherever they begin', () => {
+    // A 40 by 40 field and a goal on a field of its own beyond its east edge: both searches must
+    // have the island made to know the goal is off it.
+    const squares: [number, number][] = [];
+    for (let x = 0; x < 40; x++) for (let y = 0; y < 40; y++) squares.push([x, y]);
+    const other: [number, number][] = [];
+    for (let x = 45; x < 50; x++) for (let y = 10; y < 15; y++) other.push([x, y]);
+    const meshes = [gridMesh(1, squares), gridMesh(2, other)];
+    const goal: Point = [4750, 1250, 0];
+    const corner: Point = [3950, 3950, 0];
+    // One alone, on a set of its own: it makes the island whole itself.
+    const alone = new PathSearch(setOf(meshes), [50, 50, 0], goal, { radius: 10 });
+    alone.run(Infinity);
+    expect(alone.taken).toBeGreaterThan(3200);
+    // Two begun together, one in each corner (the second's triangle is the last the first's
+    // flood reaches), taking turns: the second makes the first's island on, not one of its own.
+    const set = setOf(meshes);
+    const first = new PathSearch(set, [50, 50, 0], goal, { radius: 10 });
+    const second = new PathSearch(set, corner, goal, { radius: 10 });
+    first.run(1);
+    second.run(1);
+    while (!first.done || !second.done) {
+      second.run(200);
+      first.run(200);
+    }
+    expect(first.taken + second.taken).toBeLessThan(alone.taken * 1.3);
+    // The ways they would have searched alone.
+    expect(first.result).toEqual(alone.result);
+    expect(second.result).toEqual(searched(setOf(meshes), corner, goal, { radius: 10 }));
+    expect(second.result?.complete).toBe(false);
+    expect(second.result?.points.at(-1)?.[0]).toBeCloseTo(4000, 0);
+  });
+
+  it('finds a nearest point exact, and cheaper, for a goal near one asked before', () => {
+    // A 20 by 20 field and goals above and beyond its east edge, the second in the first's grid
+    // square (a dragon flown on a little): the triangle kept for the first bounds the look.
+    const squares: [number, number][] = [];
+    for (let x = 0; x < 20; x++) for (let y = 0; y < 20; y++) squares.push([x, y]);
+    const mesh = gridMesh(1, squares);
+    const nearest = (
+      set: NavmeshSet,
+      point: Point,
+    ): { at: readonly [number, number, number]; taken: number } => {
+      const start = set.locate([50, 50, 0]);
+      if (!start) throw new Error('no start');
+      const island = islandOf(set, start.navmesh, start.triangle);
+      // Whole before the look is counted.
+      island.grow({ allowance: Infinity, taken: 0 });
+      const share = { allowance: Infinity, taken: 0 };
+      const step = island.nearestSteps(point, share).next();
+      if (step.done !== true) throw new Error('gave way unbounded');
+      return { at: step.value.at, taken: share.taken };
+    };
+    const set = setOf([mesh]);
+    nearest(set, [3000, 900, 1500]);
+    const goal: Point = [3030, 940, 1480];
+    const warm = nearest(set, goal);
+    // The same goal on an island that was asked nothing yet.
+    const cold = nearest(setOf([mesh]), goal);
+    const off = (at: readonly number[]): number =>
+      Math.hypot((at[0] ?? 0) - goal[0], (at[1] ?? 0) - goal[1], (at[2] ?? 0) - goal[2]);
+    expect(off(warm.at)).toBeCloseTo(off(cold.at), 6);
+    expect(warm.at[0]).toBeCloseTo(2000, 6);
+    expect(warm.taken).toBeLessThan(cold.taken);
+    // The same goal again: answered at once.
+    expect(nearest(set, goal).taken).toBe(0);
+  });
+
   it("finds the island's point nearest a goal as a look at every triangle does", () => {
     // A field whose east half rises (a hill): points around, above, below and far off it.
     const squares: [number, number][] = [];

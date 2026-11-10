@@ -59,8 +59,11 @@ const GRID = 256;
  * worldspace is far smaller), the keys small integers (a map keyed by larger ones is far slower).
  */
 const GRID_OFFSET = 1 << 13;
-/** Nearest points kept per island, for the goals asked most lately (several actors, one goal). */
-const NEAREST_KEPT = 16;
+/**
+ * Nearest points kept per island, by the grid square of the goals asked most lately (several
+ * actors, one goal; a moving goal stays in a square a while).
+ */
+const NEAREST_KEPT = 64;
 
 const gridKey = (gx: number, gy: number): number =>
   (gx + GRID_OFFSET) * 2 * GRID_OFFSET + (gy + GRID_OFFSET);
@@ -79,9 +82,14 @@ export class NavmeshIsland {
   >();
   /** Navmeshes its links lead into that were not loaded as it was made. */
   readonly #missing = new Set<number>();
-  /** The triangles marked but not yet flooded from (each: its navmesh and index). */
-  readonly #openMesh: Navmesh[] = [];
-  readonly #openTriangle: number[] = [];
+  /**
+   * The triangles marked but not yet flooded from (each: its navmesh and index), flooded from in
+   * the order marked from `#openHead` on: outward from the first, so a triangle near it is found
+   * early (a search asks whether its goal is on the island while it is made).
+   */
+  #openMesh: Navmesh[] = [];
+  #openTriangle: number[] = [];
+  #openHead = 0;
   /**
    * Its triangles by the grid squares their bounds cover (indices into the two lists below), and
    * the heights they span in each.
@@ -96,8 +104,8 @@ export class NavmeshIsland {
   #maxY = -Infinity;
   #minZ = Infinity;
   #maxZ = -Infinity;
-  /** The nearest points lately asked for, by the goal's coordinates. */
-  readonly #nearestKept = new Map<string, IslandPoint>();
+  /** The nearest points lately asked for, by the goal's grid square (gridKey), the goal kept. */
+  readonly #nearestKept = new Map<number, { readonly goal: Vec3; readonly near: IslandPoint }>();
   readonly #set: NavmeshLookup;
   readonly #slots: WeakMap<Navmesh, (NavmeshIsland | undefined)[]> | undefined;
   /** How many triangles it reaches (so far, while it is being made). */
@@ -120,7 +128,7 @@ export class NavmeshIsland {
 
   /** Whether it is made whole (every triangle it reaches found). */
   get complete(): boolean {
-    return this.#openMesh.length === 0;
+    return this.#openHead >= this.#openMesh.length;
   }
 
   /** The last navmesh marked in: its reached triangles and islands' slots. */
@@ -205,12 +213,13 @@ export class NavmeshIsland {
   grow(share: IslandShare): boolean {
     const openMesh = this.#openMesh;
     const openTriangle = this.#openTriangle;
-    while (openMesh.length > 0) {
+    while (this.#openHead < openMesh.length) {
       if (share.taken >= share.allowance) return false;
       share.taken++;
-      const at = openMesh.pop();
-      const index = openTriangle.pop();
-      if (!at || index === undefined) break;
+      const at = openMesh[this.#openHead];
+      const index = openTriangle[this.#openHead];
+      this.#openHead++;
+      if (!at || index === undefined) continue;
       this.#index(at, index);
       for (let edge = 0; edge < 3; edge++) {
         const across = triangleNeighbour(at, index, edge);
@@ -239,6 +248,10 @@ export class NavmeshIsland {
         this.#mark(into, target);
       }
     }
+    // Whole: the lists let go.
+    this.#openMesh = [];
+    this.#openTriangle = [];
+    this.#openHead = 0;
     return true;
   }
 
@@ -297,15 +310,24 @@ export class NavmeshIsland {
    * Its point nearest to `point` (straight, in 3D), and the triangle it lies in; made whole
    * first. Looks at the grid squares outward from the point's (each square and each triangle in
    * one takes one of `share`), giving way when `share` is spent. The last points asked for are
-   * kept (actors going for one goal ask for the same point).
+   * kept by the goal's grid square: the same goal again is answered at once; another in its
+   * square (soldiers chasing one dragon, each asking where it is then) begins from the point of
+   * the triangle kept for it, so only what may lie nearer is looked at, and the answer is exact.
    */
   *nearestSteps(point: Vec3, share: IslandShare): Generator<undefined, IslandPoint, undefined> {
     while (!this.grow(share)) yield;
-    const keyOfPoint = `${String(point[0])},${String(point[1])},${String(point[2])}`;
-    const kept = this.#nearestKept.get(keyOfPoint);
-    if (kept) return kept;
     const cx = Math.floor(point[0] / GRID);
     const cy = Math.floor(point[1] / GRID);
+    const square = gridKey(cx, cy);
+    const kept = this.#nearestKept.get(square);
+    if (kept) {
+      // Asked again: kept the longest from now on.
+      this.#nearestKept.delete(square);
+      this.#nearestKept.set(square, kept);
+      if (kept.goal[0] === point[0] && kept.goal[1] === point[1] && kept.goal[2] === point[2]) {
+        return kept.near;
+      }
+    }
     // The rings of squares round the point's that reach the island's squares.
     const outside = Math.max(this.#minX - cx, cx - this.#maxX, this.#minY - cy, cy - this.#maxY);
     const first = Math.max(0, outside);
@@ -322,6 +344,16 @@ export class NavmeshIsland {
       best: undefined,
       bestD: Infinity,
     };
+    if (kept) {
+      // The kept triangle's point nearest this goal: nothing farther need be looked at.
+      if (share.taken >= share.allowance) yield;
+      share.taken++;
+      const { navmesh, triangle } = kept.near;
+      const [a, b, c] = navmeshTriangle(navmesh, triangle);
+      const at = closestOnTriangle(point, a, b, c);
+      query.best = { at, navmesh, triangle };
+      query.bestD = (at[0] - point[0]) ** 2 + (at[1] - point[1]) ** 2 + (at[2] - point[2]) ** 2;
+    }
     // No point of it lies nearer in height than its heights' span.
     const dz = Math.max(this.#minZ - point[2], 0, point[2] - this.#maxZ);
     for (let ring = first; ring <= last; ring++) {
@@ -348,11 +380,12 @@ export class NavmeshIsland {
     const best = query.best;
     // An island reaches at least the triangle it was made from.
     if (!best) throw new Error('navmesh island without triangles');
+    this.#nearestKept.delete(square);
     if (this.#nearestKept.size >= NEAREST_KEPT) {
       const oldest = this.#nearestKept.keys().next();
       if (oldest.done !== true) this.#nearestKept.delete(oldest.value);
     }
-    this.#nearestKept.set(keyOfPoint, best);
+    this.#nearestKept.set(square, { goal: [point[0], point[1], point[2]], near: best });
     return best;
   }
 
@@ -365,24 +398,67 @@ export class NavmeshIsland {
   }
 }
 
-/** The islands made for a set (each triangle: the last one made that reaches it). */
-const ISLANDS = new WeakMap<NavmeshLookup, WeakMap<Navmesh, (NavmeshIsland | undefined)[]>>();
+/**
+ * The islands made for a set: each triangle's (the last one made that reaches it), and the one
+ * being made. One is made at a time: a search whose triangle it has not reached yet makes it on
+ * (its triangle may be on it) rather than make another over the same triangles beside it.
+ */
+interface SetIslands {
+  readonly slots: WeakMap<Navmesh, (NavmeshIsland | undefined)[]>;
+  making: NavmeshIsland | undefined;
+}
+
+const ISLANDS = new WeakMap<NavmeshLookup, SetIslands>();
+
+function islandsOf(set: NavmeshLookup): SetIslands {
+  let islands = ISLANDS.get(set);
+  if (!islands) {
+    islands = { slots: new WeakMap(), making: undefined };
+    ISLANDS.set(set, islands);
+  }
+  return islands;
+}
 
 /**
- * The island a triangle of a set lies in (made once, kept while it holds). It may not be whole
- * yet (`complete`; `grow` makes it on): one being made that has reached the triangle is the
- * triangle's island, a search on it goes on making it.
+ * Makes on the island a triangle of a set lies in, as far as `share` gives (each triangle
+ * flooded takes one): the island that has reached the triangle (whole or not yet: `complete`),
+ * or undefined while the island being made has not reached it. An island made whole is kept
+ * while it holds. The set makes one island at a time, so searches begun together on one stretch
+ * of navmesh flood it once: while the island being made has not reached a triangle, it is made
+ * on first (the triangle is found on it, or once it is whole without it, the triangle's own is
+ * begun).
  */
-export function islandOf(set: NavmeshLookup, navmesh: Navmesh, triangle: number): NavmeshIsland {
-  let byNavmesh = ISLANDS.get(set);
-  if (!byNavmesh) {
-    byNavmesh = new WeakMap();
-    ISLANDS.set(set, byNavmesh);
+export function growIsland(
+  set: NavmeshLookup,
+  navmesh: Navmesh,
+  triangle: number,
+  share: IslandShare,
+): NavmeshIsland | undefined {
+  const islands = islandsOf(set);
+  const known = islands.slots.get(navmesh)?.[triangle];
+  if (known?.has(navmesh, triangle) && known.current(set)) {
+    if (!known.complete) known.grow(share);
+    return known;
   }
-  const known = byNavmesh.get(navmesh)?.[triangle];
-  if (known?.current(set) && known.has(navmesh, triangle)) return known;
+  const making = islands.making;
+  if (making && !making.complete && making.current(set)) {
+    const whole = making.grow(share);
+    if (making.has(navmesh, triangle)) return making;
+    if (!whole) return undefined;
+  }
   // Every triangle it reaches finds it next time (a later island reaching one takes its place).
-  return new NavmeshIsland(set, navmesh, triangle, byNavmesh);
+  const island = new NavmeshIsland(set, navmesh, triangle, islands.slots);
+  islands.making = island;
+  island.grow(share);
+  return island;
+}
+
+/** The island a triangle of a set lies in, made whole at once (growIsland unbounded). */
+export function islandOf(set: NavmeshLookup, navmesh: Navmesh, triangle: number): NavmeshIsland {
+  for (;;) {
+    const island = growIsland(set, navmesh, triangle, { allowance: Infinity, taken: 0 });
+    if (island?.complete === true) return island;
+  }
 }
 
 /** The island a triangle of a set lies in if one is made whole and holds, else undefined. */
@@ -391,7 +467,7 @@ export function islandKnown(
   navmesh: Navmesh,
   triangle: number,
 ): NavmeshIsland | undefined {
-  const known = ISLANDS.get(set)?.get(navmesh)?.[triangle];
+  const known = ISLANDS.get(set)?.slots.get(navmesh)?.[triangle];
   return known?.complete === true && known.current(set) && known.has(navmesh, triangle)
     ? known
     : undefined;

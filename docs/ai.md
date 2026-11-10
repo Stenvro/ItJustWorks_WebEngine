@@ -173,14 +173,24 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   picks that point. Both are work of the search and are counted as its nodes (below): making an
   island is a flood of its triangles (one node each; 9,000–12,000 round Helgen, a loaded exterior
   grid up to ~50,000), done again once one of its navmeshes is unloaded or replaced or a navmesh
-  it links into loads (a cell streamed in), and a search begun on a triangle it has reached while
-  it is made goes on making it; it keeps its triangles in a grid of 256-unit squares as it goes.
-  The nearest point looks at the grid's squares outward from the goal's (each square and each
-  triangle tested a node; about 100 for a goal 1,500 units above or beside the island), and the
-  island keeps the last 16 it found by goal, so the soldiers chasing one dragon find it once. Only
-  a search over frames (`PathSearch`: the travels') makes an island; one searched at once
-  (`findPath`: a wander point's check, a step aside, the Clairvoyance trail) goes by an island
-  already made and otherwise searches within its own limit as before.
+  it links into loads (a cell streamed in); it keeps its triangles in a grid of 256-unit squares
+  as it goes. The search goes first and an island made whole is looked at once: a way found
+  within 256 nodes (most) never waits for a flood, so it gives its path in the share it began
+  even just after a cell streamed in. A search that runs on makes the island beside it (256
+  triangles every 64 of its nodes; the flood goes outward from where it began, so a goal near is
+  found on it early) until its goal is found on the island (it goes on alone) or the island is
+  whole without it (the search is let go for the way to the nearest point); one to a goal off
+  every navmesh, or that ended short first, makes it at once. A set makes one island at a time:
+  a search whose triangle the island being made has not reached yet makes that one on first, so
+  searches begun together flood a stretch of navmesh once. The nearest point looks at the grid's
+  squares outward from the goal's (each square and each triangle tested a node; about 100 for a
+  goal 1,500 units above or beside the island). The island keeps the last 64 it found by the
+  goal's grid square: the same goal is answered at once, and another in that square (soldiers
+  chasing a dragon, each asking where it is as they search) begins from the point of the
+  triangle kept for it, so only what may lie nearer is looked at and the point is still exact
+  for its own goal. Only a search over frames (`PathSearch`: the travels') makes an island; one
+  searched at once (`findPath`: a wander point's check, a step aside, the Clairvoyance trail)
+  goes by an island already made and otherwise searches within its own limit as before.
 - **Searches over frames** (`PathSearch`, `ActorMovers`): the searches of the actors' travels,
   moved actors' and walkers' together, take at most 2,000 nodes of a frame (about 2 ms at most; a
   search gives way before the node past its share, and counts every node it took, the island's

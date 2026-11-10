@@ -14,7 +14,7 @@ import {
   triangleNeighbour,
   type Navmesh,
 } from '../world/navmesh.ts';
-import { islandKnown, islandOf } from './navmesh-islands.ts';
+import { growIsland, islandKnown, type NavmeshIsland } from './navmesh-islands.ts';
 import { insidePart, ObstacleIndex, partSpan, type NavmeshObstacle } from './navmesh-obstacles.ts';
 
 type Vec3 = readonly [number, number, number];
@@ -116,6 +116,18 @@ export const ROAD_AVOID_COST = 2;
 const LEDGE_COST = 256;
 /** The default search limit (triangles). */
 const SEARCH_LIMIT = 20000;
+/**
+ * A search over frames that has not reached its goal after this many nodes (a search's first
+ * share) begins to make its island beside it (searchSteps); most ways end well within it.
+ */
+const ISLAND_AFTER = 256;
+/**
+ * From then on, the island is made on by ISLAND_NODES of the share every ISLAND_EVERY search
+ * nodes: mostly the island, as what a search to a goal off it takes meanwhile is lost (the
+ * island is kept for the searches after it).
+ */
+const ISLAND_EVERY = 64;
+const ISLAND_NODES = 256;
 
 /** A triangle of a mesh, as one number (form ids are 32 bits, triangles 16). */
 const keyOf = (navmesh: number, triangle: number): number => navmesh * 65536 + triangle;
@@ -401,20 +413,49 @@ function* searchSteps(
   // point (ours: the island's point nearest the goal in a straight line).
   // Making the island (a flood of its triangles, once while its navmeshes stay loaded) and
   // finding its nearest point take from the search's share like its nodes and give way with it.
-  const island =
-    islands === 'make'
-      ? islandOf(set, start.navmesh, start.triangle)
-      : islands === 'known'
-        ? islandKnown(set, start.navmesh, start.triangle)
-        : undefined;
-  if (island) {
-    while (!island.grow(share)) yield;
-    if (!goal || !island.has(goal.navmesh, goal.triangle)) {
-      const near = yield* island.nearestSteps(to, share);
-      const path = yield* searchSteps(set, from, near.at, options, closeAvoided, share, 'none');
-      return path && { ...path, complete: false };
+  // The search goes first: a way it finds within ISLAND_AFTER nodes (most) needs no island, so
+  // a short way gives its path in the share it began, whether the island is made or not. One
+  // that runs on makes the island beside it (ISLAND_NODES every ISLAND_EVERY nodes; the island
+  // being made is shared by all searches: growIsland) until the goal is found on it (the search
+  // goes on alone) or the island is whole without it (the search is let go). A goal off every
+  // navmesh is reached by no search: its island is made at once.
+  // The verdict: the goal on the start's island ('on'), off it (the island), or not known yet.
+  type Verdict = 'on' | NavmeshIsland | undefined;
+  const judge = (island: NavmeshIsland | undefined): Verdict => {
+    if (!island) return undefined;
+    if (goal && island.has(goal.navmesh, goal.triangle)) return 'on';
+    return island.complete ? island : undefined;
+  };
+  let verdict: Verdict =
+    islands === 'none' ? 'on' : judge(islandKnown(set, start.navmesh, start.triangle));
+  // An island not made yet is made only by a search over frames (findPath searches at once).
+  if (verdict === undefined && islands === 'known') verdict = 'on';
+  // Makes the island on by up to `nodes` of the share (giving way when it is spent) or until it
+  // judges the goal on or off it.
+  const islandWork = function* (nodes: number): Generator<undefined, Verdict, undefined> {
+    let left = nodes;
+    for (;;) {
+      if (share.taken >= share.allowance) yield;
+      const part: SearchShare = {
+        allowance: Math.min(left, share.allowance - share.taken),
+        taken: 0,
+      };
+      const judged = judge(growIsland(set, start.navmesh, start.triangle, part));
+      share.taken += part.taken;
+      left -= part.taken;
+      if (judged !== undefined || left <= 0) return judged;
     }
-  }
+  };
+  // Goes to the island's point nearest the goal instead.
+  const toNearest = function* (
+    island: NavmeshIsland,
+  ): Generator<undefined, NavPath | undefined, undefined> {
+    const near = yield* island.nearestSteps(to, share);
+    const path = yield* searchSteps(set, from, near.at, options, closeAvoided, share, 'none');
+    return path && { ...path, complete: false };
+  };
+  if (verdict === undefined && !goal) verdict = yield* islandWork(Infinity);
+  if (verdict !== undefined && verdict !== 'on') return yield* toNearest(verdict);
   const goalKey = goal ? keyOf(goal.navmesh.formId, goal.triangle) : undefined;
   const obstacles = obstacleIndex(options.obstacles);
   const partsOf = (navmesh: Navmesh, triangle: number): readonly (readonly Vec3[])[] | undefined =>
@@ -496,6 +537,14 @@ function* searchSteps(
     open.push(added);
   };
   while (open.size > 0 && searched < limit) {
+    if (
+      verdict === undefined &&
+      searched >= ISLAND_AFTER &&
+      (searched - ISLAND_AFTER) % ISLAND_EVERY === 0
+    ) {
+      verdict = yield* islandWork(ISLAND_NODES);
+      if (verdict !== undefined && verdict !== 'on') return yield* toNearest(verdict);
+    }
     const node = open.pop();
     if (!node) break;
     node.closed = true;
@@ -596,6 +645,11 @@ function* searchSteps(
   // An avoid node only costs (observed in the original); closing what lies under it is ours, to
   // keep a way out of it where there is another. One standing in the only way (a corridor, a
   // doorway) does not end the way short: it is searched again at the nodes' cost alone.
+  if (!reached && verdict === undefined) {
+    // It ended short (its triangles spent or its limit) before the island judged the goal.
+    verdict = yield* islandWork(Infinity);
+    if (verdict !== undefined && verdict !== 'on') return yield* toNearest(verdict);
+  }
   pathSearchStats.searches++;
   pathSearchStats.nodes += searched;
   if (reached) pathSearchStats.reached++;
