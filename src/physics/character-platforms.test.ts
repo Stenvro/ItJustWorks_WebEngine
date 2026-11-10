@@ -168,8 +168,11 @@ describe('a simulated body under the character controller', () => {
 });
 
 describe('a simulated body the character stands on, by its mass', () => {
-  /** How far a character standing on a 200 × 200 × 60 body of `mass` goes as it slides at `speed`. */
-  const ride = (mass: number, speed: number): number => {
+  /**
+   * How far a character standing on a 200 × 200 × 60 body of `mass` goes as it slides at `speed`
+   * for half a second, and the fastest it went in a step (game units a second).
+   */
+  const rideOn = (mass: number, speed: number): { gone: number; fastest: number } => {
     const physics = new PhysicsWorld(matrix, GRAVITY);
     platform(physics, 'fixed');
     const crate = physics.world.createRigidBody(
@@ -183,16 +186,21 @@ describe('a simulated body the character stands on, by its mass', () => {
     physics.step(1 / 60);
     const character = settled(physics, [0, 0, 61]);
     const start = character.feet;
+    let fastest = 0;
     for (let i = 0; i < 30; i++) {
+      const before = character.feet;
       crate.setLinvel({ x: h(speed), y: 0, z: 0 }, true);
       character.step(1 / 60);
       physics.step(1 / 60);
+      const after = character.feet;
+      fastest = Math.max(fastest, Math.hypot(after[0] - before[0], after[1] - before[1]) * 60);
     }
     const gone = Math.hypot(character.feet[0] - start[0], character.feet[1] - start[1]);
     character.free();
     physics.free();
-    return gone;
+    return { gone, fastest };
   };
+  const ride = (mass: number, speed: number): number => rideOn(mass, speed).gone;
 
   it('is not carried off by one light enough to push (under fMoveLimitMass) that the solver throws', () => {
     // A kettle thrown at 4000 units a second: half a second on it was 2000 units.
@@ -204,6 +212,14 @@ describe('a simulated body the character stands on, by its mass', () => {
     const gone = ride(300, 120);
     expect(gone).toBeGreaterThan(50);
     expect(gone).toBeLessThan(70);
+  });
+
+  it('is carried by a heavy one the solver throws no faster than a body pushes a character (400)', () => {
+    // A 300 kg body squeezed out at 4000 units a second: half a second on it took the
+    // character 2000 units, and it flew on at that speed off it.
+    const { gone, fastest } = rideOn(300, 4000);
+    expect(fastest).toBeLessThan(410);
+    expect(gone).toBeLessThan(210);
   });
 });
 

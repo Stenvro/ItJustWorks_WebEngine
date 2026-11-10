@@ -210,8 +210,14 @@ speed through the air when it leaves it (`CharacterBody`, `#findCarrier`). A sim
 enough for it to push (under fMoveLimitMass, 95: a kettle, a basket) is stood on but carries
 nothing: the solver can throw such a body thousands of units a second, and the shape went with it
 (in Helgen's burning inn, by a kettle and rubble, the player went 7,700 units across the land in
-two seconds and fell on under the world). TODO(M13): inferred; the engine's rule for what a
-simulated body under its proxy gives it was not read.
+two seconds and fell on under the world). A heavier simulated body carries it at most at 400
+units a second, the most anything moving gives a character (`PUSHED_MAX_SPEED`, as a push): a
+heavy body the solver squeezes out between rubble and a wall is thrown as fast, and that is no
+motion to ride. A keyframed body (a lift, a turning platform, a script's TranslateTo) carries it
+at its own speed, and fixed ground carries nothing. `CharacterBody.carriedBy` tells what carried
+it in its last step (the body's owner, simulated or not, its mass, the speed and whether it was
+held), for the log and QA. TODO(M13): inferred; the engine's rule for what a simulated body
+under its proxy gives it was not read.
 
 ## Where coc puts the player
 
