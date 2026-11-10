@@ -132,7 +132,22 @@ guides' watch (`GUIDE_WATCH`, from MQ101 stage 100 on): once a second Ralof's an
 package (editor id), procedure, whether their AI is held for a reaction, the reaction and the
 scene, logged as they change, and where they stand every 10 s; MQ101's and MQ101DragonAttack's
 stages; every actor that begins or ends a reaction to a dead body; the player's capsule while
-it is not grounded for more than 2 s.
+it is not grounded for more than 2 s. Each frame it also watches what carries the player
+(`CharacterBody.carriedBy`): a simulated body whose carry was held to its limit (`carry held:`,
+its reference, base, mass and speed), and the player's feet going faster than 1,500 units a
+second outside a load (`player flung`: what carried it, and the four fastest simulated bodies
+within 400 units, each with its reference and base).
+
+`opening-ralof` (not in a run without names) is the same opening with the bot on Ralof's side
+(`window.__qaSide`): of the current targets it takes Ralof and the Stormcloaks' keep marker
+(dunCGObjectiveKeepDoorRalofREF), as a player picks that door of "Enter the Keep with Hadvar or
+Ralof"; without a side it takes the nearest (Hadvar's, each time). A target that is a container
+or a dead actor (MQ101's "Find some equipment", the warden's chest; "Loot Gunjar's body") it
+walks to, faces and opens with Activate; the scenario then takes all in the container menu (R),
+closes it (Tab), and the player wears the armor and one weapon it carries and does not wear yet,
+each as the inventory menu equips a selected entry (`EquipmentEngine.toggle`: MQ101PlayerScript's
+OnObjectEquipped sets stages 256 and 258). Each use of a door logs what the crosshair is on
+(its reference and verb), how far the door is, and the door's lock or blocked activation.
 
 ## The monitors in the page
 

@@ -392,10 +392,14 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
     // those of the objective shown last (MQ101's "Make your way to the Keep" shows one of its
     // four as MQ101DragonAttack's stage stands: Ralof, the inn, Hadvar, the courtyard), the
     // nearest of them (the two keep doors of "Enter the Keep").
+    // A side chosen (window.__qaSide 'ralof' or 'hadvar'): of the targets, that guide and the
+    // keep door by them ("Enter the Keep with Hadvar or Ralof"), as a player picks the door.
+    const side = window.__qaSide === 'ralof' ? new Set([0x2bf9e, 0xe24c7]) : window.__qaSide === 'hadvar' ? new Set([0x2bfa2, 0xe24c8]) : undefined;
     let best;
     const latest = Math.max(-1, ...targets.filter((t) => t.holds && !bot.skip?.has(t.reference)).map((t) => t.shown));
-    for (const t of targets) {
-      if (!t.holds || bot.skip?.has(t.reference) || t.shown !== latest) continue;
+    const current = targets.filter((t) => t.holds && !bot.skip?.has(t.reference) && t.shown === latest);
+    const sided = side ? current.filter((t) => side.has(t.reference)) : [];
+    for (const t of sided.length > 0 ? sided : current) {
       const m = measure(t);
       if (!best || m.d < best.d) best = m;
     }
@@ -452,12 +456,25 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
     let goal = [...best.t.placement.position];
     bot.door = undefined;
     bot.guide = W.actorStage?.get(best.t.reference) ? best.t.reference : undefined;
+    // A target to loot (MQ101's "Find some equipment": the warden's chest; "Loot Gunjar's
+    // body"): a container, or a dead actor, not looted yet. Walked to and opened as a player
+    // does; the scenario takes all in the container menu (R) and closes it, and the player then
+    // wears what it took (lootEquip).
+    bot.loot = undefined;
+    if (best.same && !bot.looted?.has(best.t.reference)) {
+      const baseId = await rt.baseOf(best.t.reference);
+      const type = baseId !== undefined ? (await rt.forms.record(baseId))?.type : undefined;
+      if (type === 'CONT' || ((type === 'NPC_') && (await rt.actors.isDead(best.t.reference)))) {
+        bot.loot = best.t.reference;
+        bot.guide = undefined;
+      }
+    }
     if (bot.guide !== undefined) bot.lastGuide = bot.guide;
     // A target that is a load door here (MQ101's "Enter the Keep": the keep's doors) is used
     // as a player uses it: walked to and activated.
     // So is the load door by a place target (the keep's doors stand by MQ101's "Enter the Keep"
     // markers, which the keep's navmesh does not reach).
-    if (best.same && bot.guide === undefined) {
+    if (best.same && bot.guide === undefined && bot.loot === undefined && !bot.looted?.has(best.t.reference)) {
       const record = await (await play.session.db).get(best.t.reference);
       if (record?.fields.has('XTEL')) bot.door = best.t.reference;
       else {
@@ -584,11 +601,16 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
         bot.drop = drop;
       }
     }
-    if (changed) say('goal ' + goal.map(Math.round).join(',') + (bot.door ? ' (door ' + bot.door.toString(16) + ')' : '') + (bot.guide ? ' (guide ' + bot.guide.toString(16) + ')' : '') + ' path ' + (found ? found.points.length + (found.complete ? '' : ' partial') : 'none'));
+    if (changed) say('goal ' + goal.map(Math.round).join(',') + (bot.door ? ' (door ' + bot.door.toString(16) + ')' : '') + (bot.guide ? ' (guide ' + bot.guide.toString(16) + ')' : '') + (bot.loot ? ' (loot ' + bot.loot.toString(16) + ')' : '') + ' path ' + (found ? found.points.length + (found.complete ? '' : ' partial') : 'none'));
   };
   bot.timer = setInterval(() => {
     const play = engineDev.play(); const player = W.player;
     const rt = play?.session.scriptsReady;
+    // The container menu of what it opened to loot: the scenario takes all and closes it.
+    if (play?.session.menuMode && bot.loot !== undefined && bot.lootMenu === undefined && [...play.host.menus].some((m) => m.movie.startsWith('containermenu'))) {
+      bot.lootMenu = bot.loot;
+      say('container menu of ' + bot.loot.toString(16) + ' open');
+    }
     if (!player || !rt || rt.controls.aiDriven || play.session.menuMode || W.loading !== undefined) { bot.release(); return; }
     const now = performance.now();
     if (!bot.planning && now - bot.lastPlan > 1500) {
@@ -611,7 +633,29 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
       const dz = goal[2] + 70 - (feet[2] + 120);
       bot.aim = goal;
       player.pitch = Math.atan2(dz, Math.max(1, toGoal));
-      if (now - (bot.usedDoor ?? 0) > 2500) { bot.usedDoor = now; tap('KeyE'); say('use door ' + bot.door.toString(16)); }
+      if (now - (bot.usedDoor ?? 0) > 2500) {
+        bot.usedDoor = now;
+        // What the crosshair is on as it presses, and whether the door is locked: a door that
+        // takes several presses says why.
+        const aimed = (() => { try { return play.#target; } catch { return undefined; } })();
+        const ref = rt.state.references.get(bot.door); const lock = ref && (ref.locked || ref.activationBlocked) ? { locked: ref.locked, level: ref.lockLevel, blocked: ref.activationBlocked } : undefined;
+        tap('KeyE');
+        say('use door ' + bot.door.toString(16) + ' (crosshair on ' + (aimed?.reference?.toString(16) ?? 'nothing') + (aimed?.verb ? ' "' + aimed.verb + '"' : '') + ', ' + Math.round(toGoal) + ' units off' + (lock ? ', lock ' + JSON.stringify(lock) : '') + ')');
+      }
+      return;
+    }
+    // At what it loots: face it and open it.
+    if (bot.loot !== undefined && toGoal < 100) {
+      bot.release();
+      const dz = goal[2] + 30 - (feet[2] + 120);
+      bot.aim = goal;
+      player.pitch = Math.atan2(dz, Math.max(1, toGoal));
+      if (now - (bot.usedLoot ?? 0) > 2500) {
+        bot.usedLoot = now;
+        const aimed = (() => { try { return play.#target; } catch { return undefined; } })();
+        tap('KeyE');
+        say('open ' + bot.loot.toString(16) + ' (crosshair on ' + (aimed?.reference?.toString(16) ?? 'nothing') + ')');
+      }
       return;
     }
     while (bot.path.length > 1 && Math.hypot(bot.path[0][0] - feet[0], bot.path[0][1] - feet[1]) < 56) bot.path.shift();
@@ -732,6 +776,57 @@ export const GUIDE_WATCH = `(async () => {
       }
     } catch (e) { say('watch failed: ' + e.message); }
   }, 1000);
+  // The carry watch, each frame: what carried the player (CharacterBody.carriedBy) whenever a
+  // simulated body's carry was held to its limit, and whenever the player's feet go faster than
+  // 1500 units a second (not through a load or a teleport: under 3000 units in the frame), with
+  // the carrier's reference and base and the simulated bodies near.
+  let lastFeet; let lastTime = performance.now();
+  const describeOwner = async (rt, owner) => {
+    if (!owner) return 'none';
+    if (owner.kind !== 'object' || !owner.reference) return owner.kind;
+    const base = await rt.baseOf(owner.reference);
+    return (await name(rt, owner.reference)) + ' [' + owner.reference.toString(16) + '] base ' + (base === undefined ? '?' : (await name(rt, base)) + ' [' + base.toString(16) + ']');
+  };
+  const carryFrame = async (now) => {
+    if (window.__qaGuides !== watch) return;
+    try {
+      const player = viewer().player;
+      const rt = engineDev.play()?.session.scriptsReady;
+      const feet = player?.feet;
+      const dt = (now - lastTime) / 1000;
+      lastTime = now;
+      const by = player?.character?.carriedBy;
+      if (rt && by?.held && now - (watch.heldLogged ?? 0) > 1000) {
+        watch.heldLogged = now;
+        say('carry held: ' + (await describeOwner(rt, by.owner)) + ', ' + Math.round(by.mass) + ' kg, at ' + Math.round(by.speed) + ' u/s, player at ' + round(feet));
+      }
+      if (rt && feet && lastFeet && dt > 0 && viewer().loading === undefined) {
+        const d = Math.hypot(feet[0] - lastFeet[0], feet[1] - lastFeet[1], feet[2] - lastFeet[2]);
+        if (d / dt > 1500 && d < 3000) {
+          const physics = viewer().play?.physics;
+          const near = [];
+          physics?.world.forEachRigidBody((body) => {
+            if (!body.isDynamic()) return;
+            const t = body.translation(); const v = body.linvel();
+            const at = [t.x * 69.99125, t.y * 69.99125, t.z * 69.99125];
+            if (Math.hypot(at[0] - feet[0], at[1] - feet[1], at[2] - feet[2]) > 400) return;
+            near.push({ body, at, speed: Math.hypot(v.x, v.y, v.z) * 69.99125 });
+          });
+          near.sort((a, b) => b.speed - a.speed);
+          const parts = [];
+          for (const n of near.slice(0, 4)) {
+            let owner;
+            for (let i = 0; i < n.body.numColliders(); i++) owner ??= physics.ownerOf(n.body.collider(i));
+            parts.push((await describeOwner(rt, owner)) + ' ' + Math.round(n.body.mass()) + ' kg ' + Math.round(n.speed) + ' u/s at ' + round(n.at));
+          }
+          say('player flung ' + Math.round(d / dt) + ' u/s (' + Math.round(d) + ' in the frame) at ' + round(feet) + ', grounded ' + player.character.grounded + ', carried by ' + (by ? (await describeOwner(rt, by.owner)) + ' at ' + Math.round(by.speed) + (by.held ? ' (held)' : '') : 'nothing') + '; bodies near: ' + (parts.join('; ') || 'none'));
+        }
+      }
+      lastFeet = feet && [...feet];
+    } catch (e) { say('carry watch failed: ' + e.message); }
+    requestAnimationFrame(carryFrame);
+  };
+  requestAnimationFrame(carryFrame);
   return 'started';
 })()`;
 
@@ -773,6 +868,35 @@ const OPENING_NOW = `(async () => {
     interior: at !== undefined && at.world === undefined,
     loading: (engineDev.world.loading ?? engineDev.viewer.loading) !== undefined,
   };
+})()`;
+
+/**
+ * After the bot's loot (the container menu taken from and closed): the target is looted, and the
+ * player wears what it carries and does not wear yet, armor and then one weapon, each as the
+ * inventory menu equips a selected entry (EquipmentEngine.toggle: its OnObjectEquipped is the
+ * player alias's MQ101PlayerScript, stages 256 and 258). Answers what was put on.
+ */
+const LOOT_EQUIP = `(async () => {
+  const bot = window.__qaBot; const rt = engineDev.play().session.scriptsReady;
+  if (!bot || !rt) return 'no bot';
+  (bot.looted ??= new Set()).add(bot.lootMenu);
+  bot.lootMenu = undefined; bot.loot = undefined; bot.lastPlan = 0;
+  const worn = [];
+  let weapon = false;
+  for (const [formId, count] of [...(await rt.inventory(0x14))]) {
+    if (count <= 0) continue;
+    const record = await rt.forms.record(formId);
+    if (record?.type !== 'ARMO' && record?.type !== 'WEAP') continue;
+    if (record.type === 'WEAP' && weapon) continue;
+    if (await rt.equipment.isEquipped(0x14, formId)) { if (record.type === 'WEAP') weapon = true; continue; }
+    if (await rt.equipment.toggle(0x14, formId, 'right')) {
+      worn.push(record.editorId || formId.toString(16));
+      if (record.type === 'WEAP') weapon = true;
+    }
+  }
+  const menus = [...engineDev.play().host.menus].map((m) => m.movie).join('/');
+  bot.log.push(Math.round(performance.now() / 1000) + ' wears ' + (worn.join(', ') || 'nothing new') + (menus ? ' (menus open: ' + menus + ')' : ''));
+  return (worn.join(', ') || 'nothing new') + (menus ? ' (menus open: ' + menus + ')' : '');
 })()`;
 
 /**
@@ -1285,10 +1409,18 @@ QA_PLAY.player.teleport([${String(x)}, ${String(y)}, ${String(z)}], Math.PI / 2)
       await ctx.console('set timescale to 120');
     },
   },
-  {
-    name: 'opening',
-    description:
-      'New game: the cart ride to Helgen, the execution, Alduin, AI-driven until MQ101 stage 160, then a bot (god mode) following the quest marker into the keep and on while MQ101 moves.',
+  openingScenario('opening'),
+  openingScenario('opening-ralof', 'ralof'),
+];
+
+/**
+ * The new game's opening; with a side, the bot takes that guide's keep door ("Enter the Keep
+ * with Hadvar or Ralof"), as a player picks one (else the nearest).
+ */
+function openingScenario(name: string, side?: 'ralof' | 'hadvar'): Scenario {
+  return {
+    name,
+    description: `New game: the cart ride to Helgen, the execution, Alduin, AI-driven until MQ101 stage 160, then a bot (god mode) following the quest marker into the keep${side ? ` by ${side === 'ralof' ? "Ralof's" : "Hadvar's"} door` : ''}, looting and wearing what the objectives ask for, and on while MQ101 moves.`,
     start: { kind: 'new' },
     bootSeconds: 300,
     seconds: 2400,
@@ -1326,8 +1458,26 @@ QA_PLAY.player.teleport([${String(x)}, ${String(y)}, ${String(z)}], Math.PI / 2)
         state.bot = true;
         // The bot does not fight (the keep's soldiers, its bear and spiders): god mode.
         await ctx.console('tgm');
+        if (side) await ctx.page.eval(`window.__qaSide = '${side}'`, 5000);
         await ctx.page.eval(FOLLOW_BOT, 30000, true);
-        ctx.note('the player is free: the follow bot takes over (god mode)');
+        ctx.note(
+          `the player is free: the follow bot takes over (god mode)${side ? `, on ${side}'s side` : ''}`,
+        );
+      }
+      // The container menu the bot opened to loot: take all (R) and close it (Tab), as a player
+      // does; then the player wears what it took.
+      if (state.bot === true) {
+        const loot = await ctx.page.eval<number | null>('window.__qaBot?.lootMenu ?? null', 5000);
+        if (loot !== null) {
+          await sleepMs(1500);
+          await ctx.page.key('KeyR');
+          await sleepMs(2000);
+          await ctx.page.key('Tab');
+          await sleepMs(2000);
+          const worn = await ctx.page.eval<string>(LOOT_EQUIP, 30000);
+          ctx.note(`looted ${loot.toString(16)}: ${worn}`);
+          if (worn.includes('containermenu')) await ctx.page.key('Escape');
+        }
       }
       // In the keep (an interior after the bot took over): on through it while MQ101 moves.
       if (state.bot === true && now.interior && !now.loading && state.inside === undefined) {
@@ -1362,5 +1512,5 @@ QA_PLAY.player.teleport([${String(x)}, ${String(y)}, ${String(z)}], Math.PI / 2)
         .catch(() => undefined);
       for (const line of guides ?? []) ctx.note(`guides: ${line}`);
     },
-  },
-];
+  };
+}
