@@ -273,6 +273,7 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
   const actors = await import('/src/shell/actors.ts');
   const paths = await import('/src/ai/pathfinding.ts');
   const { Layer } = await import('/src/physics/collision-layers.ts');
+  const { playerTrigger } = await import('/src/scripting/runtime/trigger-gates.ts');
   // Interiors play in the model viewer, the world outside in the world viewer (as the monitors
   // pick it): the player, the stage, the navmeshes and the physics of the one playing now.
   const viewer = () => (engineDev.world.play ? engineDev.world : engineDev.viewer);
@@ -397,6 +398,7 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
     const at = await rt.placement(0x14);
     if (!at) return;
     const targets = await objectiveTargets(rt);
+    bot.inside = at.world === undefined;
     const here = (p) => at.world !== undefined ? p.world === at.world : p.cell !== undefined && p.cell === at.cell;
     const measure = (t) => {
       const same = here(t.placement);
@@ -446,12 +448,51 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
       if (m && m.same && bot.metGuide !== key) {
         // By him, it stays while he talks (25 s: the keep's scenes speak three lines before
         // their phase that waits for the player near).
-        if (m.d < 100 && bot.byGuide?.key !== key) { bot.byGuide = { key, since: performance.now() }; say('by the guide at stage ' + key); }
+        if (m.d < 100 && bot.byGuide?.key !== key) { bot.byGuide = { key, since: performance.now(), at: [...placement.position] }; say('by the guide at stage ' + key); }
+        // A guide who walks on (MQ101KeepScene2B escorts the player down the stairs) leads:
+        // followed while he goes, the marker only once he has stood 25 s.
+        if (bot.byGuide?.key === key && Math.hypot(placement.position[0] - bot.byGuide.at[0], placement.position[1] - bot.byGuide.at[1]) > 80) {
+          bot.byGuide = { key, since: performance.now(), at: [...placement.position] };
+          if (bot.ledBy !== key) { bot.ledBy = key; say('the guide leads on: after him (' + key + ')'); }
+        }
         if (bot.byGuide?.key === key && performance.now() - bot.byGuide.since > 25000) { bot.metGuide = key; say('the guide talked: on to the marker'); }
         else {
           if (bot.calledBy !== key) { bot.calledBy = key; say('the guide is in a scene: to him first (' + key + ')'); }
           best = m;
           called = true;
+        }
+      } else if (m && m.same && bot.metGuide === key) {
+        // He has talked and stands, his scene waiting on (MQ101KeepIntroSceneB's "Wait around
+        // the corner": MQ101SetStage292 by him): a player walks on round him into the trigger
+        // that waits for them, of those within 1,200 units of him whose scripts name the
+        // marker's quest, the nearest first.
+        bot.gates ??= new Map();
+        if (!bot.gates.has(key)) {
+          bot.gates.set(key, 'pending');
+          const found = [];
+          for (const trigger of viewer().play?.physics.triggersNear([...placement.position], 1200) ?? []) {
+            const waits = await playerTrigger(rt, trigger);
+            const where = waits && waits.names.has(best.t.quest) ? await rt.placement(trigger) : undefined;
+            if (where) found.push({ trigger, at: [...where.position] });
+          }
+          bot.gates.set(key, found);
+          say('triggers by the guide that wait for the player: ' + (found.map((g) => g.trigger.toString(16)).join(', ') || 'none'));
+        }
+        const gates = bot.gates.get(key);
+        if (Array.isArray(gates)) {
+          bot.walkedInto ??= new Set();
+          for (const g of gates) if (rt.triggerVolumes.inside(g.trigger).has(0x14)) bot.walkedInto.add(g.trigger);
+          let gate;
+          for (const g of gates) {
+            if (bot.walkedInto.has(g.trigger)) continue;
+            const d = Math.hypot(g.at[0] - at.position[0], g.at[1] - at.position[1], g.at[2] - at.position[2]);
+            if (!gate || d < gate.d) gate = { ...g, d };
+          }
+          if (gate) {
+            if (bot.gate !== gate.trigger) { bot.gate = gate.trigger; say('into the trigger ' + gate.trigger.toString(16) + ' at ' + gate.at.map(Math.round).join(',')); }
+            best = { ...measure({ quest: best.t.quest, objective: -1, order: 0, holds: true, reference: gate.trigger, placement: { position: gate.at, cell: at.cell, world: at.world } }), gate: true };
+            called = true;
+          }
         }
       }
     }
@@ -492,7 +533,7 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
     // as a player uses it: walked to and activated.
     // So is the load door by a place target (the keep's doors stand by MQ101's "Enter the Keep"
     // markers, which the keep's navmesh does not reach).
-    if (best.same && bot.guide === undefined && bot.loot === undefined && !bot.looted?.has(best.t.reference)) {
+    if (best.same && !best.gate && bot.guide === undefined && bot.loot === undefined && !bot.looted?.has(best.t.reference)) {
       const record = await (await play.session.db).get(best.t.reference);
       if (record?.fields.has('XTEL')) bot.door = best.t.reference;
       else {
@@ -636,6 +677,38 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
       plan().catch((e) => say('plan failed: ' + e.message)).finally(() => { bot.planning = false; });
     }
     const feet = player.feet;
+    // A fight inside (MQ101's keep: "Wait for battle to be over", the Imperials who fight Ralof):
+    // as a player does, it draws and goes at the nearest living enemy of the player or of the
+    // guide followed last on its floor, and attacks once within reach (god mode keeps it up).
+    const stage = W.actorStage;
+    if (stage && bot.inside) {
+      const ally = bot.lastGuide;
+      const enemies = new Set(stage.combat.enemiesOfPlayer());
+      for (const s of stage.all()) {
+        const target = stage.combat.targetOf(s.reference);
+        if (!s.dead && target !== undefined && (target === 0x14 || target === ally) && s.reference !== ally) enemies.add(s.reference);
+      }
+      let foe;
+      for (const ref of enemies) {
+        const s = stage.get(ref);
+        if (!s || s.dead || Math.abs(s.position[2] - feet[2]) > 160) continue;
+        const d = Math.hypot(s.position[0] - feet[0], s.position[1] - feet[1]);
+        if (d < 1500 && (!foe || d < foe.d)) foe = { s, d };
+      }
+      if (foe) {
+        if (bot.fighting !== foe.s.reference) { bot.fighting = foe.s.reference; say('fights ' + foe.s.reference.toString(16) + ' at ' + Math.round(foe.d)); }
+        if (!bot.drawn) { bot.drawn = true; player.press('Ready Weapon', true); setTimeout(() => player.press('Ready Weapon', false), 120); }
+        bot.aim = foe.s.position;
+        player.pitch = -0.15;
+        if (foe.d > 110) { hold('KeyW', true); for (const key of ['KeyA', 'KeyD', 'KeyS']) hold(key, false); }
+        else {
+          bot.release();
+          if (now - (bot.swung ?? 0) > 900) { bot.swung = now; player.press('Right Attack/Block', true); setTimeout(() => player.press('Right Attack/Block', false), 150); }
+        }
+        return;
+      }
+      if (bot.fighting !== undefined) { say('the fight is over'); bot.fighting = undefined; }
+    }
     const goal = bot.goal;
     if (!goal) { bot.release(); return; }
     const guide = bot.guide !== undefined ? W.actorStage?.get(bot.guide) : undefined;
@@ -662,6 +735,20 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
       }
       return;
     }
+    // Someone stood between it and what it loots (Ralof by Gunjar's body, the crosshair on him):
+    // a player steps round to the body's other side, then faces it again.
+    if (bot.loot !== undefined && bot.lootStand?.loot === bot.loot && !bot.lootStand.reached) {
+      const [sx, sy] = bot.lootStand.at;
+      if (Math.hypot(sx - feet[0], sy - feet[1]) < 20 || now - bot.lootStand.since > 8000) {
+        bot.lootStand.reached = true;
+        bot.release();
+      } else {
+        bot.aim = bot.lootStand.at;
+        player.pitch = 0;
+        hold('KeyW', true);
+        return;
+      }
+    }
     // At what it loots: face it and open it.
     if (bot.loot !== undefined && toGoal < 100) {
       bot.release();
@@ -685,6 +772,16 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
           const hit = play?.physics.pick(player.position, player.forward, 250, 5, Layer.itemPicker, player.character.collider);
           const body = staged?.placed ? [actors.actorFeet(staged.placed), actors.headPosition(staged.placed)].map((p) => p.map(Math.round).join(',')).join(' to ') : 'not staged';
           seen = ', pick meets ' + (hit ? (hit.owner?.kind ?? '?') + ' ' + (hit.owner?.reference?.toString(16) ?? '') + ' at ' + Math.round(hit.distance) : 'nothing') + ', body ' + body + (staged ? ', dead ' + staged.dead : '') + ', camera ' + player.position.map(Math.round).join(',') + ' pitch ' + player.pitch.toFixed(2) + ', allows Activate ' + player.allows?.('Activate');
+        }
+        const blocker = aimed?.reference !== undefined && aimed.reference !== bot.loot ? W.actorStage?.get(aimed.reference) : undefined;
+        if (blocker) {
+          // To the far side of the target from them, a quarter turn further each time.
+          const turns = bot.lootStand?.loot === bot.loot ? bot.lootStand.turns + 1 : 0;
+          const away = Math.atan2(goal[1] - blocker.position[1], goal[0] - blocker.position[0]) + turns * (Math.PI / 2);
+          const at = [goal[0] + Math.cos(away) * 60, goal[1] + Math.sin(away) * 60, goal[2]];
+          bot.lootStand = { loot: bot.loot, at, turns, since: now, reached: false };
+          say('open ' + bot.loot.toString(16) + ': ' + aimed.reference.toString(16) + ' stands in the way; round to ' + at.map(Math.round).join(','));
+          return;
         }
         tap('KeyE');
         say('open ' + bot.loot.toString(16) + ' (crosshair on ' + (aimed?.reference?.toString(16) ?? 'nothing') + seen + ')');
@@ -718,7 +815,13 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
       const move = ['KeyA', 'KeyD', 'KeyS'][bot.stuckCount % 3];
       bot.dodge = { key: move, until: now + 500 + 200 * (bot.stuckCount % 4) };
       if (bot.stuckCount % 2 === 0) tap('Space');
-      say('stuck at ' + feet.map(Math.round).join(',') + ': ' + { KeyA: 'step left', KeyD: 'step right', KeyS: 'back off' }[move] + (bot.stuckCount % 2 === 0 ? ', jump' : ''));
+      // Every tenth time, why it may not move: its controls, the ground and what lies under it.
+      let why = '';
+      if (bot.stuckCount % 10 === 1) {
+        const under = viewer().play?.physics.pick([feet[0], feet[1], feet[2] + 40], [0, 0, -1], 120, 5, Layer.charController, player.character.collider);
+        why = ' (allows Forward ' + player.allows?.('Forward') + ', Jump ' + player.allows?.('Jump') + ', disabled controls ' + (player.disabledControls?.() ?? 0) + ', grounded ' + player.character.grounded + ', under ' + (under ? (under.owner?.kind ?? '?') + ' ' + (under.owner?.reference?.toString(16) ?? '') + ' at ' + Math.round(under.distance) : 'nothing') + ', AI driven ' + rt.controls.aiDriven + ')';
+      }
+      say('stuck at ' + feet.map(Math.round).join(',') + ': ' + { KeyA: 'step left', KeyD: 'step right', KeyS: 'back off' }[move] + (bot.stuckCount % 2 === 0 ? ', jump' : '') + why);
     }
   }, 100);
   // The view turns to the point it heads for as a player turns a mouse: once it is more than 5°
@@ -1593,6 +1696,10 @@ function openingScenario(name: string, side?: 'ralof' | 'hadvar'): Scenario {
       if (state.bot === true) {
         const loot = await ctx.page.eval<number | null>('window.__qaBot?.lootMenu ?? null', 5000);
         if (loot !== null) {
+          await sleepMs(1500);
+          // The menu opens on its categories; the X button takes all only from the container's
+          // items list (the movie's isViewingContainer: a category shown), as a player goes in.
+          await ctx.page.key('ArrowRight');
           await sleepMs(1500);
           await ctx.page.key('KeyR');
           await sleepMs(2000);

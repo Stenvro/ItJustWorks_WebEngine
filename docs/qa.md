@@ -149,10 +149,17 @@ which a frame that short makes read as 1,500 units a second; none was carried.
 and dunCGObjectiveKeepDoorRalofREF, or Hadvar and his), as a player picks that door of "Enter the Keep with Hadvar or
 Ralof"; without a side it takes the nearest (Hadvar's, each time). A target that is a container
 or a dead actor (MQ101's "Find some equipment", the warden's chest; "Loot Gunjar's body") it
-walks to, faces and opens with Activate; the scenario then takes all in the container menu (R),
-closes it (Tab), and the player wears the armor and one weapon it carries and does not wear yet,
-each as the inventory menu equips a selected entry (`EquipmentEngine.toggle`: MQ101PlayerScript's
-OnObjectEquipped sets stages 256 and 258). While the crosshair finds nothing at what it loots it pitches lower and higher in turn and logs
+walks to, faces and opens with Activate (someone between it and the target, the crosshair on
+them: Ralof by Gunjar's body, it steps round to the target's other side first); the scenario
+then goes into the container's items list (Right: the menu opens on its categories, and its X
+button takes all only while a category's items are shown, the movie's `isViewingContainer`),
+takes all (R), closes the menu (Tab), and the player wears the armor and one weapon it carries
+and does not wear yet, each as the inventory menu equips a selected entry
+(`EquipmentEngine.toggle`: MQ101PlayerScript's OnObjectEquipped sets stages 256 and 258).
+Inside, a fight comes first (the nearest living enemy of the player or of the guide followed
+last, on its floor, within 1,500 units: MQ101's "Wait for battle to be over"): it draws (Ready
+Weapon), goes at the enemy and attacks within reach (Right Attack/Block), as a player does; god
+mode keeps it up. While the crosshair finds nothing at what it loots it pitches lower and higher in turn and logs
 what the crosshair's pick meets, where the target's posed body lies, the camera and whether
 Activate is allowed; a target not on the actor stage logs its game state once (reference state,
 dead, corpse pose, placement, the dead actors that are on the stage). Each use of a door logs
