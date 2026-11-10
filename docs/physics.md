@@ -204,6 +204,15 @@ that actor at least 100 units a second as it falls; a step up never lands on an 
 past another, its lower shape a little up the other's, it still stands on the floor. One whose fall another actor stops (placed into it: the player set at Highmoon Hall's coc marker where Gorm stood held him 63 units up) is held up by it the same way, and is moved out of what it overlaps first. The player stands on heads, as in the game. TODO(M13): Havok's character
 proxy's own rule was not read; NPCs are not seen standing on one another in the game.
 
+**Carried by what it stands on.** A moving body under the controller (a keyframed lift, a turning
+platform, a script's TranslateTo; a heavy simulated body) carries it, and it keeps that body's
+speed through the air when it leaves it (`CharacterBody`, `#findCarrier`). A simulated body light
+enough for it to push (under fMoveLimitMass, 95: a kettle, a basket) is stood on but carries
+nothing: the solver can throw such a body thousands of units a second, and the shape went with it
+(in Helgen's burning inn, by a kettle and rubble, the player went 7,700 units across the land in
+two seconds and fell on under the world). TODO(M13): inferred; the engine's rule for what a
+simulated body under its proxy gives it was not read.
+
 ## Where coc puts the player
 
 Observed in the original (`src/world/coc-spot.ts`, `src/shell/cell-placement.ts`): the

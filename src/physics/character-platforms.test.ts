@@ -167,6 +167,46 @@ describe('a simulated body under the character controller', () => {
   });
 });
 
+describe('a simulated body the character stands on, by its mass', () => {
+  /** How far a character standing on a 200 × 200 × 60 body of `mass` goes as it slides at `speed`. */
+  const ride = (mass: number, speed: number): number => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    platform(physics, 'fixed');
+    const crate = physics.world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic().setTranslation(0, 0, h(30)).setGravityScale(0),
+    );
+    const collider = physics.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(h(100), h(100), h(30)).setMass(mass).setFriction(0),
+      crate,
+    );
+    physics.register(collider, Layer.static, { reference: 2, kind: 'object' });
+    physics.step(1 / 60);
+    const character = settled(physics, [0, 0, 61]);
+    const start = character.feet;
+    for (let i = 0; i < 30; i++) {
+      crate.setLinvel({ x: h(speed), y: 0, z: 0 }, true);
+      character.step(1 / 60);
+      physics.step(1 / 60);
+    }
+    const gone = Math.hypot(character.feet[0] - start[0], character.feet[1] - start[1]);
+    character.free();
+    physics.free();
+    return gone;
+  };
+
+  it('is not carried off by one light enough to push (under fMoveLimitMass) that the solver throws', () => {
+    // A kettle thrown at 4000 units a second: half a second on it was 2000 units.
+    expect(ride(1, 4000)).toBeLessThan(80);
+  });
+
+  it('is carried by a heavy one (fMoveLimitMass or more) as by a platform', () => {
+    // 120 units a second for half a second.
+    const gone = ride(300, 120);
+    expect(gone).toBeGreaterThan(50);
+    expect(gone).toBeLessThan(70);
+  });
+});
+
 describe('moving bodies push the character controller', () => {
   it('is knocked back by a heavy body that comes at it, hardly by a light one', () => {
     const run = (mass: number): number => {

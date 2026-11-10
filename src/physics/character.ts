@@ -1658,6 +1658,15 @@ export class CharacterBody {
     );
     const body = hit?.collider.parent();
     if (!hit || !body || hit.normal1.z <= 0.05) return undefined;
+    // A simulated body light enough for it to push (under fMoveLimitMass: a kettle, a basket)
+    // is stood on but does not carry it: the solver can throw such a body thousands of units a
+    // second, and the shape went with it and kept its speed through the air (in Helgen's burning
+    // inn, by a kettle and rubble, the player went 7,700 units across the land in two seconds and
+    // on under the world). TODO(M13): inferred; the engine's rule for what a simulated body under
+    // its proxy gives it is not read.
+    if (body.isDynamic() && body.mass() < (this.settings.moveLimitMass ?? MOVE_LIMIT_MASS)) {
+      return undefined;
+    }
     return { body, collider: hit.collider, pose: poseAfter(body, seconds) };
   }
 
