@@ -1815,14 +1815,42 @@ in one frame was not measured, and the walkers' searches were not paced yet); th
 ride, arrival and execution 59, 57 and 63 fps, with no searches in the cart ride's windows (the
 machine is shared: windows without the changed work vary by ±10 fps between runs).
 
-What is left (TODO(M13)): Alduin's attack is still below 60 fps (46 over the second run's
-windows, the slowest 39). Its actors (behavior graphs 4 ms,
-the movers' travels 4–6 ms with the searches' 2 ms share, combat 1.6 ms) and the physics at 1.5–2
-steps a frame are the largest parts; Rapier's own step (2–3 ms, ~450 active bodies: the actors'
-keyframed biped bodies and controllers) has no symbols to break it down. The actors searching
-again and again for a goal they cannot reach (Alduin on the tower: the same island taken whole
-each time) are the AI's to settle; `SceneRenderer.animate` (3–6 ms: fades, palettes, particles)
-is spread over many small parts.
+A third run with the frame's search nodes a true cap (walkers' searches paced too) and a goal off
+the start's island gone to by the island's nearest point (docs/ai.md, "Paths"): the soldiers'
+searches for Alduin on the tower (5,700–12,000 nodes each before) are gone; Alduin's attack 47.4
+fps over fifteen windows (52.6 and 55.3 in the first two, 41.8–49.7 after; p95 28–33 ms; 1.1–1.4
+physics steps a frame). The search nodes of single frames were measured this time: at most 1,749
+in any frame of the run (in the window at stage 130, before the attack), at most 1,569 within
+Alduin's attack (the first share of a search begun with the frame's nodes free is 1,488:
+2,000 less the 512 reserve); in the later windows one actor (a soldier going round the tower's
+foot, ~4,800 nodes a search, eight a window) takes them in about one frame in ten. Making an
+island and finding its nearest point were not counted yet then (they ran whole in a search's
+first share): a frame that made one took more than its count.
+
+A fourth run with those counted too (an island made a share at a time, its nearest point found on
+a grid and kept per goal: docs/ai.md, "Paths") and the follow bot's own searches left out of the
+count (the bot stands in for the player; once a search at once made no island, the bot's way off
+the tower's top took ~1,340 nodes in some frames on top of the soldiers' 1,488, 2,824 in a frame
+in a run before it was left out): at most 1,744 search nodes in any
+frame of the run (stage 25), at most 1,609 within Alduin's attack. Islands made as cells stream in
+(the cart ride, the arrival) take the frame's 1,488 for a few frames each (p99 1,488 in those
+windows). Alduin's attack 55.2 fps over nine windows (59.7, 62.3, 56.3, 52.2, 52.3, 54.0, 50.9,
+53.1, 56.1; p95 22–28 ms; 1.0–1.2 physics steps a frame; awake bodies 71 to 148); the third run's
+first nine windows of the attack were 47.7. The run reached the attack a minute later and its
+windows end four and a half minutes into it, where the third run's went on to seven; with the
+machine shared, how much of the 7.5 fps is the bot's and the islands' and how much the machine's is
+not known.
+
+What is left (TODO(M13)): Alduin's attack is still below 60 fps (55 over the fourth run's
+windows, 47 over the third's, the slowest 42). Its actors (behavior graphs 4 ms, the movers'
+travels, combat 1.6 ms) and the physics at 1.0–1.4 steps a frame are the largest parts; Rapier's own step (2–3 ms) has no symbols
+to break it down. In both the second and third runs the world's awake dynamic bodies grow all
+through the attack (70–90 to 250–380 over seven minutes, about 25 more each window, with the
+bodies from 2,850 to 3,370) and the frame rate falls from 52–60 in the attack's first minute to
+42–49 after: what those bodies are (missed arrows lying on the ground, the tower's debris) and
+why they do not sleep is the next thing to look at. The soldier's repeated way round the tower's
+foot (its chase taken again as Alduin moves) is the AI's; `SceneRenderer.animate` (3–6 ms: fades,
+palettes, particles) is spread over many small parts.
 
 ## The lighting technique's flags and the fades (observed in the original)
 
