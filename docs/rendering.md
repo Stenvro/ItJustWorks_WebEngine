@@ -1841,6 +1841,21 @@ windows end four and a half minutes into it, where the third run's went on to se
 machine shared, how much of the 7.5 fps is the bot's and the islands' and how much the machine's is
 not known.
 
+A fifth run with a search going first and making its island only once it runs on (one island
+made at a time for all searches, docs/ai.md, "Paths") and the follow bot's islands its own (it
+made them over the game's navmeshes before, uncounted, and the soldiers' searches went by them):
+in the cart ride and the arrival the frames at the 1,488 of a first share are gone but one window
+(stage 35: p99 1,488; before, four windows of stages 15–35); within Alduin's attack (seven windows
+this run, the attack three minutes long; the fourth run's was still going four and a half minutes in) the most search nodes in a
+frame were 148, 7, 1,488, 424, 27, 1,603 and 18 (p99 20, 5, 1,488, 406, 27, 1,600, 11), where
+the fourth run's attack windows were at 1,488 or more in seven of ten (p99 1,488–1,497). The two
+windows at the cap are one actor's each: a prisoner's eight searches of ~1,500 nodes, and the
+soldier ff000867's twenty-one of ~2,850 going after Alduin (he searches again each time Alduin
+moved CHASE_SLACK, 192 units). The frame rate is not comparable: the machine was busier all
+through this run (the execution's windows, with no searches in them, 39–51 fps against 69–96 in
+the fourth run; the attack's 24–40 against 51–62; 1.2–2.5 physics steps a frame, as frames were
+longer).
+
 What is left (TODO(M13)): Alduin's attack is still below 60 fps (55 over the fourth run's
 windows, 47 over the third's, the slowest 42). Its actors (behavior graphs 4 ms, the movers'
 travels, combat 1.6 ms) and the physics at 1.0–1.4 steps a frame are the largest parts; Rapier's own step (2–3 ms) has no symbols
