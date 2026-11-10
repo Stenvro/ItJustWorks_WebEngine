@@ -104,7 +104,11 @@ import {
   scriptConstraints,
   type ScriptView,
 } from './script-world.ts';
-import { actorScriptGraph, placedScriptGraph } from '../animation/script-graphs.ts';
+import {
+  actorScriptGraph,
+  placedScriptGraph,
+  playerScriptGraph,
+} from '../animation/script-graphs.ts';
 import { placeObject } from '../sim/placed-objects.ts';
 import { CreatedObjects } from './created-objects.ts';
 import { itemGlow } from '../gameplay/magic/enchantment-glow.ts';
@@ -471,12 +475,21 @@ export class ModelViewer {
     animated: (reference, event) => {
       this.#stage?.obstacleAnimated(reference, event);
     },
-    graphOf: (reference) =>
-      placedScriptGraph(
+    graphOf: (reference) => {
+      const graph = placedScriptGraph(
         this.#instances.get(reference)?.graph,
         this.#allObjectSkeletons.find((entry) => entry.reference === reference)?.skeleton.behavior,
         clock,
-      ) ?? actorScriptGraph(this.#stage?.get(reference)?.placed.behavior),
+      );
+      if (graph) return graph;
+      // The player's body and first-person graphs (their avatar's), as outdoors. Without them an
+      // interior had no player graph, so its variables read as 0: the landing idles' LandRoot
+      // (GetGraphVariableInt(bInJumpState) == 1) never held, and after a jump the body stayed in
+      // its JumpFallState on the ground, refusing every block and attack.
+      if (reference === PLAYER_REF && this.#avatar)
+        return playerScriptGraph(this.#avatar.body.behavior, this.#avatar.firstPerson?.behavior);
+      return actorScriptGraph(this.#stage?.get(reference)?.placed.behavior);
+    },
     motionTypeChanged: (reference, motionType) => {
       for (const placed of this.#play?.placementsOf(reference) ?? []) {
         this.#play?.physics.setMotion(placed, motionType === MOTION_KEYFRAMED);

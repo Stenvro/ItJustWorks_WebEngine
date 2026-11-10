@@ -10,6 +10,11 @@
 // attackStop). Found 2026-11-09 in the browser in Helgen Keep, where a block pressed mid-swing was
 // lost for good while the button stayed held; on 2026-11-10 four of five blocks pressed mid-swing
 // and held 0.9 s were let go before the axe's swing ended (1.5 s), unraised.
+//
+// The jump case passes here with or without the refused block's retry: the simulation's player
+// graph always landed. In the browser indoors it did not (the interior viewer gave the conditions
+// no player graph, so LandRoot's bInJumpState read 0): that is guarded by tools/qa-interaction.ts
+// (interaction-jump-block), as the browser's interior viewer does not run headless.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WeaponState } from '../../../src/gameplay/combat/combat-state.ts';
