@@ -415,7 +415,9 @@ var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
     // keep scenes wait for the player within 100 units of Ralof or Hadvar while the marker is on
     // the way out): a player goes to them first, once for each stage of the marker's quest.
     let called = false;
-    if (best && bot.lastGuide !== undefined && best.t.reference !== bot.lastGuide && W.actorStage?.get(bot.lastGuide) && rt.scenes.sceneOf(bot.lastGuide) !== undefined) {
+    // Inside only: outside, by the tower's hole, Ralof's scene walked him on as the player came
+    // to him, and the two went down the tower together instead of on to the inn's roof.
+    if (best && at.world === undefined && bot.lastGuide !== undefined && best.t.reference !== bot.lastGuide && W.actorStage?.get(bot.lastGuide) && rt.scenes.sceneOf(bot.lastGuide) !== undefined) {
       const key = best.t.quest + ':' + (rt.state.quests.get(best.t.quest)?.stage ?? 0);
       const placement = await rt.placement(bot.lastGuide);
       const m = placement && measure({ quest: best.t.quest, objective: -1, order: 0, holds: true, reference: bot.lastGuide, placement });

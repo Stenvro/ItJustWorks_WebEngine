@@ -109,8 +109,9 @@ conditions do not hold yet, as a player goes on the way the objective leads (MQ1
 way to the Keep" shows the burning inn's marker until stage 120 of MQ101DragonAttack; then
 Hadvar). With no target shown at all it follows the guide it followed last while that one is
 about (MQ101DragonAttack's stage 192: Hadvar ran ahead into his trigger and waits by the
-street's, which only the player sets). A guide it followed who is in a scene in the same space
-is gone to first, once for each stage of the marker's quest, and stood by for 25 s (not walked
+street's, which only the player sets). Inside, a guide it followed who is in a scene in the same
+space is gone to first (outside, Ralof's scene by the tower's hole walked him down the tower with
+the player), once for each stage of the marker's quest, and stood by for 25 s (not walked
 past) before the marker (MQ101's keep scenes speak three lines, then wait with a looping "come
 here" line until the player is within 100 units of Ralof or Hadvar, while the marker is on the
 way out). A target that is a load door here, or a place with one within 400 units across (MQ101's "Enter the Keep" markers by the keep's doors), it walks to and uses; one whose way it found shut twice and is stuck on again it leaves for another shown target (the Stormcloak keep door's street is shut to one who came with Hadvar). A navmesh way far longer than the straight line (twice it and 300 more) to a goal more than
