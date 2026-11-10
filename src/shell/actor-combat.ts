@@ -1427,6 +1427,20 @@ export class ActorCombat implements CombatBridge {
     return this.#fighters.get(reference)?.state;
   }
 
+  /**
+   * The states its body's graph is in (each active state machine's current state), as one key:
+   * what the player's input watches to ask again for a block the graph refused (a jump's
+   * JumpRoot). '' without a fighter or a graph (then there is nothing to tell apart).
+   */
+  graphStates(reference: number): string {
+    const graph = this.#fighters.get(reference)?.body?.behavior;
+    if (!graph) return '';
+    return graph
+      .states()
+      .map((entry) => `${entry.machine}=${entry.state}`)
+      .join('|');
+  }
+
   /** What the QA monitors read of a fighter (QaFighter); undefined: not one of its fighters. */
   qaFighter(reference: number): QaFighter | undefined {
     const fighter = this.#fighters.get(reference);

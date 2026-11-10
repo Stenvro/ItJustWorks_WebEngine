@@ -24,6 +24,13 @@ const RIGHT = 'Right Attack/Block';
 const LEFT = 'Left Attack/Block';
 const READY = 'Ready Weapon';
 
+/**
+ * How long a block held and refused waits before it is asked again although nothing it watches
+ * (blockState) changed: what refused it may lie beyond what it watches (the combat not ready yet,
+ * a graph variable a condition reads). TODO(M13): inferred; a low rate, not every frame.
+ */
+export const BLOCK_RETRY_SECONDS = 0.5;
+
 /** The player's casting: the hands holding magic take their buttons (0 left, 1 right). */
 export interface CastingButtons {
   /** Whether a hand holds something to cast now (a spell, a staff, a scroll). */
@@ -51,6 +58,8 @@ export class PlayerCombat {
   #raising = false;
   /** The state (blockState) a block held was refused in: asked again once it changes. */
   #refused: string | undefined;
+  /** When (#clock) that refused block was asked. */
+  #refusedAt = 0;
 
   /** The player's casting, if any. */
   readonly #casting: () => CastingButtons | undefined;
@@ -134,20 +143,31 @@ export class PlayerCombat {
     // waits for the swing's end (the graph takes no block then, and the press was lost: the
     // player stood with the button held and no guard up). TODO(M13): inferred; the original
     // raises a block held through a swing as the swing ends. A block the graph refused (a
-    // stagger, a left hand whose tree has no blockStart) is asked again only once what refused
-    // it changed (blockState), not every frame.
+    // stagger, a jump in the air, a sprint, a left hand whose tree has no blockStart) is asked
+    // again once what refused it changed (blockState: the combat state, the hands, the ground
+    // under the feet, the sprint, the graph's states) or BLOCK_RETRY_SECONDS passed, not every
+    // frame.
     if (!bow && this.#blocking && player.isHeld(LEFT) && !state.blocking && !attacking(state)) {
-      const asked = blockState(state, hands);
-      if (!this.#raising && asked !== this.#refused) {
+      const asked = blockState(state, hands, {
+        grounded: player.character.grounded,
+        sprinting: player.motion.sprinting,
+        graph: combat.graphStates(PLAYER_REF),
+      });
+      const due = asked !== this.#refused || this.#clock - this.#refusedAt >= BLOCK_RETRY_SECONDS;
+      if (!this.#raising && due) {
         this.#raising = true;
+        const at = this.#clock;
+        const refused = (): void => {
+          this.#refused = asked;
+          this.#refusedAt = at;
+        };
         void combat
           .block(PLAYER_REF, true)
           .then((taken) => {
-            this.#refused = taken ? undefined : asked;
+            if (taken) this.#refused = undefined;
+            else refused();
           })
-          .catch(() => {
-            this.#refused = asked;
-          })
+          .catch(refused)
           .finally(() => {
             this.#raising = false;
           });
@@ -234,8 +254,10 @@ export class PlayerCombat {
 
 /**
  * What decides whether the graph takes a block held now: the attack under way, a stagger, a
- * recoil, a fall, a paired animation, life, and the hands. A block refused in one state is asked
- * again only once this changes (the attack ended, the stagger ended, the gear changed).
+ * recoil, a fall, a paired animation, life, the hands, and of the body: the ground under its feet
+ * (a jump in the air), a sprint, and its graph's states (0_master's JumpRoot and a sprint's
+ * states take no ActionLeftAttack). A block refused in one state is asked again once this changes
+ * (the attack, the stagger or the jump ended, the gear changed).
  */
 export function blockState(
   state: CombatState,
@@ -244,6 +266,7 @@ export function blockState(
     readonly left: number | undefined;
     readonly shield: boolean;
   },
+  body: { readonly grounded: boolean; readonly sprinting: boolean; readonly graph: string },
 ): string {
   return [
     state.weapon,
@@ -257,5 +280,8 @@ export function blockState(
     hands.right ?? '',
     hands.left ?? '',
     hands.shield,
+    body.grounded,
+    body.sprinting,
+    body.graph,
   ].join(':');
 }
