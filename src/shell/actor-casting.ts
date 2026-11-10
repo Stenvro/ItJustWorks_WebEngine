@@ -411,6 +411,7 @@ export class ActorCasting {
         },
         moveTo: () => undefined,
         send: (event) => avatar.send(event),
+        wouldTake: (event) => avatar.wouldTake(event),
       };
     }
     const staged = this.#options.get(actor);
@@ -444,6 +445,7 @@ export class ActorCasting {
         this.#artsHear(actor, [event]);
         return taken;
       },
+      ...(user.wouldTake && { wouldTake: (event: string) => user.wouldTake?.(event) ?? false }),
     };
   }
 

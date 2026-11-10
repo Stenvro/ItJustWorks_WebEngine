@@ -418,16 +418,40 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
   // Found 2026-11-09: at 10 frames a second the block's IdleExecutionerChop_Player came while the
   // player's graph, put back in Executionee_State by the block's instant enter, was still in
   // AOExecutioneeEnter, which does not take it: it was dropped, and the player stood at the block
-  // as Alduin came, looking off and the view level.
-  it('lays the player on the block at 10 frames a second (stage 80 to 100)', async () => {
+  // as Alduin came, looking off and the view level. Found in review 2026-11-09: held until the
+  // body's graph would take it, it was sent while the first-person graph, 0.3 s behind (measured
+  // in the browser at about 10 frames a second), was still in its AOExecutioneeEnter: the
+  // first-person graph dropped it, and the view stayed in the kneeling idle's, level and facing
+  // away from the tower, while the body lay on the block.
+  it('lays the player on the block at 7 frames a second, the view on the camera node (stage 80 to 100)', async () => {
     expect(ridersOff).toBeDefined();
     if (!ridersOff) return;
     const sim = await loadSim(ridersOff);
     try {
+      // Frames of 0.14 s, a little slower than the browser's with the processor slowed (about 10
+      // a second): each graph update is cut to 0.1 s (animateSkeletons' MAX_STEP).
+      const frame = 0.14;
+      const avatar = sim.world.playerView?.avatar;
+      const body = avatar?.body;
+      expect(body).toBeDefined();
+      // The first-person graph 0.3 s behind the body's into the block's enter, as in the browser
+      // (here it ends its AOExecutioneeEnter a frame after the body's): its first three updates
+      // in AOExecutioneeEnter pass no time, as for a clip still being read.
+      const first = avatar?.firstPerson?.behavior;
+      if (first) {
+        const update = first.update.bind(first);
+        let held = 0;
+        first.update = (dt: number): void => {
+          const entering = first.states().some(({ state }) => state === 'AOExecutioneeEnter.hkx');
+          if (entering && held < 3) {
+            held++;
+            update(0);
+          } else update(dt);
+        };
+      }
       let chopped = false;
-      for (let t = 0; t < 300 && !sim.stageDone(MQ101, 100); t += 0.1) {
-        await sim.step(0.1, 0.1);
-        const avatar = sim.world.playerView?.avatar;
+      for (let t = 0; t < 300 && !sim.stageDone(MQ101, 100); t += frame) {
+        await sim.step(frame, frame);
         chopped ||= [avatar?.body.behavior, avatar?.firstPerson?.behavior].every(
           (graph) =>
             graph?.states().some(({ state }) => state === 'AOExecutioneeChop_1stPerson') === true,
@@ -435,6 +459,20 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
       }
       expect(sim.stageDone(MQ101, 100)).toBe(true);
       expect(chopped, "the player's head on the block before Alduin comes").toBe(true);
+      // The view follows the first-person camera node through the chop to the block's idle: down
+      // to the block (the eye at the head's height on it) and up to the tower as Alduin comes.
+      const onBlock = (): boolean =>
+        avatar?.firstPerson?.behavior
+          ?.playing()
+          .some(({ animation }) => /AOExecutioneeIdleOnBlockPlayer/i.test(animation)) === true;
+      expect(await sim.until(onBlock, 30, frame)).toBe(true);
+      await sim.step(1, frame);
+      const view = sim.world.player.forward;
+      expect(Math.asin(view[2]), 'the view turned up by the camera node').toBeGreaterThan(0.3);
+      expect(
+        sim.world.player.eye[2] - sim.world.player.feet[2],
+        'the eye on the block',
+      ).toBeLessThan(70);
     } finally {
       await sim.close();
     }

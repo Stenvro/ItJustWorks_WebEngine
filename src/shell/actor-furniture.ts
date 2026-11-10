@@ -66,6 +66,11 @@ export interface FurnitureUser {
   moveTo(position: Vec3, heading: number): void;
   /** Sends an animation event to its graphs; whether one took it. */
   send(event: string): boolean;
+  /**
+   * Whether its graphs would all take an event now (without it: its body's graph). The player
+   * has two, the body's and the first-person one (PlayerAvatar.wouldTake).
+   */
+  wouldTake?(event: string): boolean;
 }
 
 /** A marker of a placed furniture, in the world. */
@@ -203,6 +208,39 @@ const KEEP_IN_SECONDS = 0.7;
  * take it (seconds; the chopping block's enter, AOExecutioneeEnter, takes 1.5).
  */
 const BACK_IN_SECONDS = 4;
+/** A held script idle's graphs are asked again after this (seconds). */
+const HOLD_POLL_SECONDS = 0.1;
+
+/**
+ * How a script's idle held for an actor in furniture ended: its graphs would take it ('taken'),
+ * the actor's use ended ('ended': its graph is its own again and decides), a later script idle
+ * for the actor came ('superseded': this one is not sent), or the wait ran out ('timeout': it is
+ * sent, and its graphs take it or not).
+ */
+export type HeldIdle = 'taken' | 'ended' | 'superseded' | 'timeout';
+
+/**
+ * Holds a script's idle until its actor's graphs would take it (`takes`), at most `seconds`,
+ * asking every HOLD_POLL_SECONDS (`wait`: real time in the page): while `using` (the actor's use
+ * of its furniture goes on) and `latest` (no later script idle came for the actor). A later idle
+ * wins over one still held, so the two never play out of order.
+ */
+export async function holdIdle(hold: {
+  readonly takes: () => boolean;
+  readonly using: () => boolean;
+  readonly latest: () => boolean;
+  readonly seconds: number;
+  readonly wait?: (seconds: number) => Promise<void>;
+}): Promise<HeldIdle> {
+  const wait = hold.wait ?? sleep;
+  for (let waited = 0; ; waited += HOLD_POLL_SECONDS) {
+    if (!hold.latest()) return 'superseded';
+    if (!hold.using()) return 'ended';
+    if (hold.takes()) return 'taken';
+    if (waited >= hold.seconds - 1e-9) return 'timeout';
+    await wait(HOLD_POLL_SECONDS);
+  }
+}
 
 /**
  * The engine's handlers of a graph's furniture exits (meshes\responses\actorresponse.txt and
@@ -271,6 +309,9 @@ export class ActorFurniture {
    */
   readonly #looping = new Map<number, { readonly idle: number; readonly until: number }>();
   readonly #loopRandom = seededRandom(0x1d1e);
+  /** Each actor's latest script idle (its number): an earlier one still held for it drops. */
+  readonly #latestIdle = new Map<number, number>();
+  #idles = 0;
 
   constructor(options: ActorFurnitureOptions) {
     this.#options = options;
@@ -468,7 +509,11 @@ export class ActorFurniture {
     }
     if (event === undefined) return false;
     if (this.#uses.has(user.reference) && options.inFurniture !== true) return false;
-    await this.#backIn(user, event);
+    const ticket = ++this.#idles;
+    this.#latestIdle.set(user.reference, ticket);
+    const held = await this.#backIn(user, event, ticket);
+    if (this.#latestIdle.get(user.reference) === ticket) this.#latestIdle.delete(user.reference);
+    if (held === 'superseded') return false;
     const sent = user.send(event);
     for (const dependent of options.dependents ?? []) dependent.send(event);
     const use = this.#uses.get(user.reference);
@@ -981,40 +1026,37 @@ export class ActorFurniture {
   }
 
   /**
-   * A script's idle played on an actor in furniture that left its graph standing (not
-   * animation-driven, as the furniture states are): the furniture's state is put back, as a
-   * body made again is. MQ101's player walked to the chopping block in the camera-bob idle
-   * (IdleWalkingCameraStart: the Master machine's MT WalkingCamera, outside the states that
-   * take a furniture's enter), so the block's IdleExecutioneeIdle went unheard; the package's
-   * end fragment then played IdleWalkingCameraEnd, which left the player standing in the
-   * block. TODO(M13): how the engine keeps a graph in its furniture (an enter it holds until
-   * the graph takes it).
+   * A script's idle for an actor in furniture whose graphs would not all take it now (the
+   * player's two: the body's and the first-person one, FurnitureUser.wouldTake). One a script's
+   * idle stood up (not animation-driven, as the furniture states are) is put back in the
+   * furniture's state first. The idle then waits until they would take it (BACK_IN_SECONDS at
+   * most; holdIdle), unless the actor's use ends or a later script idle for it comes, which the
+   * held one gives way to (it is not sent: the later one is the script's last word, and the held
+   * one sent after it would play out of order). MQ101's block: the camera-bob end (the walk's
+   * package's end fragment) stood the player up, and the block's IdleExecutionerChop_Player,
+   * heard only in Executionee_State, came half a second later, before the state was put back:
+   * the player stood through the execution instead of laying their head on the block. At 10
+   * frames a second the chop came 0.4 s after the block's instant enter put the player's graphs
+   * back, during AOExecutioneeEnter, which does not take it, and was dropped (measured in the
+   * simulation). In the browser at about 10 frames a second the first-person graph ended its
+   * AOExecutioneeEnter 0.3 s after the body's: sent as the body's graph would take it, the chop
+   * was dropped by the first-person graph, and the view stayed in the kneeling idle's, level and
+   * the way the player had walked in, while the body lay on the block. TODO(M13): inferred, as
+   * the rest of this (how the engine keeps a graph in its furniture).
    */
-  /**
-   * A script's idle for an actor in furniture whose graph a script's idle stood up (not
-   * animation-driven, as the furniture states are) and which that graph would not take now: the
-   * furniture's state is put back first and the idle waits until the graph would take it
-   * (BACK_IN_SECONDS at most). MQ101's block: the camera-bob end (the walk's package's end
-   * fragment) stood the player up, and the block's IdleExecutionerChop_Player, heard only in
-   * Executionee_State, came half a second later, before the state was put back: the player
-   * stood through the execution instead of laying their head on the block. A graph already put
-   * back (animation-driven) that would not take the idle yet, still on its way into the state's
-   * idle, is waited for too: at 10 frames a second the chop came 0.4 s after the block's instant
-   * enter put the player's graph back, during AOExecutioneeEnter, which does not take it; sent
-   * then it was dropped and the player stood as Alduin came (measured in the simulation; at 60
-   * frames a second it came before the state was put back, and waited). TODO(M13): inferred, as
-   * the rest of this.
-   */
-  async #backIn(user: FurnitureUser, event: string): Promise<void> {
+  async #backIn(user: FurnitureUser, event: string, ticket: number): Promise<HeldIdle> {
     const use = this.#uses.get(user.reference);
     const graph = user.placed.behavior;
-    if (!use || !inside(use) || !graph) return;
-    if (graph.wouldHandle(event)) return;
+    const takes = (): boolean =>
+      user.wouldTake?.(event) ?? user.placed.behavior?.wouldHandle(event) === true;
+    if (!use || !inside(use) || !graph || takes()) return 'taken';
     if (graph.variable('bAnimationDriven') === 0) await this.#restore(user);
-    for (let waited = 0; waited < BACK_IN_SECONDS; waited += 0.1) {
-      if (this.#uses.get(user.reference) !== use || user.placed.behavior.wouldHandle(event)) return;
-      await sleep(0.1);
-    }
+    return holdIdle({
+      takes,
+      using: () => this.#uses.get(user.reference) === use,
+      latest: () => this.#latestIdle.get(user.reference) === ticket,
+      seconds: BACK_IN_SECONDS,
+    });
   }
 
   async #keepIn(user: FurnitureUser, use: Use): Promise<void> {

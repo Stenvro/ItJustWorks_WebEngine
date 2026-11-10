@@ -737,6 +737,25 @@ export class PlayerAvatar {
     }
   }
 
+  /**
+   * Whether its graphs would take an event now: each of the body's and the first-person one
+   * that names it (the first-person graph has not all the body's events). Both hear what is
+   * sent; one that dropped a furniture's idle stays out of step with the other for good: on
+   * Helgen's block the first-person graph, which ended its AOExecutioneeEnter later than the
+   * body's (0.3 s at about 10 frames a second in the browser), missed IdleExecutionerChop_Player
+   * sent as the body's graph would take it, and the view stayed in the kneeling idle's while the
+   * body lay on the block (src/shell/actor-furniture.ts #backIn).
+   */
+  wouldTake(event: string): boolean {
+    let named = false;
+    for (const graph of [this.#made.body.behavior, this.#firstPerson?.skeleton.behavior]) {
+      if (!graph?.declares(event)) continue;
+      named = true;
+      if (!graph.wouldHandle(event)) return false;
+    }
+    return named;
+  }
+
   /** Sends an animation event to its graphs (the body's and the first-person one). */
   send(event: string): boolean {
     let taken = false;
