@@ -139,15 +139,15 @@ export class PlayerCombat {
         this.#left = { since: this.#clock, power: false };
       }
     }
-    // A block held goes up once no attack is under way: pressed in the middle of a swing, it
-    // waits for the swing's end (the graph takes no block then, and the press was lost: the
-    // player stood with the button held and no guard up). TODO(M13): inferred; the original
-    // raises a block held through a swing as the swing ends. A block the graph refused (a
-    // stagger, a jump in the air, a sprint, a left hand whose tree has no blockStart) is asked
-    // again once what refused it changed (blockState: the combat state, the hands, the ground
-    // under the feet, the sprint, the graph's states) or BLOCK_RETRY_SECONDS passed, not every
-    // frame.
-    if (!bow && this.#blocking && player.isHeld(LEFT) && !state.blocking && !attacking(state)) {
+    // A block held goes up once no attack is under way or the attack's window has opened
+    // (blockOpen): pressed in the middle of a swing, it waits for the window (the graph takes no
+    // block before it, and the press was lost: the player stood with the button held and no
+    // guard up). 0_master's attack states take blockStart from AttackWinStart on and then end
+    // the attack (blockStartOut, attackStop). A block the graph refused (a stagger, a jump in the
+    // air, a sprint, a left hand whose tree has no blockStart) is asked again once what refused
+    // it changed (blockState: the combat state, the hands, the ground under the feet, the
+    // sprint, the graph's states) or BLOCK_RETRY_SECONDS passed, not every frame.
+    if (!bow && this.#blocking && player.isHeld(LEFT) && !state.blocking && blockOpen(state)) {
       const asked = blockState(state, hands, {
         grounded: player.character.grounded,
         sprinting: player.motion.sprinting,
@@ -250,6 +250,21 @@ export class PlayerCombat {
       done();
     }
   }
+}
+
+/**
+ * Whether a block held may be asked of the graph now: no attack under way, or a melee attack's
+ * window open (nextAttack from AttackWinStart, then followThrough). 0_master's attack states
+ * take blockStart only from AttackWinStart on (behavior-run: an axe's attackStart, blockStart
+ * 0.5 s in stays in AttackState; sent after AttackWinStart, BlockState, blockStartOut, then
+ * attackStop).
+ */
+export function blockOpen(state: CombatState): boolean {
+  return (
+    !attacking(state) ||
+    state.attack === AttackState.nextAttack ||
+    state.attack === AttackState.followThrough
+  );
 }
 
 /**

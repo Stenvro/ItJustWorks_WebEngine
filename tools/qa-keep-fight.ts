@@ -468,7 +468,15 @@ async function main(): Promise<void> {
   await page.eval(`(window.__kf.stop(), true)`);
   // A block held through a jump (won, the weapon still out): pressed, then Space, still held
   // for 2.5 s; the guard must be up after the landing.
-  let jumpBlock: { states: string[]; asks: boolean[]; upAtEnd: boolean } | undefined;
+  let jumpBlock:
+    | {
+        states: string[];
+        asks: boolean[];
+        upAtEnd: boolean;
+        graph: string;
+        wantBlock: number | undefined;
+      }
+    | undefined;
   if (outcome.startsWith('won')) {
     await sleep(1500);
     await page.eval(
@@ -478,8 +486,9 @@ async function main(): Promise<void> {
     await sleep(400);
     await page.key('Space');
     await sleep(2500);
-    jumpBlock = await page.eval<{ states: string[]; asks: boolean[]; upAtEnd: boolean }>(
-      `(() => { const k = window.__kf; const r = { states: [...new Set(k.blockHold ?? [])], asks: k.blockAsks ?? [], upAtEnd: k.V().actorStage.combat.combatState(0x14)?.blocking === true }; k.blockHold = undefined; return r; })()`,
+    // With the graph's states and its iWantBlock at the end (what refused a block not up).
+    jumpBlock = await page.eval<NonNullable<typeof jumpBlock>>(
+      `(() => { const k = window.__kf; const c = k.V().actorStage.combat; const r = { states: [...new Set(k.blockHold ?? [])], asks: k.blockAsks ?? [], upAtEnd: c.combatState(0x14)?.blocking === true, graph: c.graphStates(0x14), wantBlock: k.V().playerView?.avatar?.body.behavior?.variable('iWantBlock') }; k.blockHold = undefined; return r; })()`,
     );
     await mouse('mouseReleased', 'right');
     log(`a block held through a jump: ${JSON.stringify(jumpBlock)}`);
