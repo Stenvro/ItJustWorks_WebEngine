@@ -426,7 +426,14 @@ screens allow −180 .. 180). The settings' units are inferred from their names 
 
 **Load doors** in Play go behind the loading menu and a loading screen as well
 (`PlayMode.loadingScreen`), as fast travel does: the place loads with the game running (the
-player is put down in it), and the screen goes once it has.
+player is put down in it), and the screen goes once it has. One journey through a door at a
+time (`main.ts` onTravel): the place left runs on behind the loading screen, so an automatic
+door come near again or a door pressed again would ask a second journey; it is not taken. A
+place loaded again while its first load still places its actors stages them all the same
+(`ActorStage`: a placement for a cell that went comes to nothing, and the cell loaded again
+places those actors anew). Before, both together left the actors the first load was placing
+off the stage (`keep-loaded-twice` in `tools/qa-scenarios.ts`: 3 of the keep's 38 actors
+staged, Gunjar's body not among them; now 38).
 
 ## The HUD
 
