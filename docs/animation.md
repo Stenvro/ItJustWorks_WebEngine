@@ -442,7 +442,12 @@ animated objects alike.
   Below 10 frames a second (the simulation at 4 to 7 a second) the headsman, behind the camera
   and updated ahead, ran his whole frames while the prisoner, updated every frame as his
   Decapitate came near, ran 0.1 s of each: the axe was 0.37 s on, rising again, and the head flew
-  up and 180 to 270 units off. TODO(M13): inferred.
+  up and 180 to 270 units off. Those so kept together also animate all their bones, seen or not
+  (the cut and the killer's swing are read off their poses): unseen, the three the block holds
+  moved iMinBonesToGenerateWhileSitting bones, the prisoner's head stood 12 units above where his
+  chop has it and the headsman's arm and axe stayed while his body turned, and in the browser the
+  head flew 9 to 12 degrees to one side where, seen, it flew 3.5 to the other (at 11 frames a
+  second 204 units off). TODO(M13): inferred.
 - **How far a pose has run.** Ours: each skeleton keeps how far its graph has run (its updates'
   steps) and how far the pose it shows has (`shownProgress`: a far graph's blend's share of its
   update). It runs with the clock except where a frame longer than MAX_STEP had its update cut

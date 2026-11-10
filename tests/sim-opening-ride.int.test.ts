@@ -580,9 +580,18 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
       const stage = sim.world.stage;
       const basket = await sim.position(HEAD_BASKET);
       if (!basket) throw new Error('no basket');
+      // Turned from the block: the camera sees none of the three the block holds (headless
+      // nothing is drawn, so their graphs are told so, as the browser's renderer tells them).
+      const unseen = new WeakSet<object>();
       const turnAway = (): void => {
         const eye = sim.world.player.eye;
         sim.world.look(Math.atan2(basket[0] - eye[0], basket[1] - eye[1]) + Math.PI);
+        for (const user of stage.furniture.usersOf(stage.furnitureOf(prisoner) ?? 0)) {
+          const graph = sim.actor(user)?.placed.behavior;
+          if (!graph || unseen.has(graph)) continue;
+          unseen.add(graph);
+          Object.defineProperty(graph, 'seen', { get: () => false, set: () => undefined });
+        }
       };
       let executioner: number | undefined;
       for (const user of stage.furniture.usersOf(stage.furnitureOf(prisoner) ?? 0)) {

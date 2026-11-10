@@ -2945,6 +2945,15 @@ export class ActorStage {
     // iMinBonesToGenerateWhileSitting of one seated, none otherwise. A flier's flying state
     // (hovering included) does not count: in the air it keeps its bone LOD like anyone.
     // TODO(M13): the engine's own "force minimum bone update" flag (3 bones) is not modelled.
+    // Ours: those whose graphs go together (#inStep) animate all theirs, seen or not: a blow's
+    // cut and the killer's swing are read off their poses. Unseen (the camera turned from
+    // Helgen's block), the three held by it moved iMinBonesToGenerateWhileSitting bones: the
+    // prisoner's head stood 12 units above where his chop has it and the headsman's arm and axe
+    // stayed while his body turned (the axe came into the blow at 110 units a second, not 295):
+    // in the browser the head flew 9 to 12 degrees to one side where, seen, it flew 3.5 to the
+    // other, and at 11 frames a second went 204 units off. TODO(M13): inferred.
+    const groups = this.#inStep();
+    const together = new Set(groups.flat());
     const sitting = this.#options.session.ini.number(
       'Animation',
       'iMinBonesToGenerateWhileSitting',
@@ -2958,7 +2967,8 @@ export class ActorStage {
         staged.dead ||
         this.knockdowns.paralyzed(reference) ||
         this.knockdowns.state(reference) === KnockState.down ||
-        actors?.get(reference)?.unconscious === true;
+        actors?.get(reference)?.unconscious === true ||
+        together.has(staged.placed);
       behavior.minimumBones = allBones ? Infinity : this.furniture.holds(reference) ? sitting : 0;
     }
     // Whether the camera saw each in the last frame (one with no 3D drawn counts as seen), and
@@ -2997,10 +3007,8 @@ export class ActorStage {
           );
         return { ...wanted, seen, rootAway };
       });
-    // Those one event reaches together are kept in step (animateInStep); held, their graphs did
+    // Those whose graphs go together are kept in step (animateInStep); held, their graphs did
     // not move them.
-    const groups = this.#inStep();
-    const together = new Set(groups.flat());
     animateSkeletons(
       groups.length === 0
         ? this.#animating()
