@@ -1026,7 +1026,10 @@ export class PlayMode {
     // One journey at a time, each behind a loading menu of its own: a second one asked while one
     // loads (a load door activated twice) goes once the first is there. Run side by side, the
     // second's loading menu took the place of the first's, which the first then closed: the
-    // second's stayed open for good, over the game.
+    // second's stayed open for good, over the game. A load door is not taken again while its
+    // place loads (main.ts onTravel), so what waits here is another kind of journey (a script's
+    // move while a door's place loads). TODO(M13): inferred: whether the original runs such a
+    // second journey after the first or drops it is not known.
     const journey = this.#journeys.then(() => this.#journey(go));
     this.#journeys = journey.catch(() => undefined);
     return journey;
