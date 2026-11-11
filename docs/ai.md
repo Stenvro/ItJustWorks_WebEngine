@@ -2426,7 +2426,11 @@ meanwhile.
   reach (fists: the race's unarmed reach, RACE DATA @100; a bash fCombatBashReach) × the
   attacker's size, from its feet to the target's shape, inside the attack data's strike angle
   (ATKD: 50° for attackStart, 35° for power attacks, 85° about ±90° for mounted side swings); it
-  hits the nearest such actor (every one with Sweep), each once an attack. With nothing to hit
+  hits the one it is aimed at (its combat target, the player's aimed actor) where it reaches it,
+  else the nearest such actor (every one with Sweep), each once an attack; a corpse its cell
+  placed dead is no such actor. TODO(M13): the aimed one first is inferred from the player's own
+  aim, which keeps its current target first; by the nearest alone, in Helgen Keep the officer's
+  blows at the player dead ahead fell on the soldier at his side. With nothing to hit
   but a wall in reach (a ray at the chest on L_WEAPON) the attacker recoils. TODO(M13): the
   engine measures from bounds; its cone's exact shape is not documented.
 - **Damage** (`damage.ts`; UESP "Damage", "Block", "Sneak", "Difficulty"): the equip system's
@@ -2991,7 +2995,11 @@ attacks it could not even play), so every attack was a power attack until stamin
 stagger locked the player out of their swings, and the race's dual wielder's power attack and
 fists were played for want of the player's own idles. A chained attack is not ended by the attack
 before it, whose clip still blends out and raises its attackStop (every second swing of the
-player's struck nothing). A power attack is chosen no sooner than fPowerAttackCoolDownTime
+player's struck nothing). In the running game the stage's bridge to the combat AI dropped the
+node's choice until 2026-11-09 (only the tests' hosts had it): every NPC swing went to its
+graph as the action's idle, unchecked, from up to 450 units (its farthest lunge, a forward
+power attack's, past its reach), and fell on whoever stood in its cone (Helgen Keep's
+Imperials on each other, Ralof on the player). A power attack is chosen no sooner than fPowerAttackCoolDownTime
 (Skyrim.esm 0) after the last (by the setting's name, TODO(M13)); one without attack data of its
 own (a paired kill move's) deals 1 + fPowerAttackDefaultBonus (1) times the damage.
 Creatures fight so: their idle trees hold no attack for ActionRightAttack, or one that is no
@@ -3221,16 +3229,26 @@ movement's Find Attack Location: "The combat behaviour tree"). The close movemen
 engine's ([Combat movement](#combat-movement)).
 
 - **Reactions** (`reactionsOf(runtime).reaction`, `src/ai/combat-reactions.ts`: the rules crime
-  does not weigh, then crime and factions' `runtime.crime.reaction`; `combatReaction` keeps the
-  rules without crime for tests and tools): summons, reanimated and commanded actors are their
-  commander's allies and share its reactions; the player's teammates are the player's allies; one scripts set to be attacked on
-  sight (SetAttackActorOnSight) is everyone's enemy; a relationship decides next (ally and lover
-  ally, friend and confidant friend, foe and worse enemy); else the factions' combat reactions
-  (FACT XNAM, scripts' SetAlly / SetEnemy) between the factions each is a member of, the closest
-  bond winning (ally, friend, enemy, neutral), the other's view where the actor's names none; a
-  crime faction set as the player's enemy is an enemy faction to the player. Vanilla factions
-  list themselves (BanditFaction is BanditFaction's ally): faction-mates are not allies by
-  themselves. Crime makes the player an enemy (`CrimeEngine.reaction`'s crime hostility): to
+  does not weigh, then crime and factions' `runtime.crime.reaction`; `combatReaction` asks the
+  same rules of plain facts for tests and tools, with crime's faction and relationship rule and
+  without frenzy, a script's combat or guards): summons, reanimated and commanded actors are their
+  commander's allies and share its reactions; the player's teammates are the player's allies; one
+  scripts set to be attacked on sight (SetAttackActorOnSight) is everyone's enemy; else factions
+  and relationships, one rule for both (`factionTies` and `reaction` in
+  `src/gameplay/factions.ts`; docs/gameplay.md "Factions and reactions"): a relationship of enemy
+  or worse, or a faction of the actor set as the player's enemy, makes an enemy; a relationship
+  of friend or better or a friend combat reaction a friend; an ally reaction or a shared faction
+  an ally; an enemy reaction an enemy; else neutral. The combat reactions (FACT XNAM, scripts'
+  SetAlly / SetEnemy) are those of the actor's factions towards the other's. A faction both are
+  in that names no reaction to itself makes them allies unless it is Special Combat (the town,
+  crime and guard factions: Whiterun's citizens and guards help each other), and one that names
+  a reaction to itself counts by that reaction alone (BanditFaction is its own ally; MQ101's keep
+  fight needs it: Ralof and the two Imperials share MQ101TemporaryFriendsFaction, which stage 270
+  sets neutral to itself, and their CW NPC factions are enemies;
+  `tests/sim-helgen-keep-fight.int.test.ts`; TODO(M13): the precedence is inferred). Two who are members of one
+  Special Combat faction (a brawl, sparring, a duel: `CrimeEngine.specialCombat`, docs/
+  gameplay.md "Factions and reactions") fight alone: no one's assistance, nor a guard's help
+  for the innocent, takes up a fight between them (TODO(M13): inferred). Crime makes the player an enemy (`CrimeEngine.reaction`'s crime hostility): to
   the members of a faction set as the player's enemy, to those of a crime faction that is, to
   guards whose response to the player's bounty is to attack (`guardResponse`), and to the others
   of a crime faction that attacks rather than arrests (soldiers) once alarmed by a bounty

@@ -34,6 +34,7 @@ import {
   type SpeechSides,
 } from '../../gameplay/crime.ts';
 import {
+  factionTies,
   overlooksCrime,
   rankFromFavor,
   reaction as regard,
@@ -866,6 +867,8 @@ export class CrimeEngine {
   async assault(attacker: number, victim: number): Promise<Crime | undefined> {
     const runtime = this.#runtime;
     if (victim === attacker) return undefined;
+    // A brawl's or a sparring match's blow (specialCombat): no crime, no alarm.
+    if (await this.specialCombat(attacker, victim)) return undefined;
     // An actor's first blow on one not hostile to it: an NPC crime (no bounty) its witnesses
     // and the guards answer. Not a guard's (observed in the original: its blows are no crime),
     // and one pair's only once, so a stray swing does not grow into an endless brawl.
@@ -921,6 +924,7 @@ export class CrimeEngine {
   async murder(killer: number, victim: number): Promise<Crime | undefined> {
     if (victim === killer) return undefined;
     if ((await this.reaction(victim, killer)) === 'hostile') return undefined;
+    if (await this.specialCombat(killer, victim)) return undefined;
     const faction = await this.victimCrimeFaction(victim);
     if (faction === undefined) return undefined;
     // An NPC's kill is a murder where its fight was its own assault: it struck first one not
@@ -1588,9 +1592,14 @@ export class CrimeEngine {
 
   /**
    * How an actor regards another (src/gameplay/factions.ts reaction): their factions' combat
-   * reactions, a shared faction, their relationship, frenzy, and crime (a faction that made the
-   * player its enemy, guards to attack them: guardResponse). The combat AI (5.2) asks this;
-   * `alarmed`: the actor learned of a crime of the other's just now.
+   * reactions, their relationship, frenzy, and crime (a faction that made the player its enemy,
+   * guards to attack them: guardResponse), and a faction both are in. Where that faction names
+   * a reaction to itself (XNAM, or a script's SetAlly / SetEnemy), it counts by that reaction as
+   * any other pair of their factions (MQ101TemporaryFriendsFaction: its own friend, then neutral
+   * from stage 270, so Ralof and the keep's Imperials fight by their CW factions); where it
+   * names none, its members are allies unless it is Special Combat (the town, crime and guard
+   * factions name none). TODO(M13): that precedence is inferred. The combat AI (5.2) asks
+   * this; `alarmed`: the actor learned of a crime of the other's just now.
    */
   async reaction(actor: number, other: number, alarmed = false): Promise<Reaction> {
     const runtime = this.#runtime;
@@ -1598,45 +1607,49 @@ export class CrimeEngine {
     if (actor === other) return 'friend';
     const mine = await actors.factionsOf(actor);
     const theirs = await actors.factionsOf(other);
-    const factionReactions: number[] = [];
-    let sameFaction = false;
-    for (const [faction, rank] of mine) {
-      if (rank < 0) continue;
-      const record = await actors.faction(faction);
-      if (
-        (theirs.get(faction) ?? -1) >= 0 &&
-        ((record?.flags ?? 0) & CrimeFlag.specialCombat) === 0
-      ) {
-        sameFaction = true;
-      }
-      for (const [otherFaction, otherRank] of theirs) {
-        if (otherRank < 0) continue;
-        const value = await actors.factionReaction(faction, otherFaction);
-        if (value !== undefined) factionReactions.push(value);
-      }
-    }
-    // Where the actor's factions name none of the other's, the other's towards the actor's
-    // count (src/ai/combat-reactions.ts, inferred: TODO(M13)). MQAncientHeroFaction names only
-    // itself; MQ304AlduinFaction names it an enemy, and Sovngarde's heroes fight Alduin.
-    if (factionReactions.length === 0) {
-      for (const [otherFaction, otherRank] of theirs) {
-        if (otherRank < 0) continue;
-        for (const [faction, rank] of mine) {
-          if (rank < 0) continue;
-          const value = await actors.factionReaction(otherFaction, faction);
-          if (value !== undefined) factionReactions.push(value);
-        }
-      }
-    }
+    const ties = await factionTies(
+      {
+        factionReaction: (faction, to) => actors.factionReaction(faction, to),
+        specialCombat: async (faction) =>
+          (((await actors.faction(faction))?.flags ?? 0) & CrimeFlag.specialCombat) !== 0,
+      },
+      mine,
+      theirs,
+    );
     const aggression = (await actors.value(actor, ActorValue.aggression)).current;
     return regard({
-      factionReactions,
-      sameFaction,
+      ...ties,
       relationshipRank: await actors.relationshipRank(actor, other),
       frenzied: aggression >= 3,
       crimeHostile: other === PLAYER_REF && (await this.#crimeHostile(actor, mine, alarmed)),
       scriptHostile: runtime.state.actors.get(actor)?.combatTargets?.includes(other) === true,
     });
+  }
+
+  /**
+   * Whether two actors fight as members of one Special Combat faction (FACT DATA flag 0x2, both
+   * members: rank 0 or more): a fight that is theirs alone. Such a faction holds the fights the
+   * game sets up between those who are otherwise no enemies: the brawl (DGIntimidateFaction),
+   * sparring (MQBladesSparringFaction, MQSovngardeSparringFaction), the Companions' single
+   * combat (CompanionsSingleCombatFaction), a duel with the player (WESpecialCombatFaction,
+   * WIPlayerEnemySpecialCombatFaction); 8 of the 13 name no reaction to themselves, so it is
+   * the flag alone that sets them apart. A blow or a kill between them is no crime, and no one
+   * takes up their fight on either side (the combat AI's assistance and the guards': src/shell/
+   * actor-combat-ai.ts). TODO(M13): inferred from the factions' uses and the editor's
+   * description of the flag (members fight each other without others joining in); what else the
+   * engine gates by it is not documented.
+   */
+  async specialCombat(actor: number, other: number): Promise<boolean> {
+    if (actor === other) return false;
+    const { actors } = this.#runtime;
+    const mine = await actors.factionsOf(actor);
+    const theirs = await actors.factionsOf(other);
+    for (const [faction, rank] of mine) {
+      if (rank < 0 || (theirs.get(faction) ?? -1) < 0) continue;
+      const record = await actors.faction(faction);
+      if (((record?.flags ?? 0) & CrimeFlag.specialCombat) !== 0) return true;
+    }
+    return false;
   }
 
   async #crimeHostile(

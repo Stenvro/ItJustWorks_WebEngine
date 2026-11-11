@@ -1339,10 +1339,14 @@ export class ActorCombat implements CombatBridge {
     return (await this.#act(fighter, 'ActionBlockAnticipate')) !== undefined;
   }
 
-  /** Blocks (true) or stops (false): the left hand's attack when it holds a shield or nothing. */
-  async block(reference: number, on: boolean): Promise<void> {
-    if (on) await this.attack(reference, 'ActionLeftAttack');
-    else await this.release(reference, 'ActionLeftRelease');
+  /**
+   * Blocks (true) or stops (false): the left hand's attack when it holds a shield or nothing.
+   * Whether the graph took a block asked for (false: it can take none now).
+   */
+  async block(reference: number, on: boolean): Promise<boolean> {
+    if (on) return this.attack(reference, 'ActionLeftAttack');
+    await this.release(reference, 'ActionLeftRelease');
+    return true;
   }
 
   /** Whether an actor fights (its target), for its AI (its packages wait meanwhile). */
@@ -1488,6 +1492,20 @@ export class ActorCombat implements CombatBridge {
   /** A fighter's combat state (the player's input reads it). */
   combatState(reference: number): CombatState | undefined {
     return this.#fighters.get(reference)?.state;
+  }
+
+  /**
+   * The states its body's graph is in (each active state machine's current state), as one key:
+   * what the player's input watches to ask again for a block the graph refused (a jump's
+   * JumpRoot). '' without a fighter or a graph (then there is nothing to tell apart).
+   */
+  graphStates(reference: number): string {
+    const graph = this.#fighters.get(reference)?.body?.behavior;
+    if (!graph) return '';
+    return graph
+      .states()
+      .map((entry) => `${entry.machine}=${entry.state}`)
+      .join('|');
   }
 
   /** What the QA monitors read of a fighter (QaFighter); undefined: not one of its fighters. */
@@ -2474,6 +2492,16 @@ export class ActorCombat implements CombatBridge {
     for (const other of this.#fighters.values()) {
       if (other === fighter || current.struck.has(other.reference)) continue;
       if (other.state.life === LifeState.dead || other.state.paired === 'support') continue;
+      // A corpse its cell placed dead (Starts Dead, not raised since) is no living target: the
+      // soldiers' blows fell on Gunjar's body in Helgen Keep (its ragdoll still takes the blow's
+      // knock below, as any moving body in reach).
+      const runtime = this.#options.session.scriptsReady;
+      if (
+        other.body?.actor.startsDead === true &&
+        runtime?.state.actors.get(other.reference)?.dead !== false
+      ) {
+        continue;
+      }
       const at = this.#feet(other);
       if (!at) continue;
       targets.push({ reference: other.reference, feet: at, ...this.#size(other) });
@@ -2486,7 +2514,7 @@ export class ActorCombat implements CombatBridge {
       [this.#heldWeapon(fighter)],
       { attackType: data.attackType },
     );
-    const contacts = strikeTargets(strike, targets, (sweeps ?? 0) !== 0);
+    const contacts = strikeTargets(strike, targets, (sweeps ?? 0) !== 0, fighter.target);
     const physics = this.#play?.physics;
     const chest: Vec3 = [feet[0], feet[1], feet[2] + strike.height * CHEST];
     if (contacts.length === 0) {
@@ -4169,7 +4197,9 @@ export class ActorCombat implements CombatBridge {
       attack: (reference, action, melee) => this.attack(reference, action, melee),
       killMove: (reference) => this.killMove(reference),
       release: (reference, action) => this.release(reference, action),
-      block: (reference, on) => this.block(reference, on),
+      block: async (reference, on) => {
+        await this.block(reference, on);
+      },
       anticipateBlow: (reference, blow) => this.anticipateBlow(reference, blow),
       act: (reference, action, target) => {
         const fighter = this.#fighters.get(reference);

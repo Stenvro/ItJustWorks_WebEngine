@@ -1395,14 +1395,43 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
   a friend; frenzied (Aggression 3), a crime against the player (a faction that made them its
   enemy, SetPlayerEnemy; guards to attack them) or a relationship of enemy or worse: hostile;
   else a friend (a friend combat reaction, a relationship of friend or better), an ally (an
-  ally reaction), hostile (an enemy reaction), an ally (a shared faction without Special
-  Combat), or neutral: a shared faction weighs less than a named enmity, and where the actor's
-  factions name none of the other's, the other's towards the actor's count (both inferred:
-  Sovngarde's heroes and Alduin share FavorExcludedFaction, only MQ304AlduinFaction names
-  MQAncientHeroFaction, an enemy, and MQ305 has them fight). The combat reactions are the
-  factions' XNAM, as scripts set them (SetAlly,
-  SetEnemy). `attacksOnSight(aggression, reaction)`: aggressive actors attack enemies, very
-  aggressive neutrals too, frenzied anyone. TODO(M13): the engine's precedence.
+  ally reaction, a shared faction), hostile (an enemy reaction), or neutral. The combat
+  reactions are the factions' XNAM, as scripts set them (SetAlly, SetEnemy). A faction both are
+  in: where it names a reaction to itself, it counts by that reaction as any other pair of their
+  factions, and its membership adds nothing; where it names none, its members are allies unless
+  it is Special Combat (0x2). Of the factions with two or more members, 172 name a reaction to
+  themselves (148 ally, 20 friend) and 496 name none, among them the town, crime and guard
+  factions (TownWhiterunFaction, CrimeFactionWhiterun, WhiterunBanneredMareFaction,
+  GuardFactionWhiterun, IsGuardFaction, TownRiverwoodFaction) and the civil war's
+  CWSonsFactionNPC and CWImperialFactionNPC: by membership Hulda, Saadia and Mikael help each
+  other, and the Bannered Mare's patrons fight a wolf together
+  (`tests/conformance/combat/controller-state.test.ts`). The reaction to itself goes first
+  where one is named: some factions name themselves enemies to set their members on each other
+  (DA02CultistsAreEnemies, WE19BanditFaction), and MQ101's TemporaryFriendsFaction, its own
+  friend while the opening's Imperials and Stormcloaks walk Helgen together, is set neutral to
+  itself at stage 270 (SetEnemy(itself, true, true)) so that Ralof and the keep's Imperials
+  fight by their CW factions' enmity; as allies by its membership, Ralof stood by while both
+  soldiers fought the player alone (`tests/sim-helgen-keep-fight.int.test.ts`).
+  `tools/faction-reactions.ts <EditorID...>` prints a faction's flags, its reaction to itself
+  and its other reactions. A shared faction weighs less than a named enmity, and where the
+  actor's factions name none of the other's, the other's towards the actor's count (both
+  inferred: Sovngarde's heroes and Alduin share FavorExcludedFaction, only MQ304AlduinFaction
+  names MQAncientHeroFaction, an enemy, and MQ305 has them fight).
+  `attacksOnSight(aggression, reaction)`: aggressive actors attack
+  enemies, very aggressive neutrals too, frenzied anyone. TODO(M13): inferred: the engine's
+  precedence, and that a named reaction to itself goes before membership.
+- Special Combat (FACT DATA 0x2; `CrimeEngine.specialCombat`): two actors who are both members
+  of such a faction fight a fight that is theirs alone: a blow or a kill between them is no
+  crime (no assault, no murder, no alarm), and no one takes up their fight on either side (the
+  combat AI's assistance and the guards' help for the innocent skip it). The 13 factions with
+  the flag hold the fights the game sets up between those who are otherwise no enemies: the
+  brawl (DGIntimidateFaction), sparring (MQBladesSparringFaction, MQSovngardeSparringFaction),
+  the Companions' training and single combat, duels with the player (WESpecialCombatFaction,
+  WIPlayerEnemySpecialCombatFaction, C06PlayerWolfSpecialCombatFaction,
+  DLC1WE08SpecialCombatFaction); 8 of them name no reaction to themselves, so the flag alone
+  sets their members apart. TODO(M13): inferred from these uses and the editor's description
+  of the flag (members fight each other without others joining in); what else the engine gates
+  by it is not documented.
 - Relationships (RELA) and their association types (ASTP: HasAssociationType,
   HasFamilyRelationship by ASTP DATA 0x1, HasParentRelationship).
 - Favor: a gift's worth (its value; TODO(M13)) is ShowGiftMenu's favor points, which raise the

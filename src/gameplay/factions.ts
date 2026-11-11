@@ -31,10 +31,21 @@ export interface ReactionInputs {
   readonly self?: boolean;
   /**
    * The combat reactions between their factions (each of the actor's factions towards each of
-   * the other's: scripts' SetAlly / SetEnemy first, else XNAM), CombatReaction values.
+   * the other's: scripts' SetAlly / SetEnemy first, else XNAM), CombatReaction values. A faction
+   * both are in that names a reaction to itself is among them as any other pair, and its
+   * membership adds nothing (`sameFaction`): some name themselves enemies to set their members
+   * on each other (DA02CultistsAreEnemies, WE19BanditFaction), and MQ101TemporaryFriendsFaction,
+   * its own friend while the opening's Imperials and Stormcloaks must not fight, is set neutral
+   * to itself by MQ101 stage 270's SetEnemy(itself, true, true) so that the keep's two sides
+   * (CWImperialFactionNPC and CWSonsFactionNPC, enemies) fight.
    */
   readonly factionReactions: readonly number[];
-  /** They share a faction that is not Special Combat (its members fight each other). */
+  /**
+   * They share a faction that names no reaction to itself and is not Special Combat (FACT DATA
+   * 0x2): its members are allies. The town, crime and guard factions name none
+   * (TownWhiterunFaction, CrimeFactionWhiterun, IsGuardFaction, CWImperialFactionNPC): Whiterun's
+   * citizens and guards help each other by them.
+   */
   readonly sameFaction: boolean;
   /** GetRelationshipRank between them. */
   readonly relationshipRank: number;
@@ -58,12 +69,13 @@ export interface ReactionInputs {
  * CommonLibSSE Actor::GetFactionReaction): itself a friend; frenzied, a crime against them, a
  * script's combat or a relationship of enemy or worse: hostile; else its closest tie: a friend
  * (friend reaction or a relationship of friend or better), an ally (ally reaction), hostile
- * where a faction of its regards one of theirs as an enemy, an ally where they merely share a
- * faction, else neutral. A shared faction weighs less than a named enmity (inferred, TODO(M13)):
- * the data needs it so. Sovngarde's heroes and Alduin share FavorExcludedFaction, a list of
- * those left out of favors, and MQ304AlduinFaction names MQAncientHeroFaction an enemy; MQ305
- * has them fight. TODO(M13): the engine's precedence between a faction's enmity and another's
- * friendship.
+ * where a faction of its regards one of theirs as an enemy, an ally where they share a faction
+ * (`sameFaction`), else neutral. A shared faction weighs less than a named enmity (inferred,
+ * TODO(M13)): the data needs it so. Sovngarde's heroes and Alduin share FavorExcludedFaction, a
+ * list of those left out of favors, and MQ304AlduinFaction names MQAncientHeroFaction an enemy;
+ * MQ305 has them fight. TODO(M13): inferred: the engine's precedence between a faction's enmity
+ * and another's friendship, and that a shared faction's reaction to itself goes before the
+ * alliance its membership makes.
  */
 export function reaction(inputs: ReactionInputs): Reaction {
   if (inputs.self) return 'friend';
@@ -78,6 +90,65 @@ export function reaction(inputs: ReactionInputs): Reaction {
   if (inputs.factionReactions.includes(CombatReaction.ally)) return 'ally';
   if (inputs.factionReactions.includes(CombatReaction.enemy)) return 'hostile';
   return inputs.sameFaction ? 'ally' : 'neutral';
+}
+
+/** What the ties between two actors' factions are read from (the running game's factions). */
+export interface FactionFacts {
+  /**
+   * A faction's combat reaction to another (CombatReaction: a script's SetAlly / SetEnemy, else
+   * XNAM), if it names one.
+   */
+  factionReaction(faction: number, other: number): Promise<number | undefined>;
+  /** Whether a faction is Special Combat (FACT DATA 0x2). */
+  specialCombat(faction: number): Promise<boolean>;
+}
+
+/**
+ * The ties between an actor's factions and another's (each faction to its rank; −1: listed,
+ * not a member yet), as `reaction` weighs them: the combat reactions of each of the actor's
+ * factions towards each of the other's (`factionReactions`; a faction both are in that names a
+ * reaction to itself among them as any other pair), and whether they share a faction that names
+ * no reaction to itself and is not Special Combat (`sameFaction`). Where the actor's factions
+ * name none of the other's, the other's towards the actor's count (inferred, TODO(M13):
+ * MQAncientHeroFaction names only itself; MQ304AlduinFaction names it an enemy, and Sovngarde's
+ * heroes fight Alduin). The one rule of the running
+ * game's reactions (CrimeEngine.reaction) and of the combat AI's tests and tools
+ * (combatReaction).
+ */
+export async function factionTies(
+  facts: FactionFacts,
+  mine: ReadonlyMap<number, number>,
+  theirs: ReadonlyMap<number, number>,
+): Promise<Pick<ReactionInputs, 'factionReactions' | 'sameFaction'>> {
+  const factionReactions: number[] = [];
+  let sameFaction = false;
+  for (const [faction, rank] of mine) {
+    if (rank < 0) continue;
+    if (
+      !sameFaction &&
+      (theirs.get(faction) ?? -1) >= 0 &&
+      (await facts.factionReaction(faction, faction)) === undefined &&
+      !(await facts.specialCombat(faction))
+    ) {
+      sameFaction = true;
+    }
+    for (const [other, otherRank] of theirs) {
+      if (otherRank < 0) continue;
+      const value = await facts.factionReaction(faction, other);
+      if (value !== undefined) factionReactions.push(value);
+    }
+  }
+  if (factionReactions.length === 0) {
+    for (const [other, otherRank] of theirs) {
+      if (otherRank < 0) continue;
+      for (const [faction, rank] of mine) {
+        if (rank < 0) continue;
+        const value = await facts.factionReaction(other, faction);
+        if (value !== undefined) factionReactions.push(value);
+      }
+    }
+  }
+  return { factionReactions, sameFaction };
 }
 
 /**

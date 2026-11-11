@@ -10,6 +10,11 @@
 //   it goes, never taken off).
 // - interaction-web (BleakFallsBarrow01): Flames cast from the left hand at Arvel's web from 150,
 //   250 and 350 units, at its middle and above: the web burns (its destruction stages) each time.
+// - interaction-jump-block (WhiterunBreezehome, an interior): an axe drawn, a block held through a
+//   jump is up again after the landing; a jump, then a swing the graph takes. Found 2026-11-10 in
+//   Helgen Keep: indoors every jump left the body's graph in JumpFallState on the ground.
+// - interaction-two-journeys (WhiterunBreezehome): a second journey behind the loading screen
+//   asked while the first loads: one loading menu at a time, and none left open after.
 
 import type { Scenario, ScenarioContext } from './qa-scenarios.ts';
 
@@ -159,6 +164,84 @@ for (const dist of [150, 250, 350]) {
 results;
 `;
 
+/**
+ * In the page (repl mode): an axe drawn indoors, a block held through a jump, then a jump and a
+ * swing: the graph's states after each landing, the block, the swing.
+ */
+const JUMP_BLOCK = `
+var v = engineDev.viewer;
+var p = v.playerView.play.player;
+var c = v.actorStage.combat;
+var r = engineDev.play().session.scriptsReady;
+var AXE = 0x13790;
+var wait = (s) => new Promise((done) => setTimeout(done, s * 1000));
+var jumping = () => /Jump/.test(c.graphStates(0x14) ?? '');
+var tap = async (event) => { p.press(event, true); await wait(0.1); p.press(event, false); };
+for (let i = 0; i < 20; i++) {
+  const box = [...engineDev.play().host.menus].find((x) => x.movie === 'messagebox.swf');
+  if (box) {
+    box.received('buttonPress', [0, 1]);
+    break;
+  }
+  await wait(0.5);
+}
+await wait(1);
+await r.addItem(0x14, r.formHandle(AXE), 1, true);
+await r.equipment.equip(0x14, AXE);
+await wait(1);
+for (let i = 0; i < 3 && c.weaponState(0x14) !== 3; i++) { await tap('Ready Weapon'); await wait(2); }
+var out = { drawn: c.weaponState(0x14) };
+p.press('Left Attack/Block', true);
+await wait(0.6);
+out.blockBefore = c.combatState(0x14)?.blocking === true;
+await tap('Jump');
+await wait(0.4);
+out.blockInAir = c.combatState(0x14)?.blocking === true;
+await wait(2.5);
+out.graphAfterBlockJump = c.graphStates(0x14);
+out.blockAfterLanding = c.combatState(0x14)?.blocking === true;
+p.press('Left Attack/Block', false);
+await wait(1);
+await tap('Jump');
+await wait(2.5);
+out.graphAfterJump = c.graphStates(0x14);
+out.landed = !jumping();
+await tap('Right Attack/Block');
+await wait(0.3);
+out.swing = c.combatState(0x14)?.current !== undefined;
+out.graphInSwing = c.graphStates(0x14);
+await wait(2);
+out;
+`;
+
+/**
+ * In the page (repl mode): two journeys behind the loading screen asked one after the other while
+ * the first still loads (a load door activated twice): the loading menus open meanwhile and after.
+ */
+const TWO_JOURNEYS = `
+var play = engineDev.play();
+var wait = (s) => new Promise((done) => setTimeout(done, s * 1000));
+var loadingMenus = () => [...play.host.menus].filter((m) => m.movie === 'loadingmenu.swf').length;
+for (let i = 0; i < 20; i++) {
+  const box = [...play.host.menus].find((x) => x.movie === 'messagebox.swf');
+  if (box) {
+    box.received('buttonPress', [0, 1]);
+    break;
+  }
+  await wait(0.5);
+}
+await wait(1);
+var first = play.loadingScreen(() => wait(2));
+await wait(0.5);
+var second = play.loadingScreen(() => wait(0.5));
+var most = 0;
+var watching = setInterval(() => { most = Math.max(most, loadingMenus()); }, 50);
+await Promise.all([first, second]);
+await wait(1.5);
+clearInterval(watching);
+({ most, after: loadingMenus(), loading: play.session.loading });
+`;
+
 export const INTERACTION: readonly Scenario[] = [
   {
     name: 'interaction-prompts',
@@ -221,6 +304,59 @@ export const INTERACTION: readonly Scenario[] = [
       for (const [where, result] of Object.entries(results)) {
         if (!result.startsWith('burnt')) await fail(ctx, `web from ${where}: ${result}`);
       }
+    }),
+  },
+  {
+    name: 'interaction-jump-block',
+    description:
+      'WhiterunBreezehome: an axe drawn, a block held through a jump is up after the landing; a jump, then a swing.',
+    start: { kind: 'coc', cell: 'WhiterunBreezehome' },
+    hour: 10,
+    bootSeconds: 240,
+    seconds: 5,
+    finish: checked(async (ctx) => {
+      const out = await ctx.page.eval<{
+        drawn: number;
+        blockBefore: boolean;
+        blockInAir: boolean;
+        graphAfterBlockJump: string;
+        blockAfterLanding: boolean;
+        graphAfterJump: string;
+        landed: boolean;
+        swing: boolean;
+        graphInSwing: string;
+      }>(JUMP_BLOCK, 120000, true);
+      ctx.note(`jump and block: ${JSON.stringify(out)}`);
+      if (!out.blockBefore) await fail(ctx, 'the block held was not up before the jump');
+      if (out.graphAfterBlockJump.includes('Jump'))
+        await fail(
+          ctx,
+          `after a jump while blocking the graph stayed in ${out.graphAfterBlockJump}`,
+        );
+      if (!out.blockAfterLanding)
+        await fail(ctx, 'a block held through a jump was not up after it');
+      if (!out.landed) await fail(ctx, `after a jump the graph stayed in ${out.graphAfterJump}`);
+      if (!out.swing || !out.graphInSwing.includes('Attack'))
+        await fail(ctx, `a swing after a jump was not taken: ${out.graphInSwing}`);
+    }),
+  },
+  {
+    name: 'interaction-two-journeys',
+    description:
+      'WhiterunBreezehome: a second journey behind the loading screen asked while the first loads: one loading menu at a time, none left.',
+    start: { kind: 'coc', cell: 'WhiterunBreezehome' },
+    hour: 10,
+    bootSeconds: 240,
+    seconds: 5,
+    finish: checked(async (ctx) => {
+      const out = await ctx.page.eval<{ most: number; after: number; loading: boolean }>(
+        TWO_JOURNEYS,
+        120000,
+        true,
+      );
+      ctx.note(`two journeys: ${JSON.stringify(out)}`);
+      if (out.most > 1) await fail(ctx, `${String(out.most)} loading menus were open at once`);
+      if (out.after > 0) await fail(ctx, `${String(out.after)} loading menus stayed open`);
     }),
   },
 ];

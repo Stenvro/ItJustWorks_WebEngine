@@ -24,7 +24,13 @@ describe('reactions', () => {
     expect(
       reaction({ ...none, factionReactions: [CombatReaction.enemy, CombatReaction.ally] }),
     ).toBe('ally');
+    // A shared faction that names no reaction to itself makes allies (the town factions).
     expect(reaction({ ...none, sameFaction: true })).toBe('ally');
+    // One that names a reaction to itself counts by it: set neutral to itself (MQ101's
+    // TemporaryFriendsFaction from stage 270), another pair's enmity decides.
+    expect(
+      reaction({ ...none, factionReactions: [CombatReaction.neutral, CombatReaction.enemy] }),
+    ).toBe('hostile');
   });
 
   it('weigh a shared faction less than a named enmity (Sovngarde: the heroes and Alduin)', () => {
@@ -49,7 +55,7 @@ describe('reactions', () => {
     expect(
       reaction({
         ...none,
-        sameFaction: true,
+        factionReactions: [CombatReaction.ally],
         relationshipRank: RelationshipRank.archnemesis,
       }),
     ).toBe('hostile');

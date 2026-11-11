@@ -17,9 +17,24 @@ const RIFTEN_CITIZEN = 0x201;
 const BANDIT = 0x202;
 const FOLLOWER = 0x203;
 const FRIEND = 0x204;
-/** Two guards of Whiterun's faction: allies. */
+/**
+ * Two guards of Whiterun's faction: allies by it (CrimeFactionWhiterun names no reaction to
+ * itself, as the town and guard factions do not).
+ */
 const GUARD = 0x205;
 const OTHER_GUARD = 0x206;
+/** A brawler: in the brawl's faction (DGIntimidateFaction, Special Combat) with the player. */
+const BRAWLER = 0x207;
+const BRAWL = 0x4cfa6;
+/**
+ * MQ101's keep: a Stormcloak and an Imperial, both in MQ101TemporaryFriendsFaction (its own
+ * friend, neutral to itself from stage 270), their CW NPC factions enemies.
+ */
+const STORMCLOAK = 0x208;
+const IMPERIAL = 0x209;
+const TEMPORARY_FRIENDS = 0xb4054;
+const SONS_NPC = 0x1c9fd;
+const IMPERIAL_NPC = 0x1c9fc;
 /** A chest Whiterun owns. */
 const CHEST = 0x400;
 /**
@@ -56,8 +71,16 @@ const hold = (formId: number, flags = 0x9040): FactionRecord => ({
 });
 
 /** A runtime with Whiterun's citizens, a Riften citizen, a bandit, a follower and a friend. */
-function engine(): { crime: CrimeEngine; state: GameState; events: StoryEventData[] } {
+function engine(): {
+  crime: CrimeEngine;
+  state: GameState;
+  events: StoryEventData[];
+  brawling: { on: boolean };
+  temporaryFriends: { reaction: number };
+} {
   const state = new GameState();
+  const brawling = { on: true };
+  const temporaryFriends = { reaction: 3 };
   state.actor(FOLLOWER).playerTeammate = true;
   const crimeFactions = new Map<number, number>([
     [VICTIM, WHITERUN],
@@ -69,6 +92,7 @@ function engine(): { crime: CrimeEngine; state: GameState; events: StoryEventDat
     [OTHER_GUARD, WHITERUN],
     [MARK, IGNORES_MURDER],
     [MEMBER, SPARES_MEMBERS],
+    [BRAWLER, WHITERUN],
   ]);
   const events: StoryEventData[] = [];
   const stats = new Map<string, number>();
@@ -93,13 +117,39 @@ function engine(): { crime: CrimeEngine; state: GameState; events: StoryEventDat
               ? hold(formId, 0x40 | 0x80)
               : formId === SPARES_MEMBERS
                 ? hold(formId, 0x40 | 0x800)
-                : undefined,
+                : formId === BRAWL
+                  ? { formId, flags: 0x2, reactions: [], ranks: [] }
+                  : undefined,
         ),
       factionsOf: (actor: number) =>
         Promise.resolve(
-          new Map<number, number>(actor === GUARD || actor === OTHER_GUARD ? [[WHITERUN, 0]] : []),
+          new Map<number, number>(
+            actor === GUARD || actor === OTHER_GUARD
+              ? [[WHITERUN, 0]]
+              : actor === BRAWLER || (actor === PLAYER_REF && brawling.on)
+                ? [[BRAWL, 0]]
+                : actor === STORMCLOAK
+                  ? [
+                      [TEMPORARY_FRIENDS, 0],
+                      [SONS_NPC, 0],
+                    ]
+                  : actor === IMPERIAL
+                    ? [
+                        [TEMPORARY_FRIENDS, 0],
+                        [IMPERIAL_NPC, 0],
+                      ]
+                    : [],
+          ),
         ),
-      factionReaction: () => Promise.resolve(undefined),
+      factionReaction: (faction: number, other: number) =>
+        Promise.resolve(
+          faction === TEMPORARY_FRIENDS && other === TEMPORARY_FRIENDS
+            ? temporaryFriends.reaction
+            : (faction === SONS_NPC && other === IMPERIAL_NPC) ||
+                (faction === IMPERIAL_NPC && other === SONS_NPC)
+              ? 1
+              : undefined,
+        ),
       value: () => Promise.resolve({ base: 0, max: 0, current: 0 }),
       info: () => Promise.resolve(undefined),
       factionRank: (actor: number, faction: number) =>
@@ -130,8 +180,32 @@ function engine(): { crime: CrimeEngine; state: GameState; events: StoryEventDat
       reference === undefined ? null : new ObjectHandle(reference, 'objectreference'),
     locationOf: () => Promise.resolve(undefined),
   } as unknown as ScriptRuntime;
-  return { crime: new CrimeEngine(runtime), state, events };
+  return { crime: new CrimeEngine(runtime), state, events, brawling, temporaryFriends };
 }
+
+describe('how actors regard each other', () => {
+  it('a shared faction that names no reaction to itself makes allies (the town and guards)', async () => {
+    const { crime } = engine();
+    expect(await crime.reaction(GUARD, OTHER_GUARD)).toBe('ally');
+    expect(await crime.reaction(GUARD, CITIZEN)).toBe('neutral');
+  });
+
+  it('a Special Combat faction makes no allies of its members (a brawl)', async () => {
+    const { crime } = engine();
+    expect(await crime.reaction(PLAYER_REF, BRAWLER)).toBe('neutral');
+  });
+
+  it("a shared faction that names a reaction to itself counts by it (MQ101's keep)", async () => {
+    const { crime, temporaryFriends } = engine();
+    // Its own friend through the opening: the Stormcloak and the Imperial do not fight.
+    expect(await crime.reaction(STORMCLOAK, IMPERIAL)).toBe('friend');
+    // Stage 270 sets it neutral to itself: their CW factions' enmity decides, its membership
+    // makes no allies.
+    temporaryFriends.reaction = 0;
+    expect(await crime.reaction(STORMCLOAK, IMPERIAL)).toBe('hostile');
+    expect(await crime.reaction(IMPERIAL, STORMCLOAK)).toBe('hostile');
+  });
+});
 
 describe('crimes and their witnesses', () => {
   it("add the bounty to the victim's crime faction when seen by those who report it", async () => {
@@ -244,6 +318,27 @@ describe('crimes and their witnesses', () => {
     expect(told.filter((event) => event.kind === 'npcCrime')).toHaveLength(1);
     expect(told[0]).toMatchObject({ kind: 'npcCrime', criminal: CITIZEN, victim: VICTIM });
     // A swing back at the one who struck first is no crime of its own (a brawl ends here).
+  });
+
+  it('a blow or a kill between members of a Special Combat faction is no crime (a brawl)', async () => {
+    const { crime, brawling } = engine();
+    const told: CrimeEvent[] = [];
+    crime.listen((event) => told.push(event));
+    crime.world = { witnesses: () => [CITIZEN, VICTIM] };
+    // The player and the brawler are both in the brawl's faction: their blows are theirs alone.
+    expect(await crime.specialCombat(PLAYER_REF, BRAWLER)).toBe(true);
+    expect(await crime.assault(PLAYER_REF, BRAWLER)).toBeUndefined();
+    await crime.assault(BRAWLER, PLAYER_REF);
+    expect(await crime.murder(PLAYER_REF, BRAWLER)).toBeUndefined();
+    expect(told).toEqual([]);
+    expect(crime.bounty(WHITERUN)).toEqual({ violent: 0, nonviolent: 0 });
+    // The brawler's blow on one outside it is an assault as any other.
+    await crime.assault(BRAWLER, VICTIM);
+    expect(told.filter((event) => event.kind === 'npcCrime')).toHaveLength(1);
+    // Out of the faction, the player's blow on the brawler is an assault again.
+    brawling.on = false;
+    expect(await crime.specialCombat(PLAYER_REF, BRAWLER)).toBe(false);
+    expect(await crime.assault(PLAYER_REF, BRAWLER)).toBeDefined();
   });
 
   it('a guard’s blow is no crime: nobody is told', async () => {

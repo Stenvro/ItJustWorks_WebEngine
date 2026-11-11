@@ -9,7 +9,12 @@
 // scroll) casts instead: its button goes to the player's casting (src/shell/player-casting.ts).
 
 import { POWER_ATTACK_TIMING } from '../gameplay/combat/combat-settings.ts';
-import { AttackState, WeaponState } from '../gameplay/combat/combat-state.ts';
+import {
+  AttackState,
+  attacking,
+  WeaponState,
+  type CombatState,
+} from '../gameplay/combat/combat-state.ts';
 import { WeaponType } from '../world/item-records.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ActorCombat } from './actor-combat.ts';
@@ -18,6 +23,13 @@ import type { Player } from './player.ts';
 const RIGHT = 'Right Attack/Block';
 const LEFT = 'Left Attack/Block';
 const READY = 'Ready Weapon';
+
+/**
+ * How long a block held and refused waits before it is asked again although nothing it watches
+ * (blockState) changed: what refused it may lie beyond what it watches (the combat not ready yet,
+ * a graph variable a condition reads). TODO(M13): inferred; a low rate, not every frame.
+ */
+export const BLOCK_RETRY_SECONDS = 0.5;
 
 /** The player's casting: the hands holding magic take their buttons (0 left, 1 right). */
 export interface CastingButtons {
@@ -42,6 +54,12 @@ export class PlayerCombat {
   #right: Hold | undefined;
   #left: Hold | undefined;
   #blocking = false;
+  /** A block asked of the graph and not answered yet. */
+  #raising = false;
+  /** The state (blockState) a block held was refused in: asked again once it changes. */
+  #refused: string | undefined;
+  /** When (#clock) that refused block was asked. */
+  #refusedAt = 0;
 
   /** The player's casting, if any. */
   readonly #casting: () => CastingButtons | undefined;
@@ -115,13 +133,49 @@ export class PlayerCombat {
     if (leftPressed) {
       if (blocks) {
         this.#blocking = true;
-        void combat.block(PLAYER_REF, true);
+        this.#refused = undefined;
+        if (bow) void combat.block(PLAYER_REF, true);
       } else {
         this.#left = { since: this.#clock, power: false };
       }
     }
+    // A block held goes up once no attack is under way or the attack's window has opened
+    // (blockOpen): pressed in the middle of a swing, it waits for the window (the graph takes no
+    // block before it, and the press was lost: the player stood with the button held and no
+    // guard up). 0_master's attack states take blockStart from AttackWinStart on and then end
+    // the attack (blockStartOut, attackStop). A block the graph refused (a stagger, a jump in the
+    // air, a sprint, a left hand whose tree has no blockStart) is asked again once what refused
+    // it changed (blockState: the combat state, the hands, the ground under the feet, the
+    // sprint, the graph's states) or BLOCK_RETRY_SECONDS passed, not every frame.
+    if (!bow && this.#blocking && player.isHeld(LEFT) && !state.blocking && blockOpen(state)) {
+      const asked = blockState(state, hands, {
+        grounded: player.character.grounded,
+        sprinting: player.motion.sprinting,
+        graph: combat.graphStates(PLAYER_REF),
+      });
+      const due = asked !== this.#refused || this.#clock - this.#refusedAt >= BLOCK_RETRY_SECONDS;
+      if (!this.#raising && due) {
+        this.#raising = true;
+        const at = this.#clock;
+        const refused = (): void => {
+          this.#refused = asked;
+          this.#refusedAt = at;
+        };
+        void combat
+          .block(PLAYER_REF, true)
+          .then((taken) => {
+            if (taken) this.#refused = undefined;
+            else refused();
+          })
+          .catch(refused)
+          .finally(() => {
+            this.#raising = false;
+          });
+      }
+    }
     if (this.#blocking && !player.isHeld(LEFT)) {
       this.#blocking = false;
+      this.#refused = undefined;
       void combat.block(PLAYER_REF, false);
     }
     if (rightPressed) {
@@ -196,4 +250,53 @@ export class PlayerCombat {
       done();
     }
   }
+}
+
+/**
+ * Whether a block held may be asked of the graph now: no attack under way, or a melee attack's
+ * window open (nextAttack from AttackWinStart, then followThrough). 0_master's attack states
+ * take blockStart only from AttackWinStart on (behavior-run: an axe's attackStart, blockStart
+ * 0.5 s in stays in AttackState; sent after AttackWinStart, BlockState, blockStartOut, then
+ * attackStop).
+ */
+export function blockOpen(state: CombatState): boolean {
+  return (
+    !attacking(state) ||
+    state.attack === AttackState.nextAttack ||
+    state.attack === AttackState.followThrough
+  );
+}
+
+/**
+ * What decides whether the graph takes a block held now: the attack under way, a stagger, a
+ * recoil, a fall, a paired animation, life, the hands, and of the body: the ground under its feet
+ * (a jump in the air), a sprint, and its graph's states (0_master's JumpRoot and a sprint's
+ * states take no ActionLeftAttack). A block refused in one state is asked again once this changes
+ * (the attack, the stagger or the jump ended, the gear changed).
+ */
+export function blockState(
+  state: CombatState,
+  hands: {
+    readonly right: number | undefined;
+    readonly left: number | undefined;
+    readonly shield: boolean;
+  },
+  body: { readonly grounded: boolean; readonly sprinting: boolean; readonly graph: string },
+): string {
+  return [
+    state.weapon,
+    state.attack,
+    attacking(state),
+    state.staggered,
+    state.recoiling,
+    state.knock,
+    state.paired ?? '',
+    state.life,
+    hands.right ?? '',
+    hands.left ?? '',
+    hands.shield,
+    body.grounded,
+    body.sprinting,
+    body.graph,
+  ].join(':');
 }
