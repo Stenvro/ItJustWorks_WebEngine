@@ -95,6 +95,7 @@ export class PlayerFurniture {
         avatar.bodyYaw = heading;
       },
       send: (event) => avatar.send(event),
+      wouldTake: (event) => avatar.wouldTake(event),
     };
     // Their falls and landings go through their idle tree, as an actor's do.
     avatar.useActions({

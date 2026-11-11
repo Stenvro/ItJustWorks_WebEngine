@@ -807,8 +807,8 @@ export class BehaviorRuntime {
   readonly #mirror: MirroredSkeleton | undefined;
   /** The turn its rotate-character modifiers make in this update (radians, counter-clockwise). */
   #rotating = 0;
-  /** How many clips this update asked for are still being read. */
-  #awaitingClips = 0;
+  /** The clips this update asked for that were still being read. */
+  readonly #awaitingClips: string[] = [];
   /** It has made a pose. */
   #posed = false;
   /** The project's default event mode of blending transitions (EVENT_MODE). */
@@ -1623,7 +1623,15 @@ export class BehaviorRuntime {
    * until it is there (#advanceClip).
    */
   get awaitingClips(): boolean {
-    return this.#awaitingClips > 0;
+    return this.#awaitingClips.length > 0;
+  }
+
+  /**
+   * Whether a clip its last update asked for is still being read now (awaitingClips, asked again
+   * of the host: one read since will play in the next update).
+   */
+  get readingClips(): boolean {
+    return this.#awaitingClips.some((animation) => this.#host.clipLoading?.(animation) === true);
   }
 
   /**
@@ -1712,15 +1720,16 @@ export class BehaviorRuntime {
   /**
    * An event raised by a node of the graph: the graph handles it at its next update, and the
    * engine hears it (#emit). `own`: the prefix of this side's own events in the paired clip
-   * the raising clip plays under (#ownEvent).
+   * the raising clip plays under (#ownEvent). `late`: how long before the
+   * update's end it fell (GraphEvent.late).
    */
-  #raise(event: BehaviorEvent | number, scope: Scope, own?: string): void {
+  #raise(event: BehaviorEvent | number, scope: Scope, own?: string, late?: number): void {
     const id = typeof event === 'number' ? event : event.id;
     const global = this.#globalEvent(id, scope);
     if (global < 0) return;
     const payload = typeof event === 'number' ? undefined : event.payload;
     this.#queue.push(payload === undefined ? { id: global } : { id: global, payload });
-    this.#ownEvent(this.#eventNames[global] ?? '', payload, own);
+    this.#ownEvent(this.#eventNames[global] ?? '', payload, own, late);
   }
 
   /**
@@ -1745,14 +1754,19 @@ export class BehaviorRuntime {
    * event. Inferred from the data, TODO(M13). An event of no side's prefix, and NPCSoundPlay
    * (paired-clips.ts), raises as it is.
    */
-  #ownEvent(text: string, payload: string | undefined, own: string | undefined): void {
+  #ownEvent(
+    text: string,
+    payload: string | undefined,
+    own: string | undefined,
+    late?: number,
+  ): void {
     if (own !== undefined && ownPairedEvent(text, partnerEventPrefix(own)) !== undefined) return;
     const stripped = own === undefined ? undefined : ownPairedEvent(text, own);
     if (stripped === undefined) {
-      this.#emit(text, payload);
+      this.#emit(text, payload, undefined, late);
       return;
     }
-    this.#emit(text, payload, stripped);
+    this.#emit(text, payload, stripped, late);
     const id = this.#eventIndex.get(stripped.toLowerCase());
     if (id !== undefined) this.#queue.push(payload === undefined ? { id } : { id, payload });
   }
@@ -1764,8 +1778,9 @@ export class BehaviorRuntime {
    * meshes\responses\actorresponse.txt names their handlers (HeadTrackingOffHandler,
    * HeadTrackingOnHandler).
    */
-  #emit(text: string, payload?: string, own?: string): void {
-    const event = own === undefined ? graphEvent(text, payload) : pairedEvent(text, own, payload);
+  #emit(text: string, payload?: string, own?: string, late?: number): void {
+    const named = own === undefined ? graphEvent(text, payload) : pairedEvent(text, own, payload);
+    const event = late === undefined ? named : { ...named, late };
     this.#raised.push(event);
     const key = event.name.toLowerCase();
     if (key === 'headtrackingoff') this.#headTracking = false;
@@ -1830,14 +1845,14 @@ export class BehaviorRuntime {
     if (!pose) return;
     this.#footIkControls = undefined;
     this.#eyes = undefined;
-    this.#awaitingClips = 0;
+    this.#awaitingClips.length = 0;
     this.#takingRoot = undefined;
     const generated = this.#generate(this.#root, 0);
     // A clip it needs is still being read (a landing's, first played on the stairs), or nothing
     // it plays gives a pose (17 clips vanilla graphs name are in no archive): it holds the pose it
     // had rather than show what is missing at the reference pose (a T-pose). The first pose it
     // ever makes has nothing to hold. TODO(M13): what the original shows for a clip it never has.
-    if ((this.#awaitingClips > 0 || !generated) && this.#posed) {
+    if ((this.#awaitingClips.length > 0 || !generated) && this.#posed) {
       this.forceOneUpdate = true;
       return;
     }
@@ -3802,6 +3817,21 @@ export class BehaviorRuntime {
     // (the tower wall's opening clip raises Begin there, which MQ101DragonAttack's stage 103
     // waits for; skipped, it never came). An acyclic trigger fires in the first cycle only.
     if (sweeps.length === 0) return;
+    // How long before the update's end a passed time fell (GraphEvent.late), by the share of the
+    // step's way through the clip that came after its nth passing.
+    const swept = sweeps.reduce((sum, sweep) => sum + Math.abs(sweep.to - sweep.from), 0);
+    const lateOf = (time: number, nth: number, onlyCycle?: number): number | undefined => {
+      if (!(swept > 1e-9) || !(dt > 0)) return undefined;
+      let after = 0;
+      let seen = -1;
+      for (const sweep of sweeps) {
+        if (seen >= nth) after += Math.abs(sweep.to - sweep.from);
+        else if (timesPassed([sweep], time, onlyCycle) > 0 && ++seen === nth)
+          after += Math.abs(sweep.to - time);
+      }
+      const late = Math.min(dt, Math.max(0, (dt * after) / swept));
+      return late > 0 ? late : undefined;
+    };
     // A clip does not raise an event its graph flags silent (EVENT_FLAGS.silent: the horse's,
     // troll's, vampire lord's and werewolf's SyncLeft and SyncRight annotations).
     const flags = scope.graph.eventFlags ?? [];
@@ -3811,12 +3841,15 @@ export class BehaviorRuntime {
     for (const trigger of node.triggers ?? []) {
       const time = trigger.relativeToEndOfClip ? duration + trigger.localTime : trigger.localTime;
       if (((flags[trigger.event.id] ?? 0) & EVENT_FLAGS.silent) !== 0) continue;
-      const times = timesPassed(sweeps, time, trigger.acyclic ? 0 : undefined);
-      for (let n = 0; n < times; n++) this.#raise(trigger.event, scope, own);
+      const onlyCycle = trigger.acyclic ? 0 : undefined;
+      const times = timesPassed(sweeps, time, onlyCycle);
+      for (let n = 0; n < times; n++)
+        this.#raise(trigger.event, scope, own, lateOf(time, n, onlyCycle));
     }
     if (((node.flags ?? 0) & CLIP_FLAGS.dontConvertAnnotationsToTriggers) === 0) {
       for (const annotation of animation.annotations) {
-        const times = timesPassed(sweeps, annotation.time - (node.cropStart ?? 0));
+        const time = annotation.time - (node.cropStart ?? 0);
+        const times = timesPassed(sweeps, time);
         if (times === 0) continue;
         if (silentEvents(scope.graph).has(annotation.text.toLowerCase())) continue;
         for (let n = 0; n < times; n++) {
@@ -3824,7 +3857,7 @@ export class BehaviorRuntime {
           // engine hears it as tag and payload (graphEvent: AnimObjLoad.DecapitationHeadGore).
           const id = this.#eventIndex.get(annotation.text.toLowerCase());
           if (id !== undefined) this.#queue.push({ id });
-          this.#ownEvent(annotation.text, undefined, own);
+          this.#ownEvent(annotation.text, undefined, own, lateOf(time, n));
         }
       }
     }
@@ -4827,7 +4860,7 @@ export class BehaviorRuntime {
     const t = blendCurve(transition.curve, transition.elapsed / transition.duration);
     const to = this.#generate(transition.to.generator, depth + 1);
     const toPose = to && this.#own(to, depth + 1);
-    const awaiting = this.#awaitingClips;
+    const awaiting = this.#awaitingClips.length;
     const source = transition.from;
     const from =
       source.kind === 'state'
@@ -4838,7 +4871,7 @@ export class BehaviorRuntime {
     if (!from) return toPose && this.#own(toPose, depth);
     if (!toPose) {
       // What it blends from plays on until the state's clip is there.
-      this.#awaitingClips = awaiting;
+      this.#awaitingClips.length = awaiting;
       return this.#own(from, depth);
     }
     const out = this.#buffer(depth);
@@ -4870,7 +4903,8 @@ export class BehaviorRuntime {
   #generateClip(node: Clip, depth: number): Generated | undefined {
     const binding = this.#host.clip(node.animation);
     if (!binding) {
-      if (this.#host.clipLoading?.(node.animation) === true) this.#awaitingClips++;
+      if (this.#host.clipLoading?.(node.animation) === true)
+        this.#awaitingClips.push(node.animation);
       return undefined;
     }
     const state = this.#clips.get(node);

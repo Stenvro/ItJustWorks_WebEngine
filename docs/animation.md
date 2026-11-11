@@ -469,10 +469,53 @@ animated objects alike.
   started up to two intervals apart: Helgen's headsman chopped 7 to 14 frames behind his prisoner,
   by where in his 0.117 s interval the event came. TODO(M13): inferred from graphs told together
   being authored in step; what the original does with an event between two updates is not read.
+- **One actor's graphs in step.** Ours: the player's first-person graph and their body's hear
+  every event together and are updated together (`animateInStep`):
+  while one waits for a clip still being read, the other is not updated (its time does not pass,
+  it keeps its pose). Updated apart, the first-person graph, reading Helgen's block clips only as
+  the player knelt, ended its enter after the body's and dropped the block's chop, sent as the
+  body's graph would take it. TODO(M13): inferred; how the original keeps them together while
+  clips are read is not known.
+- **Graphs that go together in step.** Ours: an actor's graph and its dependents'
+  (AddDependentAnimatedObjectReference: Helgen's block sends the prisoner's chop to the headsman
+  and the guard), and the graphs of those one piece of furniture holds together (the block holds
+  the three through the chop; its HeadChopBlockHookupSCRIPT removes the dependents 2 s after it
+  plays the chop, some 9.8 s before the prisoner's clip raises Decapitate), are kept in step the
+  same way (`animateInStep` with the stage's rates): each
+  told an event hears it at once, so the clips it starts are known to be still being read before
+  any of them moves on; while one reads, the others stand at the clock (the time they ran ahead
+  is dropped) and keep their poses; all go on in the update the clip comes in. They are updated
+  every frame, all of them, so none runs ahead of the others and a frame cut to MAX_STEP is cut
+  alike. Updated apart, in the browser with the processor slowed (about 9 and 11 frames a second)
+  the headsman's and the guard's chop clips, read only as the first prisoner was beheaded, came
+  0.18 to 0.19 s after the prisoner's: his chop ran ahead, his head flew before the axe was down,
+  its flight bent by the axe still swinging, and in one of two runs it went over the basket's rim.
+  Below 10 frames a second (the simulation at 4 to 7 a second) the headsman, behind the camera
+  and updated ahead, ran his whole frames while the prisoner, updated every frame as his
+  Decapitate came near, ran 0.1 s of each: the axe was 0.37 s on, rising again, and the head flew
+  up and 180 to 270 units off. Those so kept together also animate all their bones, seen or not
+  (the cut and the killer's swing are read off their poses): unseen, the three the block holds
+  moved iMinBonesToGenerateWhileSitting bones, the prisoner's head stood 12 units above where his
+  chop has it and the headsman's arm and axe stayed while his body turned, and in the browser the
+  head flew 9 to 12 degrees to one side where, seen, it flew 3.5 to the other (at 11 frames a
+  second 204 units off). TODO(M13): inferred.
+- **How far a pose has run.** Ours: each skeleton keeps how far its graph has run (its updates'
+  steps) and how far the pose it shows has (`shownProgress`: a far graph's blend's share of its
+  update). It runs with the clock except where a frame longer than MAX_STEP had its update cut
+  (below 10 frames a second the animation runs slower than the clock): a killer's swing is read
+  over 0.1 s of it, not of the clock ("Dismemberment" below; `SwingTrail`). Read over the clock
+  at 4 frames a second in the browser, the headsman's axe came into the blow at 12 units a second
+  (it comes down at 390), bent aside by where it stopped, and the head went 207 units from the
+  basket.
 - **Not past a trigger.** The interval is cut to just short (half a frame) of the next trigger or
   annotation a playing clip passes (the engine walks the active clips' triggers), so that what
   the clips raise (a footstep, a sound) is raised at its moment, not up to a quarter of a second
-  early (`BehaviorRuntime.nextEventIn`).
+  early (`BehaviorRuntime.nextEventIn`). The cut counts the whole step the graph takes: from
+  its own time, which is behind the clock when its last interval ended before this frame (the
+  frames' clock seldom lands on an interval's end). Counted from the clock instead, at Helgen's
+  block with the camera turned away, an update stepped the prisoner's chop 0.181 s (an interval
+  of 0.164 s and the frame it was behind) while his Decapitate was 0.172 s on, and raised it
+  0.164 s before its moment (measured in the simulation at 60 frames a second).
 - **Not for a frame or two.** An interval no longer than (1 + fAnimInterpSlop) frames is not worth
   it: the graph updates every frame. bAnimInterpEnable 0 turns it all off.
 - **Bones of an actor not seen.** At each update the graph generates as many bones as its bone
@@ -1286,10 +1329,28 @@ up again.
 Ours: the body's instances read the cut nodes as its scene is built again (`Severing`: the
 partition rule, the head parts left out); the decapitation armor's models are put on its
 pose in place; the piece is the actor's instances skinned to the head on a still copy of the
-pose as the blow found it (the pose last shown as the graph raises Decapitate, whenever the cut
-gets its turn: inferred, TODO(M13)), drawn where the head's body (the skeleton model's head body,
+pose as the blow found it (inferred, TODO(M13)): the pose shown at the moment of the clip's
+Decapitate on the animation clock, whenever the cut gets its turn. A graph raises a clip's event
+in the update that passes it and tells how long before that update's end it fell
+(`GraphEvent.late`, at most about a frame where the update is held short of its clips' next
+event: [How often graphs update](#how-often-graphs-update)). The blow's moment is the update's end
+on the animation clock less that (`BlowMoment`; the player's body runs on its avatar's own clock,
+so only the lateness is taken, its update ending at the frame's clock). The lateness is in
+seconds of the clock: a frame longer than `animateSkeletons`' cut (0.1 s, below 10 frames a
+second) has its graph stepped by the cut, and the event's share of that step is put on the whole
+frame (inferred, TODO(M13)); the player's avatar clock runs the whole frame too, at the player's
+pace. Where the actor is shown
+as the clock runs, the blow waits for the clock and takes the pose between the two frames shown
+around its moment; where its graph ran ahead and is shown at once (unseen, not interpolated), it
+takes the pose between the one shown before that update and the one after (the graph's at the
+update's two ends; `shownAhead`). At Helgen's block the moment is 6 ms (60 frames a second) to
+39 ms (15) after the pose last shown when the graph raised it. With the camera turned away the
+prisoner's graph raised it 0.164 s early (the update's cut counted from the clock, now from the
+graph's own time): read from the pose then, the head flew over the basket's rim and 478 units
+down the street (measured in the simulation). The piece is drawn where the head's body (the skeleton model's head body,
 alone) carries it; the weapon's motion is read from where the killer's weapon node was over the
-SWING_SECONDS (0.1 s) coming into the blow (`SwingTrail`; the engine reads its weapon body's
+SWING_SECONDS (0.1 s) coming into the blow's moment, between the frames it was shown in
+(`SwingTrail.at`; the engine reads its weapon body's
 velocity, and what stretch of the animation that covers was not read: TODO(M13)), the killer
 being a killmove's leader
 before the kill lands (inferred: the victim's myKiller is set by the kill), else, for an actor
@@ -1462,7 +1523,19 @@ do too.
 Two graphs run: the race's (`defaultmale.hkx`) on the body and the first-person one
 (`_1stperson\firstperson.hkx`) on the first-person skeleton (`_1stperson\skeleton.nif` with
 `skeletonfirst.hkx`, 99 bones), whose **Camera1st [Cam1]** bone is the first-person camera:
-120.5 units up at rest, 86.4 in SneakMTIdle (times the race's height). The player's movement
+120.5 units up at rest, 86.4 in SneakMTIdle (times the race's height). Its rotation is the
+identity at rest (its +y the body's forward) and nearly so walking; the scripts' first-person
+clips turn it: on Helgen's block (`AOExecutioneeIdleOnBlockPlayer`) its +y is (-0.88, -0.07,
+0.46) in the body's frame, to the body's left and 27 degrees up, at the headsman and the tower
+behind him. While looking is switched off (DisablePlayerControls' abLooking: MQ101 stage 95) the
+player's own pitch goes back to level and the view goes to where the node looks as drawn (the
+arms are pitched about it by the player's pitch, so view and arms agree) and follows it
+(`Player.#followCameraNode`, both at π radians a second: inferred from the engine's
+fFirstPersonDisablePOVLerpDPS, whose value is not read, TODO(M13)). Looking back on, the player
+looks on from that view; leaving first person while it is still off, they keep their own heading
+and level pitch (the third-person camera does not take the node's 27 degrees up, which looking
+off would not let them correct). Otherwise the view is the player's heading and pitch and the
+node only places the eye. The player's movement
 drives both, as the engine drives every actor's graph ([Driving the graphs](#driving-the-graphs)):
 Speed (the controls' wish, the controller's horizontal velocity, game units per second),
 Direction, TurnDelta, IsSprinting, IsSneaking; the movement actions (moveStart / moveStop at

@@ -114,7 +114,12 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   waited for the archers to kill him (measured in the browser: after IdleStop he ran his
   patrol). One on its way to furniture is not in it yet: its idle stops so too (furniture
   holds an actor only entering, in or leaving it; MQ101's Imperial, in a dialogue idle as his
-  package sent him to the keep's inner lever, stood there for ever and the gate stayed shut).
+  package sent him to the keep's inner lever, stood there for ever and the gate stayed shut),
+  and its walk there is a walk: its movement's actions (ActionMoveStart, the turns, the moves
+  and the rest Locomotion performs: `MOVEMENT_ACTIONS`) and its path's end turn (ActionPathEnd)
+  play their idles; other idles wait until it is done with the furniture. Held from them, MQ101's
+  first prisoner, called to the chopping block, got no moveStart and slid the 400 units there in
+  MT_Idle (inferred: the engine puts an actor in furniture as it enters it, TODO(M13)).
   An idle that is not animation-driven holds it as well where its graph does not leave
   the idle on moveStart (the human graph's NonOffsetIdles: MT_Idle_Nervous and the other idles
   a scene or package plays, which only IdleStop and IdleForceDefaultState end): its controller
@@ -905,8 +910,24 @@ Actors use furniture as the engine's furniture handling does, as far as the data
   the package's end fragment played IdleWalkingCameraEnd, which left them standing in the
   block: its IdleExecutionerAlduinReactionDeath (Behavior37, within Executionee_State) never
   played, PlayImod and IdleFurnitureExit never came, and MQ101 never reached stages 145 and
-  160, which give the controls back. TODO(M13): how the engine keeps a graph in its furniture
-  (an enter it holds until the graph takes it).
+  160, which give the controls back. A script's idle in furniture that the actor's graphs would
+  not all take yet waits for them (at most 4 s), whether a graph stands (put back first) or is
+  still on its way into the state's idle: at 10 frames a second the block's
+  IdleExecutionerChop_Player came during AOExecutioneeEnter, 0.4 s after the instant enter put
+  the player's graph back, and was dropped. The player has two graphs, the body's and the
+  first-person one, kept in step (`animateInStep`: while one waits for a clip still being read,
+  the other is not updated). Updated apart, the first-person graph, which read its block clips
+  only as the player knelt (the body's were read for the prisoner), ended its AOExecutioneeEnter
+  later than the body's in the browser with the processor slowed; the chop, sent as the body's
+  graph would take it, was dropped by the first-person graph alone, and the view, on its camera
+  node, stayed in the kneeling idle's while the body lay on the block. A held idle also waits for
+  each of the player's graphs that names its event, but at most 0.3 s once the body's would take
+  it (one the first-person graph names and never takes in that state is not held the 4 s). The
+  script idles for an actor go in the order PlayIdle was called (each takes its turn as it is
+  called and waits for the one before to be sent, held or found to play nothing): a later one
+  supersedes one still held (that one is not sent: the two would play out of order), one that
+  plays nothing does not. TODO(M13): how the engine keeps a graph in its furniture (an enter it
+  holds until the graph takes it).
 - **Getting up: the graph says when** (observed in the original). The engine does not end
   a use by a timer: it answers the events a graph raises with the handlers
   `meshes\responses\actorresponse.txt` names (`playercharacterresponse.txt` for the player,
@@ -1049,7 +1070,9 @@ KillActor; a graph's KillActor kills its actor; Decapitate takes the prisoner's 
 (docs/animation.md, "Dismemberment"). The event reaches all three graphs in one frame
 (`ActorFurniture.playIdle`), and a graph updated less often for being far from the camera hears it
 at once (docs/animation.md, "How often graphs update"): the three clips run in step, the axe coming
-down as the head goes.
+down as the head goes. The prisoner and his dependents (AddDependentAnimatedObjectReference), and
+the three the block holds, are updated together every frame and kept in step while one of them
+still reads its chop clip (`animateInStep`; docs/animation.md, "Graphs that go together in step").
 
 The player at the block (observed in the original): driven by AI from stage 70
 (SetPlayerAIDriven(True) in its fragment) to stage 140, they step up in line

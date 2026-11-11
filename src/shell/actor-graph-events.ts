@@ -258,9 +258,20 @@ export class ActorGraphEvents {
       void runtime?.actors.kill(source.reference, stage.combat.killerOf(source.reference));
     });
     // Decapitate (an execution's chop): the actor's head comes off
-    // (src/shell/actor-dismemberment.ts; a killmove's victim hears its killer's 2_Decapitate).
-    d.handle('DecapitateHandler', (source) => {
-      if (!source.firstPerson) void stage.dismemberment.decapitate(source.reference);
+    // (src/shell/actor-dismemberment.ts; a killmove's victim hears its killer's 2_Decapitate),
+    // at the moment its clip has it. An actor's graph runs on the animation clock (its time is
+    // where its update ended there); the player's body runs on its avatar's own clock (at the
+    // player's pace, on in menus that show them) and every frame, so only how long before its
+    // update's end the event fell is taken, as seconds of the animation clock.
+    d.handle('DecapitateHandler', (source, event) => {
+      if (source.firstPerson) return;
+      const late = event.late ?? 0;
+      const graphTime = source.player ? undefined : source.skeleton.time;
+      const pace = source.player ? this.#options.session.time.playerPace : 1;
+      void stage.dismemberment.decapitate(source.reference, {
+        late: pace > 0 ? late / pace : late,
+        ...(graphTime !== undefined && { graphTime }),
+      });
     });
     // Casting: the hands' SpellFire, the voice's (shouts) and its start, interrupts.
     d.handle('LeftHandSpellFireHandler', (source) => {

@@ -27,6 +27,7 @@ import {
 } from '../ai/idle-records.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
 import { idleLoopSeconds } from '../ai/ambient-idles.ts';
+import { MOVEMENT_ACTIONS } from '../ai/locomotion.ts';
 import { enterStep, markerRank } from '../ai/furniture-markers.ts';
 import type { SandboxSpot } from '../ai/package-runtime.ts';
 import { parseNif } from '../formats/nif/nif.ts';
@@ -65,6 +66,11 @@ export interface FurnitureUser {
   moveTo(position: Vec3, heading: number): void;
   /** Sends an animation event to its graphs; whether one took it. */
   send(event: string): boolean;
+  /**
+   * Whether its graphs would all take an event now (without it: its body's graph). The player
+   * has two, the body's and the first-person one (PlayerAvatar.wouldTake).
+   */
+  wouldTake?(event: string): boolean;
 }
 
 /** A marker of a placed furniture, in the world. */
@@ -204,6 +210,57 @@ const KEEP_IN_SECONDS = 0.7;
  * take it (seconds; the chopping block's enter, AOExecutioneeEnter, takes 1.5).
  */
 const BACK_IN_SECONDS = 4;
+/** A held script idle's graphs are asked again after this (seconds). */
+const HOLD_POLL_SECONDS = 0.1;
+/**
+ * A held script idle the actor's body graph would take waits this long at most for its other
+ * graphs (the player's first-person one) to take it too (seconds). Kept in step
+ * (animateInStep), they are at most a frame apart; one that names the event but would not take
+ * it in that state does not hold the idle the whole BACK_IN_SECONDS. TODO(M13): inferred.
+ */
+const OTHER_GRAPHS_SECONDS = 0.3;
+
+/**
+ * How a script's idle held for an actor in furniture ended: its graphs would take it ('taken'),
+ * its body's graph would and its other graphs did not come to it within OTHER_GRAPHS_SECONDS
+ * ('body': it is sent), the actor's use ended ('ended': its graph is its own again and decides), a later script idle
+ * for the actor came ('superseded': this one is not sent), or the wait ran out ('timeout': it is
+ * sent, and its graphs take it or not).
+ */
+export type HeldIdle = 'taken' | 'body' | 'ended' | 'superseded' | 'timeout';
+
+/**
+ * Holds a script's idle until its actor's graphs would take it (`takes`), at most `seconds`,
+ * asking every HOLD_POLL_SECONDS (`wait`: real time in the page): while `using` (the actor's use
+ * of its furniture goes on) and `latest` (no later script idle came for the actor). A later idle
+ * wins over one still held, so the two never play out of order. With `bodyTakes` (its body's
+ * graph alone would take it), the other graphs are waited for OTHER_GRAPHS_SECONDS at most.
+ */
+export async function holdIdle(hold: {
+  readonly takes: () => boolean;
+  readonly bodyTakes?: () => boolean;
+  readonly using: () => boolean;
+  readonly latest: () => boolean;
+  readonly seconds: number;
+  readonly wait?: (seconds: number) => Promise<void>;
+}): Promise<HeldIdle> {
+  const wait = hold.wait ?? sleep;
+  let body: number | undefined;
+  for (let waited = 0; ; waited += HOLD_POLL_SECONDS) {
+    if (!hold.latest()) return 'superseded';
+    if (!hold.using()) return 'ended';
+    if (hold.takes()) return 'taken';
+    body = hold.bodyTakes?.() === true ? (body ?? waited) : undefined;
+    if (body !== undefined && waited - body >= OTHER_GRAPHS_SECONDS - 1e-9) return 'body';
+    if (waited >= hold.seconds - 1e-9) return 'timeout';
+    await wait(HOLD_POLL_SECONDS);
+  }
+}
+
+/** Whether an actor's graphs would all take an event now (FurnitureUser.wouldTake). */
+function takesNow(user: FurnitureUser, event: string): boolean {
+  return user.wouldTake?.(event) ?? user.placed.behavior?.wouldHandle(event) === true;
+}
 
 /**
  * The engine's handlers of a graph's furniture exits (meshes\responses\actorresponse.txt and
@@ -272,6 +329,17 @@ export class ActorFurniture {
    */
   readonly #looping = new Map<number, { readonly idle: number; readonly until: number }>();
   readonly #loopRandom = seededRandom(0x1d1e);
+  /**
+   * Each actor's latest script idle that has its event (its number, drawn as playIdle was
+   * called): an earlier one still held for it drops.
+   */
+  readonly #latestIdle = new Map<number, number>();
+  /**
+   * Each actor's last script idle until it settles (it is sent, held or plays nothing): the
+   * next one waits for it, so they go in the order the scripts called them.
+   */
+  readonly #idleTurns = new Map<number, Promise<void>>();
+  #idles = 0;
 
   constructor(options: ActorFurnitureOptions) {
     this.#options = options;
@@ -450,35 +518,71 @@ export class ActorFurniture {
       readonly dependents?: readonly FurnitureUser[];
     } = {},
   ): Promise<boolean> {
+    // Its turn is taken as it is called: PlayIdle comes here without waiting (the scripts' native
+    // returns at once), and what each call looks up takes its own time (a parent idle's children,
+    // their conditions). A later call that found its idle first went before an earlier one, or
+    // an earlier one superseded it while it was held. Each waits for the one before to settle.
+    const actor = user.reference;
+    const ticket = ++this.#idles;
+    const before = this.#idleTurns.get(actor);
+    let settle = (): void => undefined;
+    const settled = new Promise<void>((resolve) => (settle = resolve));
+    this.#idleTurns.set(actor, settled);
+    try {
+      const event = await this.#scriptIdleEvent(user, idle, target, options.inFurniture === true);
+      await before;
+      // One that plays nothing is not the script's last word: one held before it goes on.
+      if (event === undefined) return false;
+      this.#latestIdle.set(actor, ticket);
+      if (this.#holdsIdle(user, event)) {
+        // Held, it lets the next one go on, which supersedes it.
+        settle();
+        await this.#backIn(user, event, ticket);
+      }
+      if (this.#latestIdle.get(actor) !== ticket) return false;
+      this.#latestIdle.delete(actor);
+      const sent = user.send(event);
+      if (sent) this.#options.specificIdle?.(actor);
+      for (const dependent of options.dependents ?? []) dependent.send(event);
+      const use = this.#uses.get(actor);
+      if (sent && use && inside(use)) void this.#keepIn(user, use);
+      if (sent && target !== undefined && event.toLowerCase().startsWith('pa_'))
+        this.#options.paired?.(actor, target, event);
+      return sent;
+    } finally {
+      settle();
+      if (this.#idleTurns.get(actor) === settled) this.#idleTurns.delete(actor);
+    }
+  }
+
+  /** The event a script's idle sends an actor (playIdle), if any. */
+  async #scriptIdleEvent(
+    user: FurnitureUser,
+    idle: number,
+    target: number | undefined,
+    inFurniture: boolean,
+  ): Promise<string | undefined> {
     const runtime = this.#options.session.scriptsReady;
     const tree = await this.#tree();
     const record = tree.idles.get(idle);
-    if (!runtime || !record) return false;
+    if (!runtime || !record) return undefined;
     const subject = new ObjectHandle(user.reference, 'actor');
     const context = target === undefined ? {} : { target: runtime.referenceHandle(target) };
     if (!(await runtime.conditionsHold(record.conditions, subject, undefined, context))) {
-      return false;
+      return undefined;
     }
     let event = record.event;
     if (event === undefined) {
       const graph = await this.#graphKey(user);
-      if (graph === undefined) return false;
+      if (graph === undefined) return undefined;
       const child = await tree.resolveAsync(idle, graph, (candidate) =>
         runtime.conditionsHold(candidate.conditions, subject, undefined, context),
       );
       event = child?.event;
     }
-    if (event === undefined) return false;
-    if (this.#uses.has(user.reference) && options.inFurniture !== true) return false;
-    await this.#backIn(user, event);
-    const sent = user.send(event);
-    if (sent) this.#options.specificIdle?.(user.reference);
-    for (const dependent of options.dependents ?? []) dependent.send(event);
-    const use = this.#uses.get(user.reference);
-    if (sent && use && inside(use)) void this.#keepIn(user, use);
-    if (sent && target !== undefined && event.toLowerCase().startsWith('pa_'))
-      this.#options.paired?.(user.reference, target, event);
-    return sent;
+    if (event === undefined) return undefined;
+    if (this.#uses.has(user.reference) && !inFurniture) return undefined;
+    return event;
   }
 
   /**
@@ -598,14 +702,19 @@ export class ActorFurniture {
   }
 
   /**
-   * Whether furniture keeps an actor from an action's idle: any use of it does, but its idle
-   * stops (ActionIdleStop) while it is only on its way there.
+   * Whether furniture keeps an actor from an action's idle: any use of it does, but while it is
+   * only on its way there its idle stops (ActionIdleStop) and its walk there is a walk: its
+   * movement's actions (MOVEMENT_ACTIONS: ActionMoveStart, the turns, ...) and its path's end turn
+   * into the entry (ActionPathEnd) play. Before, a walk to furniture got no moveStart and glided
+   * in the idle it stood in (Helgen's first prisoner to the chopping block). TODO(M13): inferred
+   * (the engine puts an actor in furniture as it enters it); whether other idles wait meanwhile
+   * is not read.
    */
   #takenBy(actor: number, action: string): boolean {
     if (action === 'ActionIdleStop') return this.holds(actor);
     const use = this.#uses.get(actor);
-    // Its walk to the furniture ends with its path's end turn into the entry (ActionPathEnd).
-    if (action === 'ActionPathEnd') return use !== undefined && use.phase !== 'approaching';
+    if (use?.phase === 'approaching')
+      return action !== 'ActionPathEnd' && !MOVEMENT_ACTIONS.has(action);
     return use !== undefined;
   }
 
@@ -981,34 +1090,51 @@ export class ActorFurniture {
   }
 
   /**
-   * A script's idle played on an actor in furniture that left its graph standing (not
-   * animation-driven, as the furniture states are): the furniture's state is put back, as a
-   * body made again is. MQ101's player walked to the chopping block in the camera-bob idle
-   * (IdleWalkingCameraStart: the Master machine's MT WalkingCamera, outside the states that
-   * take a furniture's enter), so the block's IdleExecutioneeIdle went unheard; the package's
-   * end fragment then played IdleWalkingCameraEnd, which left the player standing in the
-   * block. TODO(M13): how the engine keeps a graph in its furniture (an enter it holds until
-   * the graph takes it).
+   * A script's idle for an actor in furniture whose graphs would not all take it now (the
+   * player's two: the body's and the first-person one, FurnitureUser.wouldTake). One a script's
+   * idle stood up (not animation-driven, as the furniture states are) is put back in the
+   * furniture's state first. The idle then waits until they would take it (BACK_IN_SECONDS at
+   * most; holdIdle), unless the actor's use ends or a later script idle for it comes, which the
+   * held one gives way to (it is not sent: the later one is the script's last word, and the held
+   * one sent after it would play out of order). MQ101's block: the camera-bob end (the walk's
+   * package's end fragment) stood the player up, and the block's IdleExecutionerChop_Player,
+   * heard only in Executionee_State, came half a second later, before the state was put back:
+   * the player stood through the execution instead of laying their head on the block. At 10
+   * frames a second the chop came 0.4 s after the block's instant enter put the player's graphs
+   * back, during AOExecutioneeEnter, which does not take it, and was dropped (measured in the
+   * simulation). In the browser at about 10 frames a second the first-person graph ended its
+   * AOExecutioneeEnter 0.3 s after the body's: sent as the body's graph would take it, the chop
+   * was dropped by the first-person graph, and the view stayed in the kneeling idle's, level and
+   * the way the player had walked in, while the body lay on the block. TODO(M13): inferred, as
+   * the rest of this (how the engine keeps a graph in its furniture).
    */
-  /**
-   * A script's idle for an actor in furniture whose graph a script's idle stood up (not
-   * animation-driven, as the furniture states are) and which that graph would not take now: the
-   * furniture's state is put back first and the idle waits until the graph would take it
-   * (BACK_IN_SECONDS at most). MQ101's block: the camera-bob end (the walk's package's end
-   * fragment) stood the player up, and the block's IdleExecutionerChop_Player, heard only in
-   * Executionee_State, came half a second later, before the state was put back: the player
-   * stood through the execution instead of laying their head on the block.
-   */
-  async #backIn(user: FurnitureUser, event: string): Promise<void> {
+  async #backIn(user: FurnitureUser, event: string, ticket: number): Promise<HeldIdle> {
     const use = this.#uses.get(user.reference);
-    const graph = user.placed.behavior;
-    if (!use || !inside(use) || !graph) return;
-    if (graph.variable('bAnimationDriven') !== 0 || graph.wouldHandle(event)) return;
-    await this.#restore(user);
-    for (let waited = 0; waited < BACK_IN_SECONDS; waited += 0.1) {
-      if (this.#uses.get(user.reference) !== use || user.placed.behavior.wouldHandle(event)) return;
-      await sleep(0.1);
-    }
+    if (!use) return 'ended';
+    if (user.placed.behavior?.variable('bAnimationDriven') === 0) await this.#restore(user);
+    return holdIdle({
+      takes: () => takesNow(user, event),
+      ...(user.wouldTake && {
+        bodyTakes: () => user.placed.behavior?.wouldHandle(event) === true,
+      }),
+      using: () => this.#uses.get(user.reference) === use,
+      latest: () => this.#latestIdle.get(user.reference) === ticket,
+      seconds: BACK_IN_SECONDS,
+    });
+  }
+
+  /**
+   * Whether a script's idle is held (#backIn): its actor is in furniture and its graphs would
+   * not take it now.
+   */
+  #holdsIdle(user: FurnitureUser, event: string): boolean {
+    const use = this.#uses.get(user.reference);
+    return (
+      use !== undefined &&
+      inside(use) &&
+      user.placed.behavior !== undefined &&
+      !takesNow(user, event)
+    );
   }
 
   async #keepIn(user: FurnitureUser, use: Use): Promise<void> {

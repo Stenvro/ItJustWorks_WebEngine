@@ -26,7 +26,7 @@ import { FIRST_PERSON_SKELETON } from '../world/player-body.ts';
 import type { GameSession } from './game-session.ts';
 
 /** The first-person behavior project (the engine's own path). */
-const FIRST_PERSON_PROJECT = 'meshes\\actors\\character\\_1stperson\\firstperson.hkx';
+export const FIRST_PERSON_PROJECT = 'meshes\\actors\\character\\_1stperson\\firstperson.hkx';
 /** The node the first-person camera rides. */
 export const CAMERA_NODE = 'Camera1st [Cam1]';
 /** The Player reference (its graph's random seed). */

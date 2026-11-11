@@ -19,7 +19,7 @@ import {
 import { driveOf } from '../ai/movement-drive.ts';
 import { MovementCatalog } from '../ai/movement-types.ts';
 import type { MovementType } from '../world/movement.ts';
-import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
+import { animateInStep, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { OverriddenPitch } from '../animation/pitch-override.ts';
 import { multiply, type Vec3 } from '../render/math.ts';
 import type { RigData } from '../animation/skeleton.ts';
@@ -89,7 +89,10 @@ export class PlayerAvatar {
   readonly #motion: InstanceMotion;
   readonly #world: Float32Array;
   #bodyYaw: number;
-  /** The avatar's own clock (s): the game's, and real time while it animates in a menu. */
+  /**
+   * The avatar's own clock (s): the game's at the player's pace, and real time while it animates
+   * in a menu; its graphs' updates take at most animateSkeletons' cut of a long frame.
+   */
   #clock = 0;
   #last: { readonly seconds: number; readonly real: number } | undefined;
   /** Its movement, as the graphs' variables and events (shared with the NPCs). */
@@ -169,6 +172,7 @@ export class PlayerAvatar {
       void this.#actions?.perform('ActionWaterwalkStart').catch(() => undefined);
     };
     player.cameraOffset = () => this.#cameraOffset();
+    player.cameraForward = () => this.#cameraForward();
     player.taggedMovement = () => this.#taggedMovement();
     player.animationMotion = () => this.#animationMotion();
     void session.db
@@ -573,7 +577,11 @@ export class PlayerAvatar {
     // real time.
     const step = !last ? 0 : this.animatesInMenus ? real - last.real : seconds - last.seconds;
     const dt = Math.min(MAX_STEP, Math.max(0, step));
-    this.#clock += dt;
+    // The clock runs the whole step: the graphs' updates are cut to MAX_STEP by animateSkeletons
+    // as before, which counts an event's lateness on the clock (GraphEvent.late: a blow's moment,
+    // BlowMoment). Cut here, below 10 frames a second an update looked as if it covered only
+    // MAX_STEP of the frame and the lateness came out short.
+    this.#clock += Math.max(0, step);
     this.stepped = dt;
     if (!this.seated && !this.knocked) this.#drive(dt);
     const body = this.#made.body;
@@ -598,7 +606,8 @@ export class PlayerAvatar {
     const pitch = this.#heldBodyPitch.step(player.pitch, third && overridden, dt);
     this.#armsPitch = this.#heldArmsPitch.step(player.pitch, !third && overridden, dt);
     body.behavior?.setVariable('Pitch', (pitch * 180) / Math.PI);
-    animateSkeletons(skeletons, this.#clock);
+    // Kept in step: one whose clip is still being read holds the other (animateInStep).
+    animateInStep(skeletons, this.#clock);
     // Knocked down it lies (and gets up) where it is placed.
     if (this.knocked) return;
     // The body stands on the player's feet, facing its own way: where the camera has them
@@ -755,6 +764,25 @@ export class PlayerAvatar {
     }
   }
 
+  /**
+   * Whether its graphs would take an event now: each of the body's and the first-person one
+   * that names it (the first-person graph has not all the body's events). Both hear what is
+   * sent; one that dropped a furniture's idle stays out of step with the other for good: on
+   * Helgen's block the first-person graph, which ended its AOExecutioneeEnter later than the
+   * body's (0.3 s at about 10 frames a second in the browser), missed IdleExecutionerChop_Player
+   * sent as the body's graph would take it, and the view stayed in the kneeling idle's while the
+   * body lay on the block (src/shell/actor-furniture.ts #backIn).
+   */
+  wouldTake(event: string): boolean {
+    let named = false;
+    for (const graph of [this.#made.body.behavior, this.#firstPerson?.skeleton.behavior]) {
+      if (!graph?.declares(event)) continue;
+      named = true;
+      if (!graph.wouldHandle(event)) return false;
+    }
+    return named;
+  }
+
   /** Sends an animation event to its graphs (the body's and the first-person one). */
   send(event: string): boolean {
     let taken = false;
@@ -783,10 +811,31 @@ export class PlayerAvatar {
     return [x * cos - y * sin, x * sin + y * cos, z];
   }
 
+  /**
+   * Where the animated Camera1st node looks in the world's axes as the arms are drawn: its +y (at
+   * rest the body's forward) by the first-person skeleton's placement, which faces the body's
+   * heading and is pitched about the node by the player's pitch (FirstPersonBody.place), so the
+   * view on it and the arms drawn agree. TODO(M13): the axis is inferred, as for the animated
+   * third-person camera's node.
+   */
+  #cameraForward(): Vec3 | undefined {
+    const first = this.#firstPerson;
+    const node = first?.pose.world(CAMERA_NODE);
+    if (!first || !node) return undefined;
+    const m = first.world;
+    const [x, y, z] = [node[4] ?? 0, node[5] ?? 0, node[6] ?? 0];
+    return [
+      (m[0] ?? 0) * x + (m[4] ?? 0) * y + (m[8] ?? 0) * z,
+      (m[1] ?? 0) * x + (m[5] ?? 0) * y + (m[9] ?? 0) * z,
+      (m[2] ?? 0) * x + (m[6] ?? 0) * y + (m[10] ?? 0) * z,
+    ];
+  }
+
   destroy(): void {
     this.#destroyed = true;
     this.#player.jumpTrigger = undefined;
     this.#player.cameraOffset = undefined;
+    this.#player.cameraForward = undefined;
     this.#player.taggedMovement = undefined;
     this.#made.scene?.destroy();
     this.#firstPerson?.destroy();

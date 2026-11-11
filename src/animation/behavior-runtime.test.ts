@@ -478,13 +478,19 @@ describe('the behavior runtime', () => {
     });
     runtime.update(0);
     runtime.update(0.7);
-    expect(runtime.takeRaised()).toEqual([
-      { name: 'AnimObjLoad', payload: 'AnimObjectTankard', text: 'AnimObjLoad' },
-      { name: 'CameraShake', payload: '0.5', text: 'CameraShake.0.5' },
+    // Each with how long before the update's end it fell (the clip at 0.7 s: 0.5, 0.3, 0.1).
+    expect(
+      runtime
+        .takeRaised()
+        .map((event) => ({ ...event, late: Math.round((event.late ?? 0) * 1000) / 1000 })),
+    ).toEqual([
+      { name: 'AnimObjLoad', payload: 'AnimObjectTankard', text: 'AnimObjLoad', late: 0.5 },
+      { name: 'CameraShake', payload: '0.5', text: 'CameraShake.0.5', late: 0.3 },
       {
         name: 'AnimObjLoad',
         payload: 'DecapitationHeadGore',
         text: 'AnimObjLoad.DecapitationHeadGore',
+        late: 0.1,
       },
     ]);
     // Sent with a payload, an event is taken as any other.

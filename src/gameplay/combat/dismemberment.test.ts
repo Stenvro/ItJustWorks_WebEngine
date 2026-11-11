@@ -69,6 +69,49 @@ describe('dismemberment', () => {
     expect(trail.before(-5)?.time).toBeCloseTo(66 / 60 - 63 / 60);
   });
 
+  it('reads where a weapon was at a moment between two frames, at any frame rate', () => {
+    // The same fall at 15 frames a second: a moment between two frames is read between them.
+    const trail = new SwingTrail();
+    expect(trail.at(1)).toBeUndefined();
+    for (let frame = 0; frame <= 15; frame++) trail.record(frame / 15, [0, 0, 300 - 20 * frame]);
+    const at = trail.at(0.95);
+    expect(at?.time).toBe(0.95);
+    expect(at?.at[2]).toBeCloseTo(300 - 300 * 0.95);
+    // Past the newest or before the oldest: the place there, at its own time.
+    expect(trail.at(2)).toEqual({ at: [0, 0, 0], time: 1 });
+    expect(trail.at(-1)).toEqual({ at: [0, 0, 300], time: 0 });
+  });
+
+  it('reads a swing over the animation, not the clock, where long frames were cut', () => {
+    // Found in review 2026-11-10: in the browser at 4 frames a second each graph update was cut to
+    // 0.1 s; read over 0.1 s of the clock, Helgen's headsman's axe came into the blow at 12 units
+    // a second, bent aside by where it stopped. Here: down at 390 a second until 1 s into its
+    // animation, then aside at 60; frames of 0.24 s that run the animation 0.1 s each.
+    const axe = (animation: number): [number, number, number] =>
+      animation <= 1 ? [0, 0, 390 * (1 - animation)] : [60 * (animation - 1), 0, 0];
+    const aside = (byAnimation: boolean): number => {
+      const trail = new SwingTrail();
+      for (let frame = 0; frame <= 14; frame++) {
+        const clock = frame * 0.24;
+        trail.record(byAnimation ? frame * 0.1 : clock, axe(frame * 0.1), clock);
+      }
+      // The blow 1.03 s into the animation: 0.3 of the frame that ran from 1 to 1.1.
+      const time = trail.timeAt(10.3 * 0.24);
+      if (time === undefined) throw new Error('no time');
+      const to = trail.at(time);
+      const from = trail.at(time - SWING_SECONDS);
+      if (!to || !from) throw new Error('no places');
+      const [x, , z] = [0, 1, 2].map((i) => (to.at[i] ?? 0) - (from.at[i] ?? 0));
+      return (Math.atan2(Math.abs(x ?? 0), Math.abs(z ?? 0)) * 180) / Math.PI;
+    };
+    expect(aside(true)).toBeLessThan(5);
+    expect(aside(false)).toBeGreaterThan(15);
+    // Kept by the clock alone (recorded with no clock of its own): the clock is its time.
+    const trail = new SwingTrail();
+    for (let frame = 0; frame <= 4; frame++) trail.record(frame * 0.1, [frame, 0, 0]);
+    expect(trail.timeAt(0.25)).toBeCloseTo(0.25);
+  });
+
   it('rolls a killing blow on an explodable part as the engine does', () => {
     const explodable = { flags: BodyPartFlag.explodable, explosionChance: 100 };
     // 5% × 100 explodes under 5, dismembers under 25.

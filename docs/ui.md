@@ -1240,7 +1240,10 @@ when above 0, else [Camera] fFirstPersonSittingAngleLimit (π/2). Game.SetSittin
 sets that turn (MQ101's cart, −55°). TODO(M13): the engine brings the turn back toward the seat at
 fFirstPersonDisablePOVLerpDPS while a control flag of the player is off, and turns it by the look
 input × fFirstPersonSittingRotationSpeed while on; the flag is not identified, so the look stays
-free within the limit. With a gamepad, the left stick alone sets the pace by its deflection
+free within the limit. With looking switched off in first person (seated or not) the view is
+brought to where the first-person camera node looks and follows it (inferred: docs/animation.md,
+"First person"): on Helgen's block the executionee's clips turn it up to the tower Alduin comes
+to. With a gamepad, the left stick alone sets the pace by its deflection
 (running: from the walk to the run; walking: up to the walk; inferred, TODO(M13): the engine's
 curve).
 
