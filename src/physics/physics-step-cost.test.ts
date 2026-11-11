@@ -1,0 +1,237 @@
+// What the physics frame costs in Helgen's opening (docs/rendering.md, "The opening's frame"):
+// a world step without World.step's walk over every body, the contact filter's ignored pairs by
+// number, and the character controllers' sweeps filtered by Rapier's groups. Each keeps the
+// results the slower way gave.
+
+import RAPIER from '@dimforge/rapier3d-compat';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import type { Mat4 } from '../render/math.ts';
+import { CharacterBody } from './character.ts';
+import type { CollisionBody, CollisionData } from './collision-data.ts';
+import { CollisionMatrix, Layer } from './collision-layers.ts';
+import {
+  GRAVITY,
+  HandlePairs,
+  initPhysics,
+  PhysicsWorld,
+  QueryGroups,
+  stepWorld,
+} from './physics-world.ts';
+
+const IDENTITY: Mat4 = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+
+/** Static, clutter and BIPED_NO_CC meet the controller; BIPED does not (as the COLL records). */
+const matrix = new CollisionMatrix([
+  {
+    formId: 1,
+    editorId: 'L_STATIC',
+    index: Layer.static,
+    name: '',
+    flags: 0,
+    collidesWith: [2, 3, 4, 5],
+  },
+  {
+    formId: 2,
+    editorId: 'L_CHARCONTROLLER',
+    index: Layer.charController,
+    name: '',
+    flags: 0,
+    collidesWith: [1, 2, 4],
+  },
+  { formId: 3, editorId: 'L_BIPED', index: Layer.biped, name: '', flags: 0, collidesWith: [1] },
+  {
+    formId: 4,
+    editorId: 'L_BIPED_NO_CC',
+    index: Layer.bipedNoCc,
+    name: '',
+    flags: 0,
+    collidesWith: [1, 2],
+  },
+  { formId: 5, editorId: 'L_CLUTTER', index: Layer.clutter, name: '', flags: 0, collidesWith: [1] },
+]);
+
+function box(
+  layer: number,
+  min: [number, number, number],
+  max: [number, number, number],
+  motion: CollisionBody['motion'] = 'fixed',
+): CollisionData {
+  const points: number[] = [];
+  for (const x of [min[0], max[0]]) {
+    for (const y of [min[1], max[1]]) for (const z of [min[2], max[2]]) points.push(x, y, z);
+  }
+  const body: CollisionBody = {
+    node: 'Body',
+    transform: IDENTITY,
+    motion,
+    phantom: false,
+    layer,
+    mass: motion === 'dynamic' ? 5 : 0,
+    inertia: motion === 'dynamic' ? [0.1, 0.1, 0.1] : [0, 0, 0],
+    centerOfMass: [0, 0, 0],
+    friction: 0.5,
+    restitution: 0.4,
+    linearDamping: 0,
+    angularDamping: 0,
+    gravityFactor: 1,
+    maxLinearVelocity: 100,
+    maxAngularVelocity: 30,
+    quality: 0,
+    solverDeactivation: 1,
+    shapes: [{ type: 'convex', layer, material: 0, points: Float32Array.from(points), radius: 0 }],
+  };
+  return { bodies: [body], skipped: [] };
+}
+
+const settings = {
+  maxSlope: 60,
+  fallingGravity: 1,
+  unsupportedGravity: 1,
+  stairMaterials: new Set<number>(),
+  stairHeight: 32,
+};
+
+beforeAll(async () => {
+  await initPhysics();
+});
+
+describe('the physics step', () => {
+  it('steps without wrapping every body again (no soft bodies), as World.step steps', () => {
+    const run = (step: (world: RAPIER.World) => void): RAPIER.Vector => {
+      const physics = new PhysicsWorld(matrix, GRAVITY);
+      physics.addObject(box(Layer.static, [-500, -500, -20], [500, 500, 0]), IDENTITY, {
+        reference: 1,
+        kind: 'object',
+      });
+      const falling = physics.addObject(
+        box(Layer.clutter, [-5, -5, 40], [5, 5, 50], 'dynamic'),
+        IDENTITY,
+        { reference: 2, kind: 'object' },
+      );
+      for (let i = 0; i < 90; i++) step(physics.world);
+      const at = falling.bodies[0]?.body.translation() ?? { x: NaN, y: NaN, z: NaN };
+      physics.free();
+      return at;
+    };
+    const stepped = run((world) => {
+      world.step();
+    });
+    const walk = vi.fn();
+    const quick = run((world) => {
+      world.mapNewSoftBodies = walk;
+      stepWorld(world, undefined, undefined);
+    });
+    expect(walk).not.toHaveBeenCalled();
+    expect(quick).toEqual(stepped);
+  });
+
+  it("PhysicsWorld.step leaves out World.step's walk over the bodies", () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    physics.addObject(box(Layer.static, [-50, -50, -20], [50, 50, 0]), IDENTITY, {
+      reference: 1,
+      kind: 'object',
+    });
+    const walk = vi.spyOn(physics.world, 'mapNewSoftBodies');
+    expect(physics.step(3 / 60)).toBe(3);
+    expect(walk).not.toHaveBeenCalled();
+    physics.free();
+  });
+
+  it('keeps pairs of handles in either order', () => {
+    const pairs = new HandlePairs();
+    pairs.add(3, 7);
+    pairs.add(7, 3);
+    pairs.add(3, 9);
+    expect(pairs.size).toBe(2);
+    expect(pairs.has(7, 3)).toBe(true);
+    expect(pairs.has(3, 7)).toBe(true);
+    expect(pairs.has(9, 7)).toBe(false);
+    pairs.delete(7, 3);
+    expect(pairs.has(3, 7)).toBe(false);
+    expect(pairs.has(9, 3)).toBe(true);
+    expect(pairs.size).toBe(1);
+  });
+});
+
+describe("the controllers' query groups", () => {
+  it('take exactly the colliders the controller filter takes', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const filter = physics.filterFor(Layer.charController);
+    const placed = [Layer.static, Layer.biped, Layer.bipedNoCc, Layer.clutter].map((layer, i) =>
+      physics.addObject(box(layer, [i * 100, 0, 0], [i * 100 + 10, 10, 10]), IDENTITY, {
+        reference: 10 + i,
+        kind: 'object',
+      }),
+    );
+    for (const { colliders } of placed) {
+      for (const collider of colliders) {
+        const member = ((collider.collisionGroups() >>> 16) & QueryGroups.controllerSolid) !== 0;
+        expect(member).toBe(filter(collider));
+      }
+    }
+    // A death moves the bodies to a layer the controllers do not meet: out of the group.
+    const ragdoll = physics.addObject(
+      box(Layer.bipedNoCc, [0, 300, 0], [10, 310, 10], 'dynamic'),
+      IDENTITY,
+      { reference: 20, kind: 'actor' },
+    );
+    expect(physics.controllerSolidOf(20)).toBe(1);
+    physics.setLayer(ragdoll, Layer.biped);
+    const [collider] = ragdoll.colliders;
+    if (!collider) throw new Error('a collider');
+    expect(((collider.collisionGroups() >>> 16) & QueryGroups.controllerSolid) !== 0).toBe(false);
+    expect(physics.controllerSolidOf(20)).toBe(0);
+    physics.free();
+  });
+
+  it("counts an actor's colliders a controller meets, its own controller left out", () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const character = new CharacterBody(physics, { radius: 14, height: 128 }, settings, [0, 0, 0], {
+      reference: 0x14,
+      kind: 'actor',
+    });
+    expect(physics.controllerSolidOf(0x14)).toBe(1);
+    expect(physics.controllerSolidOf(0x14, character.collider)).toBe(0);
+    const own = physics.addObject(box(Layer.bipedNoCc, [100, 0, 0], [110, 10, 10]), IDENTITY, {
+      reference: 0x14,
+      kind: 'actor',
+    });
+    expect(physics.controllerSolidOf(0x14, character.collider)).toBe(1);
+    physics.remove(own);
+    expect(physics.controllerSolidOf(0x14, character.collider)).toBe(0);
+    physics.free();
+  });
+
+  it("walks through a body of its own a controller meets, and stops at another actor's", () => {
+    const walk = (owner: number): number => {
+      const physics = new PhysicsWorld(matrix, GRAVITY);
+      physics.addObject(box(Layer.static, [-500, -500, -20], [500, 500, 0]), IDENTITY, {
+        reference: 1,
+        kind: 'object',
+      });
+      // A body on BIPED_NO_CC across the way, 60 units ahead.
+      physics.addObject(box(Layer.bipedNoCc, [60, -100, 0], [70, 100, 200]), IDENTITY, {
+        reference: owner,
+        kind: 'actor',
+      });
+      const character = new CharacterBody(
+        physics,
+        { radius: 14, height: 128 },
+        settings,
+        [0, 0, 0],
+        { reference: 0x14, kind: 'actor' },
+      );
+      physics.step(1 / 60);
+      character.velocity = [200, 0];
+      for (let i = 0; i < 60; i++)
+        physics.step(1 / 60, (step) => {
+          character.step(step);
+        });
+      const x = character.feet[0];
+      physics.free();
+      return x;
+    };
+    expect(walk(0x14)).toBeGreaterThan(150);
+    expect(walk(0x99)).toBeLessThan(60);
+  });
+});

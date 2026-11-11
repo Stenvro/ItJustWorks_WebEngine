@@ -44,6 +44,7 @@ import {
 } from '../ai/process-levels.ts';
 import {
   findPath,
+  PathSearch,
   straightReach,
   type AvoidNode,
   type NavmeshSet,
@@ -73,6 +74,7 @@ import { HAVOK_SCALE } from '../physics/collision-data.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import { TRAP_REACH } from '../scripting/runtime/trap-hits.ts';
+import { framePaced } from '../render/frame-work.ts';
 import type { Vec3 } from '../render/math.ts';
 import {
   CHECK_FALL_DISTANCE,
@@ -390,6 +392,60 @@ interface Travel {
   readonly heading: number | undefined;
   /** The navmesh obstacles' version its path was searched at. */
   obstacles: number;
+  /** Its path being searched over frames (#travelFrame), from where it stood then. */
+  search: PendingSearch | undefined;
+}
+
+/** A travel's path search under way (#travelFrame). */
+interface PendingSearch {
+  readonly reference: number;
+  readonly search: PathSearch;
+  /** Whether it stood on the navmeshes, where, and the arrival radius at the path's end. */
+  readonly on: boolean;
+  readonly position: Vec3;
+  readonly arrive: number;
+}
+
+/**
+ * The path searches' nodes a frame of the actors' travels takes at most, every search of every
+ * actor (moved or walking) together (about 1 µs a node in Chrome). Searches that end within it
+ * (most take a few dozen) give their path in the frame they began, as before; a longer one (a
+ * goal off the actor's island explored all of it, 12,000 nodes round Helgen: 10–25 ms) goes on
+ * in the next frames, its actor going on as it went meanwhile (its last request kept). Searches
+ * going on from earlier frames take the frame's nodes first, the one waiting longest first, but
+ * leave FIRST_SEARCH_RESERVE of them to the searches' first shares (#runWaitingSearches).
+ * Inferred from the original searching its paths on a pathing thread of their own, a path coming
+ * some frames after it was asked for. TODO(M13): the engine's own budget, and what an actor does
+ * until its path comes (ours: it goes on as it went).
+ */
+const SEARCH_NODES_PER_FRAME = 2000;
+/**
+ * The nodes of SEARCH_NODES_PER_FRAME the searches going on from earlier frames leave to the
+ * searches' first shares: a short way (most take a few dozen) never waits behind another actor's
+ * long search.
+ */
+const FIRST_SEARCH_RESERVE = 512;
+/**
+ * A search's first share: what a search begun takes of the reserve (more where the frame has
+ * more left than the reserve). One begun once the frame's nodes are spent takes it first in the
+ * next frame.
+ */
+const FIRST_SEARCH_NODES = 256;
+/** The searches' pacing while frames are drawn. */
+const SEARCH_PACING: SearchPacing = {
+  frame: SEARCH_NODES_PER_FRAME,
+  reserve: FIRST_SEARCH_RESERVE,
+  first: FIRST_SEARCH_NODES,
+};
+
+/** Path searches' node budgets a frame (SEARCH_NODES_PER_FRAME and the ones after it). */
+export interface SearchPacing {
+  /** The nodes of all searches together a frame. */
+  readonly frame: number;
+  /** Of them, what the searches going on from earlier frames leave to first shares. */
+  readonly reserve: number;
+  /** A search's first share. */
+  readonly first: number;
 }
 
 /** A travel ended by skipped hours sets the actor on the navmesh within this of its place. */
@@ -698,6 +754,7 @@ export class ActorMovers {
         pathStarted: false,
         heading: options.heading,
         obstacles: this.#options.obstacles?.version ?? 0,
+        search: undefined,
         done: (arrived) => {
           if (this.#travels.get(reference) !== travel) return;
           this.#travels.delete(reference);
@@ -744,13 +801,32 @@ export class ActorMovers {
     this.#requests.delete(reference);
   }
 
-  /** Where an actor travels to now, and the points of its path (development checks). */
-  travelOf(reference: number): { destination: Vec3; points: readonly Vec3[] } | undefined {
+  /**
+   * Where an actor travels to now, the points of its path, and whether its path is being searched
+   * over frames (development checks).
+   */
+  travelOf(
+    reference: number,
+  ): { destination: Vec3; points: readonly Vec3[]; searching: boolean } | undefined {
     const travel = this.#travels.get(reference);
     return (
-      travel && { destination: travel.destination, points: travel.follower?.path.points ?? [] }
+      travel && {
+        destination: travel.destination,
+        points: travel.follower?.path.points ?? [],
+        searching: travel.search !== undefined,
+      }
     );
   }
+
+  /**
+   * Path searches paced over frames with these node budgets (SEARCH_NODES_PER_FRAME and the
+   * ones after it) as while frames are drawn, also without them: for tests of the searches going
+   * on over frames in the headless simulation.
+   */
+  searchPacing: SearchPacing | undefined;
+
+  /** The most path search nodes a frame of the actors' travels has taken (development checks). */
+  searchNodesMost = 0;
 
   /**
    * The way still ahead of an actor on its travel: its path's points it has yet to reach (straight
@@ -760,6 +836,109 @@ export class ActorMovers {
     const travel = this.#travels.get(reference);
     if (!travel) return undefined;
     return travel.follower ? travel.follower.ahead : [travel.destination];
+  }
+
+  /** What is left of this frame's path search nodes (SEARCH_NODES_PER_FRAME). */
+  #searchBudget = SEARCH_NODES_PER_FRAME;
+  /** The path search nodes this frame took (searchNodesMost). */
+  #searchTaken = 0;
+  /** The searches going on from earlier frames, the one begun first first. */
+  #waitingSearches: PendingSearch[] = [];
+
+  /** Whether path searches go on over frames (frames to keep smooth, or a test's pacing). */
+  #searchesPaced(): boolean {
+    return this.searchPacing !== undefined || framePaced();
+  }
+
+  /** A search's share of this frame's nodes: at most `nodes`, never more than are left. */
+  #searchRun(pending: PendingSearch, nodes: number): void {
+    const taken = pending.search.run(Math.min(nodes, this.#searchBudget));
+    this.#searchBudget -= taken;
+    this.#searchTaken += taken;
+  }
+
+  /**
+   * At a frame's start, the searches going on from earlier frames take its nodes: first those
+   * that had no first share yet (begun once the frame's nodes were spent), of the reserve; then
+   * all of them, the one waiting longest first, of what the reserve leaves. So each in turn ends,
+   * however many others begin anew, and the frame keeps its reserve for searches begun in it.
+   */
+  #runWaitingSearches(): void {
+    const pacing = this.searchPacing ?? SEARCH_PACING;
+    this.searchNodesMost = Math.max(this.searchNodesMost, this.#searchTaken);
+    this.#searchTaken = 0;
+    this.#searchBudget = pacing.frame;
+    // Those whose travel ended or dropped them (its goal moved, its way changed) are let go.
+    const waiting = this.#waitingSearches.filter(
+      (pending) => this.#travels.get(pending.reference)?.search === pending,
+    );
+    if (this.#searchesPaced()) {
+      let reserve = pacing.reserve;
+      for (const pending of waiting) {
+        const owed = pacing.first - pending.search.taken;
+        if (owed <= 0 || reserve <= 0) continue;
+        const before = this.#searchBudget;
+        this.#searchRun(pending, Math.min(owed, reserve));
+        reserve -= before - this.#searchBudget;
+      }
+      for (const pending of waiting) {
+        const left = this.#searchBudget - pacing.reserve;
+        if (left <= 0) break;
+        if (!pending.search.done) this.#searchRun(pending, left);
+      }
+    }
+    this.#waitingSearches = waiting.filter((pending) => !pending.search.done);
+  }
+
+  /**
+   * A path search begun this frame: whether it has ended. It takes its first share
+   * (FIRST_SEARCH_NODES; more of what the frame has left beyond the reserve), never more than
+   * the frame has left, and goes on in the next frames (#runWaitingSearches). Without frames to
+   * keep smooth (the headless simulation, a loading screen) it runs to its end at once.
+   */
+  #searchBegun(pending: PendingSearch): boolean {
+    const search = pending.search;
+    if (!this.#searchesPaced()) {
+      search.run(Infinity);
+      return true;
+    }
+    const pacing = this.searchPacing ?? SEARCH_PACING;
+    this.#searchRun(pending, Math.max(pacing.first, this.#searchBudget - pacing.reserve));
+    if (!search.done) this.#waitingSearches.push(pending);
+    return search.done;
+  }
+
+  /**
+   * A travel's path search this frame: the one going on from earlier frames, else one begun
+   * (`begin`; undefined: none could be, the travel was given up). The search once it has ended;
+   * undefined while it goes on (the actor goes on as it went), or when none could begin. A
+   * moving destination that went past its recalc distance while it went on is followed on
+   * instead (searched again in the next frame): its path would lead where it no longer is.
+   */
+  #searchFor(travel: Travel, begin: () => PendingSearch | undefined): PendingSearch | undefined {
+    let pending = travel.search;
+    if (pending) {
+      // Going on from an earlier frame: it took its share at the frame's start
+      // (#runWaitingSearches); without frames to keep smooth now, it ends at once.
+      if (!this.#searchesPaced()) pending.search.run(Infinity);
+      if (!pending.search.done) return undefined;
+    } else {
+      travel.searches++;
+      pending = begin();
+      if (!pending) return undefined;
+      travel.search = pending;
+      // Not ended within this frame's share: on in the next.
+      if (!this.#searchBegun(pending)) return undefined;
+    }
+    travel.search = undefined;
+    if (this.#followMoving(travel)) return undefined;
+    return pending;
+  }
+
+  /** Its path searched again from where it is now: the path it had and a search under way go. */
+  #searchAgain(travel: Travel): void {
+    travel.follower = undefined;
+    travel.search = undefined;
   }
 
   /** One frame of an actor's travel: its path searched (again), followed, ended. */
@@ -778,37 +957,56 @@ export class ActorMovers {
     if (!travel.follower) {
       const set = this.#options.navmeshes?.();
       if (!set) return;
-      travel.searches++;
-      // Off the navmeshes (a straight way left it: MQ101's second cart before the hay bales in
-      // Helgen's square), the path begins at their nearest point.
-      const position = mover.staged.position;
-      const on = set.locate(position) !== undefined;
-      const start = on ? position : set.nearest?.(position, NAVMESH_REACH);
-      const end = navGoal(set, travel.destination, travel.arrive);
-      const found =
-        start &&
-        findPath(set, start, end.goal, {
-          // Stuck on its way (a corner its path grazed): wider of the edges each time it searches
-          // again. TODO(M13): the engine's own way out (not documented).
-          radius: mover.character.shape.radius * travel.searches,
-          large: (mover.race?.size ?? RaceSize.medium) >= RaceSize.large,
-          // A swimmer crosses water as readily as land (the navmesh's water triangles).
-          swims:
-            (mover.staged.placed.look.raceFlags & RaceFlag.swims) !== 0 &&
-            this.#options.swimAllowed?.(reference) !== false,
-          closedDoors: this.#closedFor(reference, travel),
-          ...this.#raceRules(reference, mover.staged),
-          blocked: this.#blockedFor(reference, travel),
-          ...avoidsOf(travel),
-          obstacles: this.#options.obstacles?.index,
-        });
+      const pending = this.#searchFor(travel, () => {
+        // Off the navmeshes (a straight way left it: MQ101's second cart before the hay bales in
+        // Helgen's square), the path begins at their nearest point.
+        const position = mover.staged.position;
+        const on = set.locate(position) !== undefined;
+        const start = on ? position : set.nearest?.(position, NAVMESH_REACH);
+        const end = navGoal(set, travel.destination, travel.arrive);
+        if (!start) {
+          this.#giveUp(reference, travel);
+          return undefined;
+        }
+        // Searched against the obstacles as they are now; those changing while it goes on are
+        // looked at once it ends (#obstaclesChanged).
+        travel.obstacles = this.#options.obstacles?.version ?? 0;
+        return {
+          reference,
+          search: new PathSearch(set, start, end.goal, {
+            // Stuck on its way (a corner its path grazed): wider of the edges each time it searches
+            // again. TODO(M13): the engine's own way out (not documented).
+            radius: mover.character.shape.radius * travel.searches,
+            large: (mover.race?.size ?? RaceSize.medium) >= RaceSize.large,
+            // A swimmer crosses water as readily as land (the navmesh's water triangles).
+            swims:
+              (mover.staged.placed.look.raceFlags & RaceFlag.swims) !== 0 &&
+              this.#options.swimAllowed?.(reference) !== false,
+            closedDoors: this.#closedFor(reference, travel),
+            ...this.#raceRules(reference, mover.staged),
+            blocked: this.#blockedFor(reference, travel),
+            ...avoidsOf(travel),
+            obstacles: this.#options.obstacles?.index,
+          }),
+          on,
+          position: [...position],
+          arrive: end.arrive,
+        };
+      });
+      // Not ended within this frame's share: on in the next (the actor goes on as it went).
+      if (!pending) return;
+      const found = pending.search.result;
       const path =
-        found && !on ? { ...found, points: [[...position] as Vec3, ...found.points] } : found;
+        found && !pending.on
+          ? { ...found, points: [[...pending.position] as Vec3, ...found.points] }
+          : found;
       if (!path || path.points.length < 2) {
         this.#giveUp(reference, travel);
         return;
       }
-      travel.follower = new PathFollower(path, { gait: travel.gait, arrive: end.arrive });
+      travel.follower = new PathFollower(path, { gait: travel.gait, arrive: pending.arrive });
+      // Obstacles that came or went while it was searched over frames, on its way: again.
+      if (this.#obstaclesChanged(travel)) return;
       this.#newPath(mover.staged);
     }
     // A door in its way (the navmesh marks only load doors): it opens it and waits, or the door
@@ -845,12 +1043,12 @@ export class ActorMovers {
     }
     if (step.state === 'stuck' && travel.direct) {
       travel.direct = false;
-      travel.follower = undefined;
+      this.#searchAgain(travel);
       return;
     }
     if (step.state === 'stuck') {
       const target = travel.follower.target;
-      travel.follower = undefined;
+      this.#searchAgain(travel);
       this.#requests.delete(reference);
       if (target) this.#heldAt(mover, travel, target);
       // Still stuck on a path searched wider (wedged where seeking a way round does not get it
@@ -930,17 +1128,24 @@ export class ActorMovers {
   /**
    * A destination that moves (an actor followed): once it moved farther than its recalc
    * distance (fAIMoveDistanceToRecalc*) from where the travel leads, the travel goes there and
-   * its path is searched again (observed in the original).
+   * its path is searched again (observed in the original). A search under way over frames ends
+   * first, towards where it was begun to: so the travel's destination is always the one its path
+   * was searched to (its path's end is not taken for the new place's), and a target moving on
+   * faster than a long search ends does not keep it from ever ending; its path is not taken
+   * then (#searchFor). TODO(M13): whether the engine drops a path request under way when its
+   * target moves on. Whether it went on to the new place.
    */
-  #followMoving(travel: Travel): void {
+  #followMoving(travel: Travel): boolean {
     const moving = travel.moving;
+    if (travel.search) return false;
     const now = moving?.position();
-    if (!moving || !now) return;
+    if (!moving || !now) return false;
     const [x, y, z] = travel.destination;
-    if (Math.hypot(now[0] - x, now[1] - y, now[2] - z) <= moving.recalc) return;
+    if (Math.hypot(now[0] - x, now[1] - y, now[2] - z) <= moving.recalc) return false;
     travel.destination = [now[0], now[1], now[2]];
-    travel.follower = undefined;
+    this.#searchAgain(travel);
     travel.searches = 0;
+    return true;
   }
 
   /**
@@ -958,7 +1163,7 @@ export class ActorMovers {
     const [x, y, z] = travel.destination;
     if (Math.hypot(now[0] - x, now[1] - y, now[2] - z) <= MOVED_ON) return false;
     travel.destination = [now[0], now[1], now[2]];
-    travel.follower = undefined;
+    this.#searchAgain(travel);
     travel.searches = 0;
     return true;
   }
@@ -1101,7 +1306,7 @@ export class ActorMovers {
         mover.character.shape.radius,
       cost: ini.number('Pathfinding', 'fAvoidNodeCost'),
     };
-    travel.follower = undefined;
+    this.#searchAgain(travel);
   }
 
   /**
@@ -1258,18 +1463,23 @@ export class ActorMovers {
 
   /**
    * A navmesh obstacle came across an actor's way on, or went while its path stopped short of
-   * its place: it searches again (not counted as a search of its being stuck).
+   * its place: it searches again (not counted as a search of its being stuck). A search under way
+   * over frames goes on against the obstacles it began with (it holds their index); the changes
+   * since are looked at against its path once it ends (#travelFrame). Whether its path went.
    */
-  #obstaclesChanged(travel: Travel): void {
+  #obstaclesChanged(travel: Travel): boolean {
     const field = this.#options.obstacles;
-    if (!field || field.version === travel.obstacles) return;
+    if (!field || field.version === travel.obstacles || travel.search) return false;
     const changes = field.changesSince(travel.obstacles);
     travel.obstacles = field.version;
     const follower = travel.follower;
-    if (!follower || travel.direct) return;
-    if (changes && !obstaclesTouch(changes, follower.remaining, follower.path.complete)) return;
-    travel.follower = undefined;
+    if (!follower || travel.direct) return false;
+    if (changes && !obstaclesTouch(changes, follower.remaining, follower.path.complete)) {
+      return false;
+    }
+    this.#searchAgain(travel);
     travel.searches = Math.max(0, travel.searches - 1);
+    return true;
   }
 
   /**
@@ -1330,7 +1540,7 @@ export class ActorMovers {
   /** A door on the way is shut to the actor: it searches again round it (a few times). */
   #blocked(reference: number, travel: Travel, door: number | undefined): void {
     if (door !== undefined) travel.closed.add(door);
-    travel.follower = undefined;
+    this.#searchAgain(travel);
     this.#requests.delete(reference);
     if (travel.searches >= SEARCHES) this.#giveUp(reference, travel);
   }
@@ -1716,6 +1926,7 @@ export class ActorMovers {
     const world = this.#world;
     if (!world) return;
     this.#frames++;
+    this.#runWaitingSearches();
     // A travel that arrived in the last frame and was followed by none: the actor stands.
     for (const [reference, request] of this.#arrived) {
       if (this.#requests.get(reference) === request) this.#requests.delete(reference);
@@ -1849,7 +2060,7 @@ export class ActorMovers {
     this.#placeOnFloor(mover);
     // Its way from where it is now.
     const travel = this.#travels.get(staged.reference);
-    if (travel) travel.follower = undefined;
+    if (travel) this.#searchAgain(travel);
     this.#options.terminal.log(
       'actor',
       `${staged.placed.actor.editorId || staged.reference.toString(16)} fell out of the world at ` +
@@ -2006,7 +2217,7 @@ export class ActorMovers {
     this.#reactions.delete(reference);
     // Its package's way, from where it stands now.
     const travel = this.#travels.get(reference);
-    if (travel) travel.follower = undefined;
+    if (travel) this.#searchAgain(travel);
   }
 
   /**
@@ -2246,25 +2457,38 @@ export class ActorMovers {
     if (!travel.follower) {
       const set = this.#options.navmeshes?.();
       if (!set) return true;
-      travel.searches++;
-      const end = navGoal(set, travel.destination, travel.arrive);
-      const path = findPath(set, staged.position, end.goal, {
-        radius: WALKER_RADIUS * travel.searches,
-        large: (walker.race?.size ?? RaceSize.medium) >= RaceSize.large,
-        swims:
-          (staged.placed.look.raceFlags & RaceFlag.swims) !== 0 &&
-          this.#options.swimAllowed?.(reference) !== false,
-        closedDoors: this.#closedFor(reference, travel),
-        ...this.#raceRules(reference, staged),
-        blocked: this.#blockedFor(reference, travel),
-        ...(travel.blockedBy && { avoid: [travel.blockedBy] }),
-        obstacles: this.#options.obstacles?.index,
+      // Paced over frames as a moved actor's (#searchFor): it goes on as it went meanwhile.
+      const pending = this.#searchFor(travel, () => {
+        const end = navGoal(set, travel.destination, travel.arrive);
+        travel.obstacles = this.#options.obstacles?.version ?? 0;
+        return {
+          reference,
+          search: new PathSearch(set, staged.position, end.goal, {
+            radius: WALKER_RADIUS * travel.searches,
+            large: (walker.race?.size ?? RaceSize.medium) >= RaceSize.large,
+            swims:
+              (staged.placed.look.raceFlags & RaceFlag.swims) !== 0 &&
+              this.#options.swimAllowed?.(reference) !== false,
+            closedDoors: this.#closedFor(reference, travel),
+            ...this.#raceRules(reference, staged),
+            blocked: this.#blockedFor(reference, travel),
+            ...(travel.blockedBy && { avoid: [travel.blockedBy] }),
+            obstacles: this.#options.obstacles?.index,
+          }),
+          on: true,
+          position: [...staged.position],
+          arrive: end.arrive,
+        };
       });
+      if (!pending) return true;
+      const path = pending.search.result;
       if (!path || path.points.length < 2) {
         this.#giveUp(reference, travel);
         return false;
       }
-      travel.follower = new PathFollower(path, { gait: travel.gait, arrive: end.arrive });
+      travel.follower = new PathFollower(path, { gait: travel.gait, arrive: pending.arrive });
+      // Obstacles that came or went while it was searched over frames, on its way: again.
+      if (this.#obstaclesChanged(travel)) return true;
       this.#newPath(staged);
     }
     const step = travel.follower.step(staged.position, seconds, (door) =>
@@ -2280,7 +2504,7 @@ export class ActorMovers {
       return false;
     }
     if (step.state === 'stuck') {
-      travel.follower = undefined;
+      this.#searchAgain(travel);
       this.#requests.delete(reference);
       if (travel.searches >= SEARCHES) this.#giveUp(reference, travel);
       return false;
@@ -2486,13 +2710,29 @@ export class ActorMovers {
 
   /** A walker is no longer one: its graph's channels no longer read its movement. */
   #dropWalker(reference: number): void {
-    this.#walkers.get(reference)?.locomotion.release();
+    const walker = this.#walkers.get(reference);
+    if (!walker) return;
+    walker.locomotion.release();
     this.#walkers.delete(reference);
+    this.#handOff(reference);
+  }
+
+  /**
+   * An actor's travel goes on as another kind of mover (a controller's or a walker's): a search
+   * under way for the one it was is dropped, searched again by the one it is now (from where it
+   * is, with its own radius). Kept, it held the travel: its moving destination and its obstacles
+   * were not looked at again while it was under way, and its path, from where the actor had
+   * been, was taken once the actor was handed back.
+   */
+  #handOff(reference: number): void {
+    const travel = this.#travels.get(reference);
+    if (travel?.search) travel.search = undefined;
   }
 
   /** Its controller goes; `held`: it is held (furniture, a mount), its triggers stay its own. */
   #free(mover: Mover, held = false): void {
     this.#movers.delete(mover.staged.reference);
+    this.#handOff(mover.staged.reference);
     mover.locomotion.release();
     mover.character.free();
     if (held) {

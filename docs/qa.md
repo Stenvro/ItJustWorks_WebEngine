@@ -40,6 +40,16 @@ node tools/qa-run.ts --list
   minutes). A page that does not answer a ping within 15 s is a `hang`: the scenario ends there
   with what was seen, and the next one gets a new tab (a new Chrome if the browser died).
 
+The frame time of the new-game opening has a runner of its own, without the monitors (they cost
+frame time themselves): `node tools/qa-perf.ts --out <folder> [--minutes 16] [--every 30]
+[--window 6] [--width 1280 --height 720]` (Vite on 5201, Chrome on 9401 by default). It drives the
+opening as the `opening` scenario does and every `--every` seconds measures `--window` seconds of
+plain frames (fps, percentiles, the GPU's time per frame from timestamps round every pass,
+physics steps, path searches by the actor that searched), then the same time under the CPU
+profiler (a `.cpuprofile` per window, summarised per function and per file in `perf.md`), and
+takes a screenshot. The numbers of 2026-11-09 are in [rendering.md](rendering.md) ("The
+opening's frame").
+
 The output folder holds `summary.md` / `summary.json` (all scenarios: counts per system, frame
 times, the worst anomalies per system) and per scenario `report.md`, `report.json` (every
 anomaly kept, grouped by kind and by system, the worst first, the timeline of quest stages and

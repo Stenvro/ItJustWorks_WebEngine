@@ -522,12 +522,17 @@ export class MagicEngine {
     }
     if (actor === PLAYER_REF && this.#playerDisguised()) disguised = true;
     const has = (archetype: number): boolean => archetypes.has(archetype);
+    // Its commander walks every active effect of the world: worked out only when asked (most
+    // ask one of the others: the invisibility veil asks of every loaded actor each frame).
+    const commander = (): number | undefined => this.commander(actor);
     return {
       calmed: has(EffectArchetype.calm),
       frenzied: has(EffectArchetype.frenzy),
       fleeing: has(EffectArchetype.demoralize) || has(EffectArchetype.turnUndead),
       rallied: has(EffectArchetype.rally),
-      commander: this.commander(actor),
+      get commander() {
+        return commander();
+      },
       paralyzed: has(EffectArchetype.paralysis),
       invisible: has(EffectArchetype.invisibility),
       ethereal: has(EffectArchetype.etherealize),

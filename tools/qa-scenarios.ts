@@ -274,6 +274,25 @@ var QA_PLAY = engineDev.world.#play;
   const { Layer } = await import('/src/physics/collision-layers.ts');
   const W = engineDev.world;
   const nav = QA_NAV;
+  // The bot's own ways, searched as a travel's are (a goal off its island gone to by the island's
+  // nearest point) but at once, and not counted with the game's searches (the frame profile's
+  // search nodes a frame, tools/qa-perf.ts): the bot stands in for the player. Its islands are
+  // its own (made over a lookup of its own, the islands being kept per lookup), so the game's
+  // searches find none it made and make theirs, counted, as they would without it.
+  const botNav = {
+    navmesh: (formId) => nav?.navmesh(formId),
+    locate: (point) => nav?.locate(point),
+    nearest: (point, reach) => nav?.nearest?.(point, reach),
+  };
+  window.__qaBotTaken = 0;
+  const botPath = (from, to, options) => {
+    const before = paths.pathSearchStats.taken;
+    const search = new paths.PathSearch(botNav, from, to, options);
+    search.run(Infinity);
+    window.__qaBotTaken += search.taken;
+    paths.pathSearchStats.taken = before;
+    return search.result;
+  };
   // A way to where the floor gives way (150 units or more down), found on a grid of 32 units
   // round the player (physics rays: the floor under each cell, steps of up to 32, nothing at
   // chest height between neighbours): of the drops, the one landing nearest the goal that lands
@@ -318,7 +337,7 @@ var QA_PLAY = engineDev.world.#play;
       }
     }
     drops.sort((a, b) => a.score - b.score);
-    const onward = drops.slice(0, 16).find((drop) => Number.isFinite(drop.landing[2]) && nav?.locate(drop.landing) && paths.findPath(nav, drop.landing, goal, { radius: 24 })?.complete);
+    const onward = drops.slice(0, 16).find((drop) => Number.isFinite(drop.landing[2]) && nav?.locate(drop.landing) && botPath(drop.landing, goal, { radius: 24 })?.complete);
     const best = onward ?? drops[0];
     if (!best) return undefined;
     const way = [];
@@ -477,7 +496,7 @@ var QA_PLAY = engineDev.world.#play;
         say('the way is shut at ' + at.map(Math.round).join(',') + ': round it');
       }
     }
-    const found = onNav ? paths.findPath(nav, feet, goal, { radius: 24, blocked: bot.blocked }) : undefined;
+    const found = onNav ? botPath(feet, goal, { radius: 24, blocked: bot.blocked }) : undefined;
     const changed = !bot.goal || Math.hypot(goal[0] - bot.goal[0], goal[1] - bot.goal[1]) > 64;
     bot.goal = goal;
     bot.path = found && found.points.length > 1 ? found.points.slice(1).map((p) => [...p]) : [goal];

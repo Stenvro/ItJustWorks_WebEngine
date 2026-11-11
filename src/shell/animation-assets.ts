@@ -84,8 +84,18 @@ export class ClipHost implements BehaviorHost {
   }
 
   behavior(name: string): BehaviorGraph | undefined {
-    return this.#behaviors.files.get(projectRelative(this.#behaviors.project, name));
+    // Asked for every behavior reference a graph passes, every update: the path is worked out
+    // once a name (its normalizing was a few percent of the graphs' time).
+    let file = this.#behaviorFiles.get(name);
+    if (file === undefined) {
+      file = projectRelative(this.#behaviors.project, name);
+      this.#behaviorFiles.set(name, file);
+    }
+    return this.#behaviors.files.get(file);
   }
+
+  /** The project's file of each behavior reference's name (behavior). */
+  readonly #behaviorFiles = new Map<string, string>();
 
   rootMotion(
     generator: string,

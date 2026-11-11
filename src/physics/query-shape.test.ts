@@ -1,5 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { initPhysics } from './physics-world.ts';
 import { queryShape } from './query-shape.ts';
 
@@ -73,6 +73,29 @@ describe('queryShape', () => {
     const rotation = { x: 0, y: 0, z: 0, w: 1 };
     const ball = new RAPIER.Ball(0.5);
     expect(kept.contactShape(at, rotation, ball, at, rotation, 0)?.distance).toBeLessThan(0);
+  });
+
+  it("lends a mesh's Rapier form too: its triangles are not built again for each contact", () => {
+    const world = new RAPIER.World({ x: 0, y: 0, z: 0 });
+    // A wall of two triangles at x 1.
+    const wall = world.createCollider(
+      RAPIER.ColliderDesc.trimesh(
+        new Float32Array([1, -2, -2, 1, 2, -2, 1, 2, 2, 1, -2, 2]),
+        new Uint32Array([0, 1, 2, 0, 2, 3]),
+      ),
+    );
+    world.step();
+    const ball = new RAPIER.Ball(0.9);
+    const at = { x: 0, y: 0, z: 0 };
+    const rotation = { x: 0, y: 0, z: 0, w: 1 };
+    const contact = (mesh: RAPIER.Shape): number | undefined =>
+      ball.contactShape(at, rotation, mesh, wall.translation(), wall.rotation(), 0.5)?.distance;
+    const plain = contact(wall.shape);
+    const kept = queryShape(wall.shape);
+    expect(kept).not.toBe(wall.shape);
+    const made = vi.spyOn(wall.shape, 'intoRaw');
+    for (let i = 0; i < 3; i++) expect(contact(kept)).toBeCloseTo(plain ?? NaN, 6);
+    expect(made).toHaveBeenCalledTimes(1);
   });
 
   it('hands cheap shapes back as they are', () => {

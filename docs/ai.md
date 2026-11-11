@@ -161,9 +161,60 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   cost). A door's triangles are closed to one it is locked to, and, while it is shut, to one
   whose race Can't Open Doors (60 races: the animals, dragons, giants, spiders, centurions:
   src/ai/race-ai-flags.ts); such an actor passes a door standing open and takes no load door
-  (`ActorDoors`). A goal that cannot be
-  reached (another island, past 20,000 triangles) gives the path to where the search came
-  nearest to it.
+  (`ActorDoors`). A goal that cannot be reached (past 20,000 triangles, closed by the searcher's
+  rules) gives the path to where the search came nearest to it. One off the island the search
+  begins in (`NavmeshIsland`: the triangles reached over edges and the portal and ledge links a
+  search crosses, made once and kept while its navmeshes are the loaded ones), or off every
+  navmesh, gives the path to the island's point nearest it (straight, in 3D), never complete:
+  searched for itself it took the whole island first, each time (12,000 triangles round Helgen,
+  10–25 ms: the soldiers going for Alduin on the tower, whose top is a navmesh of its own,
+  searched again each time he moved 192 units; now 20–80 nodes, to the tower's foot). Inferred:
+  the original's pathing ends a way it cannot complete where it gets nearest; TODO(M13): how it
+  picks that point. Both are work of the search and are counted as its nodes (below): making an
+  island is a flood of its triangles (one node each; 9,000–12,000 round Helgen, a loaded exterior
+  grid up to ~50,000), done again once one of its navmeshes is unloaded or replaced or a navmesh
+  it links into loads (a cell streamed in); it keeps its triangles in a grid of 256-unit squares
+  as it goes. The search goes first and an island made whole is looked at once: a way found
+  within 256 nodes (most) never waits for a flood, so it gives its path in the share it began
+  even just after a cell streamed in. A search that runs on makes the island beside it (256
+  triangles every 64 of its nodes; the flood goes outward from where it began, so a goal near is
+  found on it early) until its goal is found on the island (it goes on alone) or the island is
+  whole without it (the search is let go for the way to the nearest point); one to a goal off
+  every navmesh, or that ended short first, makes it at once. A search whose triangle no island
+  has reached yet begins its own flood there, and where two floods meet they are one island from
+  then on (each goes on outward from where it is), so searches begun together on a stretch of
+  navmesh flood it once, and one begun on a stretch of its own (a tower top, a ledge) floods only
+  that, in the share it began, while the exterior's island is still being made. The nearest point looks at the grid's
+  squares outward from the goal's (each square and each triangle tested a node; about 100 for a
+  goal 1,500 units above or beside the island). The island keeps the last 64 it found by the
+  goal's grid square: the same goal is answered at once, and another in that square (soldiers
+  chasing a dragon, each asking where it is as they search) begins from the point of the
+  triangle kept for it, so only what may lie nearer is looked at and the point is still exact
+  for its own goal. Only a search over frames (`PathSearch`: the travels') makes an island; one
+  searched at once (`findPath`: a wander point's check, a step aside, the Clairvoyance trail)
+  goes by an island already made and otherwise searches within its own limit as before.
+- **Searches over frames** (`PathSearch`, `ActorMovers`): the searches of the actors' travels,
+  moved actors' and walkers' together, take at most 2,000 nodes of a frame (about 2 ms at most; a
+  search gives way before the node past its share, and counts every node it took, the island's
+  flooded triangles and the nearest point's squares and triangles among them: those cost less
+  than a search node, 0.1–0.6 µs each against about 1 µs); most end within a
+  few dozen and give their path in the frame they began. A long one goes on in the next frames,
+  its actor going on as it went meanwhile (its last request kept). The frame's nodes go first to
+  the searches going on from earlier frames, but they leave 512 of them to the searches' first
+  shares: first those begun once an earlier frame's nodes were spent (256 each), then the one
+  waiting longest first, so each ends in turn; a search begun takes 256 of what is left (more,
+  where more than the 512 is left), so a short way never waits behind another actor's long
+  search. While one goes on it keeps what it began with: obstacles that come or go meanwhile are
+  looked at against its path once it ends (searched again if they touch it), and a moving
+  destination is followed on once it ends (the travel's destination is always the one its path
+  was searched to); one that went past its recalc distance meanwhile is searched for again
+  instead, the path to where it was never taken. An actor handed from its controller to walking
+  without one (or back) drops a search under way and searches again as what it is now. Without
+  frames to keep smooth (the headless simulation, a loading screen) a search ends at once, as
+  before (tests/sim-path-search-frames.int.test.ts paces them). Inferred from the original
+  searching its paths on a pathing thread of their own, a path coming some frames after it was
+  asked for; TODO(M13): its budget and order, and what an actor does until its path comes
+  (ours: it goes on as it went).
 - **Off the navmesh** (`ActorMovers`): a travel from a point off the navmeshes begins at their
   nearest point within 512 units. One to a point off them (the player by a door stands a few
   units past the navmesh's edge) ends at their nearest point if that is within the travel's
