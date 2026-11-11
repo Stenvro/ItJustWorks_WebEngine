@@ -253,9 +253,9 @@ var QA_RIDE_NAV = engineDev.world.#navmeshes;
 })()`;
 
 /**
- * The follow bot (in the page): it walks the player to the nearest target of the active quests'
- * shown objectives (the compass's quest marker: "Follow Ralof", "Follow Hadvar", the keep's
- * door), along the navmesh (src/ai/pathfinding.ts), through the load door on the way when the
+ * The follow bot (in the page): it walks the player to the current marker of the running quests'
+ * shown objectives (of the targets that hold, the nearest of the objective shown last: Ralof,
+ * Hadvar, the keep's doors; a guide in a scene who calls the player first), along the navmesh (src/ai/pathfinding.ts), through the load door on the way when the
  * target is in another space; a guide near enough is waited for, and walked past once they
  * stand still a while. A target that is a place, reached with nothing moving on for 6 s, leads
  * on to the objective's next target (the way a player goes on: the burning inn's marker, then
@@ -266,28 +266,53 @@ var QA_RIDE_NAV = engineDev.world.#navmeshes;
  */
 export const FOLLOW_BOT = `
 var QA_NAV = engineDev.world.#navmeshes;
-var QA_PLAY = engineDev.world.#play;
+var QA_NAV_INSIDE = engineDev.viewer.#navmeshes;
 (async () => {
   if (window.__qaBot) return 'running';
   const compass = await import('/src/shell/compass.ts');
+  const actors = await import('/src/shell/actors.ts');
   const paths = await import('/src/ai/pathfinding.ts');
   const { Layer } = await import('/src/physics/collision-layers.ts');
-  const W = engineDev.world;
-  const nav = QA_NAV;
+  const { playerTrigger } = await import('/src/scripting/runtime/trigger-gates.ts');
+  // Interiors play in the model viewer, the world outside in the world viewer (as the monitors
+  // pick it): the player, the stage, the navmeshes and the physics of the one playing now.
+  const viewer = () => (engineDev.world.play ? engineDev.world : engineDev.viewer);
+  const W = {
+    get player() { return viewer().player; },
+    get actorStage() { return viewer().actorStage; },
+    get loading() { return viewer().loading; },
+  };
+  const nav = new Proxy({}, {
+    get: (_, key) => {
+      const set = engineDev.world.play ? QA_NAV : QA_NAV_INSIDE;
+      const value = set[key];
+      return typeof value === 'function' ? value.bind(set) : value;
+    },
+  });
   // The bot's own ways, searched as a travel's are (a goal off its island gone to by the island's
   // nearest point) but at once, and not counted with the game's searches (the frame profile's
   // search nodes a frame, tools/qa-perf.ts): the bot stands in for the player. Its islands are
   // its own (made over a lookup of its own, the islands being kept per lookup), so the game's
   // searches find none it made and make theirs, counted, as they would without it.
-  const botNav = {
-    navmesh: (formId) => nav?.navmesh(formId),
-    locate: (point) => nav?.locate(point),
-    nearest: (point, reach) => nav?.nearest?.(point, reach),
+  // One lookup for the world outside and one for the interior playing: each has its islands.
+  const botNavs = new Map();
+  const botNav = () => {
+    const set = engineDev.world.play ? QA_NAV : QA_NAV_INSIDE;
+    let own = botNavs.get(set);
+    if (!own) {
+      own = {
+        navmesh: (formId) => set?.navmesh(formId),
+        locate: (point) => set?.locate(point),
+        nearest: (point, reach) => set?.nearest?.(point, reach),
+      };
+      botNavs.set(set, own);
+    }
+    return own;
   };
   window.__qaBotTaken = 0;
   const botPath = (from, to, options) => {
     const before = paths.pathSearchStats.taken;
-    const search = new paths.PathSearch(botNav, from, to, options);
+    const search = new paths.PathSearch(botNav(), from, to, options);
     search.run(Infinity);
     window.__qaBotTaken += search.taken;
     paths.pathSearchStats.taken = before;
@@ -299,7 +324,7 @@ var QA_PLAY = engineDev.world.#play;
   // on navmesh with a way on to it (the inn's upper floor has holes nearer down into a room that
   // rubble shuts), else the one landing nearest.
   const findDrop = (feet, goal) => {
-    const physics = QA_PLAY?.physics;
+    const physics = viewer().play?.physics;
     if (!physics) return undefined;
     const ray = (from, dir, length) => physics.raycast(from, dir, length, Layer.charController, undefined, 0x14);
     const CELL = 32; const SPAN = 40;
@@ -366,13 +391,27 @@ var QA_PLAY = engineDev.world.#play;
           if (reference === undefined) continue;
           const holds = target.conditions.length === 0 || (await rt.conditionsHold(target.conditions, rt.referenceHandle(reference), undefined, { quest: formId }));
           const placement = await rt.placement(reference);
-          if (placement) found.push({ quest: formId, objective: objective.index, order, holds, reference, placement });
+          if (placement) found.push({ quest: formId, objective: objective.index, shown: state.shown ?? 0, order, holds, reference, placement });
         }
       }
     }
     return found;
   };
-  const say = (text) => { bot.log.push(Math.round(performance.now() / 1000) + ' ' + text); if (bot.log.length > 200) bot.log.shift(); };
+  const say = (text) => { bot.log.push(Math.round(performance.now() / 1000) + ' ' + text); if (bot.log.length > 800) bot.log.shift(); };
+  // Each load door's journey asked for and each interior loaded, with who asked (the page's
+  // call stack): a door taken twice, a place loaded twice at once, shows here.
+  const caller = () => (new Error().stack ?? '').split('\\n').slice(3, 6).map((l) => l.trim().replace(/^at /, '').replace(/\\(?https?:\\/\\/[^/]+\\//, '').replace(/\\?[^:]*:/, ':').replace(/\\)$/, '')).join(' < ');
+  for (const view of [engineDev.world, engineDev.viewer]) {
+    if (view.__qaWatched) continue;
+    view.__qaWatched = true;
+    const travel = view.onTravel;
+    if (travel) view.onTravel = (teleport) => { say('door journey asked to ' + teleport.position.map(Math.round).join(',') + ' (' + caller() + ')'); return travel(teleport); };
+  }
+  if (!engineDev.viewer.__qaShowCell) {
+    const viewer = engineDev.viewer; const show = viewer.showCell.bind(viewer);
+    viewer.__qaShowCell = true;
+    viewer.showCell = (...args) => { say('interior ' + args[0].toString(16) + ' loads (' + caller() + ')'); return show(...args); };
+  }
   const events = (code) => W.player?.eventsOfKey(code) ?? [];
   const hold = (code, down) => {
     const player = W.player; if (!player) return;
@@ -388,17 +427,32 @@ var QA_PLAY = engineDev.world.#play;
     const at = await rt.placement(0x14);
     if (!at) return;
     const targets = await objectiveTargets(rt);
+    bot.inside = at.world === undefined;
     const here = (p) => at.world !== undefined ? p.world === at.world : p.cell !== undefined && p.cell === at.cell;
     const measure = (t) => {
       const same = here(t.placement);
       const d = same ? Math.hypot(t.placement.position[0] - at.position[0], t.placement.position[1] - at.position[1]) : 1e9;
       return { t, d, same };
     };
+    // The current objective's marker, as a player reads the compass: of the targets that hold,
+    // those of the objective shown last (MQ101's "Make your way to the Keep" shows one of its
+    // four as MQ101DragonAttack's stage stands: Ralof, the inn, Hadvar, the courtyard), the
+    // nearest of them (the two keep doors of "Enter the Keep").
+    // A side chosen (window.__qaSide 'ralof' or 'hadvar'): of the targets, that guide and the
+    // keep door by them ("Enter the Keep with Hadvar or Ralof"), as a player picks the door.
+    const side = window.__qaSide === 'ralof' ? new Set([0x2bf9e, 0xe24c7]) : window.__qaSide === 'hadvar' ? new Set([0x2bfa2, 0xe24c8]) : undefined;
     let best;
-    for (const t of targets) {
-      if (!t.holds || bot.skip?.has(t.reference)) continue;
+    const latest = Math.max(-1, ...targets.filter((t) => t.holds && !bot.skip?.has(t.reference)).map((t) => t.shown));
+    const current = targets.filter((t) => t.holds && !bot.skip?.has(t.reference) && t.shown === latest);
+    const sided = side ? current.filter((t) => side.has(t.reference)) : [];
+    for (const t of sided.length > 0 ? sided : current) {
       const m = measure(t);
       if (!best || m.d < best.d) best = m;
+    }
+    const chosen = best ? best.t.quest.toString(16) + ' objective ' + best.t.objective + ' target ' + best.t.reference.toString(16) : 'none';
+    if (chosen !== bot.chosen) {
+      bot.chosen = chosen;
+      say('marker: ' + chosen + ' (of ' + targets.map((t) => t.objective + ':' + t.reference.toString(16) + (t.holds ? '' : ' off')).join(', ') + ')');
     }
     // No target shown (MQ101DragonAttack's stage 192: Hadvar ran ahead into his trigger and
     // waits by the street's, which the player sets walking in): a player follows the guide
@@ -406,6 +460,78 @@ var QA_PLAY = engineDev.world.#play;
     if (!best && bot.lastGuide !== undefined && W.actorStage?.get(bot.lastGuide)) {
       const placement = await rt.placement(bot.lastGuide);
       if (placement) best = measure({ quest: 0, objective: -1, order: 0, holds: true, reference: bot.lastGuide, placement });
+    }
+    // The guide calls the player in a scene ("Come here, let me get those bindings off": MQ101's
+    // keep scenes wait for the player within 100 units of Ralof or Hadvar while the marker is on
+    // the way out): a player goes to them first, once for each stage of the marker's quest.
+    let called = false;
+    // Inside only: outside, by the tower's hole, Ralof's scene walked him on as the player came
+    // to him, and the two went down the tower together instead of on to the inn's roof. The
+    // guide is the one followed last, else whichever of Ralof (2bf9e) and Hadvar (2bfa2) is here
+    // in a scene: a bot that followed Hadvar to Ralof's door meets Ralof inside.
+    const sceneGuide = at.world === undefined ? [bot.lastGuide, 0x2bf9e, 0x2bfa2].find((g) => g !== undefined && W.actorStage?.get(g) && rt.scenes.sceneOf(g) !== undefined) : undefined;
+    // A target to loot here comes first (the scene waits for it: MQ101's "Find some equipment"
+    // while Hadvar walks about the room).
+    const lootable = async (t) => {
+      if (!here(t.placement) || bot.looted?.has(t.reference)) return false;
+      const baseId = await rt.baseOf(t.reference);
+      const type = baseId !== undefined ? (await rt.forms.record(baseId))?.type : undefined;
+      return type === 'CONT' || (type === 'NPC_' && (await rt.actors.isDead(t.reference)));
+    };
+    if (best && sceneGuide !== undefined && best.t.reference !== sceneGuide && !(await lootable(best.t))) {
+      const key = best.t.quest + ':' + (rt.state.quests.get(best.t.quest)?.stage ?? 0);
+      const placement = await rt.placement(sceneGuide);
+      const m = placement && measure({ quest: best.t.quest, objective: -1, order: 0, holds: true, reference: sceneGuide, placement });
+      if (m && m.same && bot.metGuide !== key) {
+        // By him, it stays while he talks (25 s: the keep's scenes speak three lines before
+        // their phase that waits for the player near).
+        if (m.d < 100 && bot.byGuide?.key !== key) { bot.byGuide = { key, since: performance.now(), at: [...placement.position] }; say('by the guide at stage ' + key); }
+        // A guide who walks on (MQ101KeepScene2B escorts the player down the stairs) leads:
+        // followed while he goes, the marker only once he has stood 25 s.
+        if (bot.byGuide?.key === key && Math.hypot(placement.position[0] - bot.byGuide.at[0], placement.position[1] - bot.byGuide.at[1]) > 80) {
+          bot.byGuide = { key, since: performance.now(), at: [...placement.position] };
+          if (bot.ledBy !== key) { bot.ledBy = key; say('the guide leads on: after him (' + key + ')'); }
+        }
+        if (bot.byGuide?.key === key && performance.now() - bot.byGuide.since > 25000) { bot.metGuide = key; say('the guide talked: on to the marker'); }
+        else {
+          if (bot.calledBy !== key) { bot.calledBy = key; say('the guide is in a scene: to him first (' + key + ')'); }
+          best = m;
+          called = true;
+        }
+      } else if (m && m.same && bot.metGuide === key) {
+        // He has talked and stands, his scene waiting on (MQ101KeepIntroSceneB's "Wait around
+        // the corner": MQ101SetStage292 by him): a player walks on round him into the trigger
+        // that waits for them, of those within 1,200 units of him whose scripts name the
+        // marker's quest, the nearest first.
+        bot.gates ??= new Map();
+        if (!bot.gates.has(key)) {
+          bot.gates.set(key, 'pending');
+          const found = [];
+          for (const trigger of viewer().play?.physics.triggersNear([...placement.position], 1200) ?? []) {
+            const waits = await playerTrigger(rt, trigger);
+            const where = waits && waits.names.has(best.t.quest) ? await rt.placement(trigger) : undefined;
+            if (where) found.push({ trigger, at: [...where.position] });
+          }
+          bot.gates.set(key, found);
+          say('triggers by the guide that wait for the player: ' + (found.map((g) => g.trigger.toString(16)).join(', ') || 'none'));
+        }
+        const gates = bot.gates.get(key);
+        if (Array.isArray(gates)) {
+          bot.walkedInto ??= new Set();
+          for (const g of gates) if (rt.triggerVolumes.inside(g.trigger).has(0x14)) bot.walkedInto.add(g.trigger);
+          let gate;
+          for (const g of gates) {
+            if (bot.walkedInto.has(g.trigger)) continue;
+            const d = Math.hypot(g.at[0] - at.position[0], g.at[1] - at.position[1], g.at[2] - at.position[2]);
+            if (!gate || d < gate.d) gate = { ...g, d };
+          }
+          if (gate) {
+            if (bot.gate !== gate.trigger) { bot.gate = gate.trigger; say('into the trigger ' + gate.trigger.toString(16) + ' at ' + gate.at.map(Math.round).join(',')); }
+            best = { ...measure({ quest: best.t.quest, objective: -1, order: 0, holds: true, reference: gate.trigger, placement: { position: gate.at, cell: at.cell, world: at.world } }), gate: true };
+            called = true;
+          }
+        }
+      }
     }
     if (!best) { bot.goal = undefined; bot.path = []; return; }
     // A place reached (no guide) where nothing moves on for a while: a player goes on the way
@@ -426,12 +552,21 @@ var QA_PLAY = engineDev.world.#play;
     let goal = [...best.t.placement.position];
     bot.door = undefined;
     bot.guide = W.actorStage?.get(best.t.reference) ? best.t.reference : undefined;
+    // A target to loot (MQ101's "Find some equipment": the warden's chest; "Loot Gunjar's
+    // body"): a container, or a dead actor, not looted yet. Walked to and opened as a player
+    // does; the scenario takes all in the container menu (R) and closes it, and the player then
+    // wears what it took (lootEquip).
+    bot.loot = undefined;
+    if (best.same && (await lootable(best.t))) {
+      bot.loot = best.t.reference;
+      bot.guide = undefined;
+    }
     if (bot.guide !== undefined) bot.lastGuide = bot.guide;
     // A target that is a load door here (MQ101's "Enter the Keep": the keep's doors) is used
     // as a player uses it: walked to and activated.
     // So is the load door by a place target (the keep's doors stand by MQ101's "Enter the Keep"
     // markers, which the keep's navmesh does not reach).
-    if (best.same && bot.guide === undefined) {
+    if (best.same && !best.gate && bot.guide === undefined && bot.loot === undefined && !bot.looted?.has(best.t.reference)) {
       const record = await (await play.session.db).get(best.t.reference);
       if (record?.fields.has('XTEL')) bot.door = best.t.reference;
       else {
@@ -453,15 +588,54 @@ var QA_PLAY = engineDev.world.#play;
     // him), 160 units on the far side; the place holds while the guide stays.
     const g = best.t.placement.position;
     if (bot.pass && (bot.pass.guide !== bot.guide || Math.hypot(g[0] - bot.pass.from[0], g[1] - bot.pass.from[1]) > 64)) bot.pass = undefined;
-    if (!bot.pass && best.same && bot.guide !== undefined && bot.waitSince !== undefined && now - bot.waitSince > 15000) {
+    if (!bot.pass && !called && best.same && bot.guide !== undefined && bot.waitSince !== undefined && now - bot.waitSince > 15000) {
       const dx = g[0] - at.position[0]; const dy = g[1] - at.position[1]; const l = Math.hypot(dx, dy) || 1;
       const point = nav?.nearest?.([g[0] + (dx / l) * 160, g[1] + (dy / l) * 160, g[2]], 96);
       if (point) {
-        bot.pass = { guide: bot.guide, from: [...g], point: [...point] };
+        bot.pass = { guide: bot.guide, from: [...g], point: [...point], since: now };
         say('the guide waits: on past it to ' + point.map(Math.round).join(','));
       }
     }
     if (bot.pass) goal = [...bot.pass.point];
+    // Past him 20 s and still he stays (MQ101DragonAttack: Hadvar waits by the street's trigger,
+    // which the player sets walking in): a player walks into the trigger near him that waits for
+    // them and whose scripts name a quest with scenes, the nearest first, each once.
+    if (bot.pass && now - bot.pass.since > 20000) {
+      const key = bot.pass.guide + '@' + bot.pass.from.map(Math.round).join(',');
+      bot.passGates ??= new Map();
+      if (!bot.passGates.has(key)) {
+        bot.passGates.set(key, 'pending');
+        const found = [];
+        for (const trigger of viewer().play?.physics.triggersNear([...bot.pass.from], 1500) ?? []) {
+          const waits = await playerTrigger(rt, trigger);
+          if (!waits) continue;
+          let scened = false;
+          for (const form of waits.names) {
+            const record = await rt.forms.record(form);
+            if (record?.type === 'SCEN' || (record?.type === 'QUST' && (await rt.sceneHost.scenesOf(form)).length > 0)) scened = true;
+          }
+          const where = scened ? await rt.placement(trigger) : undefined;
+          if (where) found.push({ trigger, at: [...where.position] });
+        }
+        bot.passGates.set(key, found);
+        say('triggers by the waiting guide that wait for the player: ' + (found.map((t) => t.trigger.toString(16)).join(', ') || 'none'));
+      }
+      const gates = bot.passGates.get(key);
+      if (Array.isArray(gates)) {
+        bot.walkedInto ??= new Set();
+        for (const t of gates) if (rt.triggerVolumes.inside(t.trigger).has(0x14)) bot.walkedInto.add(t.trigger);
+        let gate;
+        for (const t of gates) {
+          if (bot.walkedInto.has(t.trigger)) continue;
+          const d = Math.hypot(t.at[0] - at.position[0], t.at[1] - at.position[1]);
+          if (!gate || d < gate.d) gate = { ...t, d };
+        }
+        if (gate) {
+          if (bot.gate !== gate.trigger) { bot.gate = gate.trigger; say('into the trigger ' + gate.trigger.toString(16) + ' at ' + gate.at.map(Math.round).join(',')); }
+          goal = [...gate.at];
+        }
+      }
+    }
     if (!best.same) {
       const door = compass.firstDoorToward(await play.session.routeMap(), at, best.t.placement);
       if (!door) { bot.goal = undefined; bot.path = []; return; }
@@ -496,14 +670,46 @@ var QA_PLAY = engineDev.world.#play;
         say('the way is shut at ' + at.map(Math.round).join(',') + ': round it');
       }
     }
-    const found = onNav ? botPath(feet, goal, { radius: 24, blocked: bot.blocked }) : undefined;
+    // Off the navmesh by a little (it keeps an actor's radius off the walls: by the tower's wall
+    // the player stood 60 units off it), the way starts from its nearest point at that height,
+    // not straight through the wall.
+    // One across a wall is no start (by the tower the nearest point was inside it): of the
+    // nearest points round the player, the nearest with nothing at chest height between.
+    let snap;
+    if (!onNav && nav?.nearest) {
+      const physics = viewer().play?.physics;
+      const clear = (p) => {
+        if (!physics) return true;
+        const from = [feet[0], feet[1], feet[2] + 50];
+        const d = [p[0] - feet[0], p[1] - feet[1], p[2] + 50 - from[2]];
+        const l = Math.hypot(...d);
+        return l < 1 || !physics.raycast(from, d.map((v) => v / l), l, Layer.charController, undefined, 0x14);
+      };
+      const seen = [];
+      for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+        const p = nav.nearest([feet[0] + dx * 64, feet[1] + dy * 64, feet[2]], 160);
+        if (p) seen.push(p);
+      }
+      seen.sort((a, b) => Math.hypot(a[0] - feet[0], a[1] - feet[1]) - Math.hypot(b[0] - feet[0], b[1] - feet[1]));
+      snap = seen.find(clear);
+    }
+    const start = onNav ? feet : snap;
+    const found = start ? botPath(start, goal, { radius: 24, blocked: bot.blocked }) : undefined;
     const changed = !bot.goal || Math.hypot(goal[0] - bot.goal[0], goal[1] - bot.goal[1]) > 64;
     bot.goal = goal;
-    bot.path = found && found.points.length > 1 ? found.points.slice(1).map((p) => [...p]) : [goal];
+    bot.path = found && found.points.length > 1 ? (snap ? [[...snap]] : []).concat(found.points.slice(1).map((p) => [...p])) : [goal];
+    // How far the way goes (a guide near across a wall is not near: Ralof inside the tower, the
+    // player outside it).
+    bot.pathLength = undefined;
+    if (found?.complete) {
+      let length = start ? Math.hypot(found.points[0][0] - start[0], found.points[0][1] - start[1]) : 0;
+      for (let i = 1; i < found.points.length; i++) length += Math.hypot(found.points[i][0] - found.points[i - 1][0], found.points[i][1] - found.points[i - 1][1]);
+      bot.pathLength = length;
+    }
     // A way over the navmesh far longer than the straight line to a goal not above: a player
     // jumps down (Helgen's tower: the hole Alduin broke, onto the inn's roof, while the navmesh
     // leads down the stairs to the door the quest has shut).
-    if (found && !bot.door && goal[2] <= feet[2] + 50) {
+    if (found && !bot.door && at.world !== undefined && goal[2] < feet[2] - 150) {
       let length = 0;
       for (let i = 1; i < found.points.length; i++) length += Math.hypot(found.points[i][0] - found.points[i - 1][0], found.points[i][1] - found.points[i - 1][1]);
       const straight = Math.hypot(goal[0] - feet[0], goal[1] - feet[1]);
@@ -526,25 +732,66 @@ var QA_PLAY = engineDev.world.#play;
         bot.drop = drop;
       }
     }
-    if (changed) say('goal ' + goal.map(Math.round).join(',') + (bot.door ? ' (door ' + bot.door.toString(16) + ')' : '') + (bot.guide ? ' (guide ' + bot.guide.toString(16) + ')' : '') + ' path ' + (found ? found.points.length + (found.complete ? '' : ' partial') : 'none'));
+    if (changed) say('goal ' + goal.map(Math.round).join(',') + (bot.door ? ' (door ' + bot.door.toString(16) + ')' : '') + (bot.guide ? ' (guide ' + bot.guide.toString(16) + ')' : '') + (bot.loot ? ' (loot ' + bot.loot.toString(16) + ')' : '') + ' path ' + (found ? found.points.length + (found.complete ? '' : ' partial') : 'none'));
   };
   bot.timer = setInterval(() => {
     const play = engineDev.play(); const player = W.player;
     const rt = play?.session.scriptsReady;
-    if (!player || !rt || rt.controls.aiDriven || play.session.menuMode || W.loading !== undefined) { bot.release(); return; }
+    // The container menu of what it opened to loot: the scenario takes all and closes it.
+    if (play?.session.menuMode && bot.loot !== undefined && bot.lootMenu === undefined && [...play.host.menus].some((m) => m.movie.startsWith('containermenu'))) {
+      bot.lootMenu = bot.loot;
+      say('container menu of ' + bot.loot.toString(16) + ' open');
+    }
+    // Behind a loading screen (session.loading: the place left still runs, its viewer not
+    // loading yet) a player does nothing: before, the bot walked and pressed on there, asking
+    // the door's journey again every press.
+    if (!player || !rt || rt.controls.aiDriven || play.session.menuMode || play.session.loading || W.loading !== undefined) { bot.release(); return; }
     const now = performance.now();
     if (!bot.planning && now - bot.lastPlan > 1500) {
       bot.planning = true; bot.lastPlan = now;
       plan().catch((e) => say('plan failed: ' + e.message)).finally(() => { bot.planning = false; });
     }
     const feet = player.feet;
+    // A fight inside (MQ101's keep: "Wait for battle to be over", the Imperials who fight Ralof):
+    // as a player does, it draws and goes at the nearest living enemy of the player or of the
+    // guide followed last on its floor, and attacks once within reach (god mode keeps it up).
+    const stage = W.actorStage;
+    if (stage && bot.inside) {
+      const ally = bot.lastGuide;
+      const enemies = new Set(stage.combat.enemiesOfPlayer());
+      for (const s of stage.all()) {
+        const target = stage.combat.targetOf(s.reference);
+        if (!s.dead && target !== undefined && (target === 0x14 || target === ally) && s.reference !== ally) enemies.add(s.reference);
+      }
+      let foe;
+      for (const ref of enemies) {
+        const s = stage.get(ref);
+        if (!s || s.dead || Math.abs(s.position[2] - feet[2]) > 160) continue;
+        const d = Math.hypot(s.position[0] - feet[0], s.position[1] - feet[1]);
+        if (d < 1500 && (!foe || d < foe.d)) foe = { s, d };
+      }
+      if (foe) {
+        if (bot.fighting !== foe.s.reference) { bot.fighting = foe.s.reference; say('fights ' + foe.s.reference.toString(16) + ' at ' + Math.round(foe.d)); }
+        if (!bot.drawn) { bot.drawn = true; player.press('Ready Weapon', true); setTimeout(() => player.press('Ready Weapon', false), 120); }
+        bot.aim = foe.s.position;
+        player.pitch = -0.15;
+        if (foe.d > 110) { hold('KeyW', true); for (const key of ['KeyA', 'KeyD', 'KeyS']) hold(key, false); }
+        else {
+          bot.release();
+          if (now - (bot.swung ?? 0) > 900) { bot.swung = now; player.press('Right Attack/Block', true); setTimeout(() => player.press('Right Attack/Block', false), 150); }
+        }
+        return;
+      }
+      if (bot.fighting !== undefined) { say('the fight is over'); bot.fighting = undefined; }
+    }
     const goal = bot.goal;
     if (!goal) { bot.release(); return; }
     const guide = bot.guide !== undefined ? W.actorStage?.get(bot.guide) : undefined;
     const toGoal = Math.hypot(goal[0] - feet[0], goal[1] - feet[1]);
     // A guide near: wait for them to lead on (after a while closer still: a trigger by them).
     const near = bot.waitSince !== undefined && now - bot.waitSince > 8000 ? 90 : 220;
-    if (guide && toGoal < near && Math.abs(goal[2] - feet[2]) < 150) { bot.release(); bot.still = 0; bot.waitSince ??= now; return; }
+    const reachable = bot.pathLength === undefined || bot.pathLength < near * 1.6;
+    if (guide && toGoal < near && reachable && Math.abs(goal[2] - feet[2]) < 150) { bot.release(); bot.still = 0; bot.waitSince ??= now; return; }
     if (!guide || toGoal > 300) bot.waitSince = undefined;
     // At the door: face it and use it.
     if (bot.door !== undefined && toGoal < 110) {
@@ -552,7 +799,77 @@ var QA_PLAY = engineDev.world.#play;
       const dz = goal[2] + 70 - (feet[2] + 120);
       bot.aim = goal;
       player.pitch = Math.atan2(dz, Math.max(1, toGoal));
-      if (now - (bot.usedDoor ?? 0) > 2500) { bot.usedDoor = now; tap('KeyE'); say('use door ' + bot.door.toString(16)); }
+      if (now - (bot.usedDoor ?? 0) > 2500) {
+        bot.usedDoor = now;
+        // What the crosshair is on as it presses, and whether the door is locked: a door that
+        // takes several presses says why.
+        const aimed = viewer().play?.crosshairTarget;
+        const ref = rt.state.references.get(bot.door); const lock = ref && (ref.locked || ref.activationBlocked) ? { locked: ref.locked, level: ref.lockLevel, blocked: ref.activationBlocked } : undefined;
+        tap('KeyE');
+        say('use door ' + bot.door.toString(16) + ' (crosshair on ' + (aimed?.reference?.toString(16) ?? 'nothing') + (aimed?.verb ? ' ' + JSON.stringify(aimed.verb) : '') + ', ' + Math.round(toGoal) + ' units off' + (lock ? ', lock ' + JSON.stringify(lock) : '') + ', allows Activate ' + player.allows?.('Activate') + ')');
+      }
+      return;
+    }
+    // Someone stood between it and what it loots (Ralof by Gunjar's body, the crosshair on him):
+    // a player steps round to the body's other side, then faces it again.
+    if (bot.loot !== undefined && bot.lootStand?.loot === bot.loot && !bot.lootStand.reached) {
+      const [sx, sy] = bot.lootStand.at;
+      if (Math.hypot(sx - feet[0], sy - feet[1]) < 20 || now - bot.lootStand.since > 8000) {
+        bot.lootStand.reached = true;
+        bot.release();
+      } else {
+        bot.aim = bot.lootStand.at;
+        player.pitch = 0;
+        hold('KeyW', true);
+        return;
+      }
+    }
+    // At what it loots: face it and open it.
+    if (bot.loot !== undefined && toGoal < 100) {
+      bot.release();
+      const dz = goal[2] + 30 - (feet[2] + 120);
+      bot.aim = goal;
+      player.pitch = Math.atan2(dz, Math.max(1, toGoal));
+      // The crosshair on nothing: a player looks about for it, lower and higher in turn.
+      bot.lootTries = bot.lootFor === bot.loot ? (bot.lootTries ?? 0) : 0;
+      bot.lootFor = bot.loot;
+      player.pitch += [0, -0.25, 0.25, -0.5, 0.5][Math.floor(bot.lootTries / 2) % 5];
+      if (now - (bot.usedLoot ?? 0) > 2500) {
+        bot.usedLoot = now;
+        bot.lootTries++;
+        const aimed = viewer().play?.crosshairTarget;
+        // What the pick meets (the crosshair's ray: from the camera along the view), and where
+        // the target's posed body lies, while the crosshair is on nothing.
+        let seen = '';
+        if (!aimed) {
+          const play = viewer().play;
+          const staged = W.actorStage?.get(bot.loot);
+          const hit = play?.physics.pick(player.position, player.forward, 250, 5, Layer.itemPicker, player.character.collider);
+          const body = staged?.placed ? [actors.actorFeet(staged.placed), actors.headPosition(staged.placed)].map((p) => p.map(Math.round).join(',')).join(' to ') : 'not staged';
+          seen = ', pick meets ' + (hit ? (hit.owner?.kind ?? '?') + ' ' + (hit.owner?.reference?.toString(16) ?? '') + ' at ' + Math.round(hit.distance) : 'nothing') + ', body ' + body + (staged ? ', dead ' + staged.dead : '') + ', camera ' + player.position.map(Math.round).join(',') + ' pitch ' + player.pitch.toFixed(2) + ', allows Activate ' + player.allows?.('Activate');
+        }
+        const blocker = aimed?.reference !== undefined && aimed.reference !== bot.loot ? W.actorStage?.get(aimed.reference) : undefined;
+        if (blocker) {
+          // To the far side of the target from them, a quarter turn further each time.
+          const turns = bot.lootStand?.loot === bot.loot ? bot.lootStand.turns + 1 : 0;
+          const away = Math.atan2(goal[1] - blocker.position[1], goal[0] - blocker.position[0]) + turns * (Math.PI / 2);
+          const at = [goal[0] + Math.cos(away) * 60, goal[1] + Math.sin(away) * 60, goal[2]];
+          bot.lootStand = { loot: bot.loot, at, turns, since: now, reached: false };
+          say('open ' + bot.loot.toString(16) + ': ' + aimed.reference.toString(16) + ' stands in the way; round to ' + at.map(Math.round).join(','));
+          return;
+        }
+        tap('KeyE');
+        say('open ' + bot.loot.toString(16) + ' (crosshair on ' + (aimed?.reference?.toString(16) ?? 'nothing') + seen + ')');
+        // Not on the stage: what the game state has for it (once).
+        if (!aimed && !W.actorStage?.get(bot.loot) && bot.lootState !== bot.loot) {
+          bot.lootState = bot.loot;
+          const ref = bot.loot;
+          void rt.placement(ref, false).then((at) => {
+            const staged = [...(W.actorStage?.all() ?? [])].filter((s) => s.placed.actor.startsDead || s.dead).map((s) => s.reference.toString(16));
+            say('not staged ' + ref.toString(16) + ': reference state ' + JSON.stringify(rt.state.references.get(ref) ?? null) + ', actor dead ' + rt.state.actors.get(ref)?.dead + ', corpse ' + JSON.stringify(rt.state.actors.get(ref)?.corpse ?? null)?.slice(0, 120) + ', placement ' + JSON.stringify(at ?? null) + ', dead on the stage ' + staged.join(' '));
+          });
+        }
+      }
       return;
     }
     while (bot.path.length > 1 && Math.hypot(bot.path[0][0] - feet[0], bot.path[0][1] - feet[1]) < 56) bot.path.shift();
@@ -573,7 +890,13 @@ var QA_PLAY = engineDev.world.#play;
       const move = ['KeyA', 'KeyD', 'KeyS'][bot.stuckCount % 3];
       bot.dodge = { key: move, until: now + 500 + 200 * (bot.stuckCount % 4) };
       if (bot.stuckCount % 2 === 0) tap('Space');
-      say('stuck at ' + feet.map(Math.round).join(',') + ': ' + { KeyA: 'step left', KeyD: 'step right', KeyS: 'back off' }[move] + (bot.stuckCount % 2 === 0 ? ', jump' : ''));
+      // Every tenth time, why it may not move: its controls, the ground and what lies under it.
+      let why = '';
+      if (bot.stuckCount % 10 === 1) {
+        const under = viewer().play?.physics.pick([feet[0], feet[1], feet[2] + 40], [0, 0, -1], 120, 5, Layer.charController, player.character.collider);
+        why = ' (allows Forward ' + player.allows?.('Forward') + ', Jump ' + player.allows?.('Jump') + ', disabled controls ' + (player.disabledControls?.() ?? 0) + ', grounded ' + player.character.grounded + ', under ' + (under ? (under.owner?.kind ?? '?') + ' ' + (under.owner?.reference?.toString(16) ?? '') + ' at ' + Math.round(under.distance) : 'nothing') + ', AI driven ' + rt.controls.aiDriven + ', pilot ' + (player.pilot !== undefined) + ', animation motion ' + JSON.stringify(player.animationMotion?.() ?? null) + ', burden ' + JSON.stringify(player.burden?.() ?? null) + ', weapon drawn ' + player.weaponDrawn?.() + ', mount ' + player.mount?.() + ', held keys ' + [...bot.held].join('+') + ', velocity ' + JSON.stringify(player.character.velocity?.map?.(Math.round) ?? null) + ')';
+      }
+      say('stuck at ' + feet.map(Math.round).join(',') + ': ' + { KeyA: 'step left', KeyD: 'step right', KeyS: 'back off' }[move] + (bot.stuckCount % 2 === 0 ? ', jump' : '') + why);
     }
   }, 100);
   // The view turns to the point it heads for as a player turns a mouse: once it is more than 5°
@@ -603,6 +926,135 @@ var QA_PLAY = engineDev.world.#play;
     requestAnimationFrame(turn);
   };
   requestAnimationFrame(turn);
+  return 'started';
+})()`;
+
+/**
+ * The guides' watch (in the page): once a second, for Ralof and Hadvar, the package that runs
+ * (editor id), its procedure, whether the AI holds it (a reaction), the reaction and the scene,
+ * logged as it changes, and where they stand every 10 s; MQ101's and MQ101DragonAttack's stages
+ * as they change; every actor that reacts to a dead body (with how far the body lies); the
+ * player's capsule while it is not grounded for more than 2 s. Its lines are `__qaGuides.log`.
+ */
+export const GUIDE_WATCH = `(async () => {
+  if (window.__qaGuides) return 'running';
+  const GUIDES = { 0x2bf9e: 'Ralof', 0x2bfa2: 'Hadvar' };
+  const QUESTS = { 0x3372b: 'MQ101', 0xd0593: 'DragonAttack' };
+  const watch = { log: [], last: new Map(), reacting: new Map(), names: new Map(), stages: new Map(), airSince: undefined, airLogged: 0 };
+  window.__qaGuides = watch;
+  const say = (text) => { watch.log.push(Math.round(performance.now() / 1000) + ' ' + text); if (watch.log.length > 600) watch.log.shift(); };
+  const viewer = () => (engineDev.world.play ? engineDev.world : engineDev.viewer);
+  const name = async (rt, id) => {
+    if (id === undefined) return '-';
+    if (!watch.names.has(id)) watch.names.set(id, (await rt.forms.record(id))?.editorId || id.toString(16));
+    return watch.names.get(id);
+  };
+  const round = (p) => p ? p.map(Math.round).join(',') : '-';
+  let ticks = 0;
+  watch.timer = setInterval(async () => {
+    try {
+      const rt = engineDev.play()?.session.scriptsReady;
+      const stage = viewer().actorStage;
+      if (!rt || !stage) return;
+      ticks++;
+      for (const [id, label] of Object.entries(QUESTS)) {
+        const q = rt.state.quests.get(Number(id));
+        const now = q ? q.stage + (q.running ? '' : ' (stopped)') : 'none';
+        if (watch.stages.get(id) !== now) { watch.stages.set(id, now); say(label + ' stage ' + now); }
+      }
+      for (const [id, label] of Object.entries(GUIDES)) {
+        const ref = Number(id);
+        const staged = stage.get(ref);
+        const running = stage.ai.current(ref);
+        const line = !staged ? 'not on the stage' : [
+          'package ' + (await name(rt, running?.id)),
+          'procedure ' + (running?.procedure ?? '-'),
+          stage.ai.held(ref) ? 'HELD' : 'not held',
+          'reaction ' + (stage.senses.reacting(ref) ?? 'none'),
+          'scene ' + (await name(rt, rt.scenes.sceneOf(ref))),
+        ].join(', ');
+        if (watch.last.get(ref) !== line) { watch.last.set(ref, line); say(label + ': ' + line + ' at ' + round(staged?.position)); }
+        else if (staged && ticks % 10 === 0) say(label + ' at ' + round(staged.position));
+      }
+      // Every actor reacting to a dead body (new ones).
+      for (const ref of stage.ai.running()) {
+        const kind = stage.senses.reacting(ref);
+        const was = watch.reacting.get(ref);
+        if (kind === was) continue;
+        watch.reacting.set(ref, kind);
+        if (kind === 'corpse' || was === 'corpse') say('corpse reaction ' + (kind === 'corpse' ? 'begins' : 'ends') + ': ' + (await name(rt, ref)) + ' [' + ref.toString(16) + '] at ' + round(stage.get(ref)?.position) + ' (package ' + (await name(rt, stage.ai.current(ref)?.id)) + ')');
+      }
+      const player = viewer().player;
+      if (player) {
+        const grounded = player.character.grounded;
+        const now = performance.now();
+        if (grounded) watch.airSince = undefined;
+        else {
+          watch.airSince ??= now;
+          if (now - watch.airSince > 2000 && now - watch.airLogged > 5000) { watch.airLogged = now; say('the player is not grounded for ' + Math.round((now - watch.airSince) / 1000) + ' s at ' + round(player.feet)); }
+        }
+      }
+    } catch (e) { say('watch failed: ' + e.message); }
+  }, 1000);
+  // The carry watch, each frame: what carried the player (CharacterBody.carriedBy) whenever a
+  // simulated body's carry was held to its limit, and whenever the player's feet go faster than
+  // 1500 units a second (a load or a teleport, 3000 units or more in the frame, is none): over
+  // more than 60 units a fling, with the carrier's reference and base and the simulated bodies
+  // near; over 8 to 60, a jump of the feet, with its parts across and up, the bot's keys and what
+  // it did last (once a second at most), so that one is told apart from the other.
+  let lastFeet; let lastTime = performance.now();
+  const describeOwner = async (rt, owner) => {
+    if (!owner) return 'none';
+    if (owner.kind !== 'object' || !owner.reference) return owner.kind;
+    const base = await rt.baseOf(owner.reference);
+    return (await name(rt, owner.reference)) + ' [' + owner.reference.toString(16) + '] base ' + (base === undefined ? '?' : (await name(rt, base)) + ' [' + base.toString(16) + ']');
+  };
+  const carryFrame = async (now) => {
+    if (window.__qaGuides !== watch) return;
+    try {
+      const player = viewer().player;
+      const rt = engineDev.play()?.session.scriptsReady;
+      const feet = player?.feet;
+      const dt = (now - lastTime) / 1000;
+      lastTime = now;
+      const by = player?.character?.carriedBy;
+      if (rt && by?.held && now - (watch.heldLogged ?? 0) > 1000) {
+        watch.heldLogged = now;
+        say('carry held: ' + (await describeOwner(rt, by.owner)) + ', ' + Math.round(by.mass) + ' kg, at ' + Math.round(by.speed) + ' u/s, player at ' + round(feet));
+      }
+      if (rt && feet && lastFeet && dt > 0 && viewer().loading === undefined) {
+        const d = Math.hypot(feet[0] - lastFeet[0], feet[1] - lastFeet[1], feet[2] - lastFeet[2]);
+        if (d / dt > 1500 && d > 8 && d <= 60 && now - (watch.jumpLogged ?? 0) > 1000) {
+          watch.jumpLogged = now;
+          const bot = window.__qaBot;
+          const across = Math.hypot(feet[0] - lastFeet[0], feet[1] - lastFeet[1]);
+          say('feet jump ' + Math.round(d) + ' in a frame of ' + Math.round(dt * 1000) + ' ms (across ' + Math.round(across) + ', up ' + Math.round(feet[2] - lastFeet[2]) + ') at ' + round(feet) + ', grounded ' + player.character.grounded + ', carried by ' + (by ? await describeOwner(rt, by.owner) : 'nothing') + ', keys ' + ([...(bot?.held ?? [])].join('+') || 'none') + ', bot last: ' + (bot?.log.at(-1) ?? '-'));
+        }
+        if (d / dt > 1500 && d > 60 && d < 3000) {
+          const physics = viewer().play?.physics;
+          const near = [];
+          physics?.world.forEachRigidBody((body) => {
+            if (!body.isDynamic()) return;
+            const t = body.translation(); const v = body.linvel();
+            const at = [t.x * 69.99125, t.y * 69.99125, t.z * 69.99125];
+            if (Math.hypot(at[0] - feet[0], at[1] - feet[1], at[2] - feet[2]) > 400) return;
+            near.push({ body, at, speed: Math.hypot(v.x, v.y, v.z) * 69.99125 });
+          });
+          near.sort((a, b) => b.speed - a.speed);
+          const parts = [];
+          for (const n of near.slice(0, 4)) {
+            let owner;
+            for (let i = 0; i < n.body.numColliders(); i++) owner ??= physics.ownerOf(n.body.collider(i));
+            parts.push((await describeOwner(rt, owner)) + ' ' + Math.round(n.body.mass()) + ' kg ' + Math.round(n.speed) + ' u/s at ' + round(n.at));
+          }
+          say('player flung ' + Math.round(d / dt) + ' u/s (' + Math.round(d) + ' in the frame) at ' + round(feet) + ', grounded ' + player.character.grounded + ', carried by ' + (by ? (await describeOwner(rt, by.owner)) + ' at ' + Math.round(by.speed) + (by.held ? ' (held)' : '') : 'nothing') + '; bodies near: ' + (parts.join('; ') || 'none'));
+        }
+      }
+      lastFeet = feet && [...feet];
+    } catch (e) { say('carry watch failed: ' + e.message); }
+    requestAnimationFrame(carryFrame);
+  };
+  requestAnimationFrame(carryFrame);
   return 'started';
 })()`;
 
@@ -644,6 +1096,35 @@ const OPENING_NOW = `(async () => {
     interior: at !== undefined && at.world === undefined,
     loading: (engineDev.world.loading ?? engineDev.viewer.loading) !== undefined,
   };
+})()`;
+
+/**
+ * After the bot's loot (the container menu taken from and closed): the target is looted, and the
+ * player wears what it carries and does not wear yet, armor and then one weapon, each as the
+ * inventory menu equips a selected entry (EquipmentEngine.toggle: its OnObjectEquipped is the
+ * player alias's MQ101PlayerScript, stages 256 and 258). Answers what was put on.
+ */
+const LOOT_EQUIP = `(async () => {
+  const bot = window.__qaBot; const rt = engineDev.play().session.scriptsReady;
+  if (!bot || !rt) return 'no bot';
+  (bot.looted ??= new Set()).add(bot.lootMenu);
+  bot.lootMenu = undefined; bot.loot = undefined; bot.lastPlan = 0;
+  const worn = [];
+  let weapon = false;
+  for (const [formId, count] of [...(await rt.inventory(0x14))]) {
+    if (count <= 0) continue;
+    const record = await rt.forms.record(formId);
+    if (record?.type !== 'ARMO' && record?.type !== 'WEAP') continue;
+    if (record.type === 'WEAP' && weapon) continue;
+    if (await rt.equipment.isEquipped(0x14, formId)) { if (record.type === 'WEAP') weapon = true; continue; }
+    if (await rt.equipment.toggle(0x14, formId, 'right')) {
+      worn.push(record.editorId || formId.toString(16));
+      if (record.type === 'WEAP') weapon = true;
+    }
+  }
+  const menus = [...engineDev.play().host.menus].map((m) => m.movie).join('/');
+  bot.log.push(Math.round(performance.now() / 1000) + ' wears ' + (worn.join(', ') || 'nothing new') + (menus ? ' (menus open: ' + menus + ')' : ''));
+  return (worn.join(', ') || 'nothing new') + (menus ? ' (menus open: ' + menus + ')' : '');
 })()`;
 
 /**
@@ -1156,10 +1637,92 @@ QA_PLAY.player.teleport([${String(x)}, ${String(y)}, ${String(z)}], Math.PI / 2)
       await ctx.console('set timescale to 120');
     },
   },
+  openingScenario('opening'),
+  openingScenario('opening-ralof', 'ralof'),
+  openingScenario('opening-hadvar', 'hadvar'),
   {
-    name: 'opening',
+    // Found 2026-11-10: a load door used again while its place loaded (the world runs on behind
+    // the loading screen: an automatic door come near again, a press) was taken a second time,
+    // and a place loaded again while its first load still placed its actors left those actors
+    // off the stage for good. Here the keep is loaded twice at once (the second as the first
+    // places its actors): the keep's own actors, Gunjar's body among them, are on the stage
+    // after both. Then the way out (HelgenKeeptoExterior01REF's journey) is asked twice: one
+    // journey is taken.
+    name: 'keep-loaded-twice',
     description:
-      'New game: the cart ride to Helgen, the execution, Alduin, AI-driven until MQ101 stage 160, then a bot (god mode) following the quest marker into the keep and on while MQ101 moves.',
+      "Helgen's keep (coc HelgenKeep01): the keep loaded twice at once, Gunjar's body and the keep's dead on the stage after; then its door out used twice, one journey taken.",
+    start: { kind: 'coc', cell: 'HelgenKeep01' },
+    bootSeconds: 300,
+    seconds: 240,
+    tick: async (ctx) => {
+      const state = ctx.state as { step?: number; since?: number };
+      const step = state.step ?? 0;
+      const STAGED = `(() => { const s = engineDev.viewer.actorStage; const all = [...(s?.all() ?? [])]; return JSON.stringify({ gunjar: s?.get(0xb1694) !== undefined, actors: all.length, dead: all.filter((a) => a.placed.actor.startsDead).length, placing: s?.placing === true, loading: engineDev.viewer.loading ?? null }); })()`;
+      const settled = async (): Promise<string | undefined> => {
+        const now = await ctx.page.eval<string>(STAGED, 20000);
+        const parsed = JSON.parse(now) as {
+          placing: boolean;
+          loading: string | null;
+          actors: number;
+        };
+        // Settled: nothing loading or being placed, and the stage filled (or a minute gone).
+        const waited = Date.now() - (state.since ?? 0) > 60000;
+        return parsed.placing || parsed.loading !== null || (parsed.actors === 0 && !waited)
+          ? undefined
+          : now;
+      };
+      if (Date.now() - (state.since ?? 0) < 10000) return false;
+      if (step === 0) {
+        const now = await settled();
+        if (!now) return false;
+        ctx.note(`as loaded: ${now}`);
+        const second = await ctx.page.eval<boolean>(
+          `(async () => { const v = engineDev.viewer; const at = { position: [-300, 4300, 400], heading: 0 }; void v.showCell(0x5de24, at); const until = performance.now() + 60000; while (v.actorStage?.placing !== true && performance.now() < until) await new Promise((r) => setTimeout(r, 5)); const placing = v.actorStage?.placing === true; void v.showCell(0x5de24, at); return placing; })()`,
+          70000,
+        );
+        ctx.note(
+          `the keep loaded twice at once (the second ${second ? 'while the first placed its actors' : 'after the first placed none'})`,
+        );
+        state.step = 1;
+        state.since = Date.now();
+        return false;
+      }
+      if (step === 1) {
+        const now = await settled();
+        if (!now) return false;
+        ctx.note(`after the loads: ${now}`);
+        const { gunjar } = JSON.parse(now) as { gunjar: boolean };
+        ctx.note(gunjar ? "Gunjar's body is on the stage" : "Gunjar's body is NOT on the stage");
+        // The door out (HelgenKeeptoExterior01REF: to AutoLoadDoor01 25fae outside), used twice.
+        await ctx.page.eval(
+          `(() => { let n = 0; for (const v of [engineDev.world, engineDev.viewer]) { const key = v === engineDev.world ? 'open' : 'showCell'; const load = v[key].bind(v); v[key] = (...a) => { n++; return load(...a); }; } window.__qaJourneys = () => n; const t = { door: 0x25fae, position: [15759.7, -77882.9, 8222], rotation: [0, 0, 2.8] }; engineDev.viewer.onTravel(t); engineDev.viewer.onTravel(t); return true; })()`,
+          20000,
+        );
+        ctx.note('the door out used twice');
+        state.step = 2;
+        state.since = Date.now();
+        return false;
+      }
+      const loading = await ctx.page.eval<boolean>(
+        '(engineDev.world.loading ?? engineDev.viewer.loading) !== undefined || engineDev.play().session.loading',
+        5000,
+      );
+      if (loading && Date.now() - (state.since ?? 0) < 120000) return false;
+      const journeys = await ctx.page.eval<number>('window.__qaJourneys()', 5000);
+      ctx.note(`places loaded for the two uses: ${String(journeys)}`);
+      return true;
+    },
+  },
+];
+
+/**
+ * The new game's opening; with a side, the bot takes that guide's keep door ("Enter the Keep
+ * with Hadvar or Ralof"), as a player picks one (else the nearest).
+ */
+function openingScenario(name: string, side?: 'ralof' | 'hadvar'): Scenario {
+  return {
+    name,
+    description: `New game: the cart ride to Helgen, the execution, Alduin, AI-driven until MQ101 stage 160, then a bot (god mode) following the quest marker into the keep${side ? ` by ${side === 'ralof' ? "Ralof's" : "Hadvar's"} door` : ''}, looting and wearing what the objectives ask for, and on while MQ101 moves.`,
     start: { kind: 'new' },
     bootSeconds: 300,
     seconds: 2400,
@@ -1170,6 +1733,7 @@ QA_PLAY.player.teleport([${String(x)}, ${String(y)}, ${String(z)}], Math.PI / 2)
         raced?: boolean;
         stage?: number;
         bot?: boolean;
+        watching?: boolean;
         inside?: number;
         escaped?: number;
         since?: number;
@@ -1185,12 +1749,41 @@ QA_PLAY.player.teleport([${String(x)}, ${String(y)}, ${String(z)}], Math.PI / 2)
         ctx.note('race menu: finished as a player would');
         await finishRaceMenu(ctx);
       }
+      // The guides watched from the dragon's arrival on (their packages, reactions and scenes;
+      // the corpse reactions round them).
+      if (now.stage >= 100 && state.watching !== true) {
+        state.watching = true;
+        await ctx.page.eval(GUIDE_WATCH, 30000);
+        ctx.note('the guides are watched');
+      }
       if (now.stage >= 160 && !now.driven && state.bot !== true) {
         state.bot = true;
         // The bot does not fight (the keep's soldiers, its bear and spiders): god mode.
         await ctx.console('tgm');
+        if (side) await ctx.page.eval(`window.__qaSide = '${side}'`, 5000);
         await ctx.page.eval(FOLLOW_BOT, 30000, true);
-        ctx.note('the player is free: the follow bot takes over (god mode)');
+        ctx.note(
+          `the player is free: the follow bot takes over (god mode)${side ? `, on ${side}'s side` : ''}`,
+        );
+      }
+      // The container menu the bot opened to loot: take all (R) and close it (Tab), as a player
+      // does; then the player wears what it took.
+      if (state.bot === true) {
+        const loot = await ctx.page.eval<number | null>('window.__qaBot?.lootMenu ?? null', 5000);
+        if (loot !== null) {
+          await sleepMs(1500);
+          // The menu opens on its categories; the X button takes all only from the container's
+          // items list (the movie's isViewingContainer: a category shown), as a player goes in.
+          await ctx.page.key('ArrowRight');
+          await sleepMs(1500);
+          await ctx.page.key('KeyR');
+          await sleepMs(2000);
+          await ctx.page.key('Tab');
+          await sleepMs(2000);
+          const worn = await ctx.page.eval<string>(LOOT_EQUIP, 30000);
+          ctx.note(`looted ${loot.toString(16)}: ${worn}`);
+          if (worn.includes('containermenu')) await ctx.page.key('Escape');
+        }
       }
       // In the keep (an interior after the bot took over): on through it while MQ101 moves.
       if (state.bot === true && now.interior && !now.loading && state.inside === undefined) {
@@ -1217,6 +1810,13 @@ QA_PLAY.player.teleport([${String(x)}, ${String(y)}, ${String(z)}], Math.PI / 2)
         )
         .catch(() => undefined);
       for (const line of log ?? []) ctx.note(`bot: ${line}`);
+      const guides = await ctx.page
+        .eval<string[] | undefined>(
+          `(() => { const w = window.__qaGuides; if (!w) return undefined; clearInterval(w.timer); return w.log; })()`,
+          10000,
+        )
+        .catch(() => undefined);
+      for (const line of guides ?? []) ctx.note(`guides: ${line}`);
     },
-  },
-];
+  };
+}

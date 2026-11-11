@@ -590,13 +590,23 @@ async function main(): Promise<void> {
       await worldViewer.open(destination.world, cell, arrival, stance);
     }
   };
-  // A load door: its prompt stays on the HUD while the place loads (SetLoadDoorInfo).
+  // A load door: its prompt stays on the HUD while the place loads (SetLoadDoorInfo). One
+  // journey through a door at a time: a door used again while its place loads (an automatic
+  // door whose fade had begun twice, a press as the loading screen came up) is not taken a
+  // second time, which loaded the place again over itself.
+  let travelling = false;
   const onTravel = (teleport: Teleport): void => {
+    if (travelling) {
+      terminal.log('door', 'already going through a door: not taken again');
+      return;
+    }
+    travelling = true;
     (play ? play.loadingScreen(() => travel(teleport)) : travel(teleport))
       .catch((error: unknown) => {
         terminal.log('door', describeError(error), 'error');
       })
       .finally(() => {
+        travelling = false;
         session?.hud.loadDoor(undefined);
       });
   };

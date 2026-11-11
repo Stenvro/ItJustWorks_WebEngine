@@ -86,6 +86,7 @@ import {
   type SavedUpdate,
 } from '../scripting/runtime/runtime-save.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
+import { MISC_QUEST_TYPE } from '../scripting/runtime/journal.ts';
 import type { StoryEventData } from '../scripting/runtime/story-manager.ts';
 import { ObjectHandle, PapyrusArray, type Value } from '../scripting/values.ts';
 import { CELL_SIZE } from '../world/land.ts';
@@ -281,6 +282,8 @@ export interface EssWorld {
   sceneCast?(formId: number): SceneCast | undefined;
   /** A story manager quest node's quests in its record's order (NNAM), by our form id. */
   nodeQuests?(formId: number): readonly number[] | undefined;
+  /** A quest's type (QUST DNAM: 6 miscellaneous), by our form id (the quests the save keeps). */
+  questType?(formId: number): number | undefined;
 }
 
 /** A scene's quest, the aliases of its actors and its actions' indices, in its record's order. */
@@ -444,6 +447,7 @@ export async function essWorld(db: RecordDatabase, ess?: EssFile): Promise<EssWo
   const places = new Map<number, RecordPlace>();
   const casts = new Map<number, SceneCast>();
   const nodes = new Map<number, readonly number[]>();
+  const types = new Map<number, number>();
   if (ess) {
     const toOurs = formIdMapper(ess, plugins);
     const actors = ess.changeForms.flatMap((entry) => {
@@ -500,6 +504,18 @@ export async function essWorld(db: RecordDatabase, ess?: EssFile): Promise<EssWo
         );
       }),
     );
+    // The quests it keeps: their types (the Miscellaneous objectives' byte reads them).
+    const quests = ess.changeForms.flatMap((entry) => {
+      const id = entry.type === 8 && entry.formId !== undefined ? toOurs(entry.formId) : undefined;
+      return id === undefined ? [] : [id];
+    });
+    await Promise.all(
+      quests.map(async (formId) => {
+        const dnam = (await db.get(formId))?.fields.first('DNAM');
+        if (!dnam || dnam.length < 12) return;
+        types.set(formId, new DataView(dnam.buffer, dnam.byteOffset, 12).getUint32(8, true));
+      }),
+    );
   }
   return {
     plugins,
@@ -510,6 +526,7 @@ export async function essWorld(db: RecordDatabase, ess?: EssFile): Promise<EssWo
     recordPlace: (formId) => places.get(formId),
     sceneCast: (formId) => casts.get(formId),
     nodeQuests: (formId) => nodes.get(formId),
+    questType: (formId) => types.get(formId),
   };
 }
 
@@ -2078,8 +2095,12 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   // The interface (global data 102): the input events whose help messages the player has done
   // (the opening's "Look" and "Forward"), not shown again; the weapons, spells and shouts used
   // last (the journal's favorites, each counted once); the journal's other pages switched off
-  // (Game.DisablePlayerControls' abJournalTabs). The Miscellaneous objectives' flag needs
-  // nothing: the journal lists every objective shown. The tutorials shown (observed in the
+  // (Game.DisablePlayerControls' abJournalTabs). The Miscellaneous objectives' byte: observed
+  // in the original, set as a miscellaneous objective is first shown (0 in both saves read,
+  // made at Helgen before any). TODO(M13): inferred that the journal's "show miscellaneous
+  // objectives" switched off clears it: a 0 while a miscellaneous objective is shown is the
+  // player's choice to hide them (GameState.miscObjectivesActive); a 0 before any is a new
+  // game's, shown. The journal lists every objective shown either way. The tutorials shown (observed in the
   // original: each by its place among the default objects, put in the list as it is first
   // shown, never shown again; 252, the journal's, in both saves read) are ours shown
   // (GameState.tutorialsShown). The help part's last number is the help message showing (by its
@@ -2089,6 +2110,16 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     try {
       const read = readInterface(interfaceData, resolve);
       controls.journalTabs = read.journalTabsDisabled === 0;
+      if (read.miscObjectivesShown === 0) {
+        const miscShown = [...state.quests].some(
+          ([formId, quest]) =>
+            world.questType?.(formId) === MISC_QUEST_TYPE &&
+            [...quest.objectives.values()].some(
+              (objective) => objective.displayed && !objective.completed && !objective.failed,
+            ),
+        );
+        if (miscShown) state.miscObjectivesActive = false;
+      }
       for (const index of read.shownHelpMessages) {
         const use = tutorialOfDefaultObject(index);
         if (use) state.tutorialsShown.add(use);

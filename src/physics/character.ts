@@ -506,6 +506,20 @@ export class CharacterBody {
    */
   #carrier: { body: RAPIER.RigidBody; collider: RAPIER.Collider; pose: Pose } | undefined;
   /**
+   * What carried it in its last step, for the log and QA: the body's owner, whether it is
+   * simulated (and its mass), the speed it would have carried it at (game units a second), and
+   * whether that was held to the limit a simulated body carries at.
+   */
+  carriedBy:
+    | {
+        readonly owner: PhysicsOwner | undefined;
+        readonly simulated: boolean;
+        readonly mass: number;
+        readonly speed: number;
+        readonly held: boolean;
+      }
+    | undefined;
+  /**
    * How much the body it stands on turned it in the last step (radians, as the game's headings
    * go: clockwise seen from above): its owner adds it to the actor's heading.
    */
@@ -1605,15 +1619,33 @@ export class CharacterBody {
       if (this.#ridden[2] > 0) this.verticalSpeed += this.#ridden[2];
     }
     this.#ridden = undefined;
+    this.carriedBy = undefined;
     if (standing) {
       const now = { at: standing.body.translation(), turn: standing.body.rotation() };
       const to = carryPoint(now, standing.pose, next);
-      const carried = this.#carryBlocked(
-        next,
-        { x: to.x - next.x, y: to.y - next.y, z: to.z - next.z },
-        standing.collider,
-        predicate,
-      );
+      const simulated = standing.body.isDynamic();
+      const wanted = { x: to.x - next.x, y: to.y - next.y, z: to.z - next.z };
+      const speed =
+        seconds > 0 ? (Math.hypot(wanted.x, wanted.y, wanted.z) * HAVOK_SCALE) / seconds : 0;
+      // A simulated body carries it no faster than anything moving gives a character
+      // (PUSHED_MAX_SPEED): what the solver gives a heavy body squeezed between others (rubble
+      // fallen on it, a wall) is no motion to ride. A keyframed one (a lift, a turning platform,
+      // a script's TranslateTo) carries it as it moves.
+      const held = simulated && speed > PUSHED_MAX_SPEED;
+      if (held) {
+        const scale = PUSHED_MAX_SPEED / speed;
+        wanted.x *= scale;
+        wanted.y *= scale;
+        wanted.z *= scale;
+      }
+      this.carriedBy = {
+        owner: this.physics.ownerOf(standing.collider),
+        simulated,
+        mass: simulated ? standing.body.mass() : 0,
+        speed,
+        held,
+      };
+      const carried = this.#carryBlocked(next, wanted, standing.collider, predicate);
       next.x += carried.x;
       next.y += carried.y;
       next.z += carried.z;
@@ -1678,6 +1710,16 @@ export class CharacterBody {
     );
     const body = hit?.collider.parent();
     if (!hit || !body || hit.normal1.z <= 0.05) return undefined;
+    // A simulated body light enough for it to push (under fMoveLimitMass: a kettle, a basket)
+    // is stood on but does not carry it: the solver can throw such a body thousands of units a
+    // second, and the shape went with it and kept its speed through the air (in Helgen's burning
+    // inn, by a kettle and rubble, the player went 7,700 units across the land in two seconds and
+    // on under the world). A heavier one carries it at most at PUSHED_MAX_SPEED (step). Fixed
+    // ground is not cast for; a keyframed body carries it as it moves. TODO(M13): inferred; the
+    // engine's rule for what a simulated body under its proxy gives it is not read.
+    if (body.isDynamic() && body.mass() < (this.settings.moveLimitMass ?? MOVE_LIMIT_MASS)) {
+      return undefined;
+    }
     return { body, collider: hit.collider, pose: poseAfter(body, seconds) };
   }
 

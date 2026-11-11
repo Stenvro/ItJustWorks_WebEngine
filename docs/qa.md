@@ -105,10 +105,22 @@ answer the Survival Mode box with No, set the hour and weather, wait until the a
 have settled, then watch for 3 minutes.
 
 The follow bot (in the page, `FOLLOW_BOT` in `tools/qa-scenarios.ts`) reads the targets of the running
-quests' shown objectives as the compass does (`questTargets`, but also for a quest the journal
-has not made the active one: MQ101 is not), finds a navmesh path (`findPath`) to the nearest and
-steers the player by `Player.yaw` and the Forward control. It waits when the guide is within 220
-units (after 8 s it closes in to 90: a trigger may be by them; after 15 s of a guide standing
+quests' shown objectives as the compass does (`questTargets`, also for a quest the journal has
+not made active), and follows the current marker as a player reads it: of the targets whose
+conditions hold, those of the objective shown last, the nearest of them (MQ101's "Make your way
+to the Keep" marks one of Ralof, the inn, Hadvar and the courtyard as MQ101DragonAttack's stage
+stands; "Enter the Keep" marks both keep doors). Before, it took the nearest target of any
+shown objective. It logs each marker it takes (`marker: ...`), finds a navmesh path
+(`findPath`) to it and steers the player by `Player.yaw` and the Forward control. Off the
+navmesh by a little (the navmesh keeps an actor's radius off the walls), its way starts from the
+nearest navmesh point round it with nothing at chest height between (by Helgen's tower the
+nearest point was inside the tower, through its wall, and the bot walked into the wall for
+good). It drives the viewer that plays now, as
+the monitors pick it: the world viewer outside, the model viewer in an interior (its player, actor
+stage, navmeshes and physics). Before, it read only the world viewer and stood still from the
+keep's door on. It waits when the guide is within 220
+units and its way there is not much longer (a guide across a wall is not near: Ralof inside the
+tower, the player outside it) (after 8 s it closes in to 90: a trigger may be by them; after 15 s of a guide standing
 still it walks on 160 units past them, into the room they lead to: Ralof in Helgen's tower, the
 stage-25 strip beyond him), uses the load door toward a target in another space
 (`firstDoorToward`, aiming and pressing Activate), and when stuck steps left, right or back
@@ -120,8 +132,14 @@ conditions do not hold yet, as a player goes on the way the objective leads (MQ1
 way to the Keep" shows the burning inn's marker until stage 120 of MQ101DragonAttack; then
 Hadvar). With no target shown at all it follows the guide it followed last while that one is
 about (MQ101DragonAttack's stage 192: Hadvar ran ahead into his trigger and waits by the
-street's, which only the player sets). A target that is a load door here, or a place with one within 400 units across (MQ101's "Enter the Keep" markers by the keep's doors), it walks to and uses; one whose way it found shut twice and is stuck on again it leaves for another shown target (the Stormcloak keep door's street is shut to one who came with Hadvar). A navmesh way far longer than the straight line (twice it and 300 more) to a goal not
-above is left for the straight line, as a player jumps down (from the tower's broken wall onto
+street's, which only the player sets). Inside, a guide it followed who is in a scene in the same
+space is gone to first (outside, Ralof's scene by the tower's hole walked him down the tower with
+the player), once for each stage of the marker's quest, and stood by for 25 s (not walked
+past) before the marker (MQ101's keep scenes speak three lines, then wait with a looping "come
+here" line until the player is within 100 units of Ralof or Hadvar, while the marker is on the
+way out). A target that is a load door here, or a place with one within 400 units across (MQ101's "Enter the Keep" markers by the keep's doors), it walks to and uses; one whose way it found shut twice and is stuck on again it leaves for another shown target (the Stormcloak keep door's street is shut to one who came with Hadvar). A navmesh way far longer than the straight line (twice it and 300 more) to a goal more than
+150 units below, outside, is left for the straight line (in the keep it walked into a wall for
+eight minutes toward the escape's marker, 650 units down), as a player jumps down (from the tower's broken wall onto
 the inn, while the navmesh leads down the stairs to the door the quest has shut). It counts as
 on the navmesh only where a triangle is near its feet' height (under the inn's upper floor
 lies the ground floor's, 300 units down). Off the navmesh with navmesh below, it goes straight
@@ -132,7 +150,64 @@ neighbours; a drop is 150 units or more), the drop landing nearest the goal on n
 way on to it (a hole in the inn's floor nearer the marker leads into a room that rubble
 shuts). The scenario ends a minute
 after MQ101 reaches stage 900 (out of the keep), or when MQ101's stage stands 8 minutes (the
-opening stalled, or the bot got nowhere). Its log goes into the report's notes.
+opening stalled, or the bot got nowhere). Its log goes into the report's notes, with the
+guides' watch (`GUIDE_WATCH`, from MQ101 stage 100 on): once a second Ralof's and Hadvar's
+package (editor id), procedure, whether their AI is held for a reaction, the reaction and the
+scene, logged as they change, and where they stand every 10 s; MQ101's and MQ101DragonAttack's
+stages; every actor that begins or ends a reaction to a dead body; the player's capsule while
+it is not grounded for more than 2 s. Each frame it also watches what carries the player
+(`CharacterBody.carriedBy`): a simulated body whose carry was held to its limit (`carry held:`,
+its reference, base, mass and speed), and the player's feet going faster than 1,500 units a
+second outside a load: over more than 60 units in a frame a fling (`player flung`: what carried
+it, and the four fastest simulated bodies within 400 units, each with its reference and base);
+over 8 to 60 a jump of the feet (`feet jump`, once a second at most: its parts across and up,
+the frame's length, grounded or not, what carried it, the bot's keys and its last line). In the
+nine opening runs of 2026-11-10 (both sides) there were 236 such jumps: 229 more up or down than
+across (at most 51 units, at most 20 across), mostly in 5-6 ms frames, at the places the bot was
+stuck pressing and jumping (a table's edge, the portcullises): the character's step up and its
+settling down onto the floor, which a frame that short makes read as 1,500 units a second. Four
+were on a portcullis (MQ101KeepGate1Ref, MQ101KeepGate2Ref: keyframed), none on a simulated body;
+no fling and no carry held to its limit was logged.
+
+`opening-ralof` and `opening-hadvar` (not in a run without names) are the same opening with the bot on one side
+(`window.__qaSide`): of the current targets it takes that guide and the keep marker by them (Ralof
+and dunCGObjectiveKeepDoorRalofREF, or Hadvar and his), as a player picks that door of "Enter the Keep with Hadvar or
+Ralof"; without a side it takes the nearest (Hadvar's, each time). A target that is a container
+or a dead actor (MQ101's "Find some equipment", the warden's chest; "Loot Gunjar's body") it
+walks to, faces and opens with Activate (someone between it and the target, the crosshair on
+them: Ralof by Gunjar's body, it steps round to the target's other side first); the scenario
+then goes into the container's items list (Right: the menu opens on its categories, and its X
+button takes all only while a category's items are shown, the movie's `isViewingContainer`),
+takes all (R), closes the menu (Tab), and the player wears the armor and one weapon it carries
+and does not wear yet, each as the inventory menu equips a selected entry
+(`EquipmentEngine.toggle`: MQ101PlayerScript's OnObjectEquipped sets stages 256 and 258).
+Inside, a fight comes first (the nearest living enemy of the player or of the guide followed
+last, on its floor, within 1,500 units: MQ101's "Wait for battle to be over"): it draws (Ready
+Weapon), goes at the enemy and attacks within reach (Right Attack/Block), as a player does; god
+mode keeps it up. While the crosshair finds nothing at what it loots it pitches lower and higher in turn and logs
+what the crosshair's pick meets, where the target's posed body lies, the camera and whether
+Activate is allowed; a target not on the actor stage logs its game state once (reference state,
+dead, corpse pose, placement, the dead actors that are on the stage). Each use of a door logs
+what the crosshair is on
+(its reference and verb), how far the door is, and the door's lock or blocked activation. Each
+load door's journey asked (`door journey asked`) and each interior loaded (`interior ... loads`)
+is logged with the page's call stack. Behind a loading screen (`session.loading`: the place
+left still runs while the next loads) the bot does nothing. Before, it pressed on: Hadvar's keep
+door (91a00) took the first press (the journey asked, the keep loading at once) and every later
+press, Activate refused, fell in the keep's 20 s load; that was the "18 s of presses" of an earlier
+run, and on Ralof's side the automatic door asked nine journeys while the keep loaded, one taken.
+A target to loot comes before a guide in a scene. Inside, a guide in a scene who waits for the player
+(MQ101's keep scenes: "Come here, let me get those bindings off") is gone to first: the guide
+followed last, else Ralof or Hadvar, whichever is there in a scene (a bot that followed Hadvar to
+Ralof's door meets Ralof inside). A guide who walks on is followed (MQ101KeepScene2B escorts the
+player down the stairs); once he has stood 25 s it walks into the trigger within 1,200 units of
+him that waits for the player and whose scripts name the marker's quest. Outside, past a guide
+who still stays 20 s, it walks into a trigger within 1,500 units of him that waits for the player
+and names a quest with scenes.
+
+`keep-loaded-twice` loads Helgen's keep twice at once (the second as the first places its
+actors) and checks that the keep's own actors, Gunjar's body among them, are on the stage after
+both; then it uses the keep's door out twice and counts the places loaded (one).
 
 ## The monitors in the page
 

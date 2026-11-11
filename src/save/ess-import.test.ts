@@ -781,6 +781,59 @@ describe('the global data tables of controls, references and sky cells', () => {
     expect(runtime.engines?.dying).toEqual([[DYING, 0]]);
   });
 
+  it("take the Miscellaneous objectives' byte as the journal's choice once one is shown", () => {
+    const MISC = 0x1c1c0;
+    /** A quest with objective 0 shown, and the interface's Miscellaneous byte. */
+    const save = (byte: number): Uint8Array =>
+      writeSyntheticEss({
+        playerName: 'Dragonborn',
+        playerLevel: 1,
+        location: 'Whiterun',
+        plugins: ['Skyrim.esm'],
+        globalData1: [],
+        globalData2: [
+          {
+            type: 102,
+            data: new EssWriter().u32(0).u8(byte).vsval(0).vsval(0).vsval(0).u8(0).done(),
+          },
+        ],
+        globalData3: [],
+        changeForms: [
+          { refId: [1, 0x14], type: 1, flags: ChangeRefr.moved, data: playerInBreezehome() },
+          {
+            refId: [1, MISC],
+            type: 8,
+            flags:
+              CHANGE_FORM_FLAGS | ChangeQuest.flags | ChangeQuest.stages | ChangeQuest.objectives,
+            data: new EssWriter()
+              .u32(0)
+              .u16(0)
+              .u16(1)
+              .vsval(1)
+              .u16(10)
+              .u8(1)
+              .vsval(1)
+              .u32(0)
+              .u32(1)
+              .done(),
+          },
+        ],
+        formIds: [],
+      });
+    const imported = (byte: number, type: number): GameState =>
+      importEss(
+        readEss(save(byte)),
+        { ...world, questType: (formId) => (formId === MISC ? type : undefined) },
+        { name: 'T', number: 1, now: 0 },
+      ).save.runtime.state as unknown as GameState;
+    // A miscellaneous objective shown and the byte clear: the player hid them.
+    expect(imported(0, 6).quests.get(MISC)?.objectives.get(0)?.displayed).toBe(true);
+    expect(imported(0, 6).miscObjectivesActive).toBe(false);
+    // Set: shown. Clear with none shown yet (the saves made at Helgen): a new game's, shown.
+    expect(imported(1, 6).miscObjectivesActive).toBe(true);
+    expect(imported(0, 2).miscObjectivesActive).toBe(true);
+  });
+
   it("keep the created objects, a cell's Warn To Leave and the file name's character", () => {
     const POTION = 0xff000a40;
     const EFFECT = 0x3eb15;

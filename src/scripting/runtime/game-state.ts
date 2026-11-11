@@ -666,6 +666,12 @@ export class GameState {
   readonly ingredientUses = new Map<number, number>();
   /** Counts the quests' updates for the player (QuestState.updated). */
   questClock = 0;
+  /**
+   * The journal's "show miscellaneous objectives" (ToggleShowMiscObjectives): the player's one
+   * choice for every miscellaneous quest (type 6), whether they are active (on the compass).
+   * A miscellaneous objective newly shown makes its quest active only while it is on.
+   */
+  miscObjectivesActive = true;
   /** What Debug.Notification / MessageBox showed (the HUD's until M9). */
   readonly messages: string[] = [];
 

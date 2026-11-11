@@ -38,8 +38,6 @@ export const JournalPage = { quests: 0, stats: 1, system: 2 } as const;
 interface JournalMemory {
   tab: number;
   quest: number;
-  /** The miscellaneous objectives show on the compass. */
-  miscActive: boolean;
 }
 
 /** The player's date, level and progress, as the journal's and the tween menu's bars show. */
@@ -63,7 +61,7 @@ export async function playerBarInfo(
 export class JournalMenu {
   readonly #host: MenuHost;
   readonly #session: GameSession;
-  readonly #memory: JournalMemory = { tab: JournalPage.quests, quest: 0, miscActive: true };
+  readonly #memory: JournalMemory = { tab: JournalPage.quests, quest: 0 };
   /** The quests as the last RequestQuestsData gave them (objectives are asked for later). */
   #quests: JournalQuest[] = [];
   /** The quest list the menu passed (a clip it asked to fill). */
@@ -243,11 +241,14 @@ export class JournalMenu {
           menu.respond(args[0], state.active);
         },
         ToggleShowMiscObjectives: (_menu, args) => {
-          this.#memory.miscActive = args[1] === true;
+          // The player's one choice for every miscellaneous quest, kept in the game state (a
+          // miscellaneous objective shown later follows it: GameState.miscObjectivesActive).
           const runtime = this.#session.scriptsReady;
+          if (!runtime) return;
+          runtime.state.miscObjectivesActive = args[1] === true;
           for (const quest of this.#quests) {
-            if (quest.type === MISC_QUEST_TYPE && runtime)
-              runtime.state.quest(quest.formId).active = this.#memory.miscActive;
+            if (quest.type === MISC_QUEST_TYPE)
+              runtime.state.quest(quest.formId).active = runtime.state.miscObjectivesActive;
           }
         },
         // The help topics (HelpManualPC's messages: their titles), and one's title and text.
@@ -407,7 +408,8 @@ export class JournalMenu {
       });
     }
     // Show on Map: for the objectives with a target on the map (questTargetID).
-    menu.respond(request, this.#memory.quest, 0, hasMisc, this.#memory.miscActive, true);
+    const miscActive = this.#session.scriptsReady?.state.miscObjectivesActive ?? true;
+    menu.respond(request, this.#memory.quest, 0, hasMisc, miscActive, true);
   }
 
   /**

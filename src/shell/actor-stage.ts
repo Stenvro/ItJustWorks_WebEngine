@@ -304,8 +304,11 @@ export class ActorStage {
   readonly #options: ActorStageOptions;
   readonly #actors = new Map<number, StagedActor>();
   readonly #cells = new Map<string, StageCell>();
-  /** References being placed now (not placed twice when two cells ask at once). */
-  readonly #placing = new Set<number>();
+  /**
+   * References being placed now, with the loaded cell they are placed for (not placed twice
+   * when two cells ask at once). One whose cell went meanwhile is placed anew by the next.
+   */
+  readonly #placing = new Map<number, { readonly key: string; readonly cell: StageCell }>();
   /**
    * The game state's place each staged actor was put on the stage from (or a script last moved
    * it to on the stage): the very array, so a newer move (a follower sent through the door
@@ -2253,7 +2256,7 @@ export class ActorStage {
       );
     };
     for (const actor of actors) {
-      if (this.#actors.has(actor.reference) || this.#placing.has(actor.reference)) continue;
+      if (this.#actors.has(actor.reference) || this.#busy(actor.reference)) continue;
       const now = runtime ? await this.#movedPlace(runtime, actor.reference) : undefined;
       if (now === null) continue;
       const saved = savedAt(actor.reference);
@@ -2273,7 +2276,7 @@ export class ActorStage {
     if (runtime) {
       for (const [reference, state] of runtime.state.references) {
         if (!state.position || own.has(reference) || reference === PLAYER_REF) continue;
-        if (this.#actors.has(reference) || this.#placing.has(reference)) continue;
+        if (this.#actors.has(reference) || this.#busy(reference)) continue;
         if (!(await this.#isActor(runtime, reference))) continue;
         const now = await this.#movedPlace(runtime, reference);
         if (!now) continue;
@@ -2287,7 +2290,7 @@ export class ActorStage {
       for (const saved of restoring?.actors() ?? []) {
         const reference = saved.reference;
         if (own.has(reference) || runtime.state.references.get(reference)?.position) continue;
-        if (this.#actors.has(reference) || this.#placing.has(reference)) continue;
+        if (this.#actors.has(reference) || this.#busy(reference)) continue;
         if (candidates.some((candidate) => candidate.actor.reference === reference)) continue;
         const at = savedAt(reference);
         if (at?.cell !== key) continue;
@@ -2694,7 +2697,7 @@ export class ActorStage {
     const cell = key === undefined ? undefined : this.#cells.get(key);
     // Sent elsewhere off the stage: the game state has its place now, not a save's record.
     if (key === undefined || !cell) this.#options.session.restoring?.drop(reference);
-    if (key === undefined || !cell || this.#placing.has(reference)) return;
+    if (key === undefined || !cell || this.#busy(reference)) return;
     if (!(await this.#isActor(runtime, reference))) return;
     const actor = await this.#cellActor(runtime, reference, now);
     if (!actor) return;
@@ -2938,7 +2941,20 @@ export class ActorStage {
 
   /** Whether actors of the loaded cells are still being placed (their models load). */
   get placing(): boolean {
-    return this.#placing.size > 0;
+    for (const reference of this.#placing.keys()) if (this.#busy(reference)) return true;
+    return false;
+  }
+
+  /**
+   * Whether an actor is being placed for a cell still loaded. One placed for a cell that went
+   * meanwhile is not (that placement comes to nothing): the cell loaded again places it anew.
+   * Before, a cell loaded twice at once (the player through a load door twice as it loaded)
+   * left the actors the first was placing off the stage for good (MQ101's Gunjar, whose gear
+   * the player must take: the opening stood at stage 255).
+   */
+  #busy(reference: number): boolean {
+    const placing = this.#placing.get(reference);
+    return placing !== undefined && this.#cells.get(placing.key) === placing.cell;
   }
 
   /**
@@ -3210,7 +3226,7 @@ export class ActorStage {
     enabled: (reference: number) => boolean,
   ): Promise<StagedActor[]> {
     if (candidates.length === 0) return [];
-    for (const { actor } of candidates) this.#placing.add(actor.reference);
+    for (const { actor } of candidates) this.#placing.set(actor.reference, { key, cell });
     const { session, terminal } = this.#options;
     // The game state's place each is put on the stage from (#keepPlace).
     const runtime = session.scriptsReady;
@@ -3357,7 +3373,11 @@ export class ActorStage {
       }
       return staged;
     } finally {
-      for (const { actor } of candidates) this.#placing.delete(actor.reference);
+      // A newer placement of the same actor (its cell loaded again) is that one's to end.
+      for (const { actor } of candidates) {
+        if (this.#placing.get(actor.reference)?.cell === cell)
+          this.#placing.delete(actor.reference);
+      }
     }
   }
 

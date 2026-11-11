@@ -117,6 +117,59 @@ describe.skipIf(!hasGamedata())('MQ101 in Helgen Keep', () => {
       await sim.close();
     }
   }, 300_000);
+  // Found 2026-11-10: in Play, a player who came into the keep by Ralof's door found no Gunjar to
+  // loot (the opening stood at stage 255), while one put there with coc did. The keep loaded a
+  // second time while its first load still placed its actors: the second left out those being
+  // placed, and the first's came to nothing (its cell had gone), so they were never staged.
+  it('stages Gunjar’s body when the keep loads again while its actors are being placed', async () => {
+    const sim = await openSim({ opening: true });
+    try {
+      await sim.step(1);
+      for (const playing of sim.runtime.scenes.snapshot()) sim.runtime.scenes.stop(playing.scene);
+      void sim.runtime.quests.setStage(MQ101, 220);
+      await sim.step(0.5);
+      await sim.openInterior(KEEP);
+      await sim.step(1);
+      expect(sim.actor(GUNJAR)).toBeDefined();
+      const stage = sim.world.stage;
+      const data = await sim.world.session.cellData(KEEP);
+      const key = String(KEEP);
+      // The keep loads again (the stage cleared, its actors asked for), and again while the
+      // first is still placing them (its models held back until the second has asked).
+      const placer = await sim.world.session.actors();
+      const place = placer.place.bind(placer);
+      let hold = true;
+      let release = (): void => undefined;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      placer.place = async (...args) => {
+        if (hold) await held;
+        return place(...args);
+      };
+      try {
+        stage.clear();
+        const first = stage.attachCell(key, data.actors, () => true);
+        // (setImmediate: the sim's clock holds its timers until it steps.)
+        for (let tries = 0; tries < 100_000 && !stage.placing; tries++) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        expect(stage.placing).toBe(true);
+        expect(stage.get(GUNJAR)).toBeUndefined();
+        stage.clear();
+        hold = false;
+        const second = stage.attachCell(key, data.actors, () => true);
+        release();
+        await Promise.all([first, second]);
+      } finally {
+        placer.place = place;
+      }
+      expect(stage.get(GUNJAR)).toBeDefined();
+      expect(stage.placing).toBe(false);
+    } finally {
+      await sim.close();
+    }
+  }, 300_000);
   // Found 2026-11-01: putting on the keep's Imperial armor made the player's body again with a
   // graph started anew: a drawn sword's body stood sheathed while the game had it drawn, and
   // whatever the graph held was dropped. Dressed in the same race, the graph goes on.
@@ -200,6 +253,7 @@ describe.skipIf(!hasGamedata())('MQ101 in Helgen Keep', () => {
       // The player keeps by Ralof (within the 100 units his "wait for the player" phase asks)
       // and loots Gunjar when he says to (stage 255).
       let looted = false;
+      let activateBack = false;
       for (let second = 0; second < 150 && !sim.stageDone(MQ101, 270); second++) {
         await sim.step(1);
         const near = await sim.distance(ralof, PLAYER_REF);
@@ -210,12 +264,17 @@ describe.skipIf(!hasGamedata())('MQ101 in Helgen Keep', () => {
           await sim.moveTo([at[0] + (me[0] - at[0]) * k, at[1] + (me[1] - at[1]) * k, at[2] + 10]);
         }
         if (!looted && sim.stageDone(MQ101, 255)) {
+          // Phase 10 ("Setstage 240 - enable all player controls") came first: its completion
+          // fragment sets 240, whose fragment gives the player every control back, Activate
+          // among them (phase 10's start took it away).
+          activateBack = sim.stageDone(MQ101, 240) && sim.runtime.controls.activate;
           const [x, y, z] = sim.actor(GUNJAR)?.position ?? [0, 0, 0];
           await sim.moveTo([x + 80, y, z + 10]);
           await sim.step(0.5);
           looted = sim.activate(GUNJAR);
         }
       }
+      expect(activateBack).toBe(true);
       expect(looted).toBe(true);
       // The soldier pulled the inner lever, the gate opened (phase 25's condition), and the
       // fight's phase ended (its fragment sets 270), with the player never seated anywhere.
