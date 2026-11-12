@@ -58,6 +58,7 @@ import {
   type AttackReachContext,
   DEFAULT_ATTACK,
   powerAttackDefault,
+  reachExtents,
   rotatesThrough,
 } from '../gameplay/combat/attacks.ts';
 import type { AttackData } from '../ai/race-combat-records.ts';
@@ -4659,11 +4660,11 @@ export class ActorCombat implements CombatBridge {
       target: targetBody,
       targetHeld: other.player && !goingAway,
       reach: this.#reach(fighter, false),
-      // As its strike is measured (hit-test.ts strikeContact): from its own centre to the
-      // target's shape. With its own radius here, a fighter in reach of a large target's shape
-      // (Sovngarde's heroes 500 units from Alduin's centre, his radius 320) never began a plain
-      // attack: its combat tree held it there as in reach, and no attack "reached".
-      extents: this.#size(other).radius,
+      // The larger of the two shapes' radii (reachExtents). With its own alone, a fighter in
+      // reach of a large target's shape (Sovngarde's heroes 500 units from Alduin's centre, his
+      // radius 320) never began a plain attack; with its target's alone, a dragon held at its
+      // own shape's edge from a human never began a bite.
+      extents: reachExtents(this.#size(fighter).radius, this.#size(other).radius),
       clearTo: (point) => this.#options.movers.straightReach(fighter.reference, point),
       settings: this.#settings,
     };

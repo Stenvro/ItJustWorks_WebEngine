@@ -2991,17 +2991,24 @@ dropped and the pick made again among the rest; the one taken sends its event to
 its recovery time starts. Its target must also be in reach of it at its hit frame
 (`attackReaches`): its lunge is its clip's move by then, or for the set's flagged attacks
 (attackStart: no move of their own) its own speed by then; the target must lie within the lunge,
-its reach, the target's extents (a strike reaches from its own centre to the target's shape:
-"Hits" above) and the target's way by then; then, from where it
+its reach, the extents (`reachExtents`: the larger of its own and its target's radius, see
+below) and the target's way by then; then, from where it
 will be (the clip's offset turned by its facing past fCombatAttackStationaryAttackDistance, its
 way clear past fCombatAttackMovingAttackDistance short of fCombatAttackAllowedOverrunDistance)
 to where the target will be (the player, unless going away from it, ×
 fCombatAttackPlayerAnticipateMult), its reach, × fCombatAttackMovingAttackReachMult if it moved,
-plus those extents, and if it moved the strike angle × fCombatAttackMovingStrikeAngleMult. (With
-its own extents there instead, a fighter in reach of a large target's shape never began a plain
+plus those extents, and if it moved the strike angle × fCombatAttackMovingStrikeAngleMult. (The
+extents are inferred, TODO(M13): the original measures between the two actors' bounds, in the
+choice and the hit; ours has one radius between two fighters of a size and takes the larger of
+the two. With its own alone, a fighter in reach of a large target's shape never began a plain
 attack: Sovngarde's heroes stood 500 units from Alduin's centre, his radius 320, held there as
-in reach by their combat tree, and only a forward power attack's lunge ever struck him.
-TODO(M13): the original measures between the two actors' bounds, in the choice and the hit.) So it
+in reach by their combat tree, and only a forward power attack's lunge ever struck him. With its
+target's alone, an attacker larger than its target never began one: the combat tree holds a
+melee fighter no nearer than the two radii, and a dragon's reach from its centre (256) is less
+than its own radius (320), so a dragon on the ground did not bite at all. Open, TODO(M13): the
+strike itself still reaches from the attacker's centre to the target's shape, so a dragon's bite
+at a human held at its shape's edge begins and misses; a hit measured between the bounds would
+land it.) So it
 swings as it closes in, a plain attack keeps its way while it swings, and a forward power attack
 (its clip goes hundreds of units) is an attack from afar and none at arm's length. Its node looks
 at all within fCombatAttackCheckTargetRangeDistance past its farthest lunge. What was wrong
