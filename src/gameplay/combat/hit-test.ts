@@ -3,9 +3,10 @@
 // have to overlap). The reach is fCombatDistance × the weapon's reach (fCombatBashReach for a
 // bash; the race's unarmed reach for fists) × the attacker's size; the strike is the cone of the
 // attack data's strike angle about its attack angle (ATKD: 50° for attackStart, 35° for power
-// attacks, 85° about ±90° for mounted side swings). A swing hits the nearest such actor (all of
-// them with Sweep: the perk system's hook). Blocks cover fCombatHitConeAngle in front of the
-// blocker. TODO(M13): the engine measures reach from its bounds and its cone's exact shape is not
+// attacks, 85° about ±90° for mounted side swings). An attacker with a combat target hits that
+// one alone; one without, the actor nearest its strike's direction (strikeTargets; the others in
+// a wider cone too with Sweep: the perk system's hook). Blocks cover fCombatHitConeAngle in front
+// of the blocker. TODO(M13): the engine measures reach from its bounds and its cone's exact shape is not
 // documented; here from the attacker's feet to the target's shape (its controller's radius).
 // Platform-independent.
 
@@ -96,31 +97,40 @@ export function strikeContact(strike: Strike, target: StrikeTarget): StrikeConta
 }
 
 /**
- * The targets a strike hits: the one it is aimed at (`aimed`: the attacker's combat target, the
- * player's aimed actor) where it reaches it, else the nearest it reaches (`all`: every one, the
- * Sweep perk). Those it is told to leave out (the attacker, the dead) are not offered.
- * TODO(M13): the aimed target first is inferred, as the player's own aim keeps its current
- * target first (observed in the original); by the nearest alone, a soldier's blow at the player
- * dead ahead fell on its fellow soldier at its side, and Ralof's on the player beside him.
+ * The targets a strike hits (observed in the original). An attacker with a combat target
+ * (`combatTarget`: an NPC in a fight) hits that one alone, where its strike reaches it: a swing
+ * that misses its target falls on no one else, friend or foe, however near they stand. One
+ * without a combat target (the player, whose aim is none; an actor swinging outside a fight)
+ * hits, of those its strike reaches, the one nearest the strike's direction. With the Sweep perk
+ * (`sweep`: fMeleeSweepViewAngleMult) every other actor within reach and inside the strike angle
+ * times that is hit as well, whether or not the strike found its own target. Those it is told to
+ * leave out (the attacker, the dead, its mount) are not offered.
  */
 export function strikeTargets(
   strike: Strike,
   targets: Iterable<StrikeTarget>,
-  all = false,
-  aimed?: number,
+  sweep?: number,
+  combatTarget?: number,
 ): StrikeContact[] {
-  const contacts: StrikeContact[] = [];
-  for (const target of targets) {
+  const offered = [...targets];
+  const reached: StrikeContact[] = [];
+  for (const target of offered) {
+    if (combatTarget !== undefined && target.reference !== combatTarget) continue;
     const contact = strikeContact(strike, target);
-    if (contact) contacts.push(contact);
+    if (contact) reached.push(contact);
   }
-  contacts.sort(
-    (a, b) =>
-      Number(b.target.reference === aimed) - Number(a.target.reference === aimed) ||
-      a.distance - b.distance ||
-      a.angle - b.angle,
-  );
-  return all ? contacts : contacts.slice(0, 1);
+  reached.sort((a, b) => a.angle - b.angle || a.distance - b.distance);
+  const contacts = reached.slice(0, 1);
+  if (sweep === undefined) return contacts;
+  const wide: Strike = { ...strike, strikeAngle: strike.strikeAngle * sweep };
+  const swept: StrikeContact[] = [];
+  for (const target of offered) {
+    if (target === contacts[0]?.target) continue;
+    const contact = strikeContact(wide, target);
+    if (contact) swept.push(contact);
+  }
+  swept.sort((a, b) => a.distance - b.distance || a.angle - b.angle);
+  return [...contacts, ...swept];
 }
 
 /**

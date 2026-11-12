@@ -2425,12 +2425,18 @@ meanwhile.
 - **Hits** (`hit-test.ts`): at HitFrame the strike reaches fCombatDistance (141) × the weapon's
   reach (fists: the race's unarmed reach, RACE DATA @100; a bash fCombatBashReach) × the
   attacker's size, from its feet to the target's shape, inside the attack data's strike angle
-  (ATKD: 50° for attackStart, 35° for power attacks, 85° about ±90° for mounted side swings); it
-  hits the one it is aimed at (its combat target, the player's aimed actor) where it reaches it,
-  else the nearest such actor (every one with Sweep), each once an attack; a corpse its cell
-  placed dead is no such actor. TODO(M13): the aimed one first is inferred from the player's own
-  aim, which keeps its current target first; by the nearest alone, in Helgen Keep the officer's
-  blows at the player dead ahead fell on the soldier at his side. With nothing to hit
+  (ATKD: 50° for attackStart, 35° for power attacks, 85° about ±90° for mounted side swings).
+  Observed in the original: an attacker with a combat target (an NPC in a fight) hits that one
+  alone, where its strike reaches it, and no one where it does not: a swing that misses its
+  target falls on no ally at its side, nor on another enemy (in Helgen Keep the officer's blows
+  at the player fell on the soldier beside him while the nearest in the cone was struck, and
+  Ralof's on the player). One without a combat target (the player; an actor swinging outside a
+  fight) hits, of the living actors its strike reaches (not its mount), the one nearest the
+  strike's direction; the player must also see it (a wall between: no one). With Sweep every
+  other actor within reach and inside the strike angle × fMeleeSweepViewAngleMult (2) is hit
+  too, whether or not the strike found its own target. Each is struck once an attack (ours:
+  TODO(M13), a clip with several hit frames, as the dual power attack's, strikes its target once);
+  a corpse its cell placed dead is no such actor. With nothing to hit
   but a wall in reach (a ray at the chest on L_WEAPON) the attacker recoils. TODO(M13): the
   engine measures from bounds; its cone's exact shape is not documented.
 - **Damage** (`damage.ts`; UESP "Damage", "Block", "Sneak", "Difficulty"): the equip system's

@@ -21,6 +21,11 @@ export interface CombatSettings {
   /** fCombatDeadActorHitConeMult: the player's strikes find the dead in a cone this much wider. */
   readonly deadActorHitConeMult: number;
   /**
+   * fMeleeSweepViewAngleMult: a sweep attack (the Sweep perk) hits the others within reach in a
+   * strike angle this much wider (observed in the original; not in the plugins).
+   */
+  readonly meleeSweepViewAngleMult: number;
+  /**
    * fCombatAttackStrikeAngleMult: an NPC picks an attack only for a target within its strike
    * angle times this (observed in the original).
    */
@@ -247,6 +252,7 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   combatBashReach: 141,
   combatHitConeAngle: 35,
   deadActorHitConeMult: 2,
+  meleeSweepViewAngleMult: 2,
   attackStrikeAngleMult: 0.67,
   attackStationaryAttackDistance: 5,
   attackMovingAttackDistance: 32,
@@ -434,6 +440,7 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   hostileActorInteriorDistance: 'fHostileActorInteriorDistance',
   hostileFlyingActorExteriorDistance: 'fHostileFlyingActorExteriorDistance',
   deadActorHitConeMult: 'fCombatDeadActorHitConeMult',
+  meleeSweepViewAngleMult: 'fMeleeSweepViewAngleMult',
   attackStrikeAngleMult: 'fCombatAttackStrikeAngleMult',
   attackStationaryAttackDistance: 'fCombatAttackStationaryAttackDistance',
   attackMovingAttackDistance: 'fCombatAttackMovingAttackDistance',

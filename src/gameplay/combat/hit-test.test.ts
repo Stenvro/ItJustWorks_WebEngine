@@ -71,23 +71,44 @@ describe('strikes', () => {
     expect(strikeContact(strike, target(1, 0, 100, 40))).toBeDefined();
   });
 
-  it('hit the nearest, or all of them with Sweep', () => {
-    const targets = [target(1, 0, 140), target(2, 10, 80), target(3, 0, 400)];
-    expect(strikeTargets(strike, targets).map((contact) => contact.target.reference)).toEqual([2]);
-    expect(strikeTargets(strike, targets, true).map((contact) => contact.target.reference)).toEqual(
-      [2, 1],
+  const hit = (contacts: readonly { readonly target: StrikeTarget }[]): number[] =>
+    contacts.map((contact) => contact.target.reference);
+
+  it('without a combat target hit the one nearest the strike’s direction', () => {
+    // 1 dead ahead at the end of the reach, 2 nearer but 7° off, 3 out of reach.
+    const targets = [target(2, 10, 80), target(1, 0, 140), target(3, 0, 400)];
+    expect(hit(strikeTargets(strike, targets))).toEqual([1]);
+    // The same angle off: the nearer.
+    expect(hit(strikeTargets(strike, [target(5, 0, 140), target(6, 0, 90)]))).toEqual([6]);
+  });
+
+  it('with a combat target hit that one alone, and no one where they do not reach it', () => {
+    // The officer swings at the player; the soldier stands nearer, dead ahead (MQ101's keep).
+    const player = target(0x14, 60, 100);
+    const soldier = target(0xff00086d, 0, 60);
+    expect(hit(strikeTargets(strike, [soldier, player], undefined, 0x14))).toEqual([0x14]);
+    // The player out of reach by the hit frame: the blow falls on no one, not on the soldier.
+    expect(hit(strikeTargets(strike, [soldier, target(0x14, 0, 300)], undefined, 0x14))).toEqual(
+      [],
+    );
+    // Nor on the soldier while the player stands behind the striker.
+    expect(hit(strikeTargets(strike, [soldier, target(0x14, 0, -80)], undefined, 0x14))).toEqual(
+      [],
     );
   });
 
-  it('hit the one aimed at where they reach it, before one nearer at the side', () => {
-    // The officer swings at the player dead ahead; the soldier stands nearer, 56° off (MQ101's keep).
-    const player = target(0x14, 0, 102);
-    const soldier = target(0xff00086d, 52, 35);
-    expect(strikeTargets(strike, [soldier, player], false, 0x14)[0]?.target.reference).toBe(0x14);
-    // The one aimed at out of reach: the nearest it reaches.
-    expect(
-      strikeTargets(strike, [soldier, target(0x14, 0, 300)], false, 0x14)[0]?.target.reference,
-    ).toBe(0xff00086d);
+  it('with Sweep hit the others within reach in the wider angle too', () => {
+    // 4 stands 80° off: outside the strike angle (50°), inside twice that.
+    const targets = [target(1, 0, 140), target(2, 10, 80), target(4, 100, 18), target(3, 0, 400)];
+    expect(hit(strikeTargets(strike, targets, 2))).toEqual([1, 2, 4]);
+    // Behind the striker: outside the wider angle as well.
+    expect(hit(strikeTargets(strike, [target(1, 0, 140), target(7, 0, -100)], 2))).toEqual([1]);
+    // The combat target out of reach: the sweep still takes those it reaches.
+    expect(hit(strikeTargets(strike, [target(2, 10, 80), target(9, 0, 300)], 2, 9))).toEqual([2]);
+    // The combat target reached: first, then the others.
+    expect(hit(strikeTargets(strike, [target(2, 10, 80), target(9, 0, 140)], 2, 9))).toEqual([
+      9, 2,
+    ]);
   });
 });
 
