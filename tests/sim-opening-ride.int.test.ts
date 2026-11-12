@@ -446,7 +446,8 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
     const sim = await loadSim(ridersOff);
     try {
       // Frames of 0.14 s, a little slower than the browser's with the processor slowed (about 10
-      // a second): each graph update is cut to 0.1 s (animateSkeletons' MAX_STEP).
+      // a second): the frame timer's step for them is 0.155 s (src/world/frame-timer.ts), which
+      // every graph's update takes whole (each was cut to 0.1 s before).
       const frame = 0.14;
       const avatar = sim.world.playerView?.avatar;
       const body = avatar?.body;
@@ -517,12 +518,14 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
         sim.world.player.eye[2] - sim.world.player.feet[2],
         'the eye on the block',
       ).toBeLessThan(70);
-      // The lateness is on the clock: up to the whole frame, not the 0.1 s step it was cut to.
+      // The lateness is on the clock: up to the frame's whole step, not the 0.1 s it was cut to.
       // Found in review 2026-11-09: the avatar's clock was cut to 0.1 s too, and the lateness
-      // came out short below 10 frames a second.
+      // came out short below 10 frames a second. The step of a 0.14 s frame at a steady rate is
+      // the frame timer's (8 × 0.14 − 0.05 − 0.14) / 6 = 0.155 s: the bound was the frame's
+      // 0.14 s while the simulation's step was the frame itself.
       expect(late.length).toBeGreaterThan(20);
       expect(Math.max(...late)).toBeGreaterThan(0.1 + 1e-6);
-      expect(Math.max(...late)).toBeLessThanOrEqual(frame + 1e-6);
+      expect(Math.max(...late)).toBeLessThanOrEqual((7 * frame - 0.05) / 6 + 1e-6);
     } finally {
       await sim.close();
     }

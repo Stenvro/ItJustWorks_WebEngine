@@ -23,10 +23,9 @@ export interface GraphEvent {
   readonly text: string;
   /**
    * How long before the end of the graph update that raised it it fell: a clip's trigger or
-   * annotation passed within the update. Undefined: at the update's end. The graph tells it in
-   * seconds of its own step; animateSkeletons gives it in seconds of the clock the skeleton runs
-   * on, which differ where a long frame's update was cut to MAX_STEP (below 10 frames a second:
-   * the step covers the whole frame of the clock). A graph updated ahead of the clock (far from
+   * annotation passed within the update. Undefined: at the update's end. In seconds of the graph's
+   * step, which is the step of the clock the skeleton runs on (animateSkeletons updates a graph
+   * by the clock's whole step, a long frame cut once by the frame timer). A graph updated ahead of the clock (far from
    * the camera) raises a clip's event before the clock reaches it; the update's end less this is
    * its moment on that clock.
    */

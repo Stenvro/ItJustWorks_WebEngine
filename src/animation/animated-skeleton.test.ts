@@ -14,6 +14,7 @@ import {
 } from './animated-skeleton.ts';
 import type { SkeletalGraph } from './behavior-runtime.ts';
 import type { BehaviorGenerator } from '../formats/hkx/behavior.ts';
+import { FRAME_GAP_SECONDS, FrameTimer } from '../world/frame-timer.ts';
 
 describe('boneLeftBound', () => {
   it('is true only beyond the bound sphere of the 3D', () => {
@@ -275,12 +276,16 @@ describe('object skeletons', () => {
           expect(run(true, at, frame, 0.1), `both read, ${String(frame)}`).toBeLessThan(1e-6);
         }
       }
-      // Below 10 frames a second, the prisoner updated every frame (each frame cut to 0.1 s) and
-      // the headsman ahead (his whole frames): apart, his chop runs on from the prisoner's.
+      // Below 10 frames a second, the prisoner updated every frame and the headsman ahead, both
+      // clips there: each runs the clock's whole step. Apart, their chops start within a frame of
+      // each other (where in the headsman's interval the event came: 0.05 s at most here) and
+      // stay so; together, in step. Before the frame timer, an update every frame was cut to
+      // 0.1 s and one ahead was not: apart, the headsman's chop ran on from the prisoner's, more
+      // than 0.1 s here and further with every frame.
       for (const frame of [0.14, 0.2]) {
         for (let i = 0; i < 3; i++) {
           const at = 1 + i * 0.047;
-          expect(run(false, at, frame, 0, 0, true)).toBeGreaterThan(0.1);
+          expect(run(false, at, frame, 0, 0, true), `apart, ${String(frame)}`).toBeLessThan(0.051);
           expect(run(true, at, frame, 0, 0, true), `near, ${String(frame)}`).toBeLessThan(1e-6);
         }
       }
@@ -334,7 +339,45 @@ describe('object skeletons', () => {
     });
   });
 
-  it('tells how far the pose shown has run: slower than the clock where long frames are cut', () => {
+  it('runs a graph updated every frame and one updated ahead alike at 7 and 10 frames a second', () => {
+    // Found 2026-11-12: below 10 frames a second a graph updated every frame had each update
+    // cut to 0.1 s while one updated ahead ran its whole interval: at 7 a second the near one
+    // fell 0.3 s behind the far one every second. The frame is cut once, by the frame timer
+    // (the clock here is the sum of its steps), and both run the clock's whole step.
+    for (const rate of [7, 10]) {
+      const near = startObjectSkeleton(nodes, graph, () => 0.5)?.skeleton;
+      const far = startObjectSkeleton(nodes, graph, () => 0.5)?.skeleton;
+      if (!near || !far) throw new Error('no skeleton');
+      const rates = (animated: AnimatedSkeleton): AnimationRate => ({
+        interval: animated === far ? 0.25 : 0,
+        interpolate: true,
+        slop: 0.25,
+      });
+      const timer = new FrameTimer();
+      let clock = 0;
+      animateSkeletons([near, far], clock, rates);
+      let ahead = 0;
+      for (let frame = 0; frame < 5 * rate; frame++) {
+        const step = timer.step(1 / rate);
+        clock += step;
+        animateSkeletons([near, far], clock, rates);
+        if ((far.time ?? 0) > clock + 1e-9) ahead++;
+        // The clip moves the blade 10 units a second: both show the clock's time, every frame.
+        const label = `${String(rate)} a second, frame ${String(frame)}`;
+        expect((near.pose.worlds[2 * 16 + 12] ?? 0) / 10, label).toBeCloseTo(clock, 4);
+        expect((far.pose.worlds[2 * 16 + 12] ?? 0) / 10, label).toBeCloseTo(clock, 4);
+      }
+      // The far one did run ahead (its interval is longer than a frame and its slop).
+      expect(ahead, `${String(rate)} a second`).toBeGreaterThan(rate);
+      expect(shownProgress(near)).toBeCloseTo(clock, 6);
+      expect(shownProgress(far)).toBeCloseTo(clock, 6);
+      // More than the 5 s of the real clock: the timer's step at these rates is a little longer
+      // than the frame (0.1583 s at 7 a second, 0.1083 s at 10).
+      expect(clock).toBeGreaterThan(5);
+    }
+  });
+
+  it('tells how far the pose shown has run: with the clock at any frame rate, less across a gap', () => {
     const near = startObjectSkeleton(nodes, graph, () => 0.5)?.skeleton;
     const far = startObjectSkeleton(nodes, graph, () => 0.5)?.skeleton;
     if (!near || !far) throw new Error('no skeleton');
@@ -351,10 +394,17 @@ describe('object skeletons', () => {
       expect(shownProgress(one)).toBeCloseTo(1, 2);
       expect((one.pose.worlds[2 * 16 + 12] ?? 0) / 10).toBeCloseTo(shownProgress(one) ?? 0, 3);
     }
-    // 4 frames a second: the near one's updates are cut to 0.1 s, its animation runs 0.1 a frame.
+    // The clock stepping 0.25 s a frame (longer than any step the frame timer hands out, short
+    // of a gap): the near one's updates are the clock's whole steps. Before the frame timer each
+    // was cut to 0.1 s here and its animation ran 0.1 s a frame (1.8 s where the clock had 3).
     for (let i = 1; i <= 8; i++) animateSkeletons([near], 1 + i * 0.25, rate);
-    expect(shownProgress(near)).toBeCloseTo(1.8, 3);
-    expect((near.pose.worlds[2 * 16 + 12] ?? 0) / 10).toBeCloseTo(1.8, 3);
+    expect(shownProgress(near)).toBeCloseTo(3, 3);
+    expect((near.pose.worlds[2 * 16 + 12] ?? 0) / 10).toBeCloseTo(3, 3);
+    // Left out of the updates for 2 s (not animated meanwhile): it goes on by a gap's step,
+    // not by the time it missed.
+    animateSkeletons([near], 5, rate);
+    expect(shownProgress(near)).toBeCloseTo(3 + FRAME_GAP_SECONDS, 3);
+    expect(near.time).toBe(5);
   });
 
   it('moves on every frame at the clock’s pace across the updates of a far graph', () => {
@@ -490,10 +540,11 @@ describe('object skeletons', () => {
     expect(moments[0]).toBeCloseTo(0.3, 3);
   });
 
-  it('gives a clip annotation its lateness on the clock where a long frame was cut', () => {
-    // Found in review 2026-11-09: below 10 frames a second a frame's update is cut to 0.1 s and
-    // the event's lateness was told in seconds of that cut step: at 5 frames a second the
-    // annotation half way through the update came out 0.05 s before the frame's end, not 0.1.
+  it('gives a clip annotation its lateness on the clock in a long frame', () => {
+    // Found in review 2026-11-09: below 10 frames a second a frame's update was cut to 0.1 s and
+    // the event's lateness was told in seconds of that cut step, not of the clock. The update
+    // is the clock's whole step now (the frame timer cuts a long frame once, for the clock), so
+    // the graph's own seconds are the clock's.
     const struck: AnimationBinding = {
       ...swing,
       animation: { ...swing.animation, annotations: [{ time: 0.15, text: 'HitFrame' }] },
@@ -513,11 +564,20 @@ describe('object skeletons', () => {
     skeleton.onEvents = (events) => {
       for (const event of events) if (event.name === 'HitFrame') late.push(event.late ?? 0);
     };
-    // Frames of 0.2 s, each update cut to 0.1 s: the graph passes 0.15 half way through the
-    // update from 0.1 to 0.2, which stands for the frame from 0.2 to 0.4 on the clock.
+    // Frames of 0.2 s: the graph passes 0.15 in the update from 0 to 0.2, 0.05 s before its end
+    // (and the clock's 0.2). Cut to 0.1 s, it passed it half way through the update from 0.1 to
+    // 0.2, which stood for the frame from 0.2 to 0.4: 0.25 s late on the clock.
+    const moments: number[] = [];
+    const heard = skeleton.onEvents;
+    skeleton.onEvents = (events) => {
+      heard(events);
+      for (const event of events)
+        if (event.name === 'HitFrame') moments.push((skeleton.time ?? 0) - (event.late ?? 0));
+    };
     for (let frame = 0; frame <= 4; frame++) animateSkeletons([skeleton], frame * 0.2);
     expect(late).toHaveLength(1);
-    expect(late[0]).toBeCloseTo(0.1, 6);
+    expect(late[0]).toBeCloseTo(0.05, 6);
+    expect(moments[0]).toBeCloseTo(0.15, 6);
   });
 
   it('tells the update an unseen graph ran ahead in, whose pose it shows at once', () => {

@@ -1,0 +1,235 @@
+// Conformance: frame time (engine map: Animation and bodies > Frame time). One step for the
+// whole frame: at a low frame rate every system moves on by the frame timer's step, so actors
+// whose graphs update at different rates stay in step, with each other and with the game's
+// clock, the scripts' clock and the game's hour. Skipped without game data.
+//
+// Sources:
+// - The rule, observed in the original (src/world/frame-timer.ts; docs/animation.md, "Frame
+//   time"): a frame counts at most 1/6 s; with [Display] bCompensateUnstableFrameTime the step
+//   is evened out over the last iUnstableFrameTimeHistorySize (8) frames, their sum less the
+//   shortest and less the longest's first 0.05 s, over the size less two: 0.95 / 6 s at a steady
+//   7 frames a second, 0.65 / 6 s at 10.
+// - The data: the Bannered Mare [0001605E] in the evening, its people about the room; the
+//   graphs of those before the camera within [Animation] fAnimInterpNearDist update every
+//   frame, those behind it every fAnimInterpMaxTime, ahead of the clock.
+
+import { describe, expect, it } from 'vitest';
+import { shownProgress } from '../../../src/animation/animated-skeleton.ts';
+import { hasGamedata, openSim, type Sim } from '../../helpers/sim.ts';
+
+const BANNERED_MARE = 0x1605e;
+const HULDA = 0x1a66e;
+/** Frames run at the rate before measuring: the timer's history holds that rate alone. */
+const LEAD_IN = 10;
+const SECONDS = 5;
+
+/** The game's hour clock in seconds of the game's day count. */
+function hourSeconds(sim: Sim): number {
+  const session = sim.world.session;
+  return (session.gameDaysPassed * 24 + session.gameHour) * 3600;
+}
+
+describe.skipIf(!hasGamedata())('one step for the whole frame (original)', () => {
+  for (const [rate, step] of [
+    [7, 0.95 / 6],
+    [10, 0.65 / 6],
+  ] as const) {
+    it(`keeps two actors’ graphs, the clocks and the hour in step at ${String(rate)} frames a second`, async () => {
+      const sim = await openSim({ interior: BANNERED_MARE, hour: 20 });
+      try {
+        await sim.step(2);
+        // Beside Hulda, facing her: she is near and before the camera, others are behind it.
+        const hulda = await sim.position(HULDA);
+        expect(hulda).toBeDefined();
+        if (!hulda) return;
+        const [px, py] = sim.world.player.feet;
+        const away = Math.hypot(px - hulda[0], py - hulda[1]) || 1;
+        await sim.moveTo([
+          hulda[0] + ((px - hulda[0]) / away) * 150,
+          hulda[1] + ((py - hulda[1]) / away) * 150,
+          hulda[2],
+        ]);
+        sim.look([hulda[0], hulda[1], hulda[2] + 100]);
+        await sim.step(1);
+        sim.look([hulda[0], hulda[1], hulda[2] + 100]);
+        const frame = 1 / rate;
+        for (let i = 0; i < LEAD_IN; i++) await sim.step(frame, frame);
+        // Those whose graphs run (one whose graph has not is not animated: it stays out).
+        const actors = sim
+          .actors()
+          .filter((staged) => !staged.dead && shownProgress(staged.placed) !== undefined);
+        const from = new Map(actors.map((staged) => [staged, shownProgress(staged.placed) ?? 0]));
+        const clock = sim.time;
+        const scripts = sim.runtime.state.realTime;
+        const hour = hourSeconds(sim);
+        const ahead = new Set<(typeof actors)[number]>();
+        const frames = SECONDS * rate;
+        for (let i = 0; i < frames; i++) {
+          sim.look([hulda[0], hulda[1], hulda[2] + 100]);
+          await sim.step(frame, frame);
+          // The frame's step is the timer's for this rate, the same for every frame.
+          expect(sim.world.frameStep, `frame ${String(i)}`).toBeCloseTo(step, 9);
+          for (const staged of actors)
+            if ((staged.placed.time ?? 0) > sim.time + 1e-6) ahead.add(staged);
+        }
+        // The game's clock, the scripts' and the game's hour moved on by the frames' steps: a
+        // little more than the real clock's 5 s.
+        const passed = sim.time - clock;
+        expect(passed).toBeCloseTo(frames * step, 6);
+        expect(passed).toBeGreaterThan(SECONDS);
+        expect(sim.runtime.state.realTime - scripts).toBeCloseTo(passed, 6);
+        expect((hourSeconds(sim) - hour) / sim.world.session.clockRate).toBeCloseTo(passed, 2);
+        // Hulda, near and before the camera, is updated every frame; those behind the camera
+        // are updated ahead. All of them animated the clock's time: the ones updated every frame
+        // to the frame, the ones ahead to within the interval they run ahead by. Before the
+        // frame timer (each update every frame cut to 0.1 s), at 7 frames a second Hulda and the
+        // three others updated every frame animated 3.5 s of the clock's 5 s and those behind
+        // the camera 4.1 to 5.1 s; at 10 a second, frames of exactly 0.1 s, nothing was cut,
+        // and with the timer's step of 0.1083 s the old cut left her at 5 s of the clock's 5.42.
+        const ran = (staged: (typeof actors)[number]): number =>
+          (shownProgress(staged.placed) ?? 0) - (from.get(staged) ?? 0);
+        const near = actors.filter((staged) => !ahead.has(staged));
+        const far = actors.filter((staged) => ahead.has(staged));
+        const her = sim.actor(HULDA);
+        expect(her && near.includes(her), 'Hulda updated every frame').toBe(true);
+        expect(far.length, 'actors updated ahead').toBeGreaterThan(0);
+        const interval = sim.world.session.ini.number('Animation', 'fAnimInterpMaxTime');
+        for (const staged of near) {
+          const name = staged.reference.toString(16);
+          expect(ran(staged), `${name}, updated every frame`).toBeCloseTo(passed, 6);
+        }
+        for (const staged of far) {
+          const name = staged.reference.toString(16);
+          const off = Math.abs(ran(staged) - passed);
+          expect(off, `${name}, updated ahead`).toBeLessThanOrEqual(interval + 1e-6);
+        }
+      } finally {
+        await sim.close();
+      }
+    }, 600_000);
+  }
+});
+
+// A character goes the frame's whole way in the physics steps the frame is handed. Observed in
+// the original (docs/physics.md, "Steps"): below 20 frames a second a frame hands Havok three
+// steps of fMaxTime, less than the frame's step, and a character's controller goes the way it
+// wants in the frame over the time Havok was handed, so the player and the actors keep up with
+// their animations while the simulated bodies fall behind. Moved by the steps alone, the player
+// ran at 32% of their speed at 7 frames a second and at 46% at 10.
+describe.skipIf(!hasGamedata())("a character's way at a low frame rate (original)", () => {
+  it('lets the player run as far as the clock says at 7 and 10 frames a second', async () => {
+    const sim = await openSim({ interior: BANNERED_MARE, hour: 20 });
+    try {
+      await sim.step(2);
+      const start: [number, number, number] = [...sim.world.player.feet];
+      const yaw = sim.world.player.yaw;
+      /** Units a second of the game's clock the player covers running from the start. */
+      const speed = async (frame: number, frames: number): Promise<number> => {
+        await sim.moveTo(start, yaw);
+        for (let i = 0; i < LEAD_IN; i++) await sim.step(frame, frame);
+        const [x, y] = sim.world.player.feet;
+        const clock = sim.time;
+        sim.press('Forward', true);
+        for (let i = 0; i < frames; i++) await sim.step(frame, frame);
+        sim.press('Forward', false);
+        const [nx, ny] = sim.world.player.feet;
+        return Math.hypot(nx - x, ny - y) / (sim.time - clock);
+      };
+      // Half a second of running each: the room is clear that far from the door.
+      const reference = await speed(1 / 60, 30);
+      expect(reference).toBeGreaterThan(100);
+      for (const rate of [10, 7]) {
+        const at = await speed(1 / rate, Math.round(rate / 2));
+        expect(at / reference, `${String(rate)} frames a second`).toBeGreaterThan(0.9);
+        expect(at / reference, `${String(rate)} frames a second`).toBeLessThan(1.1);
+      }
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+});
+
+// A character's path is the same at any frame rate (docs/physics.md, "A character's way in the
+// steps"): a step that covers more than its own time goes in moves of no more than that time,
+// snapped to the ground between them, and the player running down the land keeps to it as at 60
+// frames a second. In one long move a step the player left the slope by Whiterun's walls (some
+// 6.6 degrees) for a fifth of the steps at 15 frames a second, and off the ground took no
+// controls.
+const TAMRIEL = 0x3c;
+
+describe.skipIf(!hasGamedata())("a character's path on the land at a low frame rate", () => {
+  it('keeps the player running downhill on the ground at 15 and 10 frames a second', async () => {
+    const sim = await openSim({
+      exterior: { world: TAMRIEL, cell: [4, -11] },
+      hour: 10,
+      gridRadius: 1,
+    });
+    try {
+      await sim.step(2);
+      const player = sim.world.player;
+      const start: [number, number, number] = [...player.feet];
+      let steps = 0;
+      let grounded = 0;
+      // After each of the player's physics steps.
+      const play = sim.world.play;
+      if (!play) throw new Error('no place open');
+      play.stepHooks.add(() => {
+        steps++;
+        if (player.character.grounded) grounded++;
+      });
+      /** Running `seconds` of the clock from the start along `yaw` at frames of `frame`. */
+      const run = async (
+        yaw: number,
+        frame: number,
+        seconds: number,
+      ): Promise<{ grounded: number; speed: number; drop: number }> => {
+        await sim.moveTo(start, yaw);
+        sim.world.look(yaw);
+        for (let i = 0; i < LEAD_IN; i++) await sim.step(frame, frame);
+        const [x, y, z] = player.feet;
+        const clock = sim.time;
+        steps = 0;
+        grounded = 0;
+        sim.press('Forward', true);
+        while (sim.time - clock < seconds - 1e-6) {
+          sim.world.look(yaw);
+          await sim.step(frame, frame);
+        }
+        sim.press('Forward', false);
+        const [nx, ny, nz] = player.feet;
+        const along = Math.hypot(nx - x, ny - y);
+        return {
+          grounded: grounded / Math.max(1, steps),
+          speed: along / (sim.time - clock),
+          drop: (z - nz) / Math.max(1, along),
+        };
+      };
+      // Downhill: of eight headings, the one going down the land the most at 60 frames a second,
+      // clear and on the ground all the way (by Whiterun's walls, south-east: some 6.6 degrees;
+      // to the south a drop on the way).
+      let yaw = 0;
+      let base = await run(0, 1 / 60, 1.5);
+      for (let i = 1; i < 8; i++) {
+        const heading = (i * Math.PI) / 4;
+        const tried = await run(heading, 1 / 60, 1.5);
+        if (tried.speed > 100 && tried.grounded > 0.95 && tried.drop > base.drop) {
+          yaw = heading;
+          base = tried;
+        }
+      }
+      // Down a slope of 5 degrees or more.
+      expect(base.drop).toBeGreaterThan(Math.tan((5 * Math.PI) / 180));
+      expect(base.speed).toBeGreaterThan(100);
+      expect(base.grounded).toBeGreaterThan(0.95);
+      for (const rate of [15, 10]) {
+        const at = await run(yaw, 1 / rate, 1.5);
+        const label = `${String(rate)} frames a second`;
+        expect(Math.abs(at.grounded - base.grounded), label).toBeLessThan(0.05);
+        expect(at.speed / base.speed, label).toBeGreaterThan(0.9);
+        expect(at.speed / base.speed, label).toBeLessThan(1.1);
+      }
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+});

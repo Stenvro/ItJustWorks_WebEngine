@@ -89,9 +89,8 @@ const DISMEMBERED_LIMB_VELOCITY = 10;
 
 /**
  * When in its graph's update a blow fell: `late`, how long before the update's end (the
- * Decapitate's GraphEvent.late, in seconds of the animation clock: animateSkeletons puts it on
- * the whole frame where a frame longer than its MAX_STEP had its update cut, below 10 frames a
- * second, and the player's is divided by the player's pace); `graphTime`, the update's
+ * Decapitate's GraphEvent.late, in seconds of the animation clock: a graph's update is the
+ * clock's whole step; the player's is divided by the player's pace); `graphTime`, the update's
  * end on the animation clock (an actor's graph runs on it, ahead of it between the updates of a
  * graph far from the camera or unseen). Without `graphTime` the graph runs on a clock of its own
  * and updates every frame (the player's body: PlayerAvatar's clock, which runs in menus that show

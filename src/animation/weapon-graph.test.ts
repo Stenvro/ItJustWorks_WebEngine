@@ -4,6 +4,7 @@ import { identity, transformPoint } from '../render/math.ts';
 import type { SkeletalGraph } from './behavior-runtime.ts';
 import { graphEvent } from './graph-events.ts';
 import { WeaponGraph } from './weapon-graph.ts';
+import { FRAME_GAP_SECONDS } from '../world/frame-timer.ts';
 
 /** One Havok bone, "String", which the clip pulls back along -y by time. */
 const havok: HkxSkeleton = {
@@ -69,13 +70,22 @@ describe('a held weapon graph', () => {
     ]);
   });
 
-  it('runs a long frame as one short step and ignores events it does not know', () => {
+  it('runs its wielder’s whole step, a gap as one short step, and ignores events it does not know', () => {
     const weapon = WeaponGraph.start(nodes, graph, () => 0.5, Int16Array.of(-1, 1));
     if (!weapon) throw new Error('no graph');
     weapon.hear([graphEvent('weaponDraw'), graphEvent('SoundPlay.WPNBowNockSD')]);
     const driven = new Map<number, Float32Array>();
+    // The longest step the frame timer hands out at its built-in settings (0.1861 s, from 6
+    // frames a second down): the weapon's graph runs it whole, as its wielder's does. It was
+    // cut to 0.1 s here while the wielder's graph was (the string moves 10 units a second).
+    weapon.update(0.1861, identity(), driven);
+    expect(transformPoint(driven.get(1) ?? identity(), [0, 0, 0])[1]).toBeCloseTo(-1.861, 3);
+    // Not run for 5 s: on by a gap's step, not by the time it missed.
     weapon.update(5, identity(), driven);
-    expect(transformPoint(driven.get(1) ?? identity(), [0, 0, 0])[1]).toBeCloseTo(-1);
+    expect(transformPoint(driven.get(1) ?? identity(), [0, 0, 0])[1]).toBeCloseTo(
+      -1.861 - 10 * FRAME_GAP_SECONDS,
+      3,
+    );
   });
 
   it("takes the wielder's variables", () => {

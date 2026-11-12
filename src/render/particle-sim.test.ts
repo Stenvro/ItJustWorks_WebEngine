@@ -6,12 +6,49 @@ import type { ParticleEmitter, ParticleSystemData } from './particle-data.ts';
 import {
   evenKeys,
   PARTICLE_FLOATS,
+  PARTICLE_MAX_STEP,
+  particleStep,
   ParticleSimulation,
   simpleColor,
   subTextureFrame,
   type ParticleBodies,
   type ParticleContext,
 } from './particle-sim.ts';
+import { FrameTimer } from '../world/frame-timer.ts';
+
+describe('particleStep', () => {
+  it("takes the frame's whole step at any frame rate while the system runs every update", () => {
+    for (const fps of [60, 30, 10, 7, 4]) {
+      const timer = new FrameTimer();
+      let clock = 0;
+      let previous: number | undefined;
+      let updated: number | undefined;
+      let ran = 0;
+      let first = 0;
+      for (let frame = 0; frame < 40; frame++) {
+        clock += timer.step(1 / fps);
+        if (frame === 0) first = clock;
+        ran += particleStep(clock, updated, previous);
+        updated = clock;
+        previous = clock;
+      }
+      // All of the clock's time since its first update (a system starts there).
+      expect(ran).toBeCloseTo(clock - first, 9);
+    }
+  });
+
+  it('takes no step at its first update and at most PARTICLE_MAX_STEP after being left out', () => {
+    expect(particleStep(5, undefined, 4.9)).toBe(0);
+    // Left out since 3 s (the update before this one was at 4.85 s): back, it goes on by 0.1 s.
+    expect(particleStep(5, 3, 4.85)).toBe(PARTICLE_MAX_STEP);
+    // Left out of one update only: the same.
+    expect(particleStep(5, 4.7, 4.85)).toBe(PARTICLE_MAX_STEP);
+    // It ran in the last update, a long frame ago: the frame's whole step.
+    expect(particleStep(5, 4.85, 4.85)).toBeCloseTo(0.15, 9);
+    // A second view in the same frame: no time has passed.
+    expect(particleStep(5, 5, 4.85)).toBe(0);
+  });
+});
 
 const EMITTER_OBJECT = 1;
 

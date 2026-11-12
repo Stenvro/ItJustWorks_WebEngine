@@ -41,6 +41,7 @@ import { studioLighting } from '../render/studio-lighting.ts';
 import { RoomCuller } from '../render/room-culler.ts';
 import { roomIndexAt, type CellRoom } from '../world/cell-rooms.ts';
 import { cellSceneLighting, pointLights } from '../world/cell-lighting.ts';
+import { stepSince } from '../world/frame-timer.ts';
 import {
   cellArrival,
   cellReferences,
@@ -1099,7 +1100,7 @@ export class ModelViewer {
   onActivate: (() => void) | undefined;
   /** Whether the renderer shows this viewer's view. */
   #viewShown = false;
-  /** Real seconds of the last clock tick (cells). */
+  /** The session's frame clock at the last clock tick (cells). */
   #lastClock: number | undefined;
 
   /** Centres the image in the part of the screen the shell does not cover. */
@@ -2184,7 +2185,11 @@ export class ModelViewer {
     const now = performance.now() / 1000;
     const session = this.#session;
     if (session) {
-      const delta = this.#lastClock === undefined ? 0 : Math.min(0.25, now - this.#lastClock);
+      // The frame's step, as the frame timer handed it out for every system (the session's
+      // frame clock: src/world/frame-timer.ts; the world's sky runs the hour the same way).
+      const frame = session.frameSeconds;
+      const delta = this.#lastClock === undefined ? 0 : stepSince(frame - this.#lastClock);
+      this.#lastClock = frame;
       // At the TimeScale times the panel's fast-forward (the slider sets the hour); it stands
       // still while the game is in a menu.
       if (!session.menuMode && !session.loading) {
@@ -2216,7 +2221,6 @@ export class ModelViewer {
         },
       );
     }
-    this.#lastClock = now;
     return now;
   }
 

@@ -421,6 +421,14 @@ export class GameSession {
   gameHour = 10;
   /** Whole days passed since the game started (the clock's midnights). */
   gameDaysPassed = 0;
+  /**
+   * The real clock as the game's frames count it (seconds): the sum of the frame timer's steps
+   * (src/world/frame-timer.ts), which the page's frame loop moves on before it draws and the
+   * headless simulation with each step. It runs on in menus. The viewers run the game's hour on
+   * it and the image-space modifiers their timelines, so a long frame moves them no further than
+   * it moves the rest of the game.
+   */
+  frameSeconds = 0;
   /** The date a new game starts on (the GameYear, GameMonth and GameDay globals). */
   #startDate: GameDate = DEFAULT_START_DATE;
   #packages: Promise<PackageData> | undefined;
@@ -580,7 +588,7 @@ export class GameSession {
       );
       return db;
     });
-    this.imageSpaceModifiers = new ScreenModifiers(this.db, terminal);
+    this.imageSpaceModifiers = new ScreenModifiers(this.db, terminal, () => this.frameSeconds);
     // The sky knows every weather and its settings as soon as the records are read.
     void this.weathers();
     void this.settings().then((gmst) => {

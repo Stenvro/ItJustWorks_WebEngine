@@ -16,9 +16,7 @@ import {
 import type { SkeletalGraph } from './behavior-runtime.ts';
 import type { GraphEvent } from './graph-events.ts';
 import { multiply } from '../render/math.ts';
-
-/** A frame longer than this (a hitch) advances the graph by this much. */
-const MAX_STEP = 0.1;
+import { stepSince } from '../world/frame-timer.ts';
 
 export class WeaponGraph {
   readonly #object: ObjectSkeleton;
@@ -83,7 +81,8 @@ export class WeaponGraph {
   update(seconds: number, hang: Float32Array, driven: Map<number, Float32Array>): void {
     const { pose, behavior } = this.#object.skeleton;
     if (!behavior) return;
-    behavior.update(Math.max(0, Math.min(seconds, MAX_STEP)));
+    // Its wielder's step (the frame's, as the frame timer cut it).
+    behavior.update(stepSince(seconds));
     // Its own events (BowDrawOut) were taken by its own transitions as it ran.
     behavior.takeRaised();
     pose.update(behavior.pose);

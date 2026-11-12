@@ -312,6 +312,11 @@ const toHavok = (v: number): number => v / HAVOK_SCALE;
 export const ACTOR_MASS = 100;
 /** The most a moving body speeds a character it hits (game units per second). */
 const PUSHED_MAX_SPEED = 400;
+/**
+ * A step whose own movement covers more than this many times its time (CharacterBody.step) goes
+ * in several moves, each covering no more than the step's time.
+ */
+const SUBSTEP_PACE = 1 + 1e-6;
 /** How fast a push dies away (per second: its speed falls by e every 1/PUSH_DAMPING seconds). */
 const PUSH_DAMPING = 6;
 /** A body pushes from contacts at most this far apart (Havok units: the narrow phase's margin). */
@@ -442,7 +447,7 @@ export class CharacterBody {
   /** Feet (bottom of the capsule) after the last step and the one before, game units. */
   #feet: [number, number, number];
   #previous: [number, number, number];
-  /** The last step's length (seconds; 0 before the first). */
+  /** The time the last step's movement covered (seconds; 0 before the first). */
   #stepped = 0;
   /** Vertical speed, game units per second (up positive). */
   verticalSpeed = 0;
@@ -532,6 +537,8 @@ export class CharacterBody {
   #leftWith: [number, number] = [0, 0];
   /** A hit's push back (knockBack): its speed (game units per second) and the seconds left. */
   #knock: { readonly velocity: readonly [number, number]; left: number } | undefined;
+  /** The simulated bodies it pushed in this step's moves (#push: once a step each). */
+  readonly #pushedBodies = new Set<number>();
   /** The mass it pushes back with against moving bodies (kg; pushedSpeed) and characters. */
   mass = ACTOR_MASS;
   /**
@@ -1103,6 +1110,45 @@ export class CharacterBody {
   }
 
   /**
+   * How far (Havok units) the shape that stood on the ground and went `moved` (it wanted
+   * `desired`) without it is above walkable ground below, within the controller's snap, if any;
+   * not onto another actor. Rapier's controller snaps to the ground only where its move went
+   * down, and the move of one on the ground is level: walking down a slope, the shape went level
+   * off it, its foot higher above it at each step (still on the ground by Rapier's look ahead),
+   * until it had none and fell to it (on 20 degrees at 370 units a second, off the ground three
+   * steps of five, in falls of some twenty steps, its controls not taken). The engine's character
+   * proxy keeps to the slope it walks down.
+   */
+  #downSlope(
+    moved: RAPIER.Vector,
+    desired: RAPIER.Vector,
+    predicate: (collider: RAPIER.Collider) => boolean,
+  ): number | undefined {
+    if (desired.x === 0 && desired.y === 0 && moved.x === 0 && moved.y === 0) return undefined;
+    const at = this.#body.translation();
+    const hit = this.physics.world.castShape(
+      { x: at.x + moved.x, y: at.y + moved.y, z: at.z + moved.z },
+      NO_ROTATION,
+      { x: 0, y: 0, z: -1 },
+      queryShape(this.#collider.shape),
+      0,
+      toHavok(this.shape.radius) + SKIN,
+      true,
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+      QueryGroups.controllerSolid,
+      this.#collider,
+      undefined,
+      (collider) => predicate(collider) && !this.#otherActor(collider),
+    );
+    // Cast to the surface, then kept the controller's gap (SKIN) off it: a cast kept to that gap
+    // stopped short on a slope now and then, or met nothing.
+    if (!hit || hit.normal1.z < Math.cos((this.settings.maxSlope * Math.PI) / 180)) {
+      return undefined;
+    }
+    return Math.max(0, hit.time_of_impact - SKIN / hit.normal1.z);
+  }
+
+  /**
    * Whether it stands on walkable ground once it moved by `moved` (Havok units). The contact
    * under its shape decides, unless that is too steep: then the cone may rest on an edge of level
    * ground (a stair's, a ledge's), which is met at the cone's own slope, so the faces under its
@@ -1337,7 +1383,8 @@ export class CharacterBody {
   /**
    * The horizontal velocity its last step made (game units per second): what it moves at, the
    * same on every frame between two steps (a frame with no step is no stop, and one with two
-   * no double speed).
+   * no double speed). Over the time the step's movement covered (`step`'s `covers`): a step
+   * that goes more of the frame's way than its own time is no faster walk to the graph.
    */
   get stepVelocity(): [number, number] {
     if (!(this.#stepped > 0)) return [0, 0];
@@ -1382,8 +1429,27 @@ export class CharacterBody {
     return this.verticalSpeed;
   }
 
-  /** One fixed step: gravity, the wanted movement, sliding and stepping. Before world.step. */
-  step(seconds: number): void {
+  /**
+   * One fixed step of `seconds`: gravity, the wanted movement, sliding and stepping. Before
+   * world.step. `covers`: the time its own movement covers in this step: the step times
+   * PhysicsWorld.movePace, the frame's time shared over the frame's steps, so the character goes
+   * the frame's whole way in them (observed in the original: PhysicsWorld.movePace). Its own
+   * movement is all of it that is its own: the wanted way (`velocity`), the fall and gravity, a
+   * jump, what it keeps through the air off a moving body; its path is the same at every frame
+   * rate. What other bodies do to it (their pushes, a knock, what carries it) goes by the step,
+   * as those bodies do. TODO(M13): inferred that the fall goes the covered time as the wanted way
+   * does; the original's character keeps its path (a jump's reach and height) below 20 frames a
+   * second.
+   *
+   * A step that covers more than its own time (below 20 frames a second) goes in moves of no
+   * more than its own time each (SUBSTEP_PACE), snapped to the ground between them as at 60 frames
+   * a second: in one long move a character walking downhill left the slope at each step (on 10
+   * degrees grounded 67% of the steps at 15 frames a second against 95% at 60) and, off the
+   * ground, took no controls.
+   */
+  step(seconds: number, covers = seconds): void {
+    const pace = seconds > 0 && covers >= 0 ? covers / seconds : 1;
+    const moves = pace > SUBSTEP_PACE ? Math.ceil(pace - (SUBSTEP_PACE - 1)) : 1;
     // Carried by what it stands on (#carrier): first by what that moved since its last step (a
     // script set it there: TranslateTo, SetPosition), so the shape stands on it again. Not for a
     // simulated body: where the solver left it differs from the step's forecast each time, and
@@ -1410,17 +1476,57 @@ export class CharacterBody {
     }
     // Moving bodies that hit it push it (#takePushes).
     this.#takePushes(carrier?.body, seconds);
+    this.#pushedBodies.clear();
+    const previous = this.#feet;
+    if (moves === 1) {
+      this.#move(seconds, seconds, covers, true);
+    } else {
+      // Each move from where the last one left the shape (its collider set there for the
+      // sweeps); the body then goes from where the step began to where the last move ended, so
+      // what it meets in the step's solve, and the others' sweeps before it, find it as before.
+      const start = this.#body.translation();
+      const touched = new Set<RAPIER.Collider>();
+      let landed: number | undefined;
+      for (let i = 0; i < moves; i++) {
+        const last = i === moves - 1;
+        this.#move(seconds, seconds / moves, covers / moves, last);
+        for (const collider of this.touched) touched.add(collider);
+        landed ??= this.landedFrom;
+        const at = this.#nextAt;
+        this.#body.setTranslation(last ? start : at, true);
+        if (last) this.#body.setNextKinematicTranslation(at);
+        this.physics.world.propagateModifiedBodyPositionsToColliders();
+      }
+      this.touched.length = 0;
+      this.touched.push(...touched);
+      this.landedFrom = landed;
+    }
+    this.#previous = previous;
+    this.#stepped = covers > 0 ? covers : seconds;
+  }
+
+  /** Where the last move left the shape's body (Havok units). */
+  #nextAt: RAPIER.Vector = { x: 0, y: 0, z: 0 };
+
+  /**
+   * One move of the step (step): `seconds`, the whole step's time (what carries it is found for
+   * it); `share`, this move's share of the step (pushes and a knock go by it); `covers`, the time
+   * this move's own movement covers. Only the `last` move finds what carries it.
+   */
+  #move(seconds: number, share: number, covers: number, last: boolean): void {
+    const pace = share > 0 ? covers / share : 1;
     const gravity = -this.physics.world.gravity.z * HAVOK_SCALE;
-    // How far it rises or falls in this step (game units). A step longer than the world's own
-    // (the complex mode's fMaxTimeComplex, twice fMaxTime) takes its rise and fall in parts of
-    // the world's own step: a jump goes as high and a fall as far whatever the step (taken whole,
-    // a jump of 76 units went 3 units higher in a crowd than alone).
-    const parts = Math.max(1, Math.round(seconds / this.physics.stepSeconds));
-    const part = seconds / parts;
+    // How far it rises or falls in this move (game units), over the time its own movement
+    // covers. A move that covers more than the world's own step (the complex mode's
+    // fMaxTimeComplex, twice fMaxTime) takes its rise and fall in parts of the world's own step:
+    // a jump goes as high and a fall as far whatever the step (taken whole, a jump of 76 units
+    // went 3 units higher in a crowd than alone).
+    const parts = Math.max(1, Math.round(covers / this.physics.stepSeconds));
+    const part = covers / parts;
     let rise = 0;
     if (this.swimming) {
       this.#jumpSpeed = 0;
-      rise = this.verticalSpeed * seconds;
+      rise = this.verticalSpeed * covers;
     } else if (this.#jumpSpeed > 0) {
       this.verticalSpeed = this.#jumpSpeed;
       this.#jumpSpeed = 0;
@@ -1464,25 +1570,21 @@ export class CharacterBody {
     // Off another actor it stood on: away from it at least as fast as it falls (as off a slope).
     const off = this.#offActor;
     const slide = off ? Math.max(OFF_ACTOR_SPEED, -this.verticalSpeed) : 0;
-    const knock = this.#knocked(seconds);
+    const knock = this.#knocked(share);
     const [vx, vy] = recoveringVelocity(
       [
-        this.velocity[0] +
+        (this.velocity[0] + this.#leftWith[0] + (off ? off[0] * slide : 0)) * pace +
           this.#pushed[0] +
-          this.#leftWith[0] +
-          knock[0] +
-          (off ? off[0] * slide : 0),
-        this.velocity[1] +
+          knock[0],
+        (this.velocity[1] + this.#leftWith[1] + (off ? off[1] * slide : 0)) * pace +
           this.#pushed[1] +
-          this.#leftWith[1] +
-          knock[1] +
-          (off ? off[1] * slide : 0),
+          knock[1],
       ],
       [...inside.values()].map(({ way, depth }) => ({ way, depth: depth * HAVOK_SCALE })),
     );
     const desired = {
-      x: toHavok(vx * seconds),
-      y: toHavok(vy * seconds),
+      x: toHavok(vx * share),
+      y: toHavok(vy * share),
       z: toHavok(rise),
     };
     // On stairs (surfaces of a stair material) whole steps are climbed; elsewhere only what
@@ -1527,6 +1629,14 @@ export class CharacterBody {
     // Rapier's controller calls anything less steep than a wall ground: on what is too steep to
     // walk the character has no support, and falls and slides off it.
     if (this.#grounded && !this.#onWalkable(moved, rest)) this.#grounded = false;
+    // Walking down a slope it keeps to it (#downSlope).
+    if (wasGrounded && !this.#grounded && !rising && !this.swimming) {
+      const down = this.#downSlope(moved, desired, predicate);
+      if (down !== undefined) {
+        moved = { x: moved.x, y: moved.y, z: moved.z - down };
+        this.#grounded = true;
+      }
+    }
     // How far it got the way it was to go (sliding along a riser is no way up the stairs).
     const wanted = desired.x * desired.x + desired.y * desired.y;
     const made = moved.x * desired.x + moved.y * desired.y;
@@ -1587,9 +1697,11 @@ export class CharacterBody {
         below = true;
         if (this.#otherActor(collision.collider)) onActor = collision.collider;
       }
-      if (seconds > 0) {
-        this.#push(collision, desired, seconds);
-        this.#bump(collision, desired, seconds);
+      // Its speed is its way over the time its own movement covered: a step that goes more of
+      // the frame's way than its own time is no harder shove or bump.
+      if (covers > 0) {
+        this.#push(collision, desired, covers);
+        this.#bump(collision, desired, covers);
       }
     }
     // Still blocked: an actor seeks a way round, its way turned a little, then more.
@@ -1647,17 +1759,20 @@ export class CharacterBody {
     this.#unsupported = !this.#grounded && !this.swimming && below;
     this.#below = below;
     // Sliding down what is too steep, it falls no faster than the slope lets it.
-    if (this.#unsupported && desired.z < 0 && moved.z > desired.z && seconds > 0) {
-      this.verticalSpeed = Math.min(0, (moved.z * HAVOK_SCALE) / seconds);
+    if (this.#unsupported && desired.z < 0 && moved.z > desired.z && covers > 0) {
+      this.verticalSpeed = Math.min(0, (moved.z * HAVOK_SCALE) / covers);
     }
     // A ceiling stops the rise; the ground stops the fall.
     if (rising && moved.z < desired.z * 0.5) this.verticalSpeed = 0;
     if (this.#grounded && this.verticalSpeed < 0) this.verticalSpeed = 0;
     const current = this.#body.translation();
     const next = { x: current.x + moved.x, y: current.y + moved.y, z: current.z + moved.z };
-    // What it stands on, where everything is now (before this step moves the bodies).
+    // What it stands on, where everything is now (before this step moves the bodies): found by
+    // the step's last move, which it carries by the whole step.
     const standing =
-      this.#grounded && !this.swimming ? this.#findCarrier(next, predicate, seconds) : undefined;
+      last && this.#grounded && !this.swimming
+        ? this.#findCarrier(next, predicate, seconds)
+        : undefined;
     // Then by what the body it stands on does in this step (its next keyframe, its velocity),
     // as far as nothing else stops the shape. Leaving it (a jump, a step off) it keeps that
     // velocity through the air, until it lands.
@@ -1665,6 +1780,12 @@ export class CharacterBody {
     if (!standing && !this.#grounded && !this.swimming && this.#ridden) {
       this.#leftWith = [this.#ridden[0], this.#ridden[1]];
       if (this.#ridden[2] > 0) this.verticalSpeed += this.#ridden[2];
+      this.#ridden = undefined;
+    }
+    if (!last) {
+      this.#nextAt = next;
+      this.#watchFall(next);
+      return;
     }
     this.#ridden = undefined;
     this.carriedBy = undefined;
@@ -1705,21 +1826,20 @@ export class CharacterBody {
     }
     this.#carrier = standing;
     this.#body.setNextKinematicTranslation(next);
-    this.#previous = this.#feet;
-    this.#stepped = seconds;
+    this.#nextAt = next;
+    this.#watchFall(next);
+  }
+
+  /**
+   * Falling: the highest point of the feet since leaving the ground; landing (not in water)
+   * sets landedFrom to how far it fell, for this move. `next`: where the move left the body.
+   */
+  #watchFall(next: RAPIER.Vector): void {
     this.#feet = [
       next.x * HAVOK_SCALE,
       next.y * HAVOK_SCALE,
       next.z * HAVOK_SCALE - this.shape.height / 2,
     ];
-    this.#watchFall();
-  }
-
-  /**
-   * Falling: the highest point of the feet since leaving the ground; landing (not in water)
-   * sets landedFrom to how far it fell, for this step.
-   */
-  #watchFall(): void {
     const z = this.#feet[2];
     this.landedFrom = undefined;
     if (this.swimming) {
@@ -1916,7 +2036,8 @@ export class CharacterBody {
   #push(collision: RAPIER.CharacterCollision, desired: RAPIER.Vector, seconds: number): void {
     const collider = collision.collider;
     const body = collider?.parent();
-    if (!collider || !body?.isDynamic()) return;
+    // Once a step: the body's velocity stays what it was until the step is solved.
+    if (!collider || !body?.isDynamic() || this.#pushedBodies.has(body.handle)) return;
     const factor = pushFactor(
       this.physics.layerOf(collider),
       body.mass(),
@@ -1943,6 +2064,7 @@ export class CharacterBody {
       factor,
     );
     if (impulse <= 0) return;
+    this.#pushedBodies.add(body.handle);
     body.applyImpulseAtPoint(
       { x: direction[0] * impulse, y: direction[1] * impulse, z: direction[2] * impulse },
       at,

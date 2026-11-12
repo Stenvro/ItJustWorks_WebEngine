@@ -1433,6 +1433,22 @@ export class PhysicsWorld {
   #accumulator = 0;
   /** Frame time not yet handed to the steps (PhysicsWorld.step). */
   #owed = 0;
+  #movePace = 1;
+
+  /**
+   * The frame's time over the time its steps were handed, for the steps of the last `step`: 1
+   * while the frame is handed whole, more where it is longer than the steps it may take (below
+   * 20 frames a second), less while time owed is made up. Observed in the original: a
+   * character's controller is given the way it wants to go in the frame, and goes it at that way
+   * over the time physics was handed, not over the frame's: it covers the frame's whole way in
+   * the steps taken, however much of the frame's time they are, so a character keeps up with
+   * its animation while the simulated bodies fall behind and catch up. What moves a character
+   * in the steps (the player's controls, the actors' movers) moves it by a step times this (its
+   * fall too: CharacterBody.step); pushes and the simulated bodies go by the step itself.
+   */
+  get movePace(): number {
+    return this.#movePace;
+  }
   /**
    * Contacts below this speed (game units per second) make no sound and are not reported
    * (`[Audio] fMinSoundVel`); set before placing objects.
@@ -2929,7 +2945,7 @@ export class PhysicsWorld {
 
   /**
    * Advances the simulation by `seconds` in fixed steps, calling `beforeStep` before each
-   * (characters move there); returns the steps taken.
+   * (characters move there, by the step times `movePace`); returns the steps taken.
    */
   step(seconds: number, beforeStep?: (step: number) => void): number {
     // The engine's rule (observed in the original): a frame hands Havok its time and the time still owed,
@@ -2965,6 +2981,7 @@ export class PhysicsWorld {
     // own frame time's clamp, perhaps) was not read.
     this.#owed = Math.min(owed - handed, most);
     this.#accumulator += handed;
+    this.#movePace = Math.abs(seconds - handed) <= STEP_EPSILON ? 1 : Math.max(0, seconds) / handed;
     let steps = 0;
     while (this.#accumulator > STEP_EPSILON) {
       beforeStep?.(size);

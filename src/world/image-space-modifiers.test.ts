@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { FRAME_GAP_SECONDS, FrameTimer } from './frame-timer.ts';
 import { NEUTRAL_IMAGE_SPACE, type ImageSpace } from './image-space.ts';
 import {
   IMAD_CHANNEL_COUNT,
@@ -76,6 +77,58 @@ const base: ImageSpace = {
   tintColor: [0, 0, 1],
   depthOfField: { strength: 0.5, distance: 20000, range: 10000, blurRadius: 2, sky: false },
 };
+
+describe('the timelines on the frame clock (advanceTo)', () => {
+  const DURATION = 2;
+  /** Frames until the modifier has ended, the clock moved on by `frame` before each. */
+  function framesUntilEnded(stack: ImageSpaceModifiers, frame: () => number): number {
+    let frames = 0;
+    while (stack.isActive(9) && frames < 10000) {
+      stack.advanceTo(frame());
+      frames++;
+    }
+    return frames;
+  }
+  function started(clock: number): ImageSpaceModifiers {
+    const stack = new ImageSpaceModifiers();
+    stack.apply(modifier(9, { animatable: true, duration: DURATION }), 1);
+    stack.advanceTo(clock);
+    return stack;
+  }
+
+  it('reads the clock in seconds: a 2 s modifier is on for 2 s of it', () => {
+    let clock = 10;
+    const stack = started(clock);
+    expect(stack.isActive(9)).toBe(true);
+    const frames = framesUntilEnded(stack, () => (clock += 1 / 60));
+    expect(frames / 60).toBeCloseTo(DURATION, 1);
+  });
+
+  it("moves on by the frame timer's step at a low frame rate, as every system does", () => {
+    // 7 frames a second: the frame timer hands out 0.1583 s a frame; the modifier's 2 s have
+    // passed when the clock every system runs on has moved 2 s (13 frames).
+    const timer = new FrameTimer();
+    let clock = 0;
+    for (let i = 0; i < 16; i++) clock += timer.step(1 / 7);
+    const stack = started(clock);
+    const start = clock;
+    const frames = framesUntilEnded(stack, () => (clock += timer.step(1 / 7)));
+    expect(frames).toBe(13);
+    expect(clock - start).toBeGreaterThanOrEqual(DURATION);
+    expect(clock - start).toBeLessThan(DURATION + 0.16);
+  });
+
+  it('goes on by a gap, not by the time no frame asked', () => {
+    let clock = 0;
+    const stack = started(clock);
+    // 1.9 s without a frame asking: the timelines move a gap's step, the modifier stays on.
+    clock += 1.9;
+    stack.advanceTo(clock);
+    expect(stack.isActive(9)).toBe(true);
+    const frames = framesUntilEnded(stack, () => (clock += 1 / 60));
+    expect(frames / 60).toBeCloseTo(DURATION - FRAME_GAP_SECONDS, 1);
+  });
+});
 
 describe('modifiers that use their target', () => {
   it('centre their radial blur on it and focus their depth of field at its distance', () => {

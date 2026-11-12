@@ -93,6 +93,7 @@ import type { PlacedPart } from './raycast.ts';
 import { REFRACTION_FORMAT } from './refraction.ts';
 import {
   PARTICLE_FLOATS,
+  particleStep,
   ParticleSimulation,
   type ParticleBodies,
   type ParticleContext,
@@ -1565,8 +1566,6 @@ export class GpuScene {
 const PARTICLE_UPDATE_DISTANCE = 4096;
 /** Nor farther than this at all (their LOD has faded them out long before). */
 const PARTICLE_MAX_DISTANCE = 16384;
-/** Longest step of a particle update (a long frame or a system that comes back into view). */
-const PARTICLE_MAX_STEP = 0.1;
 
 /** Effect shader controlled variables (EffectShaderControlledVariable). */
 const EffectVariable = {
@@ -2024,6 +2023,9 @@ export class SceneRenderer {
   #particleData = new Float32Array(4096 * PARTICLE_FLOATS);
   /** Particle instances written this frame (a second view's go after them). */
   #particleCursor = 0;
+  /** The clock at this particle update and at the one before it (particleStep). */
+  #particlesAt: number | undefined;
+  #particlesBefore: number | undefined;
   #particleBuffer: GPUBuffer;
   readonly #shadowMap: GPUTexture;
   readonly #cascadeLayout: GPUBindGroupLayout;
@@ -3977,6 +3979,10 @@ export class SceneRenderer {
     start: number,
   ): void {
     this.#particleCursor = start;
+    if (seconds !== this.#particlesAt) {
+      this.#particlesBefore = this.#particlesAt;
+      this.#particlesAt = seconds;
+    }
     let needed = 0;
     for (const scene of scenes) {
       for (const draw of scene.particles) needed += draw.simulation.data.maxParticles;
@@ -4001,11 +4007,9 @@ export class SceneRenderer {
           (simulation.count > 0 &&
             sphereVisible(this.#frame.planes, simulation.center, simulation.radius));
         if (distance > PARTICLE_UPDATE_DISTANCE && !inView) continue;
-        // Time since this system last ran (it may have been out of view for a while).
-        const step =
-          draw.updated === undefined
-            ? 0
-            : Math.max(0, Math.min(PARTICLE_MAX_STEP, seconds - draw.updated));
+        // Time since this system last ran: the frame's step, or less of the time it was out of
+        // view for.
+        const step = particleStep(seconds, draw.updated, this.#particlesBefore);
         const context: ParticleContext = {
           seconds,
           dt: step,
