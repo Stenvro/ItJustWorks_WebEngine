@@ -225,6 +225,26 @@ describe.skipIf(!hasGamedata())('the combat AI shouts on the local game data', (
     expect(await offered('DragonUnrelentingForceShout', GORMLAITH)).toEqual([]);
   }, 60_000);
 
+  it('nor is a hand’s spell of that make an attack: Soul Trap', async () => {
+    // SoulTrap: one aimed, hostile Script effect without an AI score.
+    const soulTrap = await runtime.magic.item(await spell('SoulTrap'));
+    const firebolt = await runtime.magic.item(await spell('Firebolt'));
+    expect(soulTrap).toBeDefined();
+    expect(firebolt).toBeDefined();
+    if (!soulTrap || !firebolt) return;
+    expect(await runtime.casting.spellScore(LYDIA, soulTrap, 'attack', PLAYER_REF)).toEqual({
+      score: 0,
+      caster: 'script',
+    });
+    expect(await runtime.casting.spellWorth(LYDIA, soulTrap, 'attack', PLAYER_REF)).toBe(0);
+    const scored = await runtime.casting.spellScore(LYDIA, firebolt, 'attack', PLAYER_REF);
+    expect(scored.caster).toBe('offensive');
+    expect(await runtime.casting.spellWorth(LYDIA, firebolt, 'attack', PLAYER_REF)).toBe(
+      scored.score,
+    );
+    expect(scored.score).toBeGreaterThan(0);
+  }, 60_000);
+
   it('not a self spell whose script effect has no AI score: Clear Skies', async () => {
     const word = await runtime.magic.item(await spell('VoiceClearSkiesSelf3'));
     expect(word).toBeDefined();
