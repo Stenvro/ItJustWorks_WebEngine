@@ -228,6 +228,42 @@ describe('the dying life state', () => {
     expect(await actors.isDead(GUARD)).toBe(false);
   });
 
+  it('dies once of two lethal blows in the same instant: one death told, one counted', async () => {
+    // Two attackers' blows on one frame, or a blow and an arrow: neither waits for the other.
+    // Each found it alive before either had marked it dead, and both killed it: OnDeath twice
+    // and its base's dead count 2 (MQ101QuestScript counts the keep's two Imperials' OnDeath
+    // calls up to 2: one of them told twice set stage 280 with the other alive).
+    const BASE = 0x5100;
+    const { actors, log } = dyingEngine();
+    const runtime = log.runtime as unknown as {
+      state: GameState;
+      baseOf: () => Promise<number | undefined>;
+    };
+    runtime.baseOf = () => Promise.resolve(BASE);
+    actors.setBase(GUARD, ActorValue.health, 50);
+    await Promise.all([
+      actors.damage(GUARD, ActorValue.health, 80, 0x1234),
+      actors.damage(GUARD, ActorValue.health, 80, 0x5678),
+    ]);
+    expect(await actors.isDead(GUARD)).toBe(true);
+    expect(log.calls).toEqual([
+      'killed 5000 by 1234',
+      'OnDying 5000 (actor 1234)',
+      'OnDeath 5000 (actor 1234)',
+    ]);
+    expect(runtime.state.deadCounts.get(BASE)).toBe(1);
+    // A blow and a script's Kill in the same instant: once as well.
+    const other = dyingEngine();
+    other.actors.setBase(GUARD, ActorValue.health, 50);
+    await Promise.all([
+      other.actors.scriptKill(GUARD, 0x1234),
+      other.actors.damage(GUARD, ActorValue.health, 80, 0x5678),
+      other.actors.kill(GUARD, 0x9abc),
+    ]);
+    expect(other.log.calls.filter((call) => call.startsWith('OnDeath'))).toHaveLength(1);
+    expect(other.log.calls.filter((call) => call.startsWith('killed'))).toHaveLength(1);
+  });
+
   it('keeps a save made while it dies, so its OnDeath comes after the load', async () => {
     // Saved within its dying: its OnDeath was still to come.
     const { actors } = dyingEngine(false, () => new Promise<void>(() => undefined));

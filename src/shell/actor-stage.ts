@@ -1428,7 +1428,15 @@ export class ActorStage {
     return user;
   }
 
-  /** The enabled actors as searches see them (the dead too: their inventories are searched). */
+  /**
+   * The enabled actors as searches see them (the dead too: their inventories are searched),
+   * each where it is now: a corpse where its ragdoll carried it (livePlacement), as its
+   * reference's place is for the scripts and the packages. Kept at the spot it died on, a body
+   * that fell or was knocked farther than a search's radius from there was outside a search
+   * centred on the body itself: MQ101RalofGetDoorKey's Find looks within 101 units of the
+   * officer's body for the key he carries, and in Helgen Keep's first fight Ralof wandered
+   * about it for good (MQ101 stood at 280).
+   */
   *#searchActors(): Iterable<{
     reference: number;
     bases: readonly number[];
@@ -1438,10 +1446,11 @@ export class ActorStage {
     for (const staged of this.#actors.values()) {
       if (staged.visibility.hidden) continue;
       const { actor, look } = staged.placed;
+      const lies = staged.dead ? this.livePlacement(staged.reference)?.position : undefined;
       yield {
         reference: staged.reference,
         bases: [actor.base, look.npc],
-        position: staged.position,
+        position: lies ?? staged.position,
         dead: staged.dead,
       };
     }

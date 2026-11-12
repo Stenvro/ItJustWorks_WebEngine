@@ -294,14 +294,13 @@ and 290 built-in ones the readers ask for by name.
    reads; the timed bash's reaction (TODO(M13), docs/ai.md "Staggers").
 2. The rates' unit (acceleration, deceleration) and what the advanced avoidance adds.
 3. The cases left in the conformance list (round 5, above).
-4. A swing that misses its target falls on whoever stands in its cone (strikeTargets: the
-   aimed target first where the strike reaches it, else the nearest). Ralof's dual-wield power
-   attacks still fall on the player beside him in Helgen Keep's first fight (8 of his 25 blows
-   in `tests/sim-helgen-keep-fight.int.test.ts`, about 15 health each; 2 to 3 in the browser).
-   Allies are kept in the strike: the game settings count the blows an ally or a friend deals
-   before it turns (iAllyHitCombatAllowed 1000, iFriendHitCombatAllowed 3: src/ai/combat-ai.ts),
-   which only means something if a blow lands on the one's allies in a fight; ours counts them
-   the same way (src/ai/combat-ai.ts, the hit tolerance). The strike angle's reading (half-width or
-   whole) is still to be read from the original (TODO(M13)). (The swings from 190 to 450 units
-   seen there before were the stage's bridge dropping the AI's attack choice: fixed, every NPC
-   melee attack now goes through attackReaches.)
+4. A clip with several hit frames (the dual power attack's) strikes its target once an attack
+   here (TODO(M13)). (Done 2026-11-12: an NPC's swing that misses its combat target falls on no
+   one else, as observed in the original: its strike is at its combat target alone, so Ralof's
+   blows no longer fall on the player beside him in Helgen Keep's first fight, nor the
+   officer's on his soldier; the player's strike, which has no combat target, takes the actor
+   nearest its direction; the strike angle is the half-width, the angle off the strike's
+   direction; Sweep takes the others in twice that. The allowances for an ally's or a friend's
+   blows count the player's alone. The swings from 190 to 450 units seen there before were the
+   stage's bridge dropping the AI's attack choice: every NPC melee attack goes through
+   attackReaches.)

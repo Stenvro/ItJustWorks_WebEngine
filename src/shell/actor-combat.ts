@@ -58,6 +58,7 @@ import {
   type AttackReachContext,
   DEFAULT_ATTACK,
   powerAttackDefault,
+  reachExtents,
   rotatesThrough,
 } from '../gameplay/combat/attacks.ts';
 import type { AttackData } from '../ai/race-combat-records.ts';
@@ -2489,8 +2490,9 @@ export class ActorCombat implements CombatBridge {
       ranged: false,
     };
     const targets: StrikeTarget[] = [];
+    const mount = this.#options.session.scriptsReady?.world.mountOf?.(fighter.reference);
     for (const other of this.#fighters.values()) {
-      if (other === fighter || current.struck.has(other.reference)) continue;
+      if (other === fighter || other.reference === mount) continue;
       if (other.state.life === LifeState.dead || other.state.paired === 'support') continue;
       // A corpse its cell placed dead (Starts Dead, not raised since) is no living target: the
       // soldiers' blows fell on Gunjar's body in Helgen Keep (its ragdoll still takes the blow's
@@ -2514,7 +2516,34 @@ export class ActorCombat implements CombatBridge {
       [this.#heldWeapon(fighter)],
       { attackType: data.attackType },
     );
-    const contacts = strikeTargets(strike, targets, (sweeps ?? 0) !== 0, fighter.target);
+    // An NPC in a fight strikes its combat target and no one else (observed in the original):
+    // its swing that misses falls on no ally at its side, nor on another enemy. The player has no
+    // combat target: their strike finds its own at the hit frame, the one nearest its direction,
+    // whom they must see (a wall between: no one).
+    const combatTarget = fighter.player ? undefined : fighter.target;
+    let contacts = strikeTargets(
+      strike,
+      targets,
+      (sweeps ?? 0) !== 0 ? this.#settings.meleeSweepViewAngleMult : undefined,
+      combatTarget,
+    );
+    if (fighter.player) {
+      // (With Sweep the list may hold only the others it sweeps: its own target is the first.)
+      const own = strikeTargets(strike, targets, undefined, combatTarget)[0]?.target.reference;
+      const found = own === undefined ? undefined : this.#fighters.get(own);
+      if (found && !this.#seen(fighter, found)) contacts = contacts.slice(1);
+    }
+    // Each is struck once an attack. Those this attack struck already are taken off here, at
+    // once and after the strike chose (not before, and not across the wait for the perks above):
+    // an attack's hit frame raised again (two clips of a blend raise theirs within a frame or
+    // two) found its target left out and fell on the next actor in its cone instead, and two
+    // raised in one frame each passed the check before either had marked its target, so one
+    // blow landed two or three times over (found 2026-11-12 in Helgen Keep, in the browser: the
+    // officer's blow told three times within a millisecond).
+    const reached = contacts.length;
+    contacts = contacts.filter((contact) => !current.struck.has(contact.target.reference));
+    for (const contact of contacts) current.struck.add(contact.target.reference);
+    if (contacts.length === 0 && reached > 0) return;
     const physics = this.#play?.physics;
     const chest: Vec3 = [feet[0], feet[1], feet[2] + strike.height * CHEST];
     if (contacts.length === 0) {
@@ -2573,7 +2602,6 @@ export class ActorCombat implements CombatBridge {
       return;
     }
     for (const contact of contacts) {
-      current.struck.add(contact.target.reference);
       const at = contact.target.feet;
       const point: Vec3 = [at[0], at[1], at[2] + contact.target.height * CHEST];
       const way: Vec3 = [point[0] - chest[0], point[1] - chest[1], point[2] - chest[2]];
@@ -4632,7 +4660,11 @@ export class ActorCombat implements CombatBridge {
       target: targetBody,
       targetHeld: other.player && !goingAway,
       reach: this.#reach(fighter, false),
-      extents: this.#size(fighter).radius,
+      // The larger of the two shapes' radii (reachExtents). With its own alone, a fighter in
+      // reach of a large target's shape (Sovngarde's heroes 500 units from Alduin's centre, his
+      // radius 320) never began a plain attack; with its target's alone, a dragon held at its
+      // own shape's edge from a human never began a bite.
+      extents: reachExtents(this.#size(fighter).radius, this.#size(other).radius),
       clearTo: (point) => this.#options.movers.straightReach(fighter.reference, point),
       settings: this.#settings,
     };

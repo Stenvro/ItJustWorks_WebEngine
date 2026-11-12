@@ -72,6 +72,7 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   ): void => {
     act(name, (actor, call) => {
       state.actor(actor)[key] = bool(call.args[0], true);
+      if (key === 'attackOnSight') actors.reactionsChanged();
     });
   };
 
@@ -368,6 +369,7 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     const entry = state.actor(actor);
     entry.playerTeammate = bool(call.args[0], true);
     entry.canDoFavor = bool(call.args[1], true);
+    runtime.actors.reactionsChanged();
   });
   ask('isdoingfavor', false, (actor) => state.actors.get(actor)?.doingFavor ?? false);
   // Observed in the original: no story manager event (Player Gets Favor is never raised).
@@ -441,15 +443,18 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     if (target === undefined || target === actor) return;
     const state = runtime.state.actor(actor);
     state.combatTargets = [...new Set([...(state.combatTargets ?? []), target])];
+    runtime.actors.reactionsChanged();
     world.startCombat?.(actor, target, { fixed: true });
   });
   act('stopcombat', (actor) => {
     delete runtime.state.actor(actor).combatTargets;
+    runtime.actors.reactionsChanged();
     world.stopCombat?.(actor);
   });
   // On the player: the guards stop pursuing them (a bribe, a persuasion: CrimeGuardsScript).
   act('stopcombatalarm', (actor) => {
     delete runtime.state.actor(actor).combatTargets;
+    runtime.actors.reactionsChanged();
     world.stopCombat?.(actor);
     world.alarm?.(actor, undefined, 'stop');
     if (actor === PLAYER_REF) runtime.crime.stopPursuit();

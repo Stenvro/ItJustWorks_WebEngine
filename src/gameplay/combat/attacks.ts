@@ -196,7 +196,10 @@ export interface AttackReachContext {
   readonly target: AttackBody;
   /** The target is the player and does not go away from the attacker: its motion counts less. */
   readonly targetHeld: boolean;
-  /** Its weapon's reach, and its own extents (its controller's radius): from its centre. */
+  /**
+   * Its weapon's reach, and the extents added to it (reachExtents: the larger of the two
+   * actors' radii).
+   */
   readonly reach: number;
   readonly extents: number;
   /** How far its way is clear towards a point its clip takes it to (none: not asked). */
@@ -212,15 +215,34 @@ export interface AttackReachContext {
 }
 
 /**
+ * The extents an attack's choice adds to its reach: the larger of the attacker's and its target's
+ * radius (their controllers'). Inferred, TODO(M13): the original measures between the two
+ * actors' bounds, in the choice and in the hit; ours has one radius between two fighters of a
+ * size, and this keeps that. With the target's alone, as a strike is measured (hit-test.ts
+ * strikeContact: from the attacker's centre to the target's shape), an attacker larger than its
+ * target never began an attack: the combat tree holds a melee fighter no nearer its target than
+ * their two radii (src/shell/actor-combat-ai.ts), and a dragon's reach from its centre (256) is
+ * less than its own radius (320), so a dragon on the ground no longer bit at all. With the
+ * attacker's alone a fighter in reach of a large target's shape never began one (Sovngarde's
+ * heroes some 500 units from Alduin's centre). The strike itself still reaches from the
+ * attacker's centre: a dragon's bite at a target held at its shape's edge begins and misses
+ * (TODO(M13), with the measure between the bounds).
+ */
+export function reachExtents(ownRadius: number, targetRadius: number): number {
+  return Math.max(ownRadius, targetRadius);
+}
+
+/**
  * Whether an attack's target will be in its reach at its hit frame (observed in the original; the
  * melee attack node's check, in our words). Its clip's move by then, or for a flagged attack
  * (attackStart) its own speed by then, is its lunge: the target must first lie within the lunge,
- * its reach, its extents and how far the target goes by then. Then where the attacker will be
+ * its reach, the extents (the context's: reachExtents) and how far
+ * the target goes by then. Then where the attacker will be
  * (a lunge of more than fCombatAttackStationaryAttackDistance: its clip's offset turned by its
  * facing, its way clear for one past fCombatAttackMovingAttackDistance, short of its end by the
  * allowed overrun; flagged: its velocity on) against where the target will be (the player, unless
  * going away from it: fCombatAttackPlayerAnticipateMult of that), its reach ×
- * fCombatAttackMovingAttackReachMult if it moved past fCombatAttackMovingAttackDistance, plus its
+ * fCombatAttackMovingAttackReachMult if it moved past fCombatAttackMovingAttackDistance, plus the
  * extents. One moving that far must also have its target within the strike angle ×
  * fCombatAttackMovingStrikeAngleMult from there. So a forward power attack, whose clip goes
  * hundreds of units, is an attack from afar and no attack at arm's length.

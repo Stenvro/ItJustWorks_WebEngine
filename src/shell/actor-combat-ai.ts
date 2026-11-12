@@ -746,7 +746,15 @@ export class ActorCombatAi {
   readonly #options: ActorCombatAiOptions;
   readonly #minds = new Map<number, Mind>();
   readonly #groups = new CombatGroups();
-  readonly #reactions = new Map<string, { value: number | undefined; read: number }>();
+  /**
+   * The reactions read ("actor:other"), each with when it was read and how often what reactions
+   * are made of had changed by then (ActorEngine.reactionChanges): read again every
+   * REACTION_SECONDS, and at once after such a change.
+   */
+  readonly #reactions = new Map<
+    string,
+    { value: number | undefined; read: number; changes: number }
+  >();
   readonly #reacting = new Set<string>();
   /** Pairs that fight as members of one Special Combat faction (CrimeEngine.specialCombat). */
   readonly #special = new Map<string, { value: boolean; read: number }>();
@@ -890,6 +898,8 @@ export class ActorCombatAi {
     const { modifier, fixed = false } = options;
     const mind = this.#mind(actor);
     mind.enemies.add(target);
+    // What it thought of the target before is read again: the fight makes it hostile to it.
+    this.#reactions.delete(`${String(actor)}:${String(target)}`);
     if (fixed) mind.fixedTarget = target;
     mind.next = 0;
     if (mind.mode !== 'idle') this.#setTarget(mind, target);
@@ -1452,8 +1462,13 @@ export class ActorCombatAi {
       // The player yields a quarrel of their blows: it accepts once they held off a while. So
       // do those that took up the fight against them (the guards of a crime, whose arrest
       // follows: src/shell/actor-crime.ts; those who helped them); one that attacks the player
-      // on sight (its faction wants them dead) stays their enemy.
+      // on sight (its faction wants them dead) stays their enemy. Not weighed on a reaction read
+      // before what it is made of last changed (#reactionNow): MQ101's stage 270 makes the keep
+      // soldiers' faction the player's enemy and sets them on the player in one fragment, and on
+      // the reaction they had read before it (a friend's) they took the unarmed player to be
+      // yielding and stood down within the frame.
       if (
+        this.#reactionNow(mind.reference, PLAYER_REF) !== undefined &&
         acceptsYield({
           fightsPlayer,
           playerEnemy,
@@ -2244,7 +2259,10 @@ export class ActorCombatAi {
     mind.lastKnown.clear();
     // What a script's StartCombat made it hostile to ends with its combat (crime-engine.ts).
     const actorState = this.#options.session.scriptsReady?.state.actors.get(reference);
-    if (actorState) delete actorState.combatTargets;
+    if (actorState?.combatTargets) {
+      delete actorState.combatTargets;
+      this.#options.session.scriptsReady?.actors.reactionsChanged();
+    }
     mind.sheatheAt = this.#clock + SHEATHE_DELAY;
     if (mind.packageStyle !== undefined) {
       mind.packageStyle = undefined;
@@ -5002,11 +5020,9 @@ export class ActorCombatAi {
     const key = `${String(actor)}:${String(other)}`;
     const kept = this.#reactions.get(key);
     const runtime = this.#options.session.scriptsReady;
-    if (
-      runtime &&
-      (!kept || this.#clock - kept.read > REACTION_SECONDS) &&
-      !this.#reacting.has(key)
-    ) {
+    const changes = runtime?.actors.reactionChanges ?? 0;
+    const stale = kept?.changes !== changes || this.#clock - kept.read > REACTION_SECONDS;
+    if (runtime && stale && !this.#reacting.has(key)) {
       this.#reacting.add(key);
       if (this.#runtime !== runtime) {
         this.#runtime = runtime;
@@ -5014,14 +5030,26 @@ export class ActorCombatAi {
       }
       void reactionOf(runtime, actor, other)
         .then((value) => {
-          this.#reactions.set(key, { value, read: this.#clock });
+          this.#reactions.set(key, { value, read: this.#clock, changes });
         })
         .catch(() => {
-          this.#reactions.set(key, { value: undefined, read: this.#clock });
+          this.#reactions.set(key, { value: undefined, read: this.#clock, changes });
         })
         .finally(() => this.#reacting.delete(key));
     }
     return kept?.value;
+  }
+
+  /**
+   * A reaction as it stands now: the one kept, unless what reactions are made of changed since
+   * it was read (a script's SetEnemy or StartCombat just now); then undefined until it is read
+   * again. For what must not be decided on an old reaction (a yield accepted: the fight's end).
+   */
+  #reactionNow(actor: number, other: number): number | undefined {
+    const value = this.#reaction(actor, other);
+    const kept = this.#reactions.get(`${String(actor)}:${String(other)}`);
+    const changes = this.#options.session.scriptsReady?.actors.reactionChanges ?? 0;
+    return kept?.changes === changes ? value : undefined;
   }
 
   /**

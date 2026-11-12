@@ -1625,7 +1625,13 @@ from the original game's behaviour only (in our words):
   references (TODO(M13): whether the engine sorts the two together); Acquire then takes it from a
   corpse or a container at once, and from a living actor only as one it holds (Allow
   Pickpocketing, Allow Killing). MQ101's Ralof fetches the keep's key from the dead officer so
-  (MQ101RalofGetDoorKey).
+  (MQ101RalofGetDoorKey). A corpse is searched where its ragdoll lies (the reference's place,
+  as a package's place that names it is): weighed at the spot it died on, a body that fell or was
+  knocked farther from there than the place's radius (the key's Find looks within 101 units of
+  the officer) was outside a search centred on itself, and Ralof wandered about it for good
+  (`tests/conformance/ai/corpse-search.test.ts`). A Find that found nothing reads its place
+  again at each search (inferred, TODO(M13)): a place a reference gives is where the reference
+  is now, not where it was as the Find began (a body still falling then, an actor walking on).
 - **Patrol:** at a point with an idle time (REFR XPRD) it waits that long; furniture it uses for
   at least fAIPatrolMinSecondsAtNormalFurniture (30 s).
 - **Wander:** each walk at least its Min Wander Distance (its slot 3, a number the engine reads;
@@ -2441,12 +2447,18 @@ meanwhile.
 - **Hits** (`hit-test.ts`): at HitFrame the strike reaches fCombatDistance (141) × the weapon's
   reach (fists: the race's unarmed reach, RACE DATA @100; a bash fCombatBashReach) × the
   attacker's size, from its feet to the target's shape, inside the attack data's strike angle
-  (ATKD: 50° for attackStart, 35° for power attacks, 85° about ±90° for mounted side swings); it
-  hits the one it is aimed at (its combat target, the player's aimed actor) where it reaches it,
-  else the nearest such actor (every one with Sweep), each once an attack; a corpse its cell
-  placed dead is no such actor. TODO(M13): the aimed one first is inferred from the player's own
-  aim, which keeps its current target first; by the nearest alone, in Helgen Keep the officer's
-  blows at the player dead ahead fell on the soldier at his side. With nothing to hit
+  (ATKD: 50° for attackStart, 35° for power attacks, 85° about ±90° for mounted side swings).
+  Observed in the original: an attacker with a combat target (an NPC in a fight) hits that one
+  alone, where its strike reaches it, and no one where it does not: a swing that misses its
+  target falls on no ally at its side, nor on another enemy (in Helgen Keep the officer's blows
+  at the player fell on the soldier beside him while the nearest in the cone was struck, and
+  Ralof's on the player). One without a combat target (the player; an actor swinging outside a
+  fight) hits, of the living actors its strike reaches (not its mount), the one nearest the
+  strike's direction; the player must also see it (a wall between: no one). With Sweep every
+  other actor within reach and inside the strike angle × fMeleeSweepViewAngleMult (2) is hit
+  too, whether or not the strike found its own target. Each is struck once an attack (ours:
+  TODO(M13), a clip with several hit frames, as the dual power attack's, strikes its target once);
+  a corpse its cell placed dead is no such actor. With nothing to hit
   but a wall in reach (a ray at the chest on L_WEAPON) the attacker recoils. TODO(M13): the
   engine measures from bounds; its cone's exact shape is not documented.
 - **Damage** (`damage.ts`; UESP "Damage", "Block", "Sneak", "Difficulty"): the equip system's
@@ -2997,12 +3009,24 @@ dropped and the pick made again among the rest; the one taken sends its event to
 its recovery time starts. Its target must also be in reach of it at its hit frame
 (`attackReaches`): its lunge is its clip's move by then, or for the set's flagged attacks
 (attackStart: no move of their own) its own speed by then; the target must lie within the lunge,
-its reach, its extents (from its own centre) and the target's way by then; then, from where it
+its reach, the extents (`reachExtents`: the larger of its own and its target's radius, see
+below) and the target's way by then; then, from where it
 will be (the clip's offset turned by its facing past fCombatAttackStationaryAttackDistance, its
 way clear past fCombatAttackMovingAttackDistance short of fCombatAttackAllowedOverrunDistance)
 to where the target will be (the player, unless going away from it, ×
 fCombatAttackPlayerAnticipateMult), its reach, × fCombatAttackMovingAttackReachMult if it moved,
-plus its extents, and if it moved the strike angle × fCombatAttackMovingStrikeAngleMult. So it
+plus those extents, and if it moved the strike angle × fCombatAttackMovingStrikeAngleMult. (The
+extents are inferred, TODO(M13): the original measures between the two actors' bounds, in the
+choice and the hit; ours has one radius between two fighters of a size and takes the larger of
+the two. With its own alone, a fighter in reach of a large target's shape never began a plain
+attack: Sovngarde's heroes stood 500 units from Alduin's centre, his radius 320, held there as
+in reach by their combat tree, and only a forward power attack's lunge ever struck him. With its
+target's alone, an attacker larger than its target never began one: the combat tree holds a
+melee fighter no nearer than the two radii, and a dragon's reach from its centre (256) is less
+than its own radius (320), so a dragon on the ground did not bite at all. Open, TODO(M13): the
+strike itself still reaches from the attacker's centre to the target's shape, so a dragon's bite
+at a human held at its shape's edge begins and misses; a hit measured between the bounds would
+land it.) So it
 swings as it closes in, a plain attack keeps its way while it swings, and a forward power attack
 (its clip goes hundreds of units) is an attack from afar and none at arm's length. Its node looks
 at all within fCombatAttackCheckTargetRangeDistance past its farthest lunge. What was wrong
@@ -3502,7 +3526,13 @@ engine's ([Combat movement](#combat-movement)).
   the actor's rule is inferred after the player's). The player yields a quarrel their blows started by sheathing and holding off 3 s:
   AcceptYield, and it lets them be; so do guards that took up a fight against the player (a
   crime: their arrest follows) unless their faction attacks the player on sight. TODO(M13): the
-  engine's rule.
+  engine's rule. The combat AI keeps the reactions it read for 5 s and reads them again at once
+  when what they are made of changes (`ActorEngine.reactionChanges`: a faction's members or its
+  reaction to another, a relationship, a script's StartCombat or StopCombat, a teammate, one
+  attacked on sight); a yield is accepted only on a reaction read since the last such change.
+  MQ101's stage 270 makes the keep soldiers' faction the player's enemy and sets them on the
+  player in one fragment: on the reaction read before it (a friend's) they took the unarmed
+  player to be yielding and stood down within the frame (`tests/sim-save-midquest.int.test.ts`).
 - **The end of combat**: no enemy known (CombatToNormal; dead, bleeding out, gone, left
   behind, or given up by its group), StopCombat, calm or a search given up: it leaves its group, stands, sheathes 3 s
   later (unless its package keeps its weapon drawn) and chooses its package again. Its own lines

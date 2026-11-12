@@ -389,6 +389,31 @@ describe('procedures', () => {
     expect(found.get(FOUND_BED.id)).toEqual([0x601]);
   });
 
+  // A place a reference gives (MQ101RalofGetDoorKey: within 101 units of the officer) is where the
+  // reference is at each search: a body still falling as the Find began comes to lie elsewhere.
+  it('find searches round where its place is now, not where it was when it began', async () => {
+    const { run, found } = harness();
+    let asked = 0;
+    const centres: number[] = [];
+    const mind = {
+      place: (location: { radius: number }) =>
+        Promise.resolve({
+          position: [asked++ === 0 ? 100 : 400, 0, 0] as const,
+          radius: location.radius,
+          reference: 0x500,
+        }),
+      search: (_criteria: unknown, place: { position: readonly number[] }) => {
+        centres.push(place.position[0] ?? 0);
+        return Promise.resolve(place.position[0] === 400 ? [0x601] : []);
+      },
+    };
+    expect(await run('Find', [0, 1, 2, 255, 3], [NEAR_HOME, BEDS, FOUND_BED, STEAL], mind)).toBe(
+      'success',
+    );
+    expect(centres).toEqual([100, 400]);
+    expect(found.get(FOUND_BED.id)).toEqual([0x601]);
+  });
+
   // MQ101's Ralof (MQ101RalofGetDoorKey, the Acquire template): the key he is to fetch is in the
   // dead officer's inventory, not a placed reference.
   it('find finds items in inventories; acquire loots a corpse but leaves the living', async () => {

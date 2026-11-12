@@ -110,9 +110,28 @@ export class ActorEngine {
   readonly #deferred = new Map<number, { due: boolean; killer?: number }>();
   /** The dying (killed, not yet dead): the kill whose OnDeath is to come, and its end. */
   readonly #dying = new Map<number, { readonly kill: object; readonly ended: Promise<boolean> }>();
+  #reactionChanges = 0;
 
   constructor(runtime: ScriptRuntime) {
     this.#runtime = runtime;
+  }
+
+  /**
+   * How often what actors' reactions are read from was changed (reactionsChanged): a reaction
+   * read before the latest change may be stale. The combat AI keeps the reactions it read for
+   * a while (src/shell/actor-combat-ai.ts) and reads them again when this moves.
+   */
+  get reactionChanges(): number {
+    return this.#reactionChanges;
+  }
+
+  /**
+   * Something reactions are made of changed: a faction's members or its reaction to another
+   * (SetEnemy, SetAlly, SetPlayerEnemy), a relationship, a script's combat (StartCombat,
+   * StopCombat), the player's teammates, one attacked on sight.
+   */
+  reactionsChanged(): void {
+    this.#reactionChanges++;
   }
 
   /** An NPC_'s own stats (ActorBase natives). */
@@ -729,6 +748,7 @@ export class ActorEngine {
 
   setFactionRank(reference: number, faction: number, rank: number): void {
     this.#runtime.state.actor(reference).factions.set(faction, rank);
+    this.reactionsChanged();
   }
 
   async removeFromAllFactions(reference: number): Promise<void> {
@@ -809,8 +829,10 @@ export class ActorEngine {
       this.#relationshipBase(a),
       this.#relationshipBase(b),
     ]);
-    if (first !== undefined && second !== undefined)
+    if (first !== undefined && second !== undefined) {
       this.#runtime.state.relationships.set(pairKey(first, second), rank);
+      this.reactionsChanged();
+    }
   }
 
   /**
@@ -1017,6 +1039,13 @@ export class ActorEngine {
     // Immortal mode (tim): the player's Kill does nothing (observed in the original).
     if (reference === PLAYER_REF && this.#runtime.debug.immortal) return;
     const state = this.#runtime.state.actor(reference);
+    // It dies once. Asked above, two kills of the same instant (two attackers' lethal blows on
+    // one frame, a blow and an arrow or a spell, a blow and a script's Kill) each found it alive
+    // before either had marked it dead, and both went on: its death told twice, its base's dead
+    // count 2, OnDeath twice. (MQ101QuestScript counts the OnDeath calls of Helgen Keep's two
+    // Imperials up to 2: one told twice set stage 280 with the officer alive.) So it is asked
+    // again here, with nothing between the question and the mark; the first to come is its killer.
+    if (state.dead === true) return;
     state.dead = true;
     if (killer !== undefined) state.killer = killer;
     const base = await this.#runtime.baseOf(reference);

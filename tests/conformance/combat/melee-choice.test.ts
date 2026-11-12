@@ -15,6 +15,7 @@ import {
   attackReaches,
   chooseAttackData,
   DEFAULT_ATTACK,
+  reachExtents,
   type AttackChoiceContext,
   type AttackReachContext,
 } from '../../../src/gameplay/combat/attacks.ts';
@@ -204,6 +205,34 @@ describe('an attack’s reach at its hit frame (attackReaches: closing in)', () 
   it('a plain attack standing: its reach and extents', () => {
     expect(attackReaches(plain, plainHit, context(155))).toBe(true);
     expect(attackReaches(plain, plainHit, context(156))).toBe(false);
+  });
+
+  it('its extents: the larger of the two shapes’ radii (inferred), so the large bite and are struck', () => {
+    // A dragon (radius 320, its reach from its centre 256) and a human (radius 23). The combat
+    // tree holds a melee fighter no nearer its target than their two radii: 343 apart.
+    const DRAGON = { radius: 320, reach: 256 };
+    const HUMAN = { radius: 23, reach: 141 };
+    const between = (
+      attacker: { radius: number; reach: number },
+      target: { radius: number },
+      apart: number,
+    ): AttackReachContext => ({
+      ...context(apart),
+      reach: attacker.reach,
+      extents: reachExtents(attacker.radius, target.radius),
+    });
+    // The dragon's bite begins from where it is held (with the human's radius alone: never).
+    expect(attackReaches(plain, plainHit, between(DRAGON, HUMAN, 343))).toBe(true);
+    expect(
+      attackReaches(plain, plainHit, { ...between(DRAGON, HUMAN, 343), extents: HUMAN.radius }),
+    ).toBe(false);
+    // A human in reach of the dragon's shape swings at it (with their own radius alone: never).
+    expect(attackReaches(plain, plainHit, between(HUMAN, DRAGON, 450))).toBe(true);
+    expect(
+      attackReaches(plain, plainHit, { ...between(HUMAN, DRAGON, 450), extents: HUMAN.radius }),
+    ).toBe(false);
+    // Two of a size: one radius between them, as ever.
+    expect(reachExtents(HUMAN.radius, HUMAN.radius)).toBe(HUMAN.radius);
   });
 
   it('a plain attack closing in: by its own speed, × fCombatAttackMovingAttackReachMult', () => {
