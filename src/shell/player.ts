@@ -1236,7 +1236,8 @@ export class Player implements Camera {
 
   /**
    * One physics step of the player. `seconds`: the time their movement covers (the frame's time
-   * shared over the frame's steps); `step`: the physics step their body falls by.
+   * shared over the frame's steps); `step`: the physics step (what pushes and carries them goes
+   * by it).
    */
   #move(seconds: number, step: number): void {
     const jump = this.#jumpRequested;

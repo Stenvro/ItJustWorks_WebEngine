@@ -292,19 +292,20 @@ function runningJump(rate: number, owed = 0): { reach: number; height: number } 
   const g = GRAVITY * HAVOK_SCALE;
   let height = 0;
   let air: { x: number; z: number; vz: number } | undefined;
-  let landed = false;
-  for (let frame = 0; frame < 10 * rate && !landed; frame++) {
+  // Set in the steps' callback (an object: the loop's test reads it after each frame).
+  const jump = { landed: false };
+  for (let frame = 0; frame < 10 * rate && !jump.landed; frame++) {
     physics.step(timer.step(1 / rate), (size) => {
-      if (landed) return;
+      if (jump.landed) return;
       character.step(size, size * physics.movePace);
       const [x, , z] = character.feet;
       height = Math.max(height, z - z0);
-      if (character.grounded && air) landed = true;
+      if (character.grounded && air) jump.landed = true;
       else if (!character.grounded) air = { x, z: z - z0, vz: character.verticalSpeed };
     });
   }
   physics.free();
-  expect(landed).toBe(true);
+  expect(jump.landed).toBe(true);
   if (!air) throw new Error('never in the air');
   const t = (air.vz + Math.sqrt(air.vz * air.vz + 2 * g * air.z)) / g;
   return { reach: air.x + SPEED * t - x0, height };

@@ -29,19 +29,35 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   Havok was handed, not in the frame's time: the frame's whole way in the steps the frame takes.
   So a character keeps up with its animation and with the clock at any frame rate, also while
   the bodies are behind (below 20 frames a second) and while the time owed is made up at three
-  steps a frame; its fall, pushes and what carries it go by the step. Ours:
+  steps a frame; pushes and what carries it go by the step. Ours:
   `PhysicsWorld.movePace` is the frame's time over the time handed, and what moves a character
   in the steps (`Player`, `ActorMovers`) moves it by a step times that
-  (`CharacterBody.step(seconds, covers)`): the wanted velocity, and swimming the vertical speed,
-  cover `covers`; gravity, a knock, pushes and the carrier go by `seconds`. Moved by the steps
-  alone, at 15 frames a second the player and the actors walked at 72% of their speed while
-  their graphs ran the frame's whole step (the feet slid), at 10 a second at 46%, at 7 at 32%,
-  and at three times their speed against the frame while the time owed was made up
-  (`src/physics/character-pace.test.ts`, `tests/conformance/animation/frame-time.test.ts`).
+  (`CharacterBody.step(seconds, covers)`): its own movement (the wanted velocity, the fall and
+  gravity, a jump, what it keeps through the air off a moving body) covers `covers`; a knock,
+  pushes and the carrier go by `seconds`. A step that covers more than its own time goes in
+  moves of no more than that time each, snapped to the ground between them, so its path is the
+  one it has at 60 frames a second: in one long move a character walking downhill left the slope
+  at each step (10 degrees: on the ground 67% of the steps at 15 frames a second, at 60 frames
+  a second 95%) and took no controls off it. A bump or a push it gives goes by its speed over
+  `covers`.
+  Moved by the steps alone, at 15 frames a second the player and the actors walked at 72% of
+  their speed while their graphs ran the frame's whole step (the feet slid), at 10 a second at
+  46%, at 7 at 32%, and at three times their speed against the frame while the time owed was
+  made up (`src/physics/character-pace.test.ts`, `tests/conformance/animation/frame-time.test.ts`).
   TODO(M13): the horses' cart and a grabbed object's spring still go by the step (their hooks
-  are not the controller's); inferred that the swimming vertical speed is covered like the
-  rest (the original keeps the vertical part of the wanted way in one of its states, taken
-  here to be swimming).
+  are not the controller's). Inferred, TODO(M13): that the fall goes by the covered time as the
+  wanted way does (with the fall by the step and the way paced, a running jump went 330 units at
+  60 frames a second, 1,025 at 7 and 120 while time owed was made up; now 325 to 330 at each),
+  and that the swimming vertical speed is covered like the rest (the original keeps the vertical
+  part of the wanted way in one of its states, taken here to be swimming).
+- **Walking down a slope** a character keeps to it (`CharacterBody` #downSlope): Rapier's
+  controller snaps the shape to the ground only where its move goes down, and the move of one on
+  the ground is level (pressed down it stutters on flat floors), so walking down a slope the
+  shape went level off it, its foot higher above it at each step, until it had no ground and
+  fell to it, its controls not taken (on 20 degrees at 370 units a second on the ground 41% of
+  the steps at 60 frames a second). One that leaves the ground so is set down on walkable ground
+  within the controller's snap (its radius) below. The engine's character proxy keeps to the
+  slope it walks down; how far it reaches down for it is not read (inferred, TODO(M13)).
 - **The world's bounds** (inferred, TODO(M13): the original's size and what its broad phase's
   border does with an entity were not read): a simulated body past 16,384 Havok units along an
   axis, beyond every worldspace's cells, goes out of the simulation and stays as it is

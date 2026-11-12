@@ -32,10 +32,15 @@ export const SPIKE_SECONDS = 0.05;
 export const HISTORY_START_SECONDS = 0.016;
 
 /**
- * Longer than any step the timer hands out (a history of 3 at 6 frames a second hands 0.2833 s;
- * the default 0.1861 s), short of iFPSClamp below 3. A system that reads its step off the game's
- * clock takes a longer one for a gap: it was left out of the frames meanwhile (an actor not
- * animated, a view not drawn), and goes on by this much, not by the time it missed.
+ * Longer than any step the timer hands out with iFPSClamp off (a history of 3 at 6 frames a
+ * second hands 0.2833 s; the default 0.1861 s) or at 6 or more (no frame then counts more than
+ * 1/6 s). A system that reads its step off the game's clock takes a longer one for a gap: it was
+ * left out of the frames meanwhile (an actor not animated, a view not drawn), and goes on by this
+ * much, not by the time it missed. An iFPSClamp of 5 or less counts every frame longer than the 1/6 s the shortest is
+ * looked for from, and the history evens that out to more (the default history: 0.2306 s at 5,
+ * 0.2972 s at 4, 0.4083 s at 3; a history of 3: 0.3833 s at 5): such steps are cut to this by the
+ * systems that read their step off the clock while the rest take them whole. TODO(M13): the gap
+ * does not follow the settings.
  */
 export const FRAME_GAP_SECONDS = 1 / 3;
 

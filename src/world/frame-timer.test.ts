@@ -80,6 +80,23 @@ describe('the frame timer (original)', () => {
       12,
     );
     expect(steady(new FrameTimer({ history: 3, fpsClamp: 0 }), 1)).toBeLessThan(FRAME_GAP_SECONDS);
+    // So does every step with iFPSClamp at 6 or more, and with the default history at 4; below
+    // that (a frame counted longer than 1/6 s) the steps are longer than the gap.
+    for (const history of [3, 8, 254]) {
+      const step = steady(new FrameTimer({ history, fpsClamp: 6 }), 1, 300);
+      expect(step, `a history of ${String(history)}`).toBeLessThan(FRAME_GAP_SECONDS);
+    }
+    expect(steady(new FrameTimer({ history: 8, fpsClamp: 4 }), 1)).toBeCloseTo(
+      1 / 6 + (8 * (1 / 4 - 1 / 6) - (0.05 - 1 / 6)) / 6,
+      12,
+    );
+    expect(steady(new FrameTimer({ history: 8, fpsClamp: 4 }), 1)).toBeLessThan(FRAME_GAP_SECONDS);
+    expect(steady(new FrameTimer({ history: 8, fpsClamp: 3 }), 1)).toBeGreaterThan(
+      FRAME_GAP_SECONDS,
+    );
+    expect(steady(new FrameTimer({ history: 3, fpsClamp: 5 }), 1)).toBeGreaterThan(
+      FRAME_GAP_SECONDS,
+    );
     // A changed size starts the history again.
     const timer = new FrameTimer();
     steady(timer, 0.1);

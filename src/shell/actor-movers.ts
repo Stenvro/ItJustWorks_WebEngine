@@ -2815,7 +2815,7 @@ export class ActorMovers {
   /**
    * One physics step of every moved actor: what it wants, then its controller's movement.
    * `step`: the time the actors' movement covers (the frame's time shared over the frame's
-   * steps); `own`: the physics step their bodies fall by.
+   * steps); `own`: the physics step (what pushes and carries them goes by it).
    */
   #stepAll(step: number, own: number): void {
     this.#stepped += step;

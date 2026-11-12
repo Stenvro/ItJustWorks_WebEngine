@@ -1293,8 +1293,8 @@ export class PhysicsWorld {
    * over the time physics was handed, not over the frame's: it covers the frame's whole way in
    * the steps taken, however much of the frame's time they are, so a character keeps up with
    * its animation while the simulated bodies fall behind and catch up. What moves a character
-   * in the steps (the player's controls, the actors' movers) moves it by a step times this;
-   * falling, pushes and the simulated bodies go by the step itself.
+   * in the steps (the player's controls, the actors' movers) moves it by a step times this (its
+   * fall too: CharacterBody.step); pushes and the simulated bodies go by the step itself.
    */
   get movePace(): number {
     return this.#movePace;
