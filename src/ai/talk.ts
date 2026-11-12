@@ -156,6 +156,19 @@ export function talkSettings(setting: (name: string) => number | undefined): Tal
 /** The interrupt flags of an actor that runs no package: it may do all. TODO(M13). */
 export const NO_PACKAGE_INTERRUPTS = 0xffff;
 
+/**
+ * The interrupt flags talking sees of an actor: those of the package it runs (none: it may do
+ * all), none while the engine's own reaction holds it (a search, a warning, a favor it was
+ * commanded: its package waits and the reaction moves it). Held, it greets, chatters, asks for
+ * scenes and comments no more, as one that fights: a greeting stopped it on the reaction's way and
+ * ended the reaction's travel. TODO(M13): inferred; the engine runs such reactions as packages of
+ * its own whose interrupt flags are not documented.
+ */
+export function talkInterrupts(packageInterrupts: number | undefined, held: boolean): number {
+  if (held) return 0;
+  return packageInterrupts ?? NO_PACKAGE_INTERRUPTS;
+}
+
 /** How an actor is placed: on its feet, seated, asleep, or in other furniture or on its way in. */
 export type TalkPosture = 'standing' | 'sitting' | 'sleeping' | 'other';
 
