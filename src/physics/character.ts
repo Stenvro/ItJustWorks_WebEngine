@@ -442,7 +442,7 @@ export class CharacterBody {
   /** Feet (bottom of the capsule) after the last step and the one before, game units. */
   #feet: [number, number, number];
   #previous: [number, number, number];
-  /** The last step's length (seconds; 0 before the first). */
+  /** The time the last step's movement covered (seconds; 0 before the first). */
   #stepped = 0;
   /** Vertical speed, game units per second (up positive). */
   verticalSpeed = 0;
@@ -1308,7 +1308,8 @@ export class CharacterBody {
   /**
    * The horizontal velocity its last step made (game units per second): what it moves at, the
    * same on every frame between two steps (a frame with no step is no stop, and one with two
-   * no double speed).
+   * no double speed). Over the time the step's movement covered (`step`'s `covers`): a step
+   * that goes more of the frame's way than its own time is no faster walk to the graph.
    */
   get stepVelocity(): [number, number] {
     if (!(this.#stepped > 0)) return [0, 0];
@@ -1666,7 +1667,7 @@ export class CharacterBody {
     this.#carrier = standing;
     this.#body.setNextKinematicTranslation(next);
     this.#previous = this.#feet;
-    this.#stepped = seconds;
+    this.#stepped = covers > 0 ? covers : seconds;
     this.#feet = [
       next.x * HAVOK_SCALE,
       next.y * HAVOK_SCALE,

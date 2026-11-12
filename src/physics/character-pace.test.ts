@@ -114,6 +114,8 @@ describe("a character's way in the steps a frame is handed (movePace)", () => {
       expect(run.covered).toBeCloseTo(run.clock, 6);
       expect(run.went / (SPEED * run.clock)).toBeGreaterThan(0.98);
       expect(run.went / (SPEED * run.clock)).toBeLessThan(1.02);
+      // Its graph is told its own speed, not the faster one each step went at.
+      expect(character.stepVelocity[0]).toBeCloseTo(SPEED, 0);
       physics.free();
     });
   }
