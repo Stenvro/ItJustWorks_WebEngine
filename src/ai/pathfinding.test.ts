@@ -934,7 +934,8 @@ describe('PathSearch', () => {
     alone.run(Infinity);
     expect(long.taken).toBe(alone.taken);
     expect(long.result).toEqual(alone.result);
-  });
+    // Three full searches over the field: about 4 s alone, more under a loaded machine.
+  }, 30_000);
 
   it('finds a nearest point exact, and cheaper, for a goal near one asked before', () => {
     // A 20 by 20 field and goals above and beyond its east edge, the second in the first's grid
