@@ -473,12 +473,26 @@ async function main(): Promise<void> {
           const blowsOn = (): Promise<number> =>
             page.eval<number>(`window.__kf.hits.filter((h) => h.tg === 'player').length`);
           const blowsBefore = await blowsOn();
+          // As a player holds a guard: standing, turned to the nearest foe all the while. (Left
+          // walking on as the last step had it, the player went past their foes through the
+          // hold and every blow fell from behind, outside the block's cone: 0 of 7 blocked.)
+          const face = (): Promise<unknown> =>
+            page
+              .eval(
+                `(() => { const k = window.__kf; const f = k.foes()[0]; if (f !== undefined) k.steer(f, 1e9); else k.stop(); return true; })()`,
+              )
+              .catch(() => undefined);
+          await face();
           await mouse('mousePressed', 'right');
           // Held until a blow falls on the player (and 0.3 s on), BLOCK_HOLD_MS at most.
           const pressed = Date.now();
-          await sleep(900);
-          while (Date.now() - pressed < BLOCK_HOLD_MS && (await blowsOn()) === blowsBefore)
+          while (
+            Date.now() - pressed < BLOCK_HOLD_MS &&
+            (Date.now() - pressed < 900 || (await blowsOn()) === blowsBefore)
+          ) {
+            await face();
             await sleep(100);
+          }
           await sleep(300);
           await mouse('mouseReleased', 'right');
           const held = await page.eval<{

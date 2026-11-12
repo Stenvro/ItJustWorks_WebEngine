@@ -20,7 +20,9 @@ for regressions.
   follow bot (god mode) and, where the bot stalls, enters the keep as MQ101SetStage220 has it;
   in the keep the player takes Gunjar's gear and fights the two Imperials by mouse buttons
   (taps, held power attacks, blocks held on their own and in the middle of a swing, each until
-  a blow falls on the player, 2.5 s at most), closes the tutorials that come up (the low health
+  a blow falls on the player, 2.5 s at most, standing and turned to the nearest foe all the
+  while: walking on through a hold, the player went past their foes and every blow fell from
+  behind, outside the block's cone), closes the tutorials that come up (the low health
   one) with E, and stops at MQ101 300 (won), the player's death, `--keep-minutes` (18) in the
   keep or `--after-fight-minutes` (18) after the fight without 300. `keep-fight.json`: the
   outcome, every blow from MQ101 150 on (the courtyard and the fight; those on the player with
