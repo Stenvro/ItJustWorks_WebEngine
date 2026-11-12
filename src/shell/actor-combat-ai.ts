@@ -1423,10 +1423,23 @@ export class ActorCombatAi {
       return;
     }
     if (mind.mode === 'search' && !searching) {
-      const found = selectTarget(detected, mind.target) ?? mind.target ?? target;
+      // The group found one: the search ends, and its target is target selection's as ever. It
+      // keeps its own while that is still a candidate and fCombatSelectTargetSwitchUpdateTime
+      // has not passed since its last switch (the selection above), even if another was found
+      // first: a fight begun on a target its group does not know yet starts searching (each
+      // target joins with nearly all its stealth points), and turning to whichever was found
+      // first set a bandit told to fight a wolf on the player standing by, the player's points
+      // draining faster. Inferred, TODO(M13): that the group's finding a target leaves the
+      // selector's timers as they are was not checked in the original.
+      const found =
+        fixed ??
+        (kept && !maySwitchTarget(this.#clock - mind.switchedAt, this.#settings)
+          ? mind.target
+          : (selectTarget(detected, mind.target) ?? mind.target ?? target));
       mind.search?.cancel();
       mind.search = undefined;
       mind.mode = 'fight';
+      if (found !== undefined && found !== mind.target) mind.switchedAt = this.#clock;
       if (found !== undefined) this.#setTarget(mind, found);
       this.#bark(mind.reference, 'LostToCombat', found);
       return;
