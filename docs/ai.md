@@ -3481,7 +3481,13 @@ engine's ([Combat movement](#combat-movement)).
   the actor's rule is inferred after the player's). The player yields a quarrel their blows started by sheathing and holding off 3 s:
   AcceptYield, and it lets them be; so do guards that took up a fight against the player (a
   crime: their arrest follows) unless their faction attacks the player on sight. TODO(M13): the
-  engine's rule.
+  engine's rule. The combat AI keeps the reactions it read for 5 s and reads them again at once
+  when what they are made of changes (`ActorEngine.reactionChanges`: a faction's members or its
+  reaction to another, a relationship, a script's StartCombat or StopCombat, a teammate, one
+  attacked on sight); a yield is accepted only on a reaction read since the last such change.
+  MQ101's stage 270 makes the keep soldiers' faction the player's enemy and sets them on the
+  player in one fragment: on the reaction read before it (a friend's) they took the unarmed
+  player to be yielding and stood down within the frame (`tests/sim-save-midquest.int.test.ts`).
 - **The end of combat**: no enemy known (CombatToNormal; dead, bleeding out, gone, left
   behind, or given up by its group), StopCombat, calm or a search given up: it leaves its group, stands, sheathes 3 s
   later (unless its package keeps its weapon drawn) and chooses its package again. Its own lines

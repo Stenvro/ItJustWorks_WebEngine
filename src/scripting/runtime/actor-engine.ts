@@ -110,9 +110,28 @@ export class ActorEngine {
   readonly #deferred = new Map<number, { due: boolean; killer?: number }>();
   /** The dying (killed, not yet dead): the kill whose OnDeath is to come, and its end. */
   readonly #dying = new Map<number, { readonly kill: object; readonly ended: Promise<boolean> }>();
+  #reactionChanges = 0;
 
   constructor(runtime: ScriptRuntime) {
     this.#runtime = runtime;
+  }
+
+  /**
+   * How often what actors' reactions are read from was changed (reactionsChanged): a reaction
+   * read before the latest change may be stale. The combat AI keeps the reactions it read for
+   * a while (src/shell/actor-combat-ai.ts) and reads them again when this moves.
+   */
+  get reactionChanges(): number {
+    return this.#reactionChanges;
+  }
+
+  /**
+   * Something reactions are made of changed: a faction's members or its reaction to another
+   * (SetEnemy, SetAlly, SetPlayerEnemy), a relationship, a script's combat (StartCombat,
+   * StopCombat), the player's teammates, one attacked on sight.
+   */
+  reactionsChanged(): void {
+    this.#reactionChanges++;
   }
 
   /** An NPC_'s own stats (ActorBase natives). */
@@ -729,6 +748,7 @@ export class ActorEngine {
 
   setFactionRank(reference: number, faction: number, rank: number): void {
     this.#runtime.state.actor(reference).factions.set(faction, rank);
+    this.reactionsChanged();
   }
 
   async removeFromAllFactions(reference: number): Promise<void> {
@@ -809,8 +829,10 @@ export class ActorEngine {
       this.#relationshipBase(a),
       this.#relationshipBase(b),
     ]);
-    if (first !== undefined && second !== undefined)
+    if (first !== undefined && second !== undefined) {
       this.#runtime.state.relationships.set(pairKey(first, second), rank);
+      this.reactionsChanged();
+    }
   }
 
   /**

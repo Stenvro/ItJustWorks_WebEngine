@@ -50,6 +50,7 @@ export function registerForms(n: Register, runtime: ScriptRuntime): void {
   // SetEnemy / SetAlly set both factions' combat reactions (Creation Kit: Faction script).
   const react = (faction: number, other: number, reaction: number): void => {
     state.faction(faction).reactions.set(other, reaction);
+    runtime.actors.reactionsChanged();
   };
   on('faction.setenemy', (faction, call) => {
     const other = formOf(call.args[0]);
@@ -159,6 +160,7 @@ export function registerForms(n: Register, runtime: ScriptRuntime): void {
   on('faction.setplayerenemy', (faction, call) => {
     state.faction(faction).playerEnemy = bool(call.args[0], true);
     state.faction(faction).playerEnemySince = state.gameDaysPassed * 24;
+    runtime.actors.reactionsChanged();
   });
   on('faction.setplayerexpelled', (faction, call) => {
     state.faction(faction).playerExpelled = bool(call.args[0], true);
