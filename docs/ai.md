@@ -959,7 +959,15 @@ Actors use furniture as the engine's furniture handling does, as far as the data
   Its enter's root motion and the tween take it to its marker, where it waits for that event
   (src/ai/furniture-markers.ts `enterStep`). TODO(M13): the engine waits for the graph alone;
   ours puts it in 1.5 s after the root motion at the latest (ENTER_GRACE, inferred as the
-  exit's), for graphs whose enters our runtime does not play to the event.
+  exit's), for graphs whose enters our runtime does not play to the event. A graph that refused
+  the enter (at the update that handled it no state machine took a transition for it: the
+  player's in the camera bob of MQ101's walk to the block, MT WalkingCamera) has no word to wait
+  for: its use is in as the root motion's time ends (`enterStep`'s `refused`; inferred,
+  TODO(M13)). Waiting the grace there, the player was in the block 2.0 s after the enter began
+  instead of 0.5 s: the block's IdleExecutionerChop_Player, played 1.2 s after the activation,
+  found the use still entering, where a script's idle is not held, and came before the walk's
+  IdleWalkingCameraEnd instead of after it; it was dropped and the player stood through the
+  execution (measured in the simulation).
 - **Idle markers** (IDLM, not drawn; with the furniture markers they are the cells' markers:
   `CellData.markers`): the actor goes to it, faces its way and plays its idles (IDLA), in order or
   one picked each time (IDLF 0x1), once through if so set (0x4), one each time its timer (IDLT)

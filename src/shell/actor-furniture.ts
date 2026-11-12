@@ -372,7 +372,8 @@ export class ActorFurniture {
    * state becomes "sitting" (a bed's "sleeping") as its graph reaches the furniture's state.
    * Here an entering use is in its furniture then (at its marker, its scripts hear OnSit), not
    * when its enter's root motion has played: it waits at its marker for the graph's word,
-   * ENTER_GRACE at most (enterStep). TODO(M13): the player's handlers also switch
+   * ENTER_GRACE at most (enterStep), unless its graph refused the enter (#enterRefused: in as
+   * its root motion's time ends). TODO(M13): the player's handlers also switch
    * the camera to the furniture's and set the controls (not reproduced).
    */
   graphEntered(user: FurnitureUser): void {
@@ -1059,14 +1060,32 @@ export class ActorFurniture {
       y += (marker.position[1] - y) * share;
       heading += angle(heading, marker.heading) * share;
     }
-    const step = enterStep(use.left);
+    const step = enterStep(use.left, this.#enterRefused(user, use));
     if (step !== 'moving') {
-      // At its marker: in once its graph says so (graphEntered), at the latest ENTER_GRACE on.
+      // At its marker: in once its graph says so (graphEntered), at the latest ENTER_GRACE on;
+      // at once where its graph refused the enter (its word will not come).
       user.moveTo(marker.position, marker.heading);
       if (step === 'in') this.#in(user, use);
       return;
     }
     user.moveTo([x, y, z], heading);
+  }
+
+  /**
+   * Whether the graph of an entering use refused its enter: at the update that handled the
+   * event no state machine took a transition for it (BehaviorRuntime.answered; not handled
+   * yet: not refused). Such a use does not wait at its marker for the graph's word (enterStep).
+   * MQ101's player walks to Helgen's block in the camera bob (MT WalkingCamera, which takes no
+   * furniture's enter). Waiting ENTER_GRACE for a word that could not come, they were in the
+   * block 2.0 s after the enter began instead of 0.5 s; the block's script played
+   * IdleExecutionerChop_Player 1.2 s after it began, while the use was still entering (where a
+   * script's idle is not held: #holdsIdle), and the walk's end fragment, run as the use is in,
+   * played IdleWalkingCameraEnd after the chop instead of before it: the chop was dropped and
+   * the player stood through the execution (measured in the simulation).
+   */
+  #enterRefused(user: FurnitureUser, use: Use): boolean {
+    const enter = use.events[0];
+    return enter !== undefined && user.placed.behavior?.answered(enter) === false;
   }
 
   /** Waits until a use is in its furniture (true) or ends (false). */

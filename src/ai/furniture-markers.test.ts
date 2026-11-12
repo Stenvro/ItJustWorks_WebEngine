@@ -15,6 +15,14 @@ describe('entering furniture: the graph says when (ChairEnterHandler, BedEnterHa
     expect(ENTER_GRACE).toBe(1.5);
     expect(enterStep(-ENTER_GRACE)).toBe('in');
   });
+
+  it('does not wait for a graph that refused the enter: in as the root motion’s time ends (inferred)', () => {
+    // MQ101's player at Helgen's block, their graphs in the camera bob (MT WalkingCamera):
+    // waiting the grace, the block's chop idle found the use still entering and was dropped.
+    expect(enterStep(0.3, true)).toBe('moving');
+    expect(enterStep(0, true)).toBe('in');
+    expect(enterStep(-0.01, true)).toBe('in');
+  });
 });
 
 describe('furniture markers', () => {
