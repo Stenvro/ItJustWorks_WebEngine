@@ -506,6 +506,12 @@ export class Player implements Camera {
   /** Whether the player may activate (Game.DisablePlayerControls' abActivate). Undefined: yes. */
   activationAllowed: (() => boolean) | undefined;
   /**
+   * The game takes no input now: the player is on their way through a load door or behind a
+   * loading screen (playerAway, src/shell/play-session.ts). No user event works, and a press is
+   * lost; a key held through it works again once they are there.
+   */
+  inputHeld: (() => boolean) | undefined;
+  /**
    * Game.SetCameraTarget: the feet of the actor the third-person camera hangs on instead of the
    * player's (undefined, or answering undefined: the player's).
    */
@@ -990,6 +996,8 @@ export class Player implements Camera {
    * left out of the question).
    */
   allows(name: string, ignore = 0): boolean {
+    // On the way to another place, or behind its loading screen: no input reaches the game.
+    if (this.inputHeld?.() === true) return false;
     // Activation is the player controls' own switch, no group of the control map.
     if (name === 'Activate' && this.activationAllowed?.() === false) return false;
     const disabled = (this.disabledControls?.() ?? 0) & ~ignore;

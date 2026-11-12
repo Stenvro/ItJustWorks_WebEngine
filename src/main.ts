@@ -593,7 +593,11 @@ async function main(): Promise<void> {
   // A load door: its prompt stays on the HUD while the place loads (SetLoadDoorInfo). One
   // journey through a door at a time: a door used again while its place loads (an automatic
   // door whose fade had begun twice, a press as the loading screen came up) is not taken a
-  // second time, which loaded the place again over itself.
+  // second time, which loaded the place again over itself. The session's journey is under way
+  // from here (GameSession.travelling): the player's own activations ask it before a
+  // reference's scripts hear of one (playerAway, src/shell/play-session.ts), so the door's
+  // scripts get one OnActivate and no input reaches the game while its place loads; what is
+  // refused here is another's activation of a door for the player (a script's Activate).
   let travelling = false;
   const onTravel = (teleport: Teleport): void => {
     if (travelling) {
@@ -601,12 +605,14 @@ async function main(): Promise<void> {
       return;
     }
     travelling = true;
+    const arrived = session?.beginJourney();
     (play ? play.loadingScreen(() => travel(teleport)) : travel(teleport))
       .catch((error: unknown) => {
         terminal.log('door', describeError(error), 'error');
       })
       .finally(() => {
         travelling = false;
+        arrived?.();
         session?.hud.loadDoor(undefined);
       });
   };

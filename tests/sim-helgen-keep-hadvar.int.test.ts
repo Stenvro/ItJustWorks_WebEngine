@@ -63,6 +63,37 @@ async function keepBy(sim: Sim, actor: number): Promise<void> {
   }
 }
 
+/**
+ * The player does not skip a trigger of the route. Keeping by Hadvar sets them at his side, a
+ * second of his run at a time, so a trigger he led them past in that second was never walked
+ * into: the next one of the route that lies between the two (nearer to each than they are to one
+ * another, about their height) is walked into first.
+ *
+ * Found 2026-11-12: the trigger of 305 on the stairs down from the first room was skipped so,
+ * and walked into only once nothing moved on, after the hall's collapse (the trigger of 310,
+ * HelgenHallCollapseScript). 305 enables the three hallway Stormcloaks in the hall that is about
+ * to fall in, and the collapse disables them six seconds later; the other way round they stood
+ * in the rubble for good, off the navmeshes, and Hadvar fought them from the corridor instead of
+ * leading on. The last of them stood 266 units beyond the navmesh's edge, never chased and never
+ * marked unreachable, and Hadvar stood facing him for good (docs/ai.md, Check Unreachable
+ * Target: open); whether he got to him first went with the fight (from one save the builds before
+ * and after the execution-at-any-frame-rate merge differed, from another both stood).
+ */
+async function passTrigger(sim: Sim, actor: number): Promise<void> {
+  const next = TRIGGERS.find(([stage]) => !sim.stageDone(MQ101, stage));
+  const at = await sim.position(actor);
+  const me = await sim.position(PLAYER_REF);
+  if (!next || !at || !me) return;
+  const [, trigger] = next;
+  const flat = (a: Vec3, b: Vec3): number => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const apart = flat(at, me);
+  if (apart <= 95 || flat(me, trigger) >= apart || flat(at, trigger) >= apart) return;
+  // A trigger's place is its box's middle, above the floor it stands on.
+  if (Math.abs(trigger[2] - (at[2] + me[2]) / 2) > 300) return;
+  await sim.moveTo(trigger);
+  await sim.step(0.25);
+}
+
 /** The player kills the route's enemies (MQ101's aliases) still alive. */
 async function fight(sim: Sim, aliases: readonly number[]): Promise<void> {
   for (const alias of aliases) {
@@ -103,6 +134,7 @@ async function playRoute(sim: Sim, done: () => boolean, seconds: number): Promis
   let stalled = 0;
   for (let second = 0; second < seconds && !done(); second++) {
     await sim.step(1);
+    await passTrigger(sim, hadvar);
     await keepBy(sim, hadvar);
     await defend(sim, hadvar);
     if (sim.stageDone(MQ101, 255) && !sim.stageDone(MQ101, 257)) {

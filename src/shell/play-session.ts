@@ -202,6 +202,21 @@ export function walksThrough(object: CellObject): boolean {
   return object.baseType === 'DOOR' && object.teleport !== undefined && object.automatic === true;
 }
 
+/**
+ * Whether the player is on their way to another place or behind a loading screen
+ * (GameSession.travelling, loading). No input reaches the game then (Player.inputHeld) and the
+ * player activates nothing, by the crosshair or by coming near an automatic door: the one
+ * place every activation of theirs asks before the reference's scripts hear of it, so a load
+ * door is activated once however long its place loads. Found 2026-11-12: the player's keys
+ * worked on while a door's place loaded, so they walked out of an automatic door's reach and
+ * into it again, and each time its scripts got OnActivate before the journey was refused.
+ */
+export function playerAway(
+  session: { readonly travelling: boolean; readonly loading: boolean } | undefined,
+): boolean {
+  return session !== undefined && (session.travelling || session.loading);
+}
+
 const autoDoorLists = new WeakMap<readonly CellObject[], readonly CellObject[]>();
 
 /** A cell's automatic load doors (walksThrough), found once per loaded cell's object list. */
@@ -1340,7 +1355,8 @@ export class PlaySession {
     if (hold) {
       if (!player.isHeld('Activate')) {
         this.#hold = undefined;
-        this.#activateTarget(hold.target);
+        // Let go once activation was switched off (or a place loads): nothing is activated.
+        if (player.allows('Activate')) this.#activateTarget(hold.target);
       } else if (clock() - hold.since >= player.ini.number('Controls', 'fZKeyDelay')) {
         this.#hold = undefined;
         // Heavier than fGrabMaxWeightWalking: it is not taken hold of.
@@ -1671,6 +1687,13 @@ export class PlaySession {
    * through (riding, sNotAllowedToUseAutoDoorsWhileonHorse instead). TODO(M13): the display
    * distance's prompt, the fade itself (here only its time passes); whether the distance is the
    * player's feet or their character's middle.
+   *
+   * None takes the player while they are on their way through a door already or behind a
+   * loading screen (Player.inputHeld: playerAway), neither as they come near nor once its fade
+   * has passed; the doors near are kept meanwhile, so one they stood by all along does not take
+   * them once they are there. Game.DisablePlayerControls' abActivate does not stop one: the game
+   * data needs it to take them, since MQ101 keeps activation off from stage 0 to 240 and its way
+   * into HelgenKeep01 is the automatic doors 25fae and 25fb2.
    */
   #watchAutoDoors(): void {
     const doors = this.autoDoors?.();
@@ -1685,16 +1708,19 @@ export class PlaySession {
     }
     const watched = this.#seenAutoDoors;
     this.#seenAutoDoors = seen;
+    const away = (): boolean => this.player.inputHeld?.() === true;
+    const may = !away();
     for (const reference of near) {
       // Coming near: one the player arrives by (just loaded) does not send them back.
       if (this.#nearAutoDoors.has(reference) || !watched.has(reference)) continue;
+      if (!may) continue;
       if (this.player.mount?.() !== undefined) {
         this.notify(this.autoDoorRidingText);
         continue;
       }
       const seconds = this.player.ini.number('General', 'fAutoDoorFadeSecs');
       setTimeout(() => {
-        this.onAutoDoor?.(reference);
+        if (!away()) this.onAutoDoor?.(reference);
       }, seconds * 1000);
     }
     this.#nearAutoDoors = near;

@@ -1335,6 +1335,32 @@ export class GameSession {
    */
   loading = false;
 
+  /** The journeys under way (beginJourney). */
+  #journeys = 0;
+
+  /**
+   * The player is on their way to another place: from the moment a journey is taken (a load
+   * door activated, a fast travel begun) until they stand where it leads, so before its loading
+   * screen is up as well as behind it. Meanwhile no input reaches the game, the player
+   * activates nothing and no automatic door takes them (Player.inputHeld, playerAway in
+   * src/shell/play-session.ts): a load door is activated once, however long its place takes to
+   * load.
+   */
+  get travelling(): boolean {
+    return this.#journeys > 0;
+  }
+
+  /** A journey begins (travelling); the function returned ends it, once. */
+  beginJourney(): () => void {
+    this.#journeys++;
+    let ended = false;
+    return () => {
+      if (ended) return;
+      ended = true;
+      this.#journeys--;
+    };
+  }
+
   /**
    * Every frame: the scripts' clocks move with the game's (real seconds, and game days as the
    * sky moves the hour); a script that set the clock (GameHour) sets the game's.
