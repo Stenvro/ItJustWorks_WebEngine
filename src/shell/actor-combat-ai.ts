@@ -702,7 +702,10 @@ const SHEATHE_DELAY = 3;
  * often.
  */
 const CORNERED_SECONDS = 10;
-/** A cowardly spectator flees a fight this long after its last blow (seconds). */
+/**
+ * A cowardly spectator flees a fight this long after its last blow (seconds). TODO(M13):
+ * inferred; the original's length is not documented.
+ */
 const SCARED_SECONDS = 10;
 /** A warning (ActionIdleWarn) is played again this often (seconds). */
 const WARN_SECONDS = 3;
@@ -1359,7 +1362,7 @@ export class ActorCombatAi {
     }
     const candidates = this.#candidates(mind, view, views, profile, magic, senses);
     const detected = candidates.filter((candidate) => candidate.detected);
-    // A cowardly spectator runs from the fight it saw.
+    // A cowardly spectator runs from the fight it saw (inferred, TODO(M13): #spectators).
     if (mind.mode === 'idle' && mind.scaredFrom && this.#clock < mind.scaredUntil) {
       if (detected.length === 0) {
         senses?.endReaction(mind.reference);
@@ -4961,7 +4964,10 @@ export class ActorCombatAi {
   /**
    * Those watching a fight (detection's spectating: their package lets them observe combat)
    * may say their ObserveCombat line (by fAISocialchanceForConversation); a cowardly one runs
-   * from it instead.
+   * from it instead, by the combat Flee tree, its load doors included (inferred, TODO(M13): the
+   * Creation Kit's Cowardly confidence avoids combat, and townspeople run from a fight they
+   * see; how long one runs, and whether a follower on a package that observes combat runs
+   * through a load door from a fight that is not its own, are not documented).
    */
   #spectators(senses: ActorSenses | undefined): void {
     if (!senses) return;

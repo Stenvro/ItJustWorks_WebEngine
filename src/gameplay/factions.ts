@@ -108,12 +108,20 @@ export interface FactionFacts {
  * not a member yet), as `reaction` weighs them: the combat reactions of each of the actor's
  * factions towards each of the other's (`factionReactions`; a faction both are in that names a
  * reaction to itself among them as any other pair), and whether they share a faction that names
- * no reaction to itself and is not Special Combat (`sameFaction`). Where the actor's factions
- * name none of the other's, the other's towards the actor's count (inferred, TODO(M13):
- * MQAncientHeroFaction names only itself; MQ304AlduinFaction names it an enemy, and Sovngarde's
- * heroes fight Alduin). The one rule of the running
- * game's reactions (CrimeEngine.reaction) and of the combat AI's tests and tools
- * (combatReaction).
+ * no reaction to itself and is not Special Combat (`sameFaction`). The reactions go one way: only
+ * the actor's own factions say how it regards the other, never the other's towards it (the data
+ * is built so: 123 XNAM reactions are named on one side only, and DLC2CultistAmbush, whose
+ * location is a town or a capital, places DLC2LvlCultistNonHostile cultists in
+ * DLC2CultistFaction, which names IsGuardFaction an enemy, unaggressive (Aggression 0,
+ * WEPlayerFriend, dunPrisonerFaction) until its stage 10 turns them on the player and so on the
+ * guards (WEPlayerEnemy, Aggression 1); were the guards to read the cultists' enmity as their
+ * own, they would fall on the cultists as they come, and that turn would mean nothing). Where the
+ * other's factions name one of the actor's an enemy, a faction they share makes no alliance
+ * (inferred, TODO(M13): Sovngarde's heroes and Alduin share FavorExcludedFaction, and only
+ * MQ304AlduinFaction names MQAncientHeroFaction, an enemy; the heroes, who name none of
+ * Alduin's, would otherwise stand by as his allies while he fights the player they help). The
+ * one rule of the running game's reactions (CrimeEngine.reaction) and of the combat AI's tests
+ * and tools (combatReaction).
  */
 export async function factionTies(
   facts: FactionFacts,
@@ -138,13 +146,15 @@ export async function factionTies(
       if (value !== undefined) factionReactions.push(value);
     }
   }
-  if (factionReactions.length === 0) {
-    for (const [other, otherRank] of theirs) {
+  if (sameFaction && !factionReactions.includes(CombatReaction.enemy)) {
+    search: for (const [other, otherRank] of theirs) {
       if (otherRank < 0) continue;
       for (const [faction, rank] of mine) {
         if (rank < 0) continue;
-        const value = await facts.factionReaction(other, faction);
-        if (value !== undefined) factionReactions.push(value);
+        if ((await facts.factionReaction(other, faction)) === CombatReaction.enemy) {
+          sameFaction = false;
+          break search;
+        }
       }
     }
   }
