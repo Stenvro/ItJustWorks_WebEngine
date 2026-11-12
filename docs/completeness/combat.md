@@ -213,6 +213,11 @@ and 290 built-in ones the readers ask for by name.
 - [x] fKnockbackTime, fKnockbackDamageMult, fKnockbackForceMax (with the built-in
       fKnockbackDamageBase, AgilBase, AgilMult): an unblocked hit's push back (knockback.ts;
       round 4). fConcussionTimer: registered, never read (inert).
+- [x] fGrenadeAgeMax (the engine's 90; no plugin sets it) and fMineAgeMax (0): the most a lobbed
+      projectile without a Lifetime lives, a mine (Alt. Trigger with a proximity) by the second;
+      past it it is taken away unburst. The runes are mines (no limit); DLC2ExpSpiderOilDecal
+      lives 90 s (projectile-flight.ts lobberAgeMax; tests/conformance/magic/
+      projectiles-explosions.test.ts).
 - [x] fKillCamBaseOdds (1): read in the original only by the kill camera's odds by level, which
       nothing calls (inert; round 4b).
 - [x] fBlockSkillMult, fBlockAmountWeaponMult, fBlockMax: registered, never read (inert); the

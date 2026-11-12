@@ -1019,8 +1019,15 @@ same aim; what differs is where they leave from and, for an NPC, what it aims at
   bounceLobber); one with an alternative trigger then lies, or slides down a slope steeper than
   the friction's angle (78.7°) until one holds it, and waits at rest for an actor within its
   proximity (the runes' 150) or its timer, then bursts; without one it bursts on the surface.
-  An actor it meets in flight sets it off. TODO(M13): the slide's law is inferred from the
-  settings' names; fGrenadeAgeMax is not read (the runes wait without a lifetime).
+  An actor it meets in flight sets it off. A lobber's age (observed in the original, asked at
+  each of its updates): the most it lives is its PROJ's Lifetime; where that is zero,
+  fGrenadeAgeMax, or for a mine (Alt. Trigger with an explosion proximity above zero)
+  fMineAgeMax; zero is no limit. Past it the projectile is taken away where it is, without
+  bursting. No plugin sets either: the engine's own values are 90 and 0, and none of the load
+  order's ten lobbers has a Lifetime, so the nine runes (mines) wait without end and
+  DLC2ExpSpiderOilDecal (Alt. Trigger, no proximity: no mine) lives 90 s
+  (projectile-flight.ts lobberAgeMax; the settings are read as the lobbers fly, so setgs
+  changes them). TODO(M13): the slide's law is inferred from the settings' names.
 - Speeds and falls: missiles and arrows fly at the PROJ's speed (an arrow's times the draw) and
   fall by the PROJ's gravity × 9.8 m/s²; beams reach their range at once; flames are sprays,
   one every relaunch interval. fArrowSpeedMult and fArrowGravityBase are not read by the engine.
