@@ -533,6 +533,13 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   with another actor and a greeting it stops for ([Talking](#talking)); the package's interrupt
   flags say whether it greets, chatters, talks with others and comments. In combat its packages
   wait; its combat override list (ECOR) keeps it to its package's place ([Combat AI](#combat-ai)).
+  A package step that asks to move it while it fights (a travel, a walk to furniture) waits for
+  the fight's end and has then not got there, as one whose way the fight stopped
+  (`ActorAi` `#afterFight`): its combat alone moves it. Found in MQ104: the plains' elk wander
+  with no pause between their walks (Energy 100), so a wander stopped by the fight asked for its
+  next walk at once and took the combat AI's own way from it, each time anew; an elk bolting
+  from the player never ran (`tests/sim-prey-flees.int.test.ts`). TODO(M13): inferred; how the
+  original parks a package's running step for a fight was not checked.
 - **When** (observed in the original): as the game's hour changes, every
   fEvaluatePackageTimer (15 s), every frame while it has none, and when a script asks
   (EvaluatePackage); here also as its package ends. One that must complete (PKDT flag 0x4) is not
@@ -3135,6 +3142,17 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   original's scale between the two). TODO(M13): the Hide behaviour's own time limit (ours: the hide
   lasts until it is found, or until its fight ends as its group gives up an enemy it lost, after
   fCombatDetectionFleeingLostRemoveTime while all of it flees).
+  A run to a door or to cover that ends short of it (no way there, its way taken from it) fails
+  its node, and the selector goes on to its next entry (`fleeRunStatus`): only one that got to
+  its cover hides, only one at its door goes through. A coward's hide that is found fails too,
+  Boost Confidence never raising its level, and it flees on (`hideEnd`): a deer found behind its
+  rock runs, it does not turn on the one that found it, so no one who would defend that one
+  takes up a fight against it (`#fightTarget`). Both inferred from the selector's order,
+  TODO(M13): what the original does with a flee run whose path fails, and how a coward's Hide
+  ends. Found in MQ104 (`tests/sim-prey-flees.int.test.ts`): an elk by the Western Watchtower
+  road, its run to cover ended where it stood, hid there in the open, was found by the player
+  looking its way, turned to fight, and Irileth and the guards hunted it while their scene stood
+  paused for the fight.
   Else away (fFleeDistance\*), cowering where it can go no farther.
 - **Flanking Movement** (Stalk, then the Flank Selector: Flank, Chase, Flank Distant, Watch
   Target): far off the chase; else the maneuver (flank or stalk), out of range Flank Distant
