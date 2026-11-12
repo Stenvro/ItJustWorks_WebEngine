@@ -148,3 +148,88 @@ describe.skipIf(!hasGamedata())("a character's way at a low frame rate (original
     }
   }, 600_000);
 });
+
+// A character's path is the same at any frame rate (docs/physics.md, "A character's way in the
+// steps"): a step that covers more than its own time goes in moves of no more than that time,
+// snapped to the ground between them, and the player running down the land keeps to it as at 60
+// frames a second. In one long move a step the player left the slope by Whiterun's walls (some
+// 6.6 degrees) for a fifth of the steps at 15 frames a second, and off the ground took no
+// controls.
+const TAMRIEL = 0x3c;
+
+describe.skipIf(!hasGamedata())("a character's path on the land at a low frame rate", () => {
+  it('keeps the player running downhill on the ground at 15 and 10 frames a second', async () => {
+    const sim = await openSim({
+      exterior: { world: TAMRIEL, cell: [4, -11] },
+      hour: 10,
+      gridRadius: 1,
+    });
+    try {
+      await sim.step(2);
+      const player = sim.world.player;
+      const start: [number, number, number] = [...player.feet];
+      let steps = 0;
+      let grounded = 0;
+      // After each of the player's physics steps.
+      const play = sim.world.play;
+      if (!play) throw new Error('no place open');
+      play.stepHooks.add(() => {
+        steps++;
+        if (player.character.grounded) grounded++;
+      });
+      /** Running `seconds` of the clock from the start along `yaw` at frames of `frame`. */
+      const run = async (
+        yaw: number,
+        frame: number,
+        seconds: number,
+      ): Promise<{ grounded: number; speed: number; drop: number }> => {
+        await sim.moveTo(start, yaw);
+        sim.world.look(yaw);
+        for (let i = 0; i < LEAD_IN; i++) await sim.step(frame, frame);
+        const [x, y, z] = player.feet;
+        const clock = sim.time;
+        steps = 0;
+        grounded = 0;
+        sim.press('Forward', true);
+        while (sim.time - clock < seconds - 1e-6) {
+          sim.world.look(yaw);
+          await sim.step(frame, frame);
+        }
+        sim.press('Forward', false);
+        const [nx, ny, nz] = player.feet;
+        const along = Math.hypot(nx - x, ny - y);
+        return {
+          grounded: grounded / Math.max(1, steps),
+          speed: along / (sim.time - clock),
+          drop: (z - nz) / Math.max(1, along),
+        };
+      };
+      // Downhill: of eight headings, the one going down the land the most at 60 frames a second,
+      // clear and on the ground all the way (by Whiterun's walls, south-east: some 6.6 degrees;
+      // to the south a drop on the way).
+      let yaw = 0;
+      let base = await run(0, 1 / 60, 1.5);
+      for (let i = 1; i < 8; i++) {
+        const heading = (i * Math.PI) / 4;
+        const tried = await run(heading, 1 / 60, 1.5);
+        if (tried.speed > 100 && tried.grounded > 0.95 && tried.drop > base.drop) {
+          yaw = heading;
+          base = tried;
+        }
+      }
+      // Down a slope of 5 degrees or more.
+      expect(base.drop).toBeGreaterThan(Math.tan((5 * Math.PI) / 180));
+      expect(base.speed).toBeGreaterThan(100);
+      expect(base.grounded).toBeGreaterThan(0.95);
+      for (const rate of [15, 10]) {
+        const at = await run(yaw, 1 / rate, 1.5);
+        const label = `${String(rate)} frames a second`;
+        expect(Math.abs(at.grounded - base.grounded), label).toBeLessThan(0.05);
+        expect(at.speed / base.speed, label).toBeGreaterThan(0.9);
+        expect(at.speed / base.speed, label).toBeLessThan(1.1);
+      }
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+});
