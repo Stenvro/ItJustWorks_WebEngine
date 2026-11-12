@@ -967,7 +967,8 @@ Actors use furniture as the engine's furniture handling does, as far as the data
   instead of 0.5 s: the block's IdleExecutionerChop_Player, played 1.2 s after the activation,
   found the use still entering, where a script's idle is not held, and came before the walk's
   IdleWalkingCameraEnd instead of after it; it was dropped and the player stood through the
-  execution (measured in the simulation).
+  execution (measured in the simulation; `tests/sim-furniture-enter.int.test.ts`, and the block
+  itself in `tests/sim-opening-ride.int.test.ts`).
 - **Idle markers** (IDLM, not drawn; with the furniture markers they are the cells' markers:
   `CellData.markers`): the actor goes to it, faces its way and plays its idles (IDLA), in order or
   one picked each time (IDLF 0x1), once through if so set (0x4), one each time its timer (IDLT)
