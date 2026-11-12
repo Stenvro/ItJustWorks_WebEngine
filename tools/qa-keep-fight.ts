@@ -125,6 +125,8 @@ const HELPERS = `(() => {
         guideMoves: guide === undefined || !stage ? undefined : (() => { const t = stage.movers.travelOf(guide); const m = stage.movers.motion(guide); return (t ? 'travel' : 'still') + ' v=' + Math.round(Math.hypot(...(m?.velocity ?? [0, 0]))); })(),
         guideFighter: guide === undefined || !stage ? undefined : (() => { const q = stage.combat.qaFighter(guide); return q && { engaged: q.engaged, weapon: q.weaponState, attack: q.attackState }; })(),
         playerPos: kf.pos(0x14)?.map(Math.round).join(','),
+        // The officer (BarracksRoomSoldier01, whose body holds the key Ralof fetches): how far its body lies from where it died.
+        officer: (() => { const r = kf.alias(173); const s = r === undefined ? undefined : stage?.get(r); const live = r === undefined ? undefined : stage?.livePlacement(r)?.position; return s && live ? { dead: s.dead, lies: Math.round(Math.hypot(live[0] - s.position[0], live[1] - s.position[1], live[2] - s.position[2])) } : undefined; })(),
       };
     },
   };

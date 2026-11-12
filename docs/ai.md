@@ -1609,7 +1609,11 @@ from the original game's behaviour only (in our words):
   references (TODO(M13): whether the engine sorts the two together); Acquire then takes it from a
   corpse or a container at once, and from a living actor only as one it holds (Allow
   Pickpocketing, Allow Killing). MQ101's Ralof fetches the keep's key from the dead officer so
-  (MQ101RalofGetDoorKey).
+  (MQ101RalofGetDoorKey). A corpse is searched where its ragdoll lies (the reference's place,
+  as a package's place that names it is): weighed at the spot it died on, a body that fell or was
+  knocked farther from there than the place's radius (the key's Find looks within 101 units of
+  the officer) was outside a search centred on itself, and Ralof wandered about it for good
+  (`tests/conformance/ai/corpse-search.test.ts`).
 - **Patrol:** at a point with an idle time (REFR XPRD) it waits that long; furniture it uses for
   at least fAIPatrolMinSecondsAtNormalFurniture (30 s).
 - **Wander:** each walk at least its Min Wander Distance (its slot 3, a number the engine reads;
