@@ -12,7 +12,8 @@
 // (MQ101 300 on Ralof's route: the key and the door), or the player dies.
 //
 //   node tools/qa-keep-fight.ts --out <folder> [--vite-port 5204] [--chrome-port 9404]
-//                               [--bot-minutes 4]
+//                               [--bot-minutes 4] [--keep-minutes 18]
+//                               [--after-fight-minutes 18]
 //
 // Writes keep-fight.json (the outcome, every blow by and on the player and the guide, who fought
 // the player in Helgen's courtyard, the menus that opened, frame times) and screenshots to the
@@ -42,6 +43,11 @@ const MQ101 = 0x3372b;
 const INTRO_RALOF = 0x4e1e2;
 /** How long the follow bot may take from MQ101 160 to the keep. */
 const BOT_MINUTES = Number(option('--bot-minutes', '4'));
+/** How long the keep may take in all, and how long after its last fight is over (minutes). */
+const KEEP_MINUTES = Number(option('--keep-minutes', '18'));
+const AFTER_FIGHT_MINUTES = Number(option('--after-fight-minutes', '18'));
+/** How long a block is held at most, waiting for a blow to fall on it (ms). */
+const BLOCK_HOLD_MS = 2500;
 const WIDTH = 1280;
 const HEIGHT = 720;
 
@@ -68,7 +74,7 @@ const HELPERS = `(() => {
   const kf = {
     V, rt, name,
     t0: performance.now(),
-    hits: [], menus: [], courtyard: new Set(), frames: [], att: [], lastMenus: '', lock: true,
+    hits: [], deaths: [], menus: [], courtyard: new Set(), frames: [], att: [], lastMenus: '', lock: true,
     stage: () => rt()?.state.quests.get(MQ)?.stage ?? -1,
     alias: (a) => rt()?.state.quests.get(MQ)?.aliases.get(a),
     pos: (ref) => ref === 0x14 ? V().player?.feet : V().actorStage?.get(ref)?.position,
@@ -97,12 +103,37 @@ const HELPERS = `(() => {
       return d;
     },
     stop: () => V().player?.press('Forward', false),
+    // A blow on the player as the hit is told: whether their block is up, how far off their
+    // facing the attacker stands (degrees) and how far away.
+    met: (aggressor) => {
+      const me = V().player; const at = kf.pos(aggressor); const s = V().actorStage?.combat.combatState(0x14);
+      if (!me || !at) return { blocking: s?.blocking === true };
+      const f = me.feet; const heading = V().playerView?.avatar?.bodyYaw ?? me.yaw;
+      let off = Math.atan2(at[0] - f[0], at[1] - f[1]) - heading; off = Math.atan2(Math.sin(off), Math.cos(off));
+      return { blocking: s?.blocking === true, off: Math.round(off * 180 / Math.PI), d: Math.round(Math.hypot(at[0] - f[0], at[1] - f[1])), pov: me.pov };
+    },
+    // Where the route stands: the scenes' phases, the guide's package and target.
+    status: () => {
+      const stage = V().actorStage; const guide = kf.guide(); const now = guide === undefined ? undefined : stage?.ai.current(guide);
+      return {
+        stage: kf.stage(),
+        scenes: rt()?.scenes.snapshot().map((s) => s.scene.toString(16) + ':' + s.phase + (s.paused ? ' paused' : '') + ' [' + s.open.map((a) => a.type + '@' + (a.actor === undefined ? '-' : name(a.actor))).join(',') + ']').join(' '),
+        guide: guide === undefined ? undefined : name(guide), guideAt: guide === undefined ? undefined : Math.round(kf.distance(guide)),
+        package: now && now.id.toString(16) + ' ' + String(now.procedure),
+        guideTarget: guide === undefined || !stage ? undefined : stage.combat.targetOf(guide)?.toString(16),
+        guidePos: guide === undefined ? undefined : kf.pos(guide)?.map(Math.round).join(','),
+        guideMoves: guide === undefined || !stage ? undefined : (() => { const t = stage.movers.travelOf(guide); const m = stage.movers.motion(guide); return (t ? 'travel' : 'still') + ' v=' + Math.round(Math.hypot(...(m?.velocity ?? [0, 0]))); })(),
+        guideFighter: guide === undefined || !stage ? undefined : (() => { const q = stage.combat.qaFighter(guide); return q && { engaged: q.engaged, weapon: q.weaponState, attack: q.attackState }; })(),
+        playerPos: kf.pos(0x14)?.map(Math.round).join(','),
+      };
+    },
   };
   window.__kf = kf;
   const watch = () => {
     const r = rt(); if (!r || kf.watching === r) return;
     kf.watching = r;
-    r.events.on('hit', (h) => kf.hits.push({ t: Math.round(performance.now() - kf.t0), a: name(h.aggressor), tg: name(h.target), power: !!h.powerAttack, blocked: !!h.blocked, stage: kf.stage() }));
+    r.events.on('hit', (h) => kf.hits.push({ t: Math.round(performance.now() - kf.t0), a: name(h.aggressor), tg: name(h.target), power: !!h.powerAttack, blocked: !!h.blocked, stage: kf.stage(), ...(h.target === 0x14 && kf.met(h.aggressor)) }));
+    r.events.on('death', (d) => kf.deaths.push({ t: Math.round(performance.now() - kf.t0), actor: name(d.actor), killer: d.killer === undefined ? undefined : name(d.killer), dead: d.dead, stage: kf.stage() }));
   };
   setInterval(() => {
     watch();
@@ -292,6 +323,14 @@ async function main(): Promise<void> {
         if (k.blockHold && s) { const p = k.V().player; k.blockHold.push([s.attack, s.staggered, s.recoiling, s.knock, s.blocking, p.character.grounded, p.motion.sprinting].map(Number).join('')); } }, 100);
       const block = c.block.bind(c);
       c.block = async (r, on) => { const res = await block(r, on); if (r === 0x14 && on && k.blockHold) k.blockAsks.push(res); return res; };
+      // While a block is held: the player's graphs' events that raise or drop it (which graph
+      // raised each, and whether the guard was up after it).
+      const heard = c.graphEvent.bind(c);
+      c.graphEvent = (source, event, handler) => {
+        heard(source, event, handler);
+        if (k.blockHold && source.reference === 0x14 && /block|stagger|recoil|attackstop/i.test(event.name + (handler ?? '')))
+          k.blockEvents.push(Math.round(performance.now() - k.t0) + ' ' + event.name + (source.firstPerson ? ' (first person)' : ' (body)') + ' -> ' + (c.combatState(0x14)?.blocking ? 'up' : 'down'));
+      };
       return true; })()`,
   );
 
@@ -311,12 +350,20 @@ async function main(): Promise<void> {
   const blocks: {
     midSwing: boolean;
     raised: boolean;
+    heldMs: number;
     states: string[];
     asks: boolean[];
+    /** The player's graphs' events about the block while it was held (which graph, up or down after). */
+    events: string[];
+    /** The blows that fell on the player while it was held (blocked: as the hit was told). */
+    blows: { blocked: boolean; blocking: boolean; off: number; d: number }[];
   }[] = [];
   let shots = 0;
+  let statusAt = 0;
+  let lastStatus = '';
   const foesSeen = new Set<number>();
-  const keepUntil = Date.now() + 18 * 60_000;
+  const keepUntil = Date.now() + KEEP_MINUTES * 60_000;
+  let fightOverAt = 0;
   let outcome = 'timeout';
   while (Date.now() < keepUntil) {
     const now = await page
@@ -419,19 +466,36 @@ async function main(): Promise<void> {
             await sleep(150);
           }
           const before = await page.eval<number>(
-            `(() => { const k = window.__kf; k.blockHold = []; k.blockAsks = []; return k.blockSeen ?? 0; })()`,
+            `(() => { const k = window.__kf; k.blockHold = []; k.blockAsks = []; k.blockEvents = []; return k.blockSeen ?? 0; })()`,
           );
+          const blowsOn = (): Promise<number> =>
+            page.eval<number>(`window.__kf.hits.filter((h) => h.tg === 'player').length`);
+          const blowsBefore = await blowsOn();
           await mouse('mousePressed', 'right');
+          // Held until a blow falls on the player (and 0.3 s on), BLOCK_HOLD_MS at most.
+          const pressed = Date.now();
           await sleep(900);
+          while (Date.now() - pressed < BLOCK_HOLD_MS && (await blowsOn()) === blowsBefore)
+            await sleep(100);
+          await sleep(300);
           await mouse('mouseReleased', 'right');
-          const held = await page.eval<{ seen: number; states: string[]; asks: boolean[] }>(
-            `(() => { const k = window.__kf; const r = { seen: k.blockSeen ?? 0, states: k.blockHold ?? [], asks: k.blockAsks ?? [] }; k.blockHold = undefined; return r; })()`,
+          const held = await page.eval<{
+            seen: number;
+            states: string[];
+            asks: boolean[];
+            events: string[];
+            blows: { blocked: boolean; blocking: boolean; off: number; d: number }[];
+          }>(
+            `(() => { const k = window.__kf; const r = { seen: k.blockSeen ?? 0, states: k.blockHold ?? [], asks: k.blockAsks ?? [], events: k.blockEvents ?? [], blows: k.hits.filter((h) => h.tg === 'player').slice(${String(blowsBefore)}).map((h) => ({ blocked: h.blocked, blocking: h.blocking, off: h.off, d: h.d })) }; k.blockHold = undefined; return r; })()`,
           );
           blocks.push({
             midSwing,
             raised: held.seen > before,
+            heldMs: Date.now() - pressed,
             states: [...new Set(held.states)],
             asks: held.asks,
+            events: held.events,
+            blows: held.blows,
           });
         } else {
           await mouse('mousePressed', 'left');
@@ -456,11 +520,22 @@ async function main(): Promise<void> {
         );
         await page.screenshot(path.join(OUT, `fight${String(fought)}-end.jpg`));
         fightStart = 0;
+        fightOverAt = Date.now();
       }
+    }
+    if (fightOverAt !== 0 && Date.now() - fightOverAt > AFTER_FIGHT_MINUTES * 60_000) {
+      outcome = `stood at MQ101 ${String(now.stage)} after the fight`;
+      break;
     }
     if (now.stage >= 300) {
       outcome = 'won: MQ101 300';
       break;
+    }
+    if (Date.now() - statusAt > 10_000) {
+      statusAt = Date.now();
+      const status = JSON.stringify(await page.eval(`window.__kf.status()`).catch(() => undefined));
+      if (status !== lastStatus) log(`status: ${status}`);
+      lastStatus = status;
     }
     await sleep(300);
   }
@@ -480,7 +555,7 @@ async function main(): Promise<void> {
   if (outcome.startsWith('won')) {
     await sleep(1500);
     await page.eval(
-      `(() => { const k = window.__kf; k.blockHold = []; k.blockAsks = []; return true; })()`,
+      `(() => { const k = window.__kf; k.blockHold = []; k.blockAsks = []; k.blockEvents = []; return true; })()`,
     );
     await mouse('mousePressed', 'right');
     await sleep(400);
@@ -509,6 +584,8 @@ async function main(): Promise<void> {
         playerAttacks: k.att.reduce((m, [, a, res]) => { const key = a + (res ? '' : ' (refused)'); m[key] = (m[key] ?? 0) + 1; return m; }, {}),
         courtyardFoes: [...k.courtyard],
         hits: k.hits.filter(h => h.stage >= 160),
+        deaths: k.deaths.filter(d => d.stage >= 160),
+        status: k.status(),
         menus: k.menus,
         frames: { n: f.length, median: f[Math.floor(f.length / 2)], p95: f[Math.floor(f.length * 0.95)], fps: 1000 / f[Math.floor(f.length / 2)] },
       }; })()`,
