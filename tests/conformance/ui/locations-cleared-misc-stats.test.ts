@@ -624,6 +624,9 @@ describe.skipIf(!hasGamedata())('the misc stats of a day at an inn (headless sim
     expect(stat(sim, 'Souls Trapped')).toBe(before);
     expect(await magic.trapSoul(PLAYER_REF, wolf)).toBe(true);
     expect(stat(sim, 'Souls Trapped')).toBe(before + 1);
+    // The wolf goes for the player, and the inn's people, whose factions name no wolf's, leave
+    // it be: alive, it would keep the player from sleeping and waiting in the cases after.
+    await sim.kill(wolf);
   });
 
   it('Poisons Used: a poison put on the player’s weapon', async () => {
