@@ -4,27 +4,35 @@
 // spell the casting engine chooses against the target (the one worth most through the
 // target's resistances and weaknesses: CastingEngine.spellWorth), each staff it carries with
 // charge left (its enchantment's worth against the target), and the shout in its voice (its
-// known words' spell). An option's damage is that worth; its reach its projectile's range.
+// known words' spell, where the combat inventory's score gives it a caster: shoutOffered; one
+// with the Script caster while that caster's own check holds). An option's damage is that
+// worth; its reach its projectile's range.
 // Its other casting (healing, potions, summons, wards, buffs) is the combat AI's support
 // (CombatCasting.support). Notes: docs/ai.md, "Combat AI".
 
 import type { CombatCasting, CombatSupport } from './actor-combat-ai.ts';
 import { MAGIC_REACH, type ActorCasting } from './actor-casting.ts';
 import type { EquipOption } from '../ai/combat-tactics.ts';
-import { shoutAttacks } from '../gameplay/combat/spell-score.ts';
+import { shoutOffered } from '../gameplay/combat/spell-score.ts';
 import type { GameSession } from './game-session.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { Delivery, type MagicItemRecord } from '../world/magic-records.ts';
 import { CastType } from '../world/spell-records.ts';
 
-/** Whether a shout's word is an attack (shoutAttacks: some effect of its spell is hostile). */
-async function attacks(runtime: ScriptRuntime, wordSpell: MagicItemRecord): Promise<boolean> {
-  const effects = [];
-  for (const entry of wordSpell.effects) {
-    const effect = await runtime.magic.effect(entry.effect);
-    if (effect) effects.push(effect);
-  }
-  return shoutAttacks(effects);
+/**
+ * Whether a shout's word is an option against a target now: its spell's score gives it a caster
+ * the fight shouts with (shoutOffered), and a Script caster's own check holds (its AI delay
+ * since the last cast, the spell not on the one it lands on already: scriptCastReady).
+ */
+async function shouts(
+  runtime: ScriptRuntime,
+  actor: number,
+  wordSpell: MagicItemRecord,
+  target: number | undefined,
+): Promise<boolean> {
+  const { caster } = await runtime.casting.spellScore(actor, wordSpell, 'attack', target);
+  if (!shoutOffered(caster)) return false;
+  return caster !== 'script' || runtime.casting.scriptCastReady(actor, wordSpell, target);
 }
 
 /** The NPCs' casting as the combat AI asks for it (of a session: its script runtime). */
@@ -49,7 +57,7 @@ export function combatCasting(
       const words = shout ? runtime.casting.wordsKnown(actor, shout) : 0;
       const word = shout?.words[Math.max(0, Math.min(words, shout.words.length) - 1)];
       const wordSpell = word ? await runtime.magic.item(word.spell) : undefined;
-      if (shout && words > 0 && wordSpell && (await attacks(runtime, wordSpell))) {
+      if (shout && words > 0 && wordSpell && (await shouts(runtime, actor, wordSpell, target))) {
         options.push(await option(runtime, actor, 'shout', shout.formId, wordSpell, target));
       }
       return options.filter((one) => one.damage > 0);

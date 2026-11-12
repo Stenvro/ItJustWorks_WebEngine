@@ -20,7 +20,12 @@
 // IsDualCasting, GetCurrentCastingType, GetCurrentDeliveryType, IsCurrentSpell,
 // SpellHasKeyword, GetCurrentShoutVariation, IsWardState). Platform-independent.
 
-import { combatSpellScore, type ScoredEffect } from '../../gameplay/combat/spell-score.ts';
+import {
+  combatSpellScore,
+  scriptCasterReady,
+  type ScoredEffect,
+  type SpellScore,
+} from '../../gameplay/combat/spell-score.ts';
 import {
   advanceCast,
   beginCast,
@@ -1672,13 +1677,7 @@ export class CastingEngine {
 
   /**
    * What a spell (or a staff's enchantment, a shout's word) is worth to an NPC's combat AI for a
-   * purpose (TODO(M13): the engine's CombatMagicCaster weighing is not documented; this reads
-   * what the data give): for an attack, each effect's magnitude (by its seconds: a damage over
-   * time counts whole) times the share its target keeps of it (magic-engine foresee: none where
-   * its conditions or level cap leave the target out, its resistances' share of a hostile one:
-   * the target's weaknesses and resistances choose the element), an effect without a magnitude
-   * (paralysis, fear, a stagger's push) counting 1, plus each effect's MGEF Script Effect AI
-   * Score; to heal, the Health it restores; for the others, its cost (the stronger the better).
+   * purpose: the combat inventory's score of it (spellScore), nothing where no caster serves it.
    */
   async spellWorth(
     actor: number,
@@ -1686,6 +1685,23 @@ export class CastingEngine {
     purpose: CastPurpose,
     target?: number,
   ): Promise<number> {
+    const { score, caster } = await this.spellScore(actor, item, purpose, target);
+    return caster === undefined ? 0 : Math.max(score, 1e-3);
+  }
+
+  /**
+   * The combat inventory's score of a spell (or a staff's enchantment, a shout's word) and the
+   * caster it gives it (src/gameplay/combat/spell-score.ts): each effect's magnitude (or cost,
+   * or a Script effect's AI score) by its seconds, times the share its target keeps of a hostile
+   * one (magic-engine foresee: its resistances' share; for an attack none where its conditions
+   * or level cap leave the target out), by its kind's weight.
+   */
+  async spellScore(
+    actor: number,
+    item: MagicItemRecord,
+    purpose: CastPurpose,
+    target?: number,
+  ): Promise<SpellScore> {
     const runtime = this.#runtime;
     const effects: ScoredEffect[] = [];
     const base = await this.baseCost(item);
@@ -1709,11 +1725,12 @@ export class CastingEngine {
         magnitude: Math.max(0, entry.magnitude),
         duration: Math.max(0, entry.duration),
         cost: Math.max(1, base) / Math.max(1, item.effects.length),
+        aiScore: effect.aiScore,
         kept: keeps,
       });
     }
     const seconds = await runtime.gameSetting('fCombatMagicConcentrationScoreDuration');
-    const { score, caster } = combatSpellScore(
+    return combatSpellScore(
       {
         self: item.delivery === Delivery.self,
         concentration: item.castType === CastType.concentration,
@@ -1721,7 +1738,33 @@ export class CastingEngine {
       },
       typeof seconds === 'number' ? seconds : undefined,
     );
-    return caster === undefined ? 0 : Math.max(score, 1e-3);
+  }
+
+  /**
+   * Whether the combat AI's Script caster may cast an item now (scriptCasterReady; observed in
+   * the original): the AI Delay Time of its script effects has passed since the actor last cast
+   * it, and the one it lands on (the caster of a self spell, else the target) does not carry it
+   * already (a concentration spell is not asked that). TODO(M13): the original keeps one record
+   * for all an actor's script casts (the last one's time and delay); ours each item's own.
+   */
+  async scriptCastReady(actor: number, item: MagicItemRecord, target?: number): Promise<boolean> {
+    const runtime = this.#runtime;
+    let aiDelay = 0;
+    for (const entry of item.effects) {
+      const effect = await runtime.magic.effect(entry.effect);
+      if (effect?.archetype === EffectArchetype.script) aiDelay = Math.max(aiDelay, effect.aiDelay);
+    }
+    const last = this.#lastCast.get(`${String(actor)}:${String(item.formId)}`);
+    const landsOn = item.delivery === Delivery.self ? actor : target;
+    const carried =
+      item.castType !== CastType.concentration &&
+      landsOn !== undefined &&
+      runtime.magic.effectsOn(landsOn).some(([, entry]) => entry.item === item.formId);
+    return scriptCasterReady({
+      sinceCast: last === undefined ? undefined : this.#clock - last,
+      aiDelay,
+      carried,
+    });
   }
 
   /**
