@@ -121,6 +121,8 @@ import {
   pickCover,
   coverRange,
   fallbackPlace,
+  fleeRunStatus,
+  hideEnd,
   hideFails,
   pickFleeDoor,
   pickWeapon,
@@ -542,6 +544,8 @@ interface Mind {
   attackLocationFailed: { readonly key: AttackLocationKey; readonly at: number } | undefined;
   /** Flee: where it flees to (a door, cover), and when it last fled through a door. */
   fleeGoal: Vec3 | undefined;
+  /** Flee: its last run to such a place ended there, not short of it (fleeRunStatus). */
+  fleeReached: boolean;
   fleeDoorAt: number;
   /** Flee: the door it last went through, and when; its hide. */
   lastDoor: { readonly door: number; readonly at: number } | undefined;
@@ -1278,6 +1282,7 @@ export class ActorCombatAi {
         attackLocation: undefined,
         attackLocationFailed: undefined,
         fleeGoal: undefined,
+        fleeReached: false,
         fleeDoorAt: -Infinity,
         lastDoor: undefined,
         hideSince: undefined,
@@ -2215,6 +2220,7 @@ export class ActorCombatAi {
     mind.attackLocation = undefined;
     mind.attackLocationFailed = undefined;
     mind.fleeGoal = undefined;
+    mind.fleeReached = false;
     mind.fleeDoor = undefined;
     if (mind.hideSince !== undefined) {
       mind.hideSince = undefined;
@@ -3327,8 +3333,8 @@ export class ActorCombatAi {
    * The hide after Flee To Cover (Hide Parallel: Track Target, Turn Around, the Hide Selector with
    * Boost Confidence last; observed in the original): its back to its enemy it stays down until
    * the enemy comes near, engages it or, looking its way, finds it (hideFails, weighed each half
-   * second); then Boost Confidence: it turns and fights. Down, it sneaks: its enemies' detection
-   * weighs it so.
+   * second); then Boost Confidence: it turns and fights, or, a coward, flees on (hideEnd). Down,
+   * it sneaks: its enemies' detection weighs it so.
    */
   #hide(f: CombatFrame): Status {
     const mind = f.mind;
@@ -3376,9 +3382,10 @@ export class ActorCombatAi {
     }
     mind.hideSince = undefined;
     this.#options.movers.sneak(mind.reference, false);
-    // Boost Confidence, the Hide Selector's last: as one cornered, it turns and fights.
-    if (this.#canBoost(mind)) mind.confidenceBoost++;
-    else mind.corneredUntil = now + CORNERED_SECONDS;
+    // Boost Confidence, the Hide Selector's last: it turns and fights, a level braver. One
+    // whose level cannot rise (the cowardly) flees on by the Flee Selector's next (hideEnd).
+    if (hideEnd(this.#canBoost(mind)) === 'failure') return 'failure';
+    mind.confidenceBoost++;
     mind.mode = 'fight';
     return 'success';
   }
@@ -4215,9 +4222,12 @@ export class ActorCombatAi {
           fleeThroughDoor: (f, run) => {
             const mind = f.mind;
             if (!run.first) {
-              if (mind.fleeGoal) return 'running';
+              const status = this.#fleeRun(mind);
+              if (status === 'running') return 'running';
               const through = mind.fleeDoor;
               mind.fleeDoor = undefined;
+              // Short of the door (no way to it, a door that serves it not): not through it.
+              if (status === 'failure') return 'failure';
               if (through !== undefined) {
                 mind.lastDoor = { door: through, at: this.#clock };
                 void this.#options.leaveThroughDoor?.(mind.reference, through);
@@ -4257,8 +4267,9 @@ export class ActorCombatAi {
           fleeToCover: (f, run) => {
             const mind = f.mind;
             if (!run.first) {
-              if (mind.fleeGoal) return 'running';
-              return this.#hide(f);
+              // At its cover it hides; short of it (no way there) the selector goes on to Flee.
+              const status = this.#fleeRun(mind);
+              return status === 'there' ? this.#hide(f) : status;
             }
             const set = this.#navmeshes();
             const s = this.#subtrees;
@@ -4445,9 +4456,17 @@ export class ActorCombatAi {
     this.#releaseBlock(mind, f.view);
     const goal: Vec3 = [to[0], to[1], to[2]];
     mind.fleeGoal = goal;
-    void this.#options.movers.travel(mind.reference, goal, 'run', COVER_ARRIVE).then(() => {
-      if (mind.fleeGoal === goal) mind.fleeGoal = undefined;
+    mind.fleeReached = false;
+    void this.#options.movers.travel(mind.reference, goal, 'run', COVER_ARRIVE).then((arrived) => {
+      if (mind.fleeGoal !== goal) return;
+      mind.fleeGoal = undefined;
+      mind.fleeReached = arrived;
     });
+  }
+
+  /** How its run to a door or to cover stands (fleeRunStatus). */
+  #fleeRun(mind: Mind): 'running' | 'there' | 'failure' {
+    return fleeRunStatus({ underWay: mind.fleeGoal !== undefined, reached: mind.fleeReached });
   }
 
   /** The navigation meshes of the loaded area (the movers' paths go over them). */

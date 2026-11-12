@@ -561,6 +561,40 @@ export function hideFails(
   return near || check.engagedSince || spotted;
 }
 
+/** A flee run to a place: Flee Through Door's door, Flee To Cover's cover. */
+export interface FleeRun {
+  /** It is on its way there still. */
+  readonly underWay: boolean;
+  /** Its way ended at the place (false: short of it: no way there, or its way was taken from it). */
+  readonly reached: boolean;
+}
+
+/**
+ * A flee run on its node's later checks: on its way it runs on; at its place the node goes on
+ * (through the door; down behind the cover: Hide); ended short of it the node fails, and the Flee
+ * Selector goes on to its next entry (Flee To Cover, Flee), as a fallback selector does with any
+ * child that fails. Before, a run that ended anywhere counted as arrival: an actor whose way to
+ * its cover ended where it stood hid there, in the open. TODO(M13): inferred from the selector's
+ * order; what the original does with a flee run whose path fails was not checked.
+ */
+export function fleeRunStatus(run: FleeRun): 'running' | 'there' | 'failure' {
+  if (run.underWay) return 'running';
+  return run.reached ? 'there' : 'failure';
+}
+
+/**
+ * What a hide that failed (hideFails) comes to, by the Hide Selector's last entry, Boost
+ * Confidence: one whose level can rise (mayBoostConfidence) turns and fights, a level braver.
+ * One whose level cannot (the cowardly) has Boost Confidence fail and the Hide with it: the Flee
+ * Selector goes on to Flee, so a deer found behind its rock runs on and attacks no one. Before,
+ * such a one fought as one cornered, and those who defend its enemy took up the fight against it.
+ * TODO(M13): inferred from the selector's order and from Boost Confidence never raising a
+ * coward's level; the original's Hide ending for a coward was not checked.
+ */
+export function hideEnd(mayBoost: boolean): 'fight' | 'failure' {
+  return mayBoost ? 'fight' : 'failure';
+}
+
 /**
  * Fallback To Ranged (observed in the original): turned to its target (within 60°) it backs along
  * the line from its target to fCombatRangedDistance from it; farther already, it stays.

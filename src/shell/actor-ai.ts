@@ -208,6 +208,11 @@ export class ActorAi {
   readonly #stops = new Map<number, number>();
   /** The actors at their meal now (an Eat package eating: PackageBody.meal). */
   readonly #eating = new Set<number>();
+  /**
+   * The package steps that asked to move an actor while it fought, each waiting for the fight's
+   * end (#afterFight).
+   */
+  readonly #fightWaits = new Map<number, (() => void)[]>();
   /** A food for meals made up (Eat's Create Fake Food): the first in the load order. */
   #fakeFood: Promise<number | undefined> | undefined;
   readonly #actors = new Map<number, { packages: ActorPackages; staged: StagedActor }>();
@@ -476,9 +481,41 @@ export class ActorAi {
     this.#stops.delete(reference);
     this.#eating.delete(reference);
     const entry = this.#actors.get(reference);
-    if (!entry) return;
-    entry.packages.stop();
-    this.#actors.delete(reference);
+    if (entry) {
+      entry.packages.stop();
+      this.#actors.delete(reference);
+    }
+    this.#fightOver(reference);
+  }
+
+  /**
+   * Whether an actor fights now, so that its package may not move it: in combat an actor's
+   * packages wait (frame), its combat moves it. A package step that asks to move it meanwhile
+   * (travel, furniture) waits here for the fight's end and has then not got there, as one whose
+   * way the fight stopped. Before, a step that went on without waiting on its package's clock
+   * took the combat AI's way from it: a sandbox's wander with no pause between its walks
+   * (wanderPause: none at Energy 100, the plains' elk's), its walk stopped as the fight began,
+   * asked for its next walk at once, and again each time the fight's own way replaced it.
+   * Found in MQ104: an elk bolting from the player by the Western Watchtower never ran, its run
+   * to cover ended as it began. TODO(M13): inferred from an actor's packages waiting while it
+   * fights; how the original parks a package's running step for a fight was not checked.
+   */
+  async #afterFight(reference: number): Promise<boolean> {
+    if (this.#engaged?.(reference) !== true) return false;
+    await new Promise<void>((resolve) => {
+      const waiting = this.#fightWaits.get(reference);
+      if (waiting) waiting.push(resolve);
+      else this.#fightWaits.set(reference, [resolve]);
+    });
+    return true;
+  }
+
+  /** An actor fights no longer (or left its AI): what waited for that goes on. */
+  #fightOver(reference: number): void {
+    const waiting = this.#fightWaits.get(reference);
+    if (!waiting) return;
+    this.#fightWaits.delete(reference);
+    for (const resume of waiting) resume();
   }
 
   /**
@@ -538,6 +575,7 @@ export class ActorAi {
         continue;
       }
       if (this.#engaged?.(reference) === true) continue;
+      this.#fightOver(reference);
       this.#gotUp.delete(reference);
       if (this.#talking.delete(reference)) {
         this.#movers.request(reference, undefined);
@@ -649,6 +687,8 @@ export class ActorAi {
       position: () => staged.position,
       heading: () => staged.heading,
       travel: async (to, gait, arrive, space, options) => {
+        // Not while it fights: its combat moves it (#afterFight).
+        if (await this.#afterFight(reference)) return false;
         await furniture.leave(user);
         if (space && !(await this.#inSpace(reference, space))) {
           // On foot through load doors (sNotAllowedToUseAutoDoorsWhileonHorse).
@@ -681,6 +721,8 @@ export class ActorAi {
       },
       face,
       useFurniture: async (target, types) => {
+        // Not while it fights: it walks to no furniture then (#afterFight).
+        if (await this.#afterFight(reference)) return false;
         // Furniture in another cell or worldspace: not from here. Its markers' coordinates are
         // that cell's; walked to on this navmesh, the actor stood at the point of it nearest
         // them (MQ201's Rulindil in Elenwen's solar, his chair in the dungeon below).

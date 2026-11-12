@@ -24,6 +24,8 @@ import {
   COMBAT_SUBTREE_DEFAULTS,
   coverRange,
   fallbackPlace,
+  fleeRunStatus,
+  hideEnd,
   hideFails,
   pickCover,
   pickFleeDoor,
@@ -235,6 +237,31 @@ describe('who flees (formula)', () => {
     // Near the cone's edge it is found only nearer: 80° off reaches about 1509 units.
     expect(hideFails(watched(80))).toBe(false);
     expect(hideFails({ ...watched(80), distance: 1400, distanceAhead: 1400 })).toBe(true);
+  });
+
+  // Found 2026-11-12 (MQ104, tests/sim-prey-flees.int.test.ts): an elk's run to cover ended where
+  // it stood, and it hid there, in plain sight of the player it fled.
+  it('a flee run that ends short of its door or cover fails; the selector goes on  [inferred]', () => {
+    expect(fleeRunStatus({ underWay: true, reached: false })).toBe('running');
+    // At its place the node goes on: through the door, down behind the cover.
+    expect(fleeRunStatus({ underWay: false, reached: true })).toBe('there');
+    // No way there, or its way taken from it: not there. Flee To Cover's failure leaves the
+    // Flee Selector its next entries (the tree's order: door, cover, away, cower).
+    expect(fleeRunStatus({ underWay: false, reached: false })).toBe('failure');
+    const selector = JSON.stringify(COMBAT_TREES.Flee);
+    expect(selector.indexOf('"action":"fleeToCover"')).toBeGreaterThan(-1);
+    expect(selector.indexOf('"action":"fleeAway"')).toBeGreaterThan(
+      selector.indexOf('"action":"fleeToCover"'),
+    );
+  });
+
+  // Found with it: that elk, found in its "hide" by the player looking its way, turned to fight as
+  // one cornered, and Irileth and her guards took up the player's defence against it.
+  it('a coward found in its hide flees on; others turn and fight a level braver  [inferred]', () => {
+    // Boost Confidence is the Hide Selector's last entry, and never raises a coward's level.
+    expect(hideEnd(mayBoostConfidence(Confidence.cowardly, 0, settings))).toBe('failure');
+    expect(hideEnd(mayBoostConfidence(Confidence.cautious, 0, settings))).toBe('fight');
+    expect(hideEnd(mayBoostConfidence(Confidence.average, 0, settings))).toBe('fight');
   });
 
   it('Fallback To Ranged backs to fCombatRangedDistance from its target  [original]', () => {
