@@ -595,6 +595,24 @@ arrives by (loaded already within the distance) does not send them back. TODO(M1
 distance's text; the fade drawn (only its time passes); whether the distance is taken from the
 feet or the character's middle.
 
+**One journey, no input on the way.** A journey is under way from the moment it is taken (a load
+door's activation, a fast travel or a script's move asked of `PlayMode.loadingScreen`) until the
+player stands where it leads: `GameSession.travelling`, so before the loading screen is up as
+well as behind it (`session.loading`). Meanwhile (`playerAway` in play-session.ts) no user event
+of the player's works and a press is lost (`Player.inputHeld`, asked by `Player.allows`; a key
+held through it works again on arrival), the player's activations stop before the reference's
+scripts hear of them (the viewers' and the simulation's `#activatable`), and an automatic door
+neither begins its fade nor takes them (`#watchAutoDoors` asks `allows('Activate')` as the player
+comes near and again once the fade has passed; the doors near are kept, so one stood by all along
+does not take them afterwards). So a load door's scripts get one OnActivate however long its
+place loads; the refusal in main.ts (`onTravel`) is left for a script's own Activate of a door
+for the player. Before (found 2026-11-12), the place left ran on with the player's keys: they
+walked out of the keep's automatic door's reach and into it again while the keep loaded, and each
+time its scripts got OnActivate before the journey was refused. An automatic door does not take
+a player whose activation is switched off either (Game.DisablePlayerControls' abActivate).
+TODO(M13): inferred for abActivate; the original's rule is not known.
+tests/sim-load-door-once.int.test.ts.
+
 **Arriving** through a door, the player waits (in place, behind the loading screen) until the
 collision of the cell and the eight around it is in place — a street, bridge or porch may
 belong to a neighbour — and ray casts see it: Rapier updates what queries search (its broad
