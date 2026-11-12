@@ -379,6 +379,7 @@ loadData (RuntimeSave.engines; src/scripting/runtime/engine-save.test.ts):
 | casting-engine#shouting    | done   | a voice key held (seconds held)               |
 | casting-engine#lastCast    | done   | the AI's delays between casts (seconds ago)   |
 | casting-engine#lesserUsed  | done   | lesser powers' cooldowns (seconds ago)        |
+| casting-engine#scriptCasts | done   | the Script caster's last cast and its delay   |
 | crime-engine#npcAssaults   | done   | NPC assaults answered                         |
 | magic-engine#accumulating  | done   | by the effect's key                           |
 | magic-engine#did           | done   | by the effect's key                           |

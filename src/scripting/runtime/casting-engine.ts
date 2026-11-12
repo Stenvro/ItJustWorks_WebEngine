@@ -22,9 +22,11 @@
 
 import {
   combatSpellScore,
+  scriptCasterDelay,
   scriptCasterReady,
   type ScoredEffect,
   type SpellScore,
+  type SpellToScore,
 } from '../../gameplay/combat/spell-score.ts';
 import {
   advanceCast,
@@ -216,6 +218,11 @@ export interface CastingSave {
   readonly casts?: readonly SavedCast[];
   /** Actors holding their voice key (shouting), with the seconds held. */
   readonly shouting?: readonly (readonly [number, number])[];
+  /**
+   * Each actor's last cast by its combat AI's Script caster: the actor, the seconds since and
+   * the AI Delay Time noted with it (none in saves made before they were kept).
+   */
+  readonly scriptCasts?: readonly (readonly [number, number, number])[];
 }
 
 /** A cast going on as a save keeps it: its item is read again, its hand where it was. */
@@ -233,6 +240,14 @@ export interface SavedCast {
 export interface PotionStrength {
   readonly formId: number;
   readonly amount: number;
+}
+
+/**
+ * A scored spell's worth to the combat AI: its score where a caster serves it and it scores more
+ * than nothing (the combat inventory weighs only such items), else nothing.
+ */
+function worthOf({ score, caster }: SpellScore): number {
+  return caster === undefined || score <= 0 ? 0 : Math.max(score, 1e-3);
 }
 
 /** The potion an NPC drinks: the one restoring the most of what it needs. */
@@ -262,6 +277,11 @@ export class CastingEngine {
   #clock = 0;
   /** When an actor last began casting an item ("actor:item": the AI's delays). */
   readonly #lastCast = new Map<string, number>();
+  /**
+   * Each actor's last cast started by its combat AI's Script caster: when, and the AI Delay Time
+   * noted with it (scriptCastBegan; one note for all its Script casts).
+   */
+  readonly #scriptCasts = new Map<number, { readonly at: number; readonly delay: number }>();
   /** When an actor last used a lesser power ("actor:spell": its cooldown; the engine's clock). */
   readonly #lesserUsed = new Map<string, number>();
   /** Until when Spell Absorption's art shows on an actor (not shown again meanwhile). */
@@ -861,11 +881,15 @@ export class CastingEngine {
     const shouting = [...this.#shouting].map(
       ([actor, since]) => [actor, this.#clock - since] as const,
     );
+    const scriptCasts = [...this.#scriptCasts].map(
+      ([actor, note]) => [actor, this.#clock - note.at, note.delay] as const,
+    );
     return {
       lastCast: ages(this.#lastCast),
       lesserUsed: ages(this.#lesserUsed),
       ...(casts.length > 0 && { casts }),
       ...(shouting.length > 0 && { shouting }),
+      ...(scriptCasts.length > 0 && { scriptCasts }),
     };
   }
 
@@ -874,6 +898,8 @@ export class CastingEngine {
     for (const [key, age] of data?.lastCast ?? []) this.#lastCast.set(key, this.#clock - age);
     for (const [key, age] of data?.lesserUsed ?? []) this.#lesserUsed.set(key, this.#clock - age);
     for (const [actor, held] of data?.shouting ?? []) this.#shouting.set(actor, this.#clock - held);
+    for (const [actor, age, delay] of data?.scriptCasts ?? [])
+      this.#scriptCasts.set(actor, { at: this.#clock - age, delay });
     for (const saved of data?.casts ?? []) this.#runtime.detach(this.#castAgain(saved));
   }
 
@@ -1646,7 +1672,8 @@ export class CastingEngine {
    * target; heal: restores its Health; summon: summons or raises; ward: a ward; buff: a Self
    * spell otherwise), that it has the magicka for and whose effects' AI Delay Time (MGEF) has
    * passed since it last cast it, the one worth most against `target` (spellWorth: through its
-   * resistances and weaknesses), the costliest of those worth as much.
+   * resistances and weaknesses), the costliest of those worth as much. One whose caster is the
+   * Script caster only while that caster's own check holds (scriptCastReady).
    */
   async chooseSpell(
     actor: number,
@@ -1667,8 +1694,10 @@ export class CastingEngine {
       const needed = item.castType === CastType.concentration ? 0 : cost;
       if (magicka <= 0 || magicka < needed) continue;
       if (await this.#delayed(actor, item)) continue;
-      const worth = await this.spellWorth(actor, item, purpose, target);
+      const scored = await this.spellScore(actor, item, purpose, target);
+      const worth = worthOf(scored);
       if (worth <= 0) continue;
+      if (scored.caster === 'script' && !this.scriptCastReady(actor, item, target)) continue;
       if (!best || worth > best.worth || (worth === best.worth && cost > best.cost))
         best = { item, cost, worth };
     }
@@ -1677,7 +1706,8 @@ export class CastingEngine {
 
   /**
    * What a spell (or a staff's enchantment, a shout's word) is worth to an NPC's combat AI for a
-   * purpose: the combat inventory's score of it (spellScore), nothing where no caster serves it.
+   * purpose: the combat inventory's score of it (spellScore), nothing where no caster serves it
+   * or it scores nothing (the combat inventory weighs only items scoring more than nothing).
    */
   async spellWorth(
     actor: number,
@@ -1685,16 +1715,15 @@ export class CastingEngine {
     purpose: CastPurpose,
     target?: number,
   ): Promise<number> {
-    const { score, caster } = await this.spellScore(actor, item, purpose, target);
-    return caster === undefined ? 0 : Math.max(score, 1e-3);
+    return worthOf(await this.spellScore(actor, item, purpose, target));
   }
 
   /**
    * The combat inventory's score of a spell (or a staff's enchantment, a shout's word) and the
-   * caster it gives it (src/gameplay/combat/spell-score.ts): each effect's magnitude (or cost,
-   * or a Script effect's AI score) by its seconds, times the share its target keeps of a hostile
-   * one (magic-engine foresee: its resistances' share; for an attack none where its conditions
-   * or level cap leave the target out), by its kind's weight.
+   * caster it gives it (src/gameplay/combat/spell-score.ts): each effect's magnitude (or cost)
+   * by its seconds, times the share its target keeps of a hostile one (magic-engine foresee: its
+   * resistances' share; for an attack none where its conditions or level cap leave the target
+   * out), by its kind's weight; a Script effect its MGEF's AI score as it stands.
    */
   async spellScore(
     actor: number,
@@ -1702,6 +1731,20 @@ export class CastingEngine {
     purpose: CastPurpose,
     target?: number,
   ): Promise<SpellScore> {
+    const seconds = await this.#runtime.gameSetting('fCombatMagicConcentrationScoreDuration');
+    return combatSpellScore(
+      await this.#spellToScore(actor, item, purpose, target),
+      typeof seconds === 'number' ? seconds : undefined,
+    );
+  }
+
+  /** A spell as the combat inventory's score reads it (spellScore). */
+  async #spellToScore(
+    actor: number,
+    item: MagicItemRecord,
+    purpose: CastPurpose,
+    target?: number,
+  ): Promise<SpellToScore> {
     const runtime = this.#runtime;
     const effects: ScoredEffect[] = [];
     const base = await this.baseCost(item);
@@ -1726,45 +1769,55 @@ export class CastingEngine {
         duration: Math.max(0, entry.duration),
         cost: Math.max(1, base) / Math.max(1, item.effects.length),
         aiScore: effect.aiScore,
+        aiDelay: effect.aiDelay,
         kept: keeps,
       });
     }
-    const seconds = await runtime.gameSetting('fCombatMagicConcentrationScoreDuration');
-    return combatSpellScore(
-      {
-        self: item.delivery === Delivery.self,
-        concentration: item.castType === CastType.concentration,
-        effects,
-      },
-      typeof seconds === 'number' ? seconds : undefined,
-    );
+    return {
+      self: item.delivery === Delivery.self,
+      concentration: item.castType === CastType.concentration,
+      effects,
+    };
   }
 
   /**
    * Whether the combat AI's Script caster may cast an item now (scriptCasterReady; observed in
-   * the original): the AI Delay Time of its script effects has passed since the actor last cast
-   * it, and the one it lands on (the caster of a self spell, else the target) does not carry it
-   * already (a concentration spell is not asked that). TODO(M13): the original keeps one record
-   * for all an actor's script casts (the last one's time and delay); ours each item's own.
+   * the original): more than the AI Delay Time noted with the actor's last Script cast
+   * (scriptCastBegan: of whatever spell) has passed since it, and the one the item lands on (the
+   * caster of a self spell, else the target) does not carry it already (a concentration spell
+   * is not asked that).
    */
-  async scriptCastReady(actor: number, item: MagicItemRecord, target?: number): Promise<boolean> {
-    const runtime = this.#runtime;
-    let aiDelay = 0;
-    for (const entry of item.effects) {
-      const effect = await runtime.magic.effect(entry.effect);
-      if (effect?.archetype === EffectArchetype.script) aiDelay = Math.max(aiDelay, effect.aiDelay);
-    }
-    const last = this.#lastCast.get(`${String(actor)}:${String(item.formId)}`);
+  scriptCastReady(actor: number, item: MagicItemRecord, target?: number): boolean {
+    const last = this.#scriptCasts.get(actor);
     const landsOn = item.delivery === Delivery.self ? actor : target;
     const carried =
       item.castType !== CastType.concentration &&
       landsOn !== undefined &&
-      runtime.magic.effectsOn(landsOn).some(([, entry]) => entry.item === item.formId);
+      this.#runtime.magic.effectsOn(landsOn).some(([, entry]) => entry.item === item.formId);
     return scriptCasterReady({
-      sinceCast: last === undefined ? undefined : this.#clock - last,
-      aiDelay,
+      sinceCast: last === undefined ? undefined : this.#clock - last.at,
+      delay: last?.delay ?? 0,
       carried,
     });
+  }
+
+  /**
+   * An actor's combat AI started a cast of an item (a spell, a staff's enchantment or a shout's
+   * word's spell) at a target: where the item's caster is the Script caster, the time and the
+   * AI Delay Time of the Script effect that gave it that caster are noted for the caster's next
+   * check (scriptCastReady). Observed in the original: the combat AI's Script caster notes it
+   * as its cast starts, one note for all the actor's Script casts; a cast of a package's (its
+   * Shout or UseMagic procedure) or a script's is not the combat AI's and notes nothing.
+   * TODO(M13): the original keeps the note with the actor's fight, so a new fight starts
+   * without one; ours keeps it with the actor.
+   */
+  async scriptCastBegan(actor: number, item: MagicItemRecord, target?: number): Promise<void> {
+    const seconds = await this.#runtime.gameSetting('fCombatMagicConcentrationScoreDuration');
+    const delay = scriptCasterDelay(
+      await this.#spellToScore(actor, item, 'attack', target),
+      typeof seconds === 'number' ? seconds : undefined,
+    );
+    if (delay !== undefined) this.#scriptCasts.set(actor, { at: this.#clock, delay });
   }
 
   /**

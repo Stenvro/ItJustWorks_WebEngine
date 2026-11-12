@@ -696,22 +696,42 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   while less than fCombatInventoryShoutMaxRecoveryTime (5 s) of recovery is left. Its shout is
   an item of the combat inventory made as a spell's is: by the score of its word's spell and
   the caster that score gives it (`combatSpellScore`, `shoutOffered`); neither a hostile effect
-  nor the delivery decides it. Storm Call's words and Alduin's Firestorm (AlduinFirestormShout:
-  DragonVoiceStormCall, in the spell lists of AlduinBase, MQ106Alduin, MQ206Alduin,
-  MQ206AncientAlduin and MQ304Alduin) are self spells: their hostile Stagger area and the
-  storm's hazard are of no kind in a self spell and add nothing, and what makes them an option
-  is VoiceStormCallEmptyAIScriptEffect ("Script Effect for AI use of Storm Call"), a Script
+  nor the delivery decides it. An effect's kind goes by its archetype, its actor value, whether
+  the spell is cast on its caster and whether the effect is hostile: in a self spell only
+  effects that are not hostile have a kind. Of the effects whose kind has a caster, the one
+  adding the most gives the item its caster, also where it adds nothing; the inventory then
+  weighs only items scoring more than nothing. Storm Call's words and Alduin's Firestorm
+  (AlduinFirestormShout: DragonVoiceStormCall, in the spell lists of AlduinBase, MQ106Alduin,
+  MQ206Alduin, MQ206AncientAlduin and MQ304Alduin) are self spells: their hostile Stagger area
+  and the storm's hazard are of no kind and add nothing, and what makes them an option is
+  VoiceStormCallEmptyAIScriptEffect ("Script Effect for AI use of Storm Call"), a Script
   effect: it adds its MGEF's Script Effect AI Score (50) as it stands, whatever its magnitude,
-  duration or cost, and gives the item the Script caster. That caster casts once more than its
-  effect's AI Delay Time (60 s) has passed since its last cast, and not while the one the
-  spell lands on (the shouter of a self spell) carries it already (`scriptCasterReady`): a
-  dragon does not call a second storm into its first. Clear Skies' words
-  (VoiceClearSkiesSelf1-3) have one script effect with no AI score: they score nothing and get
-  no caster, so Sovngarde's heroes, Clear Skies in their voices from MQ305's mist, do not shout
-  it at Alduin instead of fighting him (`tests/conformance/combat/inventory.int.test.ts`).
-  TODO(M13): the original keeps one record of an actor's last script cast and its delay, ours
-  each item's own; a word whose caster is not one sent against the target nor Script (Restore,
-  Ward, Cloak, ...) is not shouted yet. The package
+  duration or cost, and gives the item the Script caster. As its cast starts, the combat AI's
+  Script caster notes the time and the AI Delay Time (60 s) of the effect that gave the item
+  that caster: one note for all the actor's Script casts. Another Script cast, of whatever
+  item, starts only once more than the noted delay has passed, and not while the one the spell
+  lands on (the shouter of a self spell) carries it already (`scriptCasterReady`;
+  `CastingEngine.scriptCastBegan` from the combat AI's cast in `src/shell/combat-casting.ts`,
+  `scriptCastReady`): a dragon does not call a second storm into its first, nor one within a
+  minute of the last, and Durnehviir's DLC1VQ05RaiseDeadShout (one Script effect, AI score
+  10,000, AI delay 30 s, lasting a second) is shouted 30 s apart, not at every recovery of the
+  voice. A word whose spell is one Script effect without an AI score has the Script caster
+  and scores nothing, so it is never taken up: Clear Skies' (VoiceClearSkiesSelf1-3; Sovngarde's
+  heroes, Clear Skies in their voices from MQ305's mist, fight Alduin with their weapons) and
+  the dragons' Unrelenting Force (DragonUnrelentingForceShout in 45 dragons' spell lists:
+  DragonVoiceUnrelentingForce is one aimed, hostile Script effect); so are the hands' spells
+  of that make (Soul Trap) no attack of the combat AI
+  (`tests/conformance/combat/inventory.int.test.ts`). The Script effects with an AI score in
+  the game data are six: VoiceStormCallEmptyAIScriptEffect, DLC1VQ05RaiseDeadScriptEffect,
+  DLC1ScriptAIEffect (the Drain Vitality shouts; 1,000,000, 45 s), DLC1ScriptAIFlyingEffect,
+  SprigganCallEffect and EmptyAIScriptEffectOnceOnly. TODO(M13): whether a dragon's fight on
+  the ground shouts Unrelenting Force some other way than by its combat inventory is not known
+  (ours: its flight picks at random among the shouts it knows); the Script caster of the
+  original also asks that its caster can pay for the spell and that the effect's conditions
+  hold on the one it lands on (ours leaves those to the cast), and keeps its note with the
+  actor's fight (ours with the actor, so it outlasts the fight); a package's Shout notes
+  nothing; a word whose caster is not one sent against the target nor Script (Restore, Ward,
+  Cloak, ...) is not shouted yet. The package
   Shout procedure does not wait for it: it turns to its target until within
   fAIShoutToleranceDegrees (5°; with its aim bool, holding the aim fAIShoutMinAimSeconds, 2 s),
   checks that no one stands in the way (within fAIAimBlockedToleranceDegrees, 10°), puts the

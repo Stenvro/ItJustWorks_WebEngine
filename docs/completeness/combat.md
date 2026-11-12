@@ -282,13 +282,18 @@ and 290 built-in ones the readers ask for by name.
       TODO(M13): a drain's count only for a target that uses the resource (ours: any).
 - [x] The shout in an actor's voice as an inventory item by its word's spell's score and caster,
       as a spell's: a Script effect adds its MGEF's AI score as it stands and gives the Script
-      caster (Storm Call's and Firestorm's "Script Effect for AI use of Storm Call", 50; a self
-      spell's hostile Stagger and hazard are of no kind; Clear Skies' script effect has no AI
-      score, so no caster); the Script caster casts once its effect's AI Delay Time has passed
-      since its last cast and not while the one the spell lands on carries it
-      (spell-score.ts shoutOffered, scriptCasterReady; tests/conformance/combat/
-      inventory.int.test.ts). TODO(M13): one record of the last script cast per actor (ours: per
-      item); a word with another support caster (Restore, Ward, Cloak, ...) is not shouted.
+      caster, also where it adds nothing (Storm Call's and Firestorm's "Script Effect for AI use
+      of Storm Call", 50; a self spell's hostile effects and its hazard are of no kind); only
+      items scoring more than nothing are weighed, so a word of one Script effect without an AI
+      score is never taken up (Clear Skies, the dragons' Unrelenting Force); the Script caster
+      notes the time and its effect's AI Delay Time as the combat AI's cast starts, one note per
+      actor, and casts again once more than that has passed and not while the one the spell
+      lands on carries it (spell-score.ts shoutOffered, scriptCasterDelay, scriptCasterReady;
+      casting-engine.ts scriptCastBegan, scriptCastReady; tests/conformance/combat/
+      inventory.int.test.ts). TODO(M13): whether a dragon's ground fight shouts Unrelenting
+      Force by another way than its inventory; the Script caster's cost and condition checks;
+      its note kept with the fight (ours: with the actor); a word with another support caster
+      (Restore, Ward, Cloak, ...) is not shouted.
 - [x] The dragons' fight: the Flight subtree, perches, breath, landing (flight.ts,
       actor-flight.ts).
 - [x] Flee: the strength ratio, to an ally, through a door, to cover; yield and surrender.
