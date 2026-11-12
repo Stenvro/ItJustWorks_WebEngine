@@ -180,12 +180,16 @@ function sideOf(prefix: string | undefined, raised: readonly string[]): Behavior
 }
 
 describe('the events of a paired clip go to each side by their prefix (inferred from the data)', () => {
+  // Each event tells how long before its update's end its trigger fell (GraphEvent.late: the
+  // clip's triggers lie 0.1 s apart from 0.1 s on), a side's own event as any other (the
+  // engine reads a blow's moment off it: DecapitateHandler).
+  const late = (seconds: number): unknown => expect.closeTo(seconds, 6);
   it('the second side (SyncAnimPrefix 2_) takes its 2_ events as its own, the prefix off', () => {
     const victim = sideOf('2_', ['2_KillActor', 'Done']);
     victim.update(0.25);
     expect(victim.takeRaised()).toEqual([
-      { name: 'KillActor', text: '2_KillActor' },
-      { name: 'Done', text: 'Done' },
+      { name: 'KillActor', text: '2_KillActor', late: late(0.15) },
+      { name: 'Done', text: 'Done', late: late(0.05) },
     ]);
   });
   it('the first side (no prefix of its clip’s own) takes its NPC events as its own', () => {
@@ -195,19 +199,26 @@ describe('the events of a paired clip go to each side by their prefix (inferred 
     const killer = sideOf(undefined, ['NPCHitFrame', '2_KillActor', 'Done']);
     killer.update(0.35);
     expect(killer.takeRaised()).toEqual([
-      { name: 'HitFrame', text: 'NPCHitFrame' },
-      { name: 'Done', text: 'Done' },
+      { name: 'HitFrame', text: 'NPCHitFrame', late: late(0.25) },
+      { name: 'Done', text: 'Done', late: late(0.05) },
     ]);
     // So the second side the first's.
     const victim = sideOf('2_', ['NPCHitFrame', '2_KillActor']);
     victim.update(0.25);
-    expect(victim.takeRaised()).toEqual([{ name: 'KillActor', text: '2_KillActor' }]);
+    expect(victim.takeRaised()).toEqual([
+      { name: 'KillActor', text: '2_KillActor', late: late(0.05) },
+    ]);
   });
   it('NPCSoundPlay is an event of its own on either side, not the first side’s SoundPlay', () => {
     const killer = sideOf(undefined, ['NPCSoundPlay.NPCKillChop']);
     killer.update(0.15);
     expect(killer.takeRaised()).toEqual([
-      { name: 'NPCSoundPlay', payload: 'NPCKillChop', text: 'NPCSoundPlay.NPCKillChop' },
+      {
+        name: 'NPCSoundPlay',
+        payload: 'NPCKillChop',
+        text: 'NPCSoundPlay.NPCKillChop',
+        late: late(0.05),
+      },
     ]);
     // The vampire lord's victim's clip annotates NPCSoundPlay.NPCVampireLordFeed.
     const victim = sideOf('2_', ['NPCSoundPlay.NPCVampireLordFeed']);

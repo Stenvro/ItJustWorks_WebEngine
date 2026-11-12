@@ -32,9 +32,12 @@ export const ENTER_GRACE = 1.5;
  * Where an entering use stands by the seconds `left` of its enter's root motion: moving by it
  * (and the tween to the marker at its end), then at its marker waiting for its graph's word,
  * then in its furniture without it after ENTER_GRACE. Its graph's enter event puts it in at
- * any time.
+ * any time. `refused`: its graph did not take the enter (it is in a state with no way into the
+ * furniture's: the player walking in the camera bob, MT WalkingCamera), so its word will not
+ * come: it is in its furniture as the root motion's time ends, without the wait. TODO(M13):
+ * inferred; what the engine makes of a use whose graph refused the enter is not known.
  */
-export function enterStep(left: number): 'moving' | 'waiting' | 'in' {
+export function enterStep(left: number, refused = false): 'moving' | 'waiting' | 'in' {
   if (left > 0) return 'moving';
-  return left <= -ENTER_GRACE ? 'in' : 'waiting';
+  return refused || left <= -ENTER_GRACE ? 'in' : 'waiting';
 }

@@ -288,7 +288,12 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
     // its idle that plays is an ambient idle it picked, not a specific idle (a sandbox's idle
     // marker routine, as the bard Mikael's at this hour, sends specific idles one after the other
     // and raises no PickNewIdle between them; the script's idle over one of those is not this
-    // case). What last set each one's idle on is told from here.
+    // case), and it holds no idle marker: one waiting at a marker picks ambient idles there, and
+    // its routine takes it on to the next marker and that one's idles. (Found 2026-11-12: Olfina
+    // Gray-Mane, 1A685, on her patrol of the inn's markers, had picked one at a marker, walked on
+    // 8 s after the script's idle and drank at the next marker's bar idles for the minute: no
+    // PickNewIdle came. Before, Saadia, D7505, sandboxing at no marker, was the first found.)
+    // What last set each one's idle on is told from here.
     const source = new Map<number, 'ambient' | 'specific'>();
     const specific = idles.specificIdle.bind(idles);
     idles.specificIdle = (reference) => {
@@ -310,6 +315,7 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
             flags.playing(staged.reference) &&
             source.get(staged.reference) === 'ambient' &&
             stage.furniture.interaction(staged.reference) === undefined &&
+            stage.furniture.markerOf(staged.reference) === undefined &&
             stage.movers.motion(staged.reference)?.moving !== true &&
             stage.movers.motion(staged.reference)?.pathing !== true,
         )?.reference;
@@ -343,6 +349,22 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
       // Sent over the ambient idle that played: the skip flag is set.
       const sent = theirs().find((call) => call.kind === 'specific');
       expect(sent?.playing).toBe(true);
+      // The script's idle is a dialogue pose that holds: idlebehavior.hkx's
+      // AnimationDrivenDialogueIdlesStateHH shifts it from side to side by its own draws
+      // (MT_IdleHDRightIdle, MT_IdleHDLeftIdle), and nothing in it raises PickNewIdle. It ends as
+      // the engine ends an idle, by the stop action (ActionIdleStop: the tree's IdleStop), after
+      // the skip's window: back in MT_Idle, whose clip raises PickNewIdle 2 s before each of its
+      // ends. (Before 2026-11-12 the case waited a minute for whatever ended the pose: Saadia's
+      // sandbox walked her on 12 s later and MT_Idle asked at 24 s. Found then, with other
+      // actors the first to stand so: Olfina walked on to a marker's idles, a child held the
+      // pose the whole minute; no PickNewIdle came.)
+      await sim.step(2 * SPECIFIC_IDLE_SKIP_WINDOW);
+      const staged = sim.actor(who);
+      expect(staged).toBeDefined();
+      if (!staged) return;
+      expect(await stage.furniture.actionEvent(stage.userOf(staged), 'ActionIdleStop')).toBe(
+        'IdleStop',
+      );
       // The stopped idle's PickNewIdle, if our graph raises one as it takes the script's idle,
       // is skipped; the one the script's idle's end raises is a request: the actor picks
       // ambient idles again (a skip that swallowed it would leave the actor without any).
