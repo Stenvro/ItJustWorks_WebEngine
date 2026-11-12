@@ -626,9 +626,10 @@ ess)` reads those places ahead);
   (`RuntimeSave.engines.dying`), so its scripts hear the OnDeath it was still waiting for as the
   load ends (docs/formats/save.md), with its killer as the akKiller. The killer is the
   reference written just before the state bytes (`EssActorData.killer`), kept on the dead too
-  (`ActorState.killer`). Measured on the saves read: of 2,365 actors only two keep one, both
-  dead (life state 2) with their timers still set, a townsman and a soldier of Helgen, and it
-  is MQ101AlduinREF, the dragon whose fire killed them; the opening's executed prisoners
+  (`ActorState.killer`). Measured on the two saves read: of their 4,727 actors (2,362 and
+  2,365) only two keep one, both in the second save and both dead (life state 2) with their
+  timers still set, a townsman and a soldier of Helgen, and it is MQ101AlduinREF, the dragon
+  whose fire killed them; the opening's executed prisoners
   (killed by their scripts) and the placed corpses keep none, nor does any living actor
   (`src/save/ess-import.test.ts`, on a synthetic save);
 - locks (the Lock extra: level, flags with bit 0 locked, key): the level and whether locked;

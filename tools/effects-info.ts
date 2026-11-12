@@ -107,10 +107,10 @@ if (values.audit) {
         `  flags 0x${shader.flags.toString(16)}, fill ${shader.fillTexture || '-'}, palette ${shader.membranePalette || '-'}`,
       );
       console.log(
-        `  membrane blend ${String(m.sourceBlend)}/${String(m.destBlend)} z ${String(m.zTest)}, fill in ${String(m.fill.fadeIn)} full ${String(m.fill.full)} out ${String(m.fill.fadeOut)} persistent ${String(m.fill.persistent)} ratio ${String(m.fill.fullRatio)}, scroll ${m.scroll.join(' ')}`,
+        `  membrane blend ${String(m.sourceBlend)}/${String(m.destBlend)} z ${String(m.zTest)}, fill in ${String(m.fill.fadeIn)} full ${String(m.fill.full)} out ${String(m.fill.fadeOut)} persistent ${String(m.fill.persistent)} ratio ${String(m.fill.fullRatio)} pulse ${String(m.fill.pulseAmplitude)} at ${String(m.fill.pulseFrequency)}/s, scroll ${m.scroll.join(' ')}`,
       );
       console.log(
-        `  edge colour ${m.edgeColor.map((c) => Math.round(c * 255)).join(' ')} falloff ${String(m.edgeFalloff)}, in ${String(m.edge.fadeIn)} full ${String(m.edge.full)} out ${String(m.edge.fadeOut)}`,
+        `  edge colour ${m.edgeColor.map((c) => Math.round(c * 255)).join(' ')} falloff ${String(m.edgeFalloff)}, in ${String(m.edge.fadeIn)} full ${String(m.edge.full)} out ${String(m.edge.fadeOut)} persistent ${String(m.edge.persistent)} ratio ${String(m.edge.fullRatio)} pulse ${String(m.edge.pulseAmplitude)} at ${String(m.edge.pulseFrequency)}/s`,
       );
       console.log(
         `  particles ${shader.particleTexture || '-'} (${String(p.textureCountU)}x${String(p.textureCountV)}), palette ${shader.particlePalette || '-'}, blend ${String(p.sourceBlend)}/${String(p.destBlend)} z ${String(p.zTest)}`,

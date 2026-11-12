@@ -578,12 +578,14 @@ Worn armour shows no glow. The armour enchantments' effects carry shaders of the
 (EnchArmorMagickaFXS on 1,142 armours, ...StaminaFXS 758, ...HealthFXS 329, ...FireFXS 324,
 ...FrostFXS 134, ...ShockFXS 128), as their Enchant Shader; of the armour enchantments' 3,147
 effect entries four have a Hit Shader (`node tools/effect-audit.ts --glow`). What
-the data says of them (`node tools/effects-info.ts EnchArmorMagickaFXS`, the six alike): flags
-0x3000C (Membrane Greyscale Alpha, No Particle Shader: their particle data is not used; the
-fire's also Membrane Greyscale Colour), an
-additive membrane with no fade in and no full time, whose fill stays at 5% to 10% (the full and
-the persistent ratio are the same) and whose edge, in the enchantment's colour, stays at 40% to
-90% and pulses by 10% to 20%, with a fade out of a second. Shown on a worn piece for as long
+the data says of them (`node tools/effects-info.ts EnchArmorMagickaFXS`, which prints the
+fill's and the edge's times, their persistent and full ratios and their pulse; the six alike):
+flags 0x3000C (Membrane Greyscale Alpha, No Particle Shader: their particle data is not used;
+the fire's 0x3000E, also Membrane Greyscale Colour), an additive membrane with no fade in and
+no full time, whose fill stays at 5% to 10% (the full and the persistent ratio are the same,
+no pulse) and whose edge, in the enchantment's colour, stays at 40% (the fire's) to 90% (the
+magicka's and the shock's) and pulses by 10% (the fire's 20%) once every 2.5 to 4 seconds,
+with a fade out of a second. Shown on a worn piece for as long
 as it is worn, that would be a coloured rim on every one of the 2,819 enchanted armours with a
 shader at all times, which the game does not look like; the second of fade out with nothing
 before it fits a shader that is started and stopped at once (a flash as the piece is put on),
