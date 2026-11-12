@@ -62,11 +62,12 @@ import { Layer } from '../physics/collision-layers.ts';
 import { inwardOnNavmesh, type NavmeshSet } from '../ai/pathfinding.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
 import type { FledFlights } from '../ai/fled-through-doors.ts';
+import { COMPLEX_SCENE_ACTORS, isComplexScene, sceneActors } from '../ai/ambient-idles.ts';
 import {
   processLevel,
   processListsBudget,
+  ProcessLevel,
   ProcessSlicer,
-  type ProcessLevel,
 } from '../ai/process-levels.ts';
 import { ActorAi } from './actor-ai.ts';
 import { ActorScenes } from './actor-scenes.ts';
@@ -421,6 +422,13 @@ export class ActorStage {
   constructor(options: ActorStageOptions) {
     this.#options = options;
     this.process = new ProcessSlicer(options.processClock ?? (() => performance.now()));
+    options.session.settings().then(
+      (settings) => {
+        this.#complexSceneActors =
+          settings.number('iAINumberActorsComplexScene') ?? COMPLEX_SCENE_ACTORS;
+      },
+      () => undefined,
+    );
     this.doors = new ActorDoors({
       session: options.session,
       find: (reference) => options.door?.(reference),
@@ -2986,18 +2994,34 @@ export class ActorStage {
         runtime?.dialogueSpeaker === reference ||
         runtime?.scenes.sceneOf(reference) !== undefined ||
         looks.target(reference) !== undefined;
-      levels.set(
-        reference,
-        processLevel({
-          loaded: true,
-          distance,
-          wasHigh: this.movers.inHighProcess(reference),
-          kept,
-        }),
-      );
+      const level = processLevel({
+        loaded: true,
+        distance,
+        wasHigh: this.movers.inHighProcess(reference),
+        kept,
+      });
+      levels.set(reference, level);
     }
     this.process.begin(levels, frame > 0 ? processListsBudget(frame, aiSettingsOf(session)) : 0);
+    // A complex scene steps the physics in its complex mode (PhysicsWorld.complex). Counted as
+    // the idles and detection count it (sceneActors): the living of the movers' high process,
+    // never the disabled or those placed or reloaded dead, however near the player they stand.
+    const high = sceneActors(this.#actors.values(), (one) => this.movers.inHighProcess(one));
+    this.complexScene = isComplexScene(high, this.#complexSceneActors);
+    if (this.#physics) this.#physics.complex = this.complexScene;
   }
+
+  /**
+   * Whether the scene is complex: as many living actors in the high process as
+   * iAINumberActorsComplexScene (20) or more, by the count the idles and detection go by
+   * (sceneActors, src/ai/ambient-idles.ts): alive, shown, not placed or reloaded dead, with a
+   * graph, of a race that walks, in the movers' high process as of the last frame (this frame's
+   * killed left out). While it is, the physics world steps fMaxTimeComplex, at most
+   * uMaxNumPhysicsStepsPerUpdateComplex times a frame. TODO(M13): inferred (PhysicsWorld.complex).
+   */
+  complexScene = false;
+  /** iAINumberActorsComplexScene. */
+  #complexSceneActors = COMPLEX_SCENE_ACTORS;
 
   /** Moves the enabled actors' skeletons; far or unseen ones less often (animationRate). */
   animate(seconds: number): void {

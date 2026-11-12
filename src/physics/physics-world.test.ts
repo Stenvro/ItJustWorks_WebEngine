@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { Mat4 } from '../render/math.ts';
-import { CharacterBody, MOVE_LIMIT_MASS } from './character.ts';
+import { CharacterBody, jumpSpeed, MOVE_LIMIT_MASS } from './character.ts';
 import { smallestExtent, type CollisionBody, type CollisionData } from './collision-data.ts';
 import { CollisionMatrix, Layer, LayerFlag } from './collision-layers.ts';
 import { DEBRIS_QUALITY, GRAVITY, initPhysics, PhysicsWorld, sweptBody } from './physics-world.ts';
@@ -298,8 +298,18 @@ describe('trigger volumes', () => {
     physics.step(1 / 60);
     expect([...physics.triggersOverlapping(character.collider)]).toEqual([0x77]);
     expect([...physics.trapsTouching(character.collider, 0).keys()]).toEqual([0x88]);
-    // Every collider's filter takes every kind: contacts are as without groups.
-    expect(character.collider.collisionGroups() & 0xffff).toBe(0xffff);
+    // Every collider's filter takes every other collider's memberships (but a welded mesh's
+    // halves, which take their own bodies': physics-step-cost.test.ts): contacts are as without
+    // groups, by no kind of query.
+    const own = character.collider.collisionGroups();
+    let passed = 0;
+    physics.world.colliders.forEach((collider) => {
+      const other = collider.collisionGroups();
+      expect((own >>> 16) & other & 0xffff).not.toBe(0);
+      expect((other >>> 16) & own & 0xffff).not.toBe(0);
+      passed++;
+    });
+    expect(passed).toBeGreaterThan(2);
     character.free();
     physics.free();
   });
@@ -1027,6 +1037,40 @@ describe('the character controller in the world', () => {
     expect(character.landedFrom).toBeUndefined();
     character.free();
     physics.free();
+  });
+
+  it('jumps as high at the complex mode’s step as at the world’s own', () => {
+    const jumped = (complex: boolean): number => {
+      const physics = new PhysicsWorld(both, GRAVITY);
+      floor(physics);
+      physics.complex = complex;
+      const character = new CharacterBody(physics, shape, settings(new Set()), [0, 0, 0], {
+        reference: 0x14,
+        kind: 'actor',
+      });
+      const frame = (): void => {
+        physics.step(1 / 60, (seconds) => {
+          character.step(seconds);
+        });
+      };
+      for (let i = 0; i < 30; i++) frame();
+      expect(character.grounded).toBe(true);
+      const from = character.feet[2];
+      // fJumpHeightMin (76 units) under the world's gravity.
+      character.jump(jumpSpeed(76, GRAVITY * 69.99125));
+      let top = from;
+      for (let i = 0; i < 120; i++) {
+        frame();
+        top = Math.max(top, character.feet[2]);
+      }
+      expect(character.grounded).toBe(true);
+      physics.free();
+      return top - from;
+    };
+    const plain = jumped(false);
+    expect(plain).toBeGreaterThan(70);
+    expect(plain).toBeLessThan(80);
+    expect(Math.abs(jumped(true) - plain)).toBeLessThan(0.5);
   });
 
   it('pushes what weighs less than fMoveLimitMass, not what weighs more', () => {

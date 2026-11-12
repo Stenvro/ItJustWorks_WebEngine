@@ -41,6 +41,8 @@ export interface SolverSettings {
  * at its own step (fMaxTime) they are these.
  */
 export const SOLVER_DEFAULTS: SolverSettings = { tau: 0.6, damping: 1, iterations: 4 };
+/** fHavokTauRatio's built-in value (observed in the original; Skyrim.esm does not set it). */
+export const HAVOK_TAU_RATIO = 0.5;
 
 /**
  * The solver's settings for a step of `step` seconds, observed in the original: with r the

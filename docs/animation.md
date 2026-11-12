@@ -373,7 +373,9 @@ stage's): the same, the idle tree's search being the furniture's `actionEvent` (
 actions'), the bound radius the sphere round the skeleton's posed nodes. Inferred (TODO(M13)):
 every idle the furniture's `playIdle` sends (a package's, a script's PlayIdle, a line's) is a
 specific idle, setting the skip flag when an idle plays; a complex scene is as many actors in
-the high process as iAINumberActorsComplexScene (20) or more (detection's count); the frame's
+the high process as iAINumberActorsComplexScene (20) or more (`sceneActors`: the living of the
+movers' high process, the disabled and those placed or reloaded dead left out; detection's count
+and the physics' complex mode's too); the frame's
 budget is [Animation] fSpecialIdlePickTime (built-in default 250) read as microseconds, the
 tries taking turns round the actors from where the last frame stopped (at least one a frame);
 the restrained (life state 6) keep their wish but try none; the dying, dead and unconscious

@@ -25,10 +25,12 @@ import {
   ambientIdleUpdate,
   ambientIdleWait,
   COMPLEX_SCENE_ACTORS,
+  countsInScene,
   isComplexScene,
   playerAmbientIdleCamera,
   playerAmbientIdleView,
   readAmbientIdleSettings,
+  sceneActors,
   SPECIAL_IDLE_PICK_TIME,
   SPECIFIC_IDLE_SKIP_WINDOW,
   type AmbientIdleActor,
@@ -447,6 +449,26 @@ describe('the idle update (original; the specifics inferred: src/ai/ambient-idle
     expect(quiet.skipping(1)).toBe(false);
   });
 
+  it('counts toward a complex scene only the living, shown actors of the high process', () => {
+    // Inferred (TODO(M13), as isComplexScene): the high process holds only actors that live (the
+    // movers leave out the disabled and those placed dead); those killed or disabled since it
+    // was last taken are left out at once.
+    const actors = [
+      { reference: 1, dead: false, visibility: { hidden: false } },
+      { reference: 2, dead: false, visibility: { hidden: false } },
+      { reference: 3, dead: true, visibility: { hidden: false } },
+      { reference: 4, dead: false, visibility: { hidden: true } },
+      { reference: 5, dead: false, visibility: { hidden: false } },
+    ];
+    const high = new Set([1, 3, 4, 5]);
+    const inHighProcess = (reference: number): boolean => high.has(reference);
+    expect(
+      actors.filter((actor) => countsInScene(actor, inHighProcess)).map((a) => a.reference),
+    ).toEqual([1, 5]);
+    expect(sceneActors(actors, inHighProcess)).toBe(2);
+    expect(sceneActors([], inHighProcess)).toBe(0);
+  });
+
   it('in a complex scene the next try waits fAIIdleWaitTimeComplexScene after an idle', () => {
     const settings = readAmbientIdleSettings((name) =>
       name === 'fAIIdleWaitTime' ? 0.1 : undefined,
@@ -555,7 +577,11 @@ describe('the stage’s idle update: moving off (inferred: src/shell/actor-ambie
   it('an actor its package walks off, and the player their own moves, cut the idle that plays', () => {
     let walking = false;
     let keys = false;
-    const npc = { reference: NPC, dead: false } as unknown as StagedActor;
+    const npc = {
+      reference: NPC,
+      dead: false,
+      visibility: { hidden: false },
+    } as unknown as StagedActor;
     const idles = new ActorAmbientIdles({
       session: {
         ini: { number: () => SPECIAL_IDLE_PICK_TIME },
@@ -600,6 +626,7 @@ describe('the stage’s idle update: moving off (inferred: src/shell/actor-ambie
   const standing = {
     reference: NPC,
     dead: false,
+    visibility: { hidden: false },
     position: [0, 0, 0],
     placed: {
       behavior: {},

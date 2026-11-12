@@ -44,7 +44,7 @@ import {
   jumpSpeed,
 } from '../physics/character.ts';
 import { HAVOK_SCALE } from '../physics/collision-data.ts';
-import { solverSettings } from '../physics/constraint-solver.ts';
+import { HAVOK_TAU_RATIO, solverSettings } from '../physics/constraint-solver.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import {
   GRAB_DEFAULTS,
@@ -326,6 +326,11 @@ export function configurePhysics(
     data.ini.number('HAVOK', 'fMaxTime'),
     data.havokTauRatio,
   );
+  physics.complexSolver = solverSettings(
+    physics.complexStep,
+    data.ini.number('HAVOK', 'fMaxTime'),
+    data.havokTauRatio,
+  );
   physics.penetration = {
     seconds: data.ini.number('RagdollAnim', 'fDetectionUpdateTimeSec'),
     desiredSpeed: data.ini.number('RagdollAnim', 'fDesiredVel'),
@@ -338,8 +343,6 @@ export const JUMP_HEIGHT_MIN = 64;
 /** fJumpSwimmingMult's built-in value. */
 export const JUMP_SWIMMING_MULT = 2;
 const FALL_VELOCITY_MIN = 600;
-/** fHavokTauRatio's built-in value (observed in the original; Skyrim.esm does not set it). */
-const HAVOK_TAU_RATIO = 0.5;
 
 /** Telekinesis's spring: GMSTs where the plugins set them, else the engine's values. */
 function telekinesisSpring(settings: GameSettings): GrabSettings {

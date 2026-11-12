@@ -1984,6 +1984,13 @@ export class ActorMovers {
         if (this.#travels.has(reference)) this.stop(reference);
         this.#requests.delete(reference);
       }
+      // Far from where it should be (set there since its controller last stepped): set there at
+      // once, as its step does. A frame may take no step (a display faster than the physics; a
+      // complex scene steps every other frame at 60 frames a second), and drawing it where its
+      // controller stands took the place it was set to before a step saw it.
+      if (beyondWarp(mover.character.feet, staged.position, this.#warpDistanceSquared())) {
+        this.teleport(staged);
+      }
       this.#draw(mover, world.physics, seconds);
       this.#watchFall(mover, world.physics);
       const reaction = this.#reactions.get(staged.reference);

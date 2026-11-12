@@ -20,12 +20,15 @@
 //   on ImpTowerOutFloor01's compressed mesh.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { COMPLEX_SCENE_ACTORS, sceneActors } from '../../../src/ai/ambient-idles.ts';
+import { HIGH_PROCESS_DISTANCE } from '../../../src/ai/process-levels.ts';
 import type { CollisionBody, CollisionData } from '../../../src/physics/collision-data.ts';
 import {
   CollisionMatrix,
   Layer,
   readCollisionMatrix,
 } from '../../../src/physics/collision-layers.ts';
+import { HAVOK_TAU_RATIO, solverSettings } from '../../../src/physics/constraint-solver.ts';
 import {
   DEBRIS_QUALITY,
   GRAVITY,
@@ -41,7 +44,7 @@ import { Vfs } from '../../../src/vfs/vfs.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
 import { openGameFolder } from '../../../tools/gamedata-path.ts';
 import { CollisionCache, settleCell, type CellSettling } from '../../../tools/settle-audit.ts';
-import { hasGamedata, openSim, type Sim } from '../../helpers/sim.ts';
+import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const matrix = new CollisionMatrix([
@@ -110,6 +113,25 @@ describe('the step (the engine’s rule)', () => {
     physics.free();
   });
 
+  // Ours (TODO(M13) in physics-world.ts): what bounds the time owed in the original was not read.
+  it('owes no more than one frame hands: a slow stretch is not made up for minutes after', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    // Six seconds at ten frames a second: three steps a frame, half of each frame's time owed.
+    for (let frame = 0; frame < 60; frame++) expect(physics.step(0.1)).toBe(3);
+    // Back at sixty: one frame's worth is made up (three steps), not three seconds.
+    const after = Array.from({ length: 10 }, () => physics.step(1 / 60));
+    expect(after).toEqual([3, 2, 1, 1, 1, 1, 1, 1, 1, 1]);
+    physics.free();
+    // In the complex mode the same: one step a frame at twenty frames a second, then a step
+    // every other frame at sixty after one made up.
+    const complex = new PhysicsWorld(matrix, GRAVITY);
+    complex.complex = true;
+    for (let frame = 0; frame < 60; frame++) expect(complex.step(0.05)).toBe(1);
+    const then = Array.from({ length: 8 }, () => complex.step(1 / 60));
+    expect(then.reduce((sum, n) => sum + n, 0)).toBeLessThanOrEqual(5);
+    complex.free();
+  });
+
   it('steps nothing in a frame under a millisecond, and owes its time', () => {
     expect(MIN_FRAME_SECONDS).toBe(0.001);
     const physics = new PhysicsWorld(matrix, GRAVITY);
@@ -155,8 +177,7 @@ describe('the step (the engine’s rule)', () => {
     expect(physics.currentStep).toBeCloseTo(PHYSICS_STEP, 9);
     physics.free();
   });
-  // What turns the mode on in the original is not identified (TODO(M13) in physics-world.ts);
-  // nothing here does. The mode itself:
+  // The mode itself; a complex scene turns it on (below: inferred, TODO(M13) in physics-world.ts).
   it('steps fMaxTimeComplex (1/30 s) once a frame in the engine’s complex mode', () => {
     const physics = new PhysicsWorld(new CollisionMatrix([]), GRAVITY);
     expect(physics.complex).toBe(false);
@@ -169,6 +190,95 @@ describe('the step (the engine’s rule)', () => {
     physics.step(1 / 60);
     expect(physics.currentStep).toBeCloseTo(PHYSICS_STEP, 9);
     physics.free();
+  });
+
+  it('takes a step every other frame of 1/60 s in the complex mode, and never three', () => {
+    const physics = new PhysicsWorld(new CollisionMatrix([]), GRAVITY);
+    physics.complex = true;
+    expect([1, 2, 3, 4, 5, 6].map(() => physics.step(1 / 60))).toEqual([1, 0, 1, 0, 1, 0]);
+    // Long frames (20 a second): one step each, where the plain mode takes its three.
+    expect([1, 2, 3].map(() => physics.step(0.05))).toEqual([1, 1, 1]);
+    physics.free();
+    const plain = new PhysicsWorld(new CollisionMatrix([]), GRAVITY);
+    expect([1, 2, 3].map(() => plain.step(0.05))).toEqual([3, 3, 3]);
+    plain.free();
+  });
+
+  it('solves a complex step as the engine does: twice the iterations (solverSettings)', () => {
+    // Observed in the original: the iterations are 4 × the step over fMaxTime, tau follows it.
+    expect(solverSettings(1 / 30, 1 / 60, HAVOK_TAU_RATIO)).toEqual({
+      tau: 0.6 * 1.5,
+      damping: 1,
+      iterations: 8,
+    });
+    const physics = new PhysicsWorld(new CollisionMatrix([]), GRAVITY);
+    const plain = physics.world.integrationParameters.numSolverIterations;
+    expect(physics.complexSolver.iterations).toBe(2 * physics.solver.iterations);
+    physics.complex = true;
+    physics.step(1 / 30);
+    // Ours (Rapier's): as many more as the step is longer.
+    expect(physics.world.integrationParameters.numSolverIterations).toBe(2 * plain);
+    physics.complex = false;
+    physics.step(1 / 60);
+    expect(physics.world.integrationParameters.numSolverIterations).toBe(plain);
+    physics.free();
+  });
+
+  it('a body falls as far and is heard landing as well in the complex mode', () => {
+    const drop = (complex: boolean): { fell: number; heard: number; rest: number } => {
+      const physics = new PhysicsWorld(matrix, GRAVITY);
+      physics.complex = complex;
+      const floor = clutter(200);
+      const base = floor.bodies[0];
+      if (!base) throw new Error('no body');
+      physics.addObject(
+        {
+          bodies: [
+            {
+              ...base,
+              motion: 'fixed',
+              layer: Layer.static,
+              mass: 0,
+              shapes: base.shapes.map((s) => ({ ...s, layer: Layer.static })),
+            },
+          ],
+          skipped: [],
+        },
+        new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -400, 1]),
+        { reference: 2, kind: 'object' },
+        false,
+      );
+      // From 14 units up it lands at about 137 units a second and bounces up to land again at
+      // about 68: above fMinSoundVel (60), and under twice it (a contact's force is its impulse
+      // over the step, half as much over a step twice as long: the second landing went unheard
+      // in the complex mode).
+      const at = new Float32Array(IDENTITY);
+      at[14] = 14;
+      const placed = physics.addObject(clutter(5), at, { reference: 1, kind: 'object' }, false);
+      const body = placed.bodies[0]?.body;
+      if (!body) throw new Error('no body');
+      physics.release(body);
+      let heard = 0;
+      let fell = 0;
+      for (let frame = 0; frame < 120; frame++) {
+        physics.step(1 / 60);
+        heard += physics.drainImpacts().length;
+        if (frame === 3) fell = 14 - body.translation().z * 69.99125;
+      }
+      const rest = body.translation().z * 69.99125;
+      physics.free();
+      return { fell, heard, rest };
+    };
+    const plain = drop(false);
+    const complex = drop(true);
+    // Four frames of falling (1/15 s: about 2 game units), the same either way to within a
+    // step's own error.
+    expect(plain.fell).toBeGreaterThan(1);
+    expect(Math.abs(complex.fell - plain.fell)).toBeLessThan(1);
+    expect(plain.heard).toBe(2);
+    expect(complex.heard).toBe(2);
+    expect(plain.rest).toBeCloseTo(0, 0);
+    expect(complex.rest).toBeCloseTo(0, 0);
   });
 });
 
@@ -368,6 +478,154 @@ describe.skipIf(!hasGamedata())(
       for (const trap of BEAR_TRAPS) {
         expect(Math.abs((placed.get(trap) ?? 0) - (after.get(trap) ?? Infinity))).toBeLessThan(4);
       }
+    });
+
+    // Inferred (TODO(M13) in physics-world.ts): the settings' names; what hands the engine's step
+    // its complex mode was not read. The scene's count is the idles' and detection's.
+    it('steps in the complex mode while iAINumberActorsComplexScene (20) actors are in the high process', async () => {
+      const physics = sim.world.play?.physics;
+      if (!physics) throw new Error('no physics');
+      const stage = sim.world.stage;
+      expect(stage.complexScene).toBe(false);
+      expect(physics.complex).toBe(false);
+      expect(physics.currentStep).toBeCloseTo(PHYSICS_STEP, 9);
+      const chicken = await sim.formId('NPC_', 'EncChicken');
+      const flock: number[] = [];
+      for (let i = 0; i < 20; i++) flock.push(await sim.place(chicken, PLAYER_REF));
+      await sim.step(1);
+      expect(stage.complexScene).toBe(true);
+      expect(physics.complex).toBe(true);
+      expect(physics.currentStep).toBeCloseTo(1 / 30, 9);
+      // The dead do not count: with the flock killed the scene is plain again.
+      for (const one of flock) await sim.kill(one);
+      await sim.step(1);
+      expect(stage.complexScene).toBe(false);
+      expect(physics.complex).toBe(false);
+      expect(physics.currentStep).toBeCloseTo(PHYSICS_STEP, 9);
+    }, 600_000);
+
+    // The idles' and detection's count (sceneActors): an actor disabled near the player is no
+    // part of the crowd, though it stands within the high process's reach.
+    it('leaves the disabled out of the complex scene: twenty and more staged near, 19 living', async () => {
+      const physics = sim.world.play?.physics;
+      if (!physics) throw new Error('no physics');
+      const stage = sim.world.stage;
+      // The tower's own living (its bandits), before the flock.
+      const others = (await sceneCount(sim)).counted;
+      expect(others).toBeLessThan(COMPLEX_SCENE_ACTORS);
+      const chicken = await sim.formId('NPC_', 'EncChicken');
+      const flock: number[] = [];
+      for (let i = 0; i < COMPLEX_SCENE_ACTORS; i++)
+        flock.push(await sim.place(chicken, PLAYER_REF));
+      await sim.step(1);
+      expect(stage.complexScene).toBe(true);
+      expect(physics.currentStep).toBeCloseTo(1 / 30, 9);
+      // As many disabled as leave 19 living in the high process.
+      const disabled = flock.slice(0, others + 1);
+      const handle = (reference: number): ReturnType<Sim['runtime']['referenceHandle']> =>
+        sim.runtime.referenceHandle(reference);
+      for (const one of disabled)
+        await sim.native(handle(one), 'ObjectReference', 'Disable', [false]);
+      await sim.step(1);
+      const count = await sceneCount(sim);
+      expect(count.near).toBeGreaterThanOrEqual(others + COMPLEX_SCENE_ACTORS);
+      expect(flock.filter((reference) => sim.actor(reference)?.visibility.hidden)).toEqual(
+        disabled,
+      );
+      expect(count.disabled).toBe(disabled.length);
+      expect(count.counted).toBe(COMPLEX_SCENE_ACTORS - 1);
+      expect(stage.complexScene).toBe(false);
+      expect(physics.complex).toBe(false);
+      expect(physics.currentStep).toBeCloseTo(PHYSICS_STEP, 9);
+      // Enabled again, they count again.
+      for (const one of disabled)
+        await sim.native(handle(one), 'ObjectReference', 'Enable', [false]);
+      await sim.step(1);
+      expect(stage.complexScene).toBe(true);
+      expect(physics.currentStep).toBeCloseTo(1 / 30, 9);
+      for (const each of flock) await sim.kill(each);
+      await sim.step(1);
+      expect(stage.complexScene).toBe(false);
+    }, 600_000);
+  },
+);
+
+/** HelgenKeep01. */
+const HELGEN_KEEP = 0x5de24;
+
+/** The actors staged near the player and how many of them make the scene's count. */
+interface SceneCount {
+  /** Not killed, within the high process's reach (HIGH_PROCESS_DISTANCE) of the player. */
+  readonly near: number;
+  /** Of those, the disabled. */
+  readonly disabled: number;
+  /** Of those, the placed dead (startsDead). */
+  readonly placedDead: number;
+  /** The complex scene's count (sceneActors). */
+  readonly counted: number;
+  readonly complex: boolean;
+  readonly step: number;
+}
+
+async function sceneCount(sim: Sim): Promise<SceneCount> {
+  const player = await sim.position(PLAYER_REF);
+  if (!player) throw new Error('no player');
+  const stage = sim.world.stage;
+  const near = sim
+    .actors()
+    .filter(
+      (staged) =>
+        !staged.dead &&
+        Math.hypot(staged.position[0] - player[0], staged.position[1] - player[1]) <
+          HIGH_PROCESS_DISTANCE,
+    );
+  return {
+    near: near.length,
+    disabled: near.filter((staged) => staged.visibility.hidden).length,
+    placedDead: near.filter((staged) => staged.placed.actor.startsDead).length,
+    counted: sceneActors(sim.actors(), (reference) => stage.movers.inHighProcess(reference)),
+    complex: stage.complexScene,
+    step: sim.world.play?.physics.currentStep ?? 0,
+  };
+}
+
+// The data: HelgenKeep01 [0005DE24], loaded outside the opening, has most of its actors disabled;
+// the Dark Brotherhood Sanctuary places initially disabled actors and actors placed dead
+// (startsDead) in the one cell. Within the high process's reach of the player both stage twenty
+// actors or more that are not killed, too few of them living to make a crowd.
+describe.skipIf(!hasGamedata())(
+  'the disabled and the placed dead make no crowd (headless simulation)',
+  () => {
+    let sim: Sim;
+    let keep: SceneCount;
+    let sanctuary: SceneCount;
+
+    beforeAll(async () => {
+      sim = await openSim({ interior: HELGEN_KEEP, hour: 10 });
+      await sim.step(3);
+      keep = await sceneCount(sim);
+      await sim.openInterior(await sim.formId('CELL', 'DarkBrotherhoodSanctuary'));
+      await sim.step(3);
+      sanctuary = await sceneCount(sim);
+    }, 600_000);
+    afterAll(async () => {
+      await sim.close();
+    });
+
+    it('steps Helgen’s keep at 1/60 s: twenty and more staged near, most of them disabled', () => {
+      expect(keep.near).toBeGreaterThanOrEqual(COMPLEX_SCENE_ACTORS);
+      expect(keep.near - keep.disabled).toBeLessThan(COMPLEX_SCENE_ACTORS);
+      expect(keep.counted).toBeLessThanOrEqual(keep.near - keep.disabled);
+      expect(keep.complex).toBe(false);
+      expect(keep.step).toBeCloseTo(PHYSICS_STEP, 9);
+    });
+
+    it('steps the Dark Brotherhood Sanctuary at 1/60 s: its placed dead and disabled not counted', () => {
+      expect(sanctuary.near).toBeGreaterThanOrEqual(COMPLEX_SCENE_ACTORS);
+      expect(sanctuary.placedDead).toBeGreaterThan(0);
+      expect(sanctuary.counted).toBeLessThan(COMPLEX_SCENE_ACTORS);
+      expect(sanctuary.complex).toBe(false);
+      expect(sanctuary.step).toBeCloseTo(PHYSICS_STEP, 9);
     });
   },
 );

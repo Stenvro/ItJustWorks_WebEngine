@@ -12,7 +12,12 @@
 //
 //   node tools/qa-perf.ts --out <folder> [--minutes 16] [--every 30] [--window 6]
 //                         [--vite-port 5201] [--chrome-port 9401] [--until-stage N]
-//                         [--width 1280] [--height 720]
+//                         [--width 1280] [--height 720] [--from-stage N]
+//
+// Each window also counts the physics: the steps and the milliseconds of every frame's
+// PhysicsWorld.step (their most in one frame too), and a census of the simulated bodies awake
+// at its end (by owner and layer, how long each has been awake, how fast it moves, how far from
+// the player it is): <n>-<stage>.awake.json. --from-stage leaves the windows before a stage out.
 //
 // The summary per window and per MQ101 stage goes to <folder>/perf.json and perf.md. The folder
 // must lie outside the repository (screenshots show the game's content).
@@ -34,6 +39,8 @@ interface Options {
   readonly vitePort: number;
   readonly chromePort: number;
   readonly untilStage: number | undefined;
+  /** No windows before this MQ101 stage (undefined: from the start). */
+  readonly fromStage: number | undefined;
   /** The page's size (CSS pixels at a device pixel ratio of 1). */
   readonly width: number;
   readonly height: number;
@@ -47,6 +54,7 @@ function parseOptions(argv: readonly string[]): Options {
   let vitePort = 5201;
   let chromePort = 9401;
   let untilStage: number | undefined;
+  let fromStage: number | undefined;
   let width = 1280;
   let height = 720;
   for (let i = 0; i < argv.length; i++) {
@@ -63,6 +71,7 @@ function parseOptions(argv: readonly string[]): Options {
     else if (arg === '--vite-port') vitePort = Number(value());
     else if (arg === '--chrome-port') chromePort = Number(value());
     else if (arg === '--until-stage') untilStage = Number(value());
+    else if (arg === '--from-stage') fromStage = Number(value());
     else if (arg === '--width') width = Number(value());
     else if (arg === '--height') height = Number(value());
     else throw new Error(`unknown argument ${arg ?? ''}`);
@@ -72,7 +81,18 @@ function parseOptions(argv: readonly string[]): Options {
   const relative = path.relative(root, resolved);
   if (!relative.startsWith('..') && !path.isAbsolute(relative))
     throw new Error(`--out must lie outside the repository: ${resolved}`);
-  return { out: resolved, minutes, every, window, vitePort, chromePort, untilStage, width, height };
+  return {
+    out: resolved,
+    minutes,
+    every,
+    window,
+    vitePort,
+    chromePort,
+    untilStage,
+    fromStage,
+    width,
+    height,
+  };
 }
 
 // --- The CPU profile's summary -------------------------------------------------------------
@@ -268,7 +288,9 @@ const STATE = `(async () => {
 })()`;
 
 /**
- * Counters on the play's physics: the steps it takes (several a frame when frames are long).
+ * Counters on the play's physics: the steps it takes (several a frame when frames are long) and
+ * each frame's steps and milliseconds in PhysicsWorld.step (its characters' moves included), and
+ * every thirty frames which simulated bodies are awake (how long each has been, for the census).
  * Installed again after a load door (a new play).
  */
 const COUNTERS = `var ph = (engineDev.world.play ?? engineDev.viewer.play)?.physics;
@@ -276,10 +298,106 @@ var perf = window.__perf;
 if (ph && perf && perf.countedOn !== ph) {
   perf.countedOn = ph;
   perf.counts = { steps: 0 };
+  perf.stepCalls = [];
+  perf.awakeSince = new Map();
+  perf.awakeClock = 0;
   var step = ph.step.bind(ph);
-  ph.step = (seconds, before) => { var n = step(seconds, before); perf.counts.steps += n; return n; };
+  var calls = 0;
+  ph.step = (seconds, before) => {
+    var from = performance.now();
+    var n = step(seconds, before);
+    perf.counts.steps += n;
+    perf.stepCalls.push([n, performance.now() - from]);
+    perf.awakeClock += seconds;
+    if (++calls % 30 === 0) {
+      var seen = new Set();
+      ph.world.bodies.forEach((b) => {
+        if (!b.isDynamic() || b.isSleeping() || !b.isEnabled()) return;
+        seen.add(b.handle);
+        if (!perf.awakeSince.has(b.handle)) perf.awakeSince.set(b.handle, perf.awakeClock);
+      });
+      for (var h of [...perf.awakeSince.keys()]) if (!seen.has(h)) perf.awakeSince.delete(h);
+    }
+    return n;
+  };
 }
 true`;
+
+/**
+ * The simulated bodies awake now: whose they are, their layer, how fast they move (Havok units
+ * and radians a second), how far from the player they are (game units) and for how long they
+ * have been awake (seconds of game time, as the counters sampled them).
+ */
+const CENSUS = `(async () => {
+  const play = engineDev.world.play ?? engineDev.viewer.play;
+  const ph = play?.physics;
+  const perf = window.__perf;
+  if (!ph) return [];
+  const rt = engineDev.play()?.session.scriptsReady;
+  const at = rt && (await rt.placement(0x14));
+  const p = at?.position ?? [0, 0, 0];
+  const SCALE = 69.99125;
+  const out = [];
+  ph.world.bodies.forEach((b) => {
+    if (!b.isDynamic() || b.isSleeping() || !b.isEnabled()) return;
+    const c = b.numColliders() > 0 ? b.collider(0) : undefined;
+    const owner = c && ph.ownerOf(c);
+    const t = b.translation();
+    const v = b.linvel();
+    const w = b.angvel();
+    const since = perf.awakeSince?.get(b.handle);
+    out.push({
+      handle: b.handle,
+      kind: owner?.kind ?? '?',
+      reference: owner ? owner.reference.toString(16) : '?',
+      layer: c ? ph.layerOf(c) : -1,
+      node: c ? ph.nodeOf(c) : undefined,
+      speed: Math.round(Math.hypot(v.x, v.y, v.z) * 1000) / 1000,
+      spin: Math.round(Math.hypot(w.x, w.y, w.z) * 1000) / 1000,
+      distance: Math.round(Math.hypot(t.x * SCALE - p[0], t.y * SCALE - p[1], t.z * SCALE - p[2])),
+      z: Math.round(t.z * SCALE),
+      mass: Math.round(b.mass() * 100) / 100,
+      ccd: b.isCcdEnabled(),
+      awake: since === undefined ? 0 : Math.round((perf.awakeClock - since) * 10) / 10,
+    });
+  });
+  return out;
+})()`;
+
+interface AwakeBody {
+  readonly handle: number;
+  readonly kind: string;
+  readonly reference: string;
+  readonly layer: number;
+  readonly node?: string;
+  readonly speed: number;
+  readonly spin: number;
+  readonly distance: number;
+  readonly z: number;
+  readonly mass: number;
+  readonly ccd: boolean;
+  readonly awake: number;
+}
+
+/** The census in a few numbers: by owner and layer, awake for long, still, far off. */
+function censusSummary(bodies: readonly AwakeBody[]): Record<string, unknown> {
+  const by = new Map<string, number>();
+  const references = new Set<string>();
+  for (const b of bodies) {
+    const key = `${b.kind}/${String(b.layer)}`;
+    by.set(key, (by.get(key) ?? 0) + 1);
+    references.add(b.reference);
+  }
+  return {
+    awake: bodies.length,
+    byKindLayer: Object.fromEntries([...by].sort((a, b) => b[1] - a[1])),
+    references: references.size,
+    over5s: bodies.filter((b) => b.awake >= 5).length,
+    over30s: bodies.filter((b) => b.awake >= 30).length,
+    still: bodies.filter((b) => b.speed < 0.05 && b.spin < 0.05).length,
+    beyond4000: bodies.filter((b) => b.distance > 4000).length,
+  };
+}
 
 /** The counters' values now, and the world's bodies and the path searches so far. */
 const COUNTS = `(async () => {
@@ -400,6 +518,16 @@ interface WindowReport {
   readonly loaf: readonly unknown[];
   /** Per frame (physics steps, path searches and their nodes) and totals now. */
   readonly counts: Record<string, number>;
+  /** PhysicsWorld.step by frame: its steps (mean, most) and its milliseconds. */
+  readonly physics: {
+    readonly steps: number;
+    readonly mostSteps: number;
+    readonly p50: number;
+    readonly p95: number;
+    readonly max: number;
+  };
+  /** The simulated bodies awake at the window's end (censusSummary). */
+  readonly census: Record<string, unknown>;
   /** The path search nodes of single frames: the most, and the 99th percentile. */
   readonly searchNodes: { readonly max: number; readonly p99: number };
   /** The path searches of the plain window by the actor that searched (TRACE_TAKE). */
@@ -448,6 +576,8 @@ function windowMarkdown(w: WindowReport): string {
   const f = w.frames;
   const lines = [
     `## ${String(w.index)}: ${String(w.at)} s, MQ101 stage ${String(w.state.stage)}, ${w.state.cell}`,
+    '',
+    `physics a frame: ${w.physics.steps.toFixed(2)} steps (most ${String(w.physics.mostSteps)}), p50 ${ms(w.physics.p50)} · p95 ${ms(w.physics.p95)} · max ${ms(w.physics.max)} ms · awake ${JSON.stringify(w.census)}`,
     '',
     `fps ${ms(f.fps)} · p50 ${ms(f.p50)} · p95 ${ms(f.p95)} · p99 ${ms(f.p99)} · max ${ms(f.max)} ms · > 33 ms ${String(f.over33)} · > 50 ms ${String(f.over50)} · GPU p50 ${ms(w.gpu.p50)} / p95 ${ms(w.gpu.p95)} ms · main thread busy ${(w.busyShare * 100).toFixed(0)} % · GC ${ms(w.profile.gcMs)} ms · search nodes a frame max ${String(w.searchNodes.max)} / p99 ${String(w.searchNodes.p99)}`,
     '',
@@ -541,10 +671,14 @@ async function main(): Promise<void> {
     while (Date.now() < end && !run.ended) {
       const state = await page.eval<WindowReport['state']>(STATE, 20000);
       if (options.untilStage !== undefined && state.stage >= options.untilStage) break;
+      if (options.fromStage !== undefined && state.stage < options.fromStage) {
+        await sleep(3000);
+        continue;
+      }
       const reset =
-        '(window.__perf.deltas.length = 0, window.__perf.gpu.length = 0, window.__perf.loaf.length = 0, window.__perf.nodes.length = 0, true)';
+        '(window.__perf.deltas.length = 0, window.__perf.gpu.length = 0, window.__perf.loaf.length = 0, window.__perf.nodes.length = 0, window.__perf.stepCalls && (window.__perf.stepCalls.length = 0), true)';
       const read =
-        '({ deltas: [...window.__perf.deltas], gpu: [...window.__perf.gpu], loaf: [...window.__perf.loaf], nodes: [...window.__perf.nodes] })';
+        '({ deltas: [...window.__perf.deltas], gpu: [...window.__perf.gpu], loaf: [...window.__perf.loaf], nodes: [...window.__perf.nodes], stepCalls: [...(window.__perf.stepCalls ?? [])] })';
       // First the frames as they are (the profiler slows the page), then the same time profiled.
       await page.eval(COUNTERS, 10000, true).catch((error: unknown) => {
         if (windows.length < 2)
@@ -559,7 +693,9 @@ async function main(): Promise<void> {
         gpu: number[];
         loaf: unknown[];
         nodes: number[];
+        stepCalls: [number, number][];
       }>(read);
+      const awake = await page.eval<AwakeBody[]>(CENSUS, 20000).catch((): AwakeBody[] => []);
       const nodesSorted = [...data.nodes].sort((a, b) => a - b);
       const after = await page.eval<Counts>(COUNTS).catch((): Counts => ({}));
       const searchers = await page.eval<unknown[]>(TRACE_TAKE).catch(() => []);
@@ -573,6 +709,16 @@ async function main(): Promise<void> {
       const index = windows.length;
       const name = `${String(index).padStart(2, '0')}-${String(state.stage)}`;
       fs.writeFileSync(path.join(options.out, `${name}.cpuprofile`), JSON.stringify(profile));
+      fs.writeFileSync(
+        path.join(options.out, `${name}.awake.json`),
+        JSON.stringify(
+          [...awake].sort((a, b) => b.awake - a.awake),
+          null,
+          1,
+        ),
+      );
+      const stepMs = data.stepCalls.map(([, t]) => t).sort((a, b) => a - b);
+      const stepCounts = data.stepCalls.map(([n]) => n);
       await page.screenshot(path.join(options.out, `${name}.jpg`)).catch(() => undefined);
       const summary = summariseProfile(profile);
       const gpuSorted = [...data.gpu].sort((a, b) => a - b);
@@ -591,6 +737,14 @@ async function main(): Promise<void> {
         profile: summary,
         loaf: data.loaf,
         counts: perFrame(before, after, data.deltas.length),
+        physics: {
+          steps: stepCounts.reduce((a, b) => a + b, 0) / Math.max(1, stepCounts.length),
+          mostSteps: Math.max(0, ...stepCounts),
+          p50: stepMs[Math.floor(stepMs.length * 0.5)] ?? 0,
+          p95: stepMs[Math.floor(stepMs.length * 0.95)] ?? 0,
+          max: stepMs.at(-1) ?? 0,
+        },
+        census: censusSummary(awake),
         searchNodes: {
           max: nodesSorted.at(-1) ?? 0,
           p99: nodesSorted[Math.floor(nodesSorted.length * 0.99)] ?? 0,
@@ -600,7 +754,7 @@ async function main(): Promise<void> {
       windows.push(report);
       const f = report.frames;
       ctx.note(
-        `window ${name}: ${ms(f.fps)} fps, p50 ${ms(f.p50)}, p95 ${ms(f.p95)}, max ${ms(f.max)} ms, GPU p50 ${ms(report.gpu.p50)} ms, busy ${(report.busyShare * 100).toFixed(0)} %, search nodes a frame max ${String(report.searchNodes.max)} / p99 ${String(report.searchNodes.p99)}, ${JSON.stringify(report.counts)}`,
+        `window ${name}: ${ms(f.fps)} fps, p50 ${ms(f.p50)}, p95 ${ms(f.p95)}, max ${ms(f.max)} ms, GPU p50 ${ms(report.gpu.p50)} ms, busy ${(report.busyShare * 100).toFixed(0)} %, search nodes a frame max ${String(report.searchNodes.max)} / p99 ${String(report.searchNodes.p99)}, ${JSON.stringify(report.counts)}, physics ${report.physics.steps.toFixed(2)} steps a frame (most ${String(report.physics.mostSteps)}), ${ms(report.physics.p50)} / ${ms(report.physics.p95)} / ${ms(report.physics.max)} ms (p50/p95/max), awake ${JSON.stringify(report.census)}`,
       );
       fs.writeFileSync(
         path.join(options.out, 'perf.json'),

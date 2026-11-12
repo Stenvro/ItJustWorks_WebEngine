@@ -1906,9 +1906,127 @@ to break it down. In both the second and third runs the world's awake dynamic bo
 through the attack (70–90 to 250–380 over seven minutes, about 25 more each window, with the
 bodies from 2,850 to 3,370) and the frame rate falls from 52–60 in the attack's first minute to
 42–49 after: what those bodies are (missed arrows lying on the ground, the tower's debris) and
-why they do not sleep is the next thing to look at. The soldier's repeated way round the tower's
-foot (its chase taken again as Alduin moves) is the AI's; `SceneRenderer.animate` (3–6 ms: fades,
-palettes, particles) is spread over many small parts.
+why they do not sleep is the next thing to look at ("The opening's physics", below: those
+counts took in bodies out of the world; the physics' cost was not theirs). The soldier's repeated
+way round the tower's foot (its chase taken again as Alduin moves) is the AI's;
+`SceneRenderer.animate` (3–6 ms: fades, palettes, particles) is spread over many small parts.
+
+### The opening's physics
+
+Measured 2026-11-12 with `tools/qa-perf.ts --from-stage 90` on the integration tip b683bfbe and
+after the changes below: the same machine, headless Chrome at 1280×720, both runs with other
+work on the machine (its sixteen threads about 80 % busy through the first run; not measured
+through the second: only the same windows of the two runs compare, and those loosely). The
+runner now counts the physics by frame (the steps of each `PhysicsWorld.step`, its milliseconds)
+and lists the simulated bodies awake at each window's end.
+
+**Which bodies are awake.** The counts above (127–211, growing to 250–380) were of bodies neither
+asleep nor fixed, and took in those out of the world: some 90 of Helgen's (ragdolls of actors
+disabled while they lay). The bodies really simulated were 0 to 66 at any window's end:
+
+- the ragdolls of those just killed (18 bodies a human, 27 a horse), awake while they settle,
+  some for a minute and more: a horse killed beside its cart lay awake for the whole attack (27
+  bodies, at most 0.06 Havok units and 0.47 radians a second), one of its bodies on the cart,
+  which is keyframed to its living horse and moves with its idle (Rapier wakes what a moving
+  keyframed body touches, each step); another corpse's 18 bodies trembled 14 to 46 s;
+- arrows that missed and did not stick (L_WEAPON, made references), up to twelve at a time, 5,000
+  to 19,000 units from the player, each awake 10 to 90 s: they roll or rock at 0.05–0.2 Havok
+  units a second with a spin of 2–6 radians a second, and neither the frequent deactivation check
+  nor the solver's slowing of slow bodies takes a body that spins;
+- clutter an actor walked into (L_CLUTTER), one to four, a second or two each.
+
+None of them wake by the weld or the hold-awake passes. TODO(M13): the arrows' roll (their box is
+as thin as its convex shell is thick: what Havok's shell does to it is not read) and the
+trembling ragdolls; Havok's rarer deactivation check (within four times the reference distance;
+its world's low frequency period, 10 s by Havok's default) is not modelled, and whether the
+tremblers stay within it was not measured (one settling ragdoll watched for 10 s did not: 0.16 Havok
+units, 0.2 radians).
+
+**Where the physics went.** With 18 bodies awake (the execution, 81 actors standing) the physics
+took 16 ms of a 50 ms frame; with 7 awake in the attack, 28 ms of 72. A profiled frame, ms (the
+same windows of the two runs):
+
+| scene                | run    | frame | physics | Rapier step | controllers | of them: ground and carrier casts | water | speeds before | top speeds |
+| -------------------- | ------ | ----: | ------: | ----------: | ----------: | --------------------------------: | ----: | ------------: | ---------: |
+| execution (stage 90) | before |  49.8 |    16.2 |         3.5 |         8.0 |                               1.8 |  0.95 |          0.62 |       0.43 |
+|                      | after  |  25.4 |     3.0 |         0.9 |         1.2 |                              0.13 |  0.12 |          0.06 |       0.09 |
+| Alduin's attack      | before |  72.3 |    27.7 |         7.0 |        14.6 |                               4.7 |  0.99 |          0.79 |       0.58 |
+|                      | after  |  35.7 |     7.7 |         3.0 |         3.1 |                              0.24 |  0.33 |          0.09 |       0.12 |
+
+What it was, and what changed:
+
+- **Three steps a frame, each frame.** A frame of 47 ms hands the physics its three steps of
+  1/60 s (the cap), the three steps make the next frame as long, and the time a longer frame
+  could not hand was owed without end: frames that grew shorter still took three. The engine has
+  a mode for this, on now while the scene is complex (as many living actors in the high process
+  as iAINumberActorsComplexScene, 20, by the idles' and detection's count, which leaves out the
+  disabled and those placed or reloaded dead: `ActorStage.complexScene`): one step of fMaxTimeComplex
+  (1/30 s) a frame at most, every other frame at 60 frames a second (docs/physics.md, "The
+  complex mode"; inferred, TODO(M13)). And the time owed is held to what one frame hands (ours,
+  TODO(M13)): a slow stretch is not made up for minutes after, at up to three times the world's
+  speed. The most steps in any frame of the opening's exterior went from 3 to 1.
+- **The controllers' call backs.** Every humanoid skeleton has a phantom on the controllers'
+  layer (its CharacterBumper), which counted as a body of the actor's own that a controller meets:
+  so every sweep and cast of every actor called back into JavaScript for each collider near it,
+  each step, to be told the layers (some 900 calls a step for 60 controllers), though the sweeps
+  leave sensors out. A controller's casts for its ground and for what carries it called back for
+  each of its own 18 keyframed bodies. Sensors are out of the controllers' group, and what no
+  actor owns has a group of its own (`QueryGroups.controllerGround`): a standing actor's step
+  calls back for nothing.
+- **Walks over every body.** The speeds before a step, the top speeds, the water, and every
+  quarter second the deactivation and the bounds each walked the world's 3,000 bodies for the
+  awake ones, with two or three calls into Rapier for each. They walk the bodies made simulated
+  (some 700: `PhysicsWorld.forEachAwake`).
+- **The contact filter on welded meshes.** A body on a welded mesh makes two pairs, one with each
+  half (the two-sided original, the ragdolls' one-sided copy), and the contact filter, a call back
+  for every pair of a moving body each step, refused one. The halves' group filters take only the
+  bodies they meet (`GROUP_RAGDOLL`): half the filter's calls for bodies on meshes.
+
+Plain frames by window, before and after (frame times and the physics of single frames; the
+keep's interior after Helgen: 45–70 fps before, 87–112 after, at 0.3–0.55 steps a frame, the
+complex mode's: that run still counted the keep's disabled and placed dead toward a complex
+scene, which they no longer make, so the keep now steps at 1/60 s; not measured again):
+
+| stage              | run    |  fps | frame p50 / p95 / max (ms) | steps a frame: mean, most | physics a frame p50 / p95 / max (ms) | awake |
+| ------------------ | ------ | ---: | -------------------------: | ------------------------: | -----------------------------------: | ----: |
+| execution (90)     | before | 20.6 |          47.2 / 61.9 / 116 |                   2.87, 3 |                   14.7 / 18.0 / 24.0 |    18 |
+|                    | after  | 44.7 |           21.6 / 33.3 / 71 |                   0.67, 1 |                      3.0 / 4.6 / 9.4 |    18 |
+| execution (95, 90) | before | 26.5 |           37.2 / 47.7 / 63 |                   2.27, 3 |                    8.6 / 13.6 / 21.4 |     0 |
+|                    | after  | 47.2 |           19.9 / 33.0 / 42 |                   0.64, 1 |                      2.4 / 3.6 / 4.0 |     0 |
+| Alduin comes (150) | before | 24.0 |           40.0 / 56.8 / 77 |                   2.61, 3 |                   11.7 / 14.8 / 17.3 |    27 |
+| (130)              | after  | 37.4 |           25.2 / 41.8 / 50 |                   0.80, 1 |                     4.4 / 9.2 / 13.1 |    30 |
+| the attack (160)   | before | 19.6 |          48.4 / 69.9 / 100 |                   3.00, 3 |                   15.0 / 20.0 / 25.9 |    30 |
+|                    | after  | 27.8 |           34.0 / 50.3 / 66 |                   1.00, 1 |                     4.3 / 8.9 / 12.6 |    29 |
+|                    | before | 20.8 |          47.0 / 66.9 / 111 |                   2.75, 3 |                   14.0 / 16.3 / 17.8 |     1 |
+|                    | after  | 39.1 |           24.9 / 35.9 / 50 |                   0.77, 1 |                      4.9 / 6.9 / 9.5 |    50 |
+|                    | before | 15.7 |          62.1 / 84.2 / 140 |                   3.00, 3 |                   17.9 / 24.5 / 39.3 |     7 |
+|                    | after  | 31.9 |           32.8 / 42.5 / 51 |                   1.00, 1 |                      5.2 / 7.4 / 8.6 |    36 |
+|                    | before | 17.9 |           54.5 / 72.4 / 84 |                   3.00, 3 |                   18.8 / 23.2 / 27.1 |    22 |
+|                    | after  | 32.9 |           31.0 / 42.8 / 50 |                   1.00, 1 |                      5.2 / 6.8 / 8.7 |    31 |
+|                    | before | 15.6 |           63.7 / 78.7 / 83 |                   3.00, 3 |                   21.8 / 26.1 / 29.4 |    66 |
+|                    | after  | 27.6 |           33.8 / 49.2 / 57 |                   1.00, 1 |                     5.9 / 9.4 / 14.0 |    35 |
+| to the keep (180)  | before | 17.4 |           56.7 / 70.8 / 78 |                   3.00, 3 |                   21.4 / 25.5 / 31.7 |    49 |
+|                    | after  | 29.0 |          33.3 / 49.7 / 142 |                   1.00, 1 |                     5.5 / 7.4 / 34.1 |    30 |
+
+(The after run is of the changes but the bound on the time owed, made after it; a run before
+that one, without the welded meshes' groups either, gave 40.8 and 43.4 fps in the execution and
+22.9–35.1 in the attack. The before run's last window, at the keep's door as its cell loads, had
+71 ms of physics in one frame; the after run's 34 ms is the same moment.)
+
+(Both runs counted the disabled and the placed dead toward a complex scene. In the headless
+simulation of the opening the right count stands at 21–31 living from the carts' arrival to the
+line-up (stages 20–80), where the miscount had 48–61: the exterior stays complex there, by a
+margin of one to eleven. The execution and the attack, as their actors die, may fall below 20
+and step at 1/60 s again; those windows were not measured again.)
+
+What is left (TODO(M13)): the attack is at 28–39 fps on the loaded machine, not 60. Below 30
+frames a second a complex scene's world runs slow (one step of 1/30 s a frame), as the plain one
+does below 20. Of a 36 ms frame the physics is 7.7 (Rapier's step 3.0 at the complex mode's twice
+the iterations, the controllers 3.1: their sweeps and casts inside Rapier, for every actor
+standing or not), the actors 9.4 (their behavior graphs 3.4, combat 1.2, their bodies' keyframes 1.1,
+the movers 1.0), `SceneRenderer.animate` 6.5 and the draws about 10. A standing
+controller still sweeps each step (a rest that leaves it out needs to know that nothing near it
+moved); the living actors' 1,100 keyframed bodies are moved each frame.
 
 ## The lighting technique's flags and the fades (observed in the original)
 

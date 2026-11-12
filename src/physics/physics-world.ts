@@ -23,7 +23,9 @@ import { PENETRATION_DEFAULTS, type PenetrationSettings } from './ragdoll-penetr
 import { integrate, type BodyFrame, type BodyMotion } from './keyframe-hierarchy.ts';
 import {
   slowBodyFactor,
+  HAVOK_TAU_RATIO,
   SOLVER_DEFAULTS,
+  solverSettings,
   solveJoints,
   easedLimit,
   HINGE_LIMIT_TAU_FACTOR,
@@ -58,8 +60,8 @@ export const GRAVITY = 9.8;
 
 /**
  * Fixed simulation step: the engine steps Havok by [HAVOK] fMaxTime (1/60 s); in a "complex"
- * mode by fMaxTimeComplex, uMaxNumPhysicsStepsPerUpdateComplex times at most (observed in the original;
- * TODO(M13): what turns that mode on is not known).
+ * mode by fMaxTimeComplex, uMaxNumPhysicsStepsPerUpdateComplex times at most (observed in the
+ * original). The mode is on in a complex scene (PhysicsWorld.complex: inferred, TODO(M13)).
  */
 export const PHYSICS_STEP = 1 / 60;
 /** Past this along any axis (Havok units) a simulated body is out of the world (#leaveBounds). */
@@ -409,10 +411,11 @@ function triangleFront(
 
 /**
  * Kinds of collider some queries want alone, as Rapier collision groups' memberships (bits):
- * the trigger volumes, the traps (L_TRAP, L_CLOUDTRAP) and the character controllers. Every
- * collider's group filter takes all of them, so contacts and the other queries are as without
- * groups; a query for one kind passes the others over inside Rapier, before its predicate,
- * which is a call back into JavaScript for every candidate (the layers stay ours: layerOf).
+ * the trigger volumes, the traps (L_TRAP, L_CLOUDTRAP) and the character controllers. No
+ * collider's group filter goes by them (GROUP_RAGDOLL: its filter), so contacts and the other
+ * queries are as without them; a query for one kind passes the others over inside Rapier, before
+ * its predicate, which is a call back into JavaScript for every candidate (the layers stay ours:
+ * layerOf).
  */
 const QUERY_OTHER = 0x1;
 const QUERY_TRIGGER = 0x2;
@@ -420,9 +423,23 @@ const QUERY_TRAP = 0x4;
 const QUERY_CONTROLLER = 0x8;
 /**
  * What a character controller meets: a collider whose layer collides with L_CHARCONTROLLER and
- * that is no ragdoll's one-sided copy of a mesh (filterFor's test, made inside Rapier).
+ * that is no ragdoll's one-sided copy of a mesh (filterFor's test, made inside Rapier), nor a
+ * phantom: the controllers' sweeps and casts leave sensors out, so one is nothing they meet
+ * (every humanoid skeleton has one on L_CHARCONTROLLER, its CharacterBumper).
  */
 const QUERY_CONTROLLER_SOLID = 0x10;
+/** Of those, the ones that are no actor's (its controller, its bodies): what holds one up. */
+const QUERY_CONTROLLER_GROUND = 0x20;
+/**
+ * Every collider is one of two more: on a ragdoll's layer (RAGDOLL_LAYERS) or not. A collider's
+ * group filter takes both, but a welded mesh's two halves: the two-sided original takes no
+ * ragdoll's body, its one-sided copy only those (PhysicsWorld.#ragdollFaces). So Rapier itself
+ * passes over the half of a mesh a body does not meet; the contact filter (a call back into
+ * JavaScript for every pair of a moving body, every step) said so for each, half of its calls
+ * for bodies on meshes.
+ */
+const GROUP_RAGDOLL = 0x40;
+const GROUP_OTHER = 0x80;
 const ALL_GROUPS = 0xffff;
 
 /** Rapier's interaction groups: memberships in the upper 16 bits, the filter in the lower. */
@@ -439,6 +456,12 @@ export const QueryGroups = {
    * the rest over inside Rapier, and need no call back for the layers (character.ts).
    */
   controllerSolid: groups(ALL_GROUPS, QUERY_CONTROLLER_SOLID),
+  /**
+   * Of those, what no actor owns: the ground and the bodies a controller stands on or is
+   * carried by. A controller's casts for them pass every actor's shapes over inside Rapier (its
+   * own keyframed bodies lie all through its shape: a call back for each, every step).
+   */
+  controllerGround: groups(ALL_GROUPS, QUERY_CONTROLLER_GROUND),
 } as const;
 
 /** What a collider belongs to: a placed reference, the landscape, an actor. */
@@ -1266,7 +1289,12 @@ export class PhysicsWorld {
    */
   readonly #limits = new Map<
     number,
-    { readonly linear: number; readonly angular: number; readonly solverDeactivation: number }
+    {
+      readonly body: RAPIER.RigidBody;
+      readonly linear: number;
+      readonly angular: number;
+      readonly solverDeactivation: number;
+    }
   >();
   /**
    * Where each awake simulated body was when it last moved (its deactivation reference: the
@@ -1297,12 +1325,23 @@ export class PhysicsWorld {
   maxSteps = MAX_STEPS_PER_UPDATE;
   /**
    * The engine's complex mode: the world steps `complexStep` ([HAVOK] fMaxTimeComplex), at most
-   * `complexSteps` (uMaxNumPhysicsStepsPerUpdateComplex) times a frame. TODO(M13): what turns it
-   * on in the original is not identified; nothing here does.
+   * `complexSteps` (uMaxNumPhysicsStepsPerUpdateComplex) times a frame: with the built-in values
+   * one step of 1/30 s, so a crowd's frame takes one step where it took up to three, and no long
+   * frame makes the next one longer by its steps. The play turns it on while the scene is
+   * complex (src/shell/actor-stage.ts: as many living actors in the high process as
+   * iAINumberActorsComplexScene, counted by sceneActors in src/ai/ambient-idles.ts, the count the
+   * idles and detection go by, which never takes in the disabled or those placed or reloaded
+   * dead). TODO(M13): inferred from the settings' names (the engine's step is handed the mode;
+   * what hands it was not read).
    */
   complex = false;
   complexStep = 1 / 30;
   complexSteps = 1;
+  /**
+   * The constraint solver's settings at the complex step (solverSettings at fMaxTimeComplex:
+   * with the built-in values twice the iterations and a larger tau).
+   */
+  complexSolver: SolverSettings = solverSettings(1 / 30, PHYSICS_STEP, HAVOK_TAU_RATIO);
   #step = PHYSICS_STEP;
   /** The step being taken (#step × the time multiplier). */
   #size = PHYSICS_STEP;
@@ -1321,6 +1360,11 @@ export class PhysicsWorld {
    * the engine's at its step, from [HAVOK] fMaxTime and fHavokTauRatio).
    */
   solver: SolverSettings = SOLVER_DEFAULTS;
+
+  /** The solver's settings for the step being taken (the complex mode's in that mode). */
+  get #stepSolver(): SolverSettings {
+    return this.complex ? this.complexSolver : this.solver;
+  }
 
   /** `gravity`: Havok units per second² (downwards). Call initPhysics() first. */
   constructor(matrix: CollisionMatrix, gravity: number) {
@@ -1354,6 +1398,25 @@ export class PhysicsWorld {
       filterContactPair: (a, b) => (collides(a, b) ? RAPIER.SolverFlags.COMPUTE_IMPULSE : null),
       filterIntersectionPair: collides,
     };
+  }
+
+  /**
+   * The bodies that can be simulated: those made simulated (the files' simulated bodies, held
+   * or keyframed meanwhile or not; some 700 of Helgen's 3,000), by handle, as their first
+   * collider is registered. The others (fixed, keyframed) never become so.
+   */
+  readonly #simulated = new Map<number, RAPIER.RigidBody>();
+
+  /**
+   * Every simulated body awake now (not held, asleep or out of the world). The passes that
+   * look for the awake ones each step walk the bodies that can be simulated, not every body of
+   * the world (three walks a step over Helgen's 3,000, two calls into Rapier for each).
+   */
+  forEachAwake(each: (body: RAPIER.RigidBody) => void): void {
+    for (const [handle, body] of this.#simulated) {
+      if (!body.isValid()) this.#simulated.delete(handle);
+      else if (body.isDynamic() && !body.isSleeping() && body.isEnabled()) each(body);
+    }
   }
 
   /** The fixed step (seconds; `[HAVOK] fMaxTime`); set before placing objects. */
@@ -1408,16 +1471,19 @@ export class PhysicsWorld {
   #pairFaces(twoSided: RAPIER.Collider, faces: RAPIER.Collider, mesh: WeldedMesh): void {
     this.#twoSided.set(twoSided.handle, mesh);
     this.#ragdollFaces.add(faces.handle);
-    // No surface of its own: out of the controllers' group.
+    // No surface of its own: out of the controllers' group. Each half meets its own bodies.
     this.#setLayer(faces, this.layerOf(faces));
+    this.#setLayer(twoSided, this.layerOf(twoSided));
   }
 
   /** Gives a collider its layer, owner and material (colliders made outside this class). */
   register(collider: RAPIER.Collider, layer: number, owner: PhysicsOwner, material = 0): void {
-    this.#setLayer(collider, layer);
     this.#owners.set(collider.handle, owner);
-    this.#countSolid(collider.handle);
+    this.#setLayer(collider, layer);
     if (material !== 0) this.#materials.set(collider.handle, material);
+    // Made simulated: one of those the awake are looked for among (forEachAwake).
+    const body = collider.parent();
+    if (body?.isDynamic() === true) this.#simulated.set(body.handle, body);
   }
 
   /**
@@ -1442,7 +1508,7 @@ export class PhysicsWorld {
       !gone &&
       owner?.kind === 'actor' &&
       layer !== undefined &&
-      this.#controllerSolid(handle, layer)
+      this.#controllerSolid(this.world.getCollider(handle), layer)
         ? owner.reference
         : undefined;
     const was = this.#solidOwner.get(handle);
@@ -1459,9 +1525,16 @@ export class PhysicsWorld {
     }
   }
 
-  /** filterFor(L_CHARCONTROLLER)'s test of a collider on `layer`. */
-  #controllerSolid(handle: number, layer: number): boolean {
-    return !this.#ragdollFaces.has(handle) && this.matrix.collides(Layer.charController, layer);
+  /**
+   * filterFor(L_CHARCONTROLLER)'s test of a collider on `layer`, and that it is no sensor (a
+   * phantom, a trigger volume): no controller's sweep or cast meets one.
+   */
+  #controllerSolid(collider: RAPIER.Collider, layer: number): boolean {
+    return (
+      !collider.isSensor() &&
+      !this.#ragdollFaces.has(collider.handle) &&
+      this.matrix.collides(Layer.charController, layer)
+    );
   }
 
   /** A collider's layer, and the kinds of query that find it (QueryGroups). */
@@ -1471,8 +1544,19 @@ export class PhysicsWorld {
     if ((this.matrix.flags(layer) & LayerFlag.triggerVolume) !== 0) kinds |= QUERY_TRIGGER;
     if (layer === Layer.trap || layer === Layer.cloudTrap) kinds |= QUERY_TRAP;
     if (layer === Layer.charController) kinds |= QUERY_CONTROLLER;
-    if (this.#controllerSolid(collider.handle, layer)) kinds |= QUERY_CONTROLLER_SOLID;
-    collider.setCollisionGroups(groups(kinds, ALL_GROUPS));
+    if (this.#controllerSolid(collider, layer)) {
+      kinds |= QUERY_CONTROLLER_SOLID;
+      if (this.#owners.get(collider.handle)?.kind !== 'actor') kinds |= QUERY_CONTROLLER_GROUND;
+    }
+    // Which bodies it meets at all: a welded mesh's halves each their own (GROUP_RAGDOLL).
+    const meets = this.#ragdollFaces.has(collider.handle)
+      ? GROUP_RAGDOLL
+      : this.#twoSided.has(collider.handle)
+        ? GROUP_OTHER
+        : GROUP_RAGDOLL | GROUP_OTHER;
+    collider.setCollisionGroups(
+      groups(kinds | (RAGDOLL_LAYERS.has(layer) ? GROUP_RAGDOLL : GROUP_OTHER), meets),
+    );
     this.#countSolid(collider.handle);
     if (layer === Layer.trap) this.#trapColliders.set(collider.handle, collider);
     else this.#trapColliders.delete(collider.handle);
@@ -1626,7 +1710,9 @@ export class PhysicsWorld {
       desc.setTranslation(translation.x, translation.y, translation.z).setRotation(rotation);
       const body = this.world.createRigidBody(desc);
       if (dynamic) {
+        this.#simulated.set(body.handle, body);
         this.#limits.set(body.handle, {
+          body,
           linear: data.maxLinearVelocity > 0 ? data.maxLinearVelocity : Infinity,
           angular: data.maxAngularVelocity > 0 ? data.maxAngularVelocity : Infinity,
           solverDeactivation: data.solverDeactivation,
@@ -1654,7 +1740,10 @@ export class PhysicsWorld {
           colliderDesc
             .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
             .setContactForceEventThreshold(
-              (data.mass * toHavok(this.impactSpeed)) / this.stepSeconds,
+              // Over the longest step the world takes: a contact's force is its impulse over
+              // the step, half as much over the complex mode's step (#collectImpacts then
+              // goes by the speed).
+              (data.mass * toHavok(this.impactSpeed)) / Math.max(this.#step, this.complexStep),
             );
         }
         if (data.phantom) colliderDesc.setActiveHooks(RAPIER.ActiveHooks.FILTER_INTERSECTION_PAIRS);
@@ -1901,7 +1990,7 @@ export class PhysicsWorld {
     const { a, b } = placed;
     if (this.#easing.has(placed) && a.body.isSleeping() && b.body.isSleeping()) return true;
     const factor = inner.type === 'ragdoll' ? RAGDOLL_LIMIT_TAU_FACTOR : HINGE_LIMIT_TAU_FACTOR;
-    const tau = this.solver.tau * factor;
+    const tau = this.#stepSolver.tau * factor;
     let past = false;
     const before = this.#easing.get(placed);
     const bounds: number[] = [];
@@ -2061,7 +2150,7 @@ export class PhysicsWorld {
       }
       const results = groupImpulses(bodies, joints, {
         step: this.#size,
-        iterations: this.solver.iterations,
+        iterations: this.#stepSolver.iterations,
       });
       const own = results[group.indexOf(placed)];
       if (own) {
@@ -2131,8 +2220,8 @@ export class PhysicsWorld {
       rb: fromCom(bodyB, pb),
       ...(error && { error: error.linear }),
       ...(angular && { angular }),
-      tau: chain ? chain.tau : this.solver.tau,
-      damping: chain ? chain.damping : this.solver.damping,
+      tau: chain ? chain.tau : this.#stepSolver.tau,
+      damping: chain ? chain.damping : this.#stepSolver.damping,
       ...(chain && { softness: chain.constraintForceMixing, block: chain.index }),
       ...(strength !== 1 && { strength }),
     };
@@ -2458,6 +2547,7 @@ export class PhysicsWorld {
     for (const { body } of placed.bodies) {
       this.#held.delete(body.handle);
       this.#limits.delete(body.handle);
+      this.#simulated.delete(body.handle);
       this.world.removeRigidBody(body);
     }
     for (const body of placed.fixedBodies) this.world.removeRigidBody(body);
@@ -2476,18 +2566,31 @@ export class PhysicsWorld {
     // world's time multiplier (Slow Time: `seconds` is the slowed frame's), so it steps as often
     // as at full speed, each step shorter.
     const scale = Math.min(1, Math.max(MIN_TIME_SCALE, this.timeScale?.() ?? 1));
-    const size = (this.complex ? this.complexStep : this.#step) * scale;
+    const whole = this.complex ? this.complexStep : this.#step;
+    const size = whole * scale;
     if (size !== this.#size) {
       this.#size = size;
       this.world.timestep = size;
+      // A longer step takes as many more of Rapier's iterations, as the engine's solver does
+      // (solverSettings: its iterations times the step over fMaxTime): what is stacked and
+      // hinged is solved as often a second in the complex mode as out of it.
+      this.world.integrationParameters.numSolverIterations =
+        SOLVER_ITERATIONS * Math.max(1, Math.round(whole / this.#step));
     }
     const owed = this.#owed + seconds;
-    const handed = Math.min(owed, size * (this.complex ? this.complexSteps : this.maxSteps));
+    const most = size * (this.complex ? this.complexSteps : this.maxSteps);
+    const handed = Math.min(owed, most);
     if (handed < MIN_FRAME_SECONDS * scale) {
       this.#owed = owed;
       return 0;
     }
-    this.#owed = owed - handed;
+    // What a long frame could not hand stays owed and is made up in the frames after it, but
+    // no more than one frame hands at most: frames that stay long (below 20 a second; below 30
+    // in the complex mode) owed more each, without end, and once they were short again every
+    // frame took its most steps until minutes of it were made up, the world and everyone walking
+    // in it at up to three times their speed. TODO(M13): ours; what bounds the original's (its
+    // own frame time's clamp, perhaps) was not read.
+    this.#owed = Math.min(owed - handed, most);
     this.#accumulator += handed;
     let steps = 0;
     while (this.#accumulator > STEP_EPSILON) {
@@ -2528,8 +2631,7 @@ export class PhysicsWorld {
     this.#sinceBounds += this.#size;
     if (this.#sinceBounds < BOUNDS_CHECK) return;
     this.#sinceBounds = 0;
-    this.world.bodies.forEach((body) => {
-      if (!body.isDynamic() || body.isSleeping() || !body.isEnabled()) return;
+    this.forEachAwake((body) => {
       const at = body.translation();
       if (
         Math.abs(at.x) > WORLD_BOUNDS ||
@@ -2559,7 +2661,7 @@ export class PhysicsWorld {
       this.#size,
       this.world.gravity,
       this.world.integrationParameters.numSolverIterations,
-      this.solver,
+      this.#stepSolver,
     );
   }
 
@@ -2682,7 +2784,7 @@ export class PhysicsWorld {
       }
       const results = groupImpulses(bodies, joints, {
         step: this.#size,
-        iterations: this.solver.iterations,
+        iterations: this.#stepSolver.iterations,
       });
       solved.forEach((link, i) => {
         const left = results[i]?.left.linear;
@@ -3967,10 +4069,10 @@ export class PhysicsWorld {
   #limitVelocities(): void {
     const gravity = this.world.gravity;
     const g = Math.hypot(gravity.x, gravity.y, gravity.z);
-    const iterations = this.solver.iterations;
+    const iterations = this.#stepSolver.iterations;
     for (const [handle, limit] of this.#limits) {
-      const body = this.world.getRigidBody(handle) as RAPIER.RigidBody | null;
-      if (!body) {
+      const body = limit.body;
+      if (!body.isValid()) {
         this.#limits.delete(handle);
         continue;
       }
@@ -4073,8 +4175,7 @@ export class PhysicsWorld {
     // Per system (its colliders' system; a lone body is its own): awake bodies and whether all
     // of them have stayed still long enough.
     const systems = new Map<string, RestingGroup>();
-    this.world.bodies.forEach((body) => {
-      if (!body.isDynamic() || body.isSleeping() || !body.isEnabled()) return;
+    this.forEachAwake((body) => {
       const handle = body.handle;
       seen.add(handle);
       let entry = still.get(handle);
@@ -4304,8 +4405,7 @@ export class PhysicsWorld {
   #recordVelocities(): void {
     this.#velocities.clear();
     this.#spins.clear();
-    this.world.bodies.forEach((body) => {
-      if (!body.isDynamic() || body.isSleeping()) return;
+    this.forEachAwake((body) => {
       this.#velocities.set(body.handle, body.linvel());
       this.#spins.set(body.handle, body.angvel());
     });

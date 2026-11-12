@@ -12,6 +12,7 @@ import {
   ambientIdleUpdate,
   ambientIdleWait,
   COMPLEX_SCENE_ACTORS,
+  countsInScene,
   isComplexScene,
   playerAmbientIdleView,
   readAmbientIdleSettings,
@@ -148,9 +149,11 @@ export class ActorAmbientIdles {
     const now = this.#clock;
     const staged = new Map<number, StagedActor>();
     let high = 0;
+    const highProcess = (reference: number): boolean =>
+      this.#options.highProcess?.(reference) !== false;
     for (const actor of this.#options.actors()) {
       staged.set(actor.reference, actor);
-      if (!actor.dead && this.#options.highProcess?.(actor.reference) !== false) high++;
+      if (countsInScene(actor, highProcess)) high++;
       // Moving off cuts the idle that played (no PickNewIdle of its end comes).
       if (this.flags.playing(actor.reference) && this.#options.moving?.(actor.reference) === true) {
         this.flags.moved(actor.reference);
