@@ -9,8 +9,16 @@
 // the corpse at the spot the officer died on: a body that fell or was knocked more than 101 units
 // from there was never found (docs/ai.md "Searches"; tests/conformance/ai/corpse-search.test.ts).
 // Here the officer dies in the air, so his body comes to rest well away from where he died.
+//
+// The same browser run had MQ101 at 280 some 20 s before the officer died: the soldier took the
+// player's blow twice in one instant, both killed him, and his OnDeath came twice.
+// MQ101QuestScript.SetStageOnDeadCount counts the two Imperials' OnDeath calls up to
+// stage280Target (2), so one death told twice was the fight over with the officer alive. An
+// actor dies once (ActorEngine.kill; src/scripting/runtime/actor-engine.test.ts): the second
+// case deals the soldier two lethal blows in one instant and has 280 wait for the officer.
 
 import { describe, expect, it } from 'vitest';
+import { ActorValue } from '../src/world/actor-values.ts';
 import { DYING_TIMER } from '../src/world/dying.ts';
 import { hasGamedata, openSim, PLAYER_REF, type Sim } from './helpers/sim.ts';
 
@@ -41,35 +49,55 @@ async function keepBy(sim: Sim, ralof: number): Promise<void> {
   }
 }
 
+/** The keep on Ralof's route up to the fight (MQ101 272): Ralof, the officer and the soldier. */
+async function toTheFight(
+  sim: Sim,
+): Promise<{ readonly ralof: number; readonly officer: number; readonly soldier: number }> {
+  await sim.step(1);
+  for (const playing of sim.runtime.scenes.snapshot()) sim.runtime.scenes.stop(playing.scene);
+  // As MQ101SetStage220 does when the player walks in with Ralof.
+  void sim.runtime.quests.setStage(MQ101, 220);
+  await sim.step(0.5);
+  await sim.openInterior(KEEP);
+  for (const playing of sim.runtime.scenes.snapshot()) {
+    if (playing.scene !== INTRO_RALOF) sim.runtime.scenes.stop(playing.scene);
+  }
+  const quest = sim.runtime.state.quest(MQ101);
+  const ralof = quest.aliases.get(RALOF) ?? 0;
+  let looted = false;
+  for (let second = 0; second < 150 && !sim.stageDone(MQ101, 272); second++) {
+    await sim.step(1);
+    await keepBy(sim, ralof);
+    if (!looted && sim.stageDone(MQ101, 255)) {
+      const [x, y, z] = sim.actor(GUNJAR)?.position ?? [0, 0, 0];
+      await sim.moveTo([x + 80, y, z + 10]);
+      await sim.step(0.5);
+      looted = sim.activate(GUNJAR);
+    }
+  }
+  expect(sim.stageDone(MQ101, 272)).toBe(true);
+  return {
+    ralof,
+    officer: quest.aliases.get(BARRACKS_OFFICER) ?? 0,
+    soldier: quest.aliases.get(BARRACKS_SOLDIER) ?? 0,
+  };
+}
+
+/** Ralof fetches the key from the officer's body (285) and opens the door (300). */
+async function toTheDoor(sim: Sim, ralof: number): Promise<void> {
+  for (let second = 0; second < 90 && !sim.stageDone(MQ101, 300); second++) {
+    await sim.step(1);
+    await keepBy(sim, ralof);
+  }
+  expect(sim.stageDone(MQ101, 285)).toBe(true);
+  expect(sim.stageDone(MQ101, 300)).toBe(true);
+}
+
 describe.skipIf(!hasGamedata())('MQ101: the key on the officer’s body', () => {
   it('Ralof takes it from a body that lies far from where the officer died, and opens the door', async () => {
     const sim = await openSim({ opening: true });
     try {
-      await sim.step(1);
-      for (const playing of sim.runtime.scenes.snapshot()) sim.runtime.scenes.stop(playing.scene);
-      // As MQ101SetStage220 does when the player walks in with Ralof.
-      void sim.runtime.quests.setStage(MQ101, 220);
-      await sim.step(0.5);
-      await sim.openInterior(KEEP);
-      for (const playing of sim.runtime.scenes.snapshot()) {
-        if (playing.scene !== INTRO_RALOF) sim.runtime.scenes.stop(playing.scene);
-      }
-      const quest = sim.runtime.state.quest(MQ101);
-      const ralof = quest.aliases.get(RALOF) ?? 0;
-      let looted = false;
-      for (let second = 0; second < 150 && !sim.stageDone(MQ101, 272); second++) {
-        await sim.step(1);
-        await keepBy(sim, ralof);
-        if (!looted && sim.stageDone(MQ101, 255)) {
-          const [x, y, z] = sim.actor(GUNJAR)?.position ?? [0, 0, 0];
-          await sim.moveTo([x + 80, y, z + 10]);
-          await sim.step(0.5);
-          looted = sim.activate(GUNJAR);
-        }
-      }
-      expect(sim.stageDone(MQ101, 272)).toBe(true);
-      const officer = quest.aliases.get(BARRACKS_OFFICER) ?? 0;
-      const soldier = quest.aliases.get(BARRACKS_SOLDIER) ?? 0;
+      const { ralof, officer, soldier } = await toTheFight(sim);
       // The officer dies in the air: his body falls from there.
       const stood = await sim.position(officer);
       expect(stood).toBeDefined();
@@ -90,13 +118,48 @@ describe.skipIf(!hasGamedata())('MQ101: the key on the officer’s body', () => 
       // MQ101EnemyScript's OnDeath comes as each one's dying ends: 280.
       await sim.until(() => sim.stageDone(MQ101, 280), DYING_TIMER);
       expect(sim.stageDone(MQ101, 280)).toBe(true);
-      // Ralof fetches the key from the body (285) and opens the door (300).
-      for (let second = 0; second < 90 && !sim.stageDone(MQ101, 300); second++) {
+      await toTheDoor(sim, ralof);
+    } finally {
+      await sim.close();
+    }
+  }, 900_000);
+
+  it('the soldier dies once of two lethal blows in one instant: 280 waits for the officer, then Ralof fetches the key', async () => {
+    const sim = await openSim({ opening: true });
+    try {
+      const { ralof, officer, soldier } = await toTheFight(sim);
+      // The player cannot die here (immortal mode): the case is not about their fight.
+      sim.runtime.debug.immortal = true;
+      // Two lethal blows on the soldier, neither waiting for the other (the player's and
+      // Ralof's on one frame).
+      const actors = sim.runtime.actors;
+      await Promise.all([
+        actors.damage(soldier, ActorValue.health, 500, PLAYER_REF),
+        actors.damage(soldier, ActorValue.health, 500, ralof),
+      ]);
+      // His dying over, his OnDeath told: once, and the officer lives, so no 280 yet.
+      for (let second = 0; second < DYING_TIMER + 3; second++) {
         await sim.step(1);
         await keepBy(sim, ralof);
       }
-      expect(sim.stageDone(MQ101, 285)).toBe(true);
-      expect(sim.stageDone(MQ101, 300)).toBe(true);
+      expect(await actors.isDead(soldier)).toBe(true);
+      // (Both are told where one fails: the death counted twice is what sets 280 early.)
+      expect
+        .soft(sim.deaths().filter((death) => death.actor === soldier && death.dead))
+        .toHaveLength(1);
+      if (!(await actors.isDead(officer))) expect.soft(sim.stageDone(MQ101, 280)).toBe(false);
+      // The officer dies (Ralof's doing, else a blow of the player's): 280, the key, the door.
+      for (let second = 0; second < 20 && !(await actors.isDead(officer)); second++) {
+        await sim.step(1);
+        await keepBy(sim, ralof);
+      }
+      if (!(await actors.isDead(officer))) {
+        expect(sim.stageDone(MQ101, 280)).toBe(false);
+        await actors.damage(officer, ActorValue.health, 500, PLAYER_REF);
+      }
+      await sim.until(() => sim.stageDone(MQ101, 280), DYING_TIMER + 3);
+      expect(sim.stageDone(MQ101, 280)).toBe(true);
+      await toTheDoor(sim, ralof);
     } finally {
       await sim.close();
     }

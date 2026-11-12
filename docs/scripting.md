@@ -1129,7 +1129,13 @@ holds the actor), relationships (RELA, read in one pass, and those scripts set),
 (its base, scripts' ActorBase changes, or an alias), dead (killed, or placed dead) and dying
 (OnDying at the kill; OnDeath once its dying ends: where the world shows it, at its graph's
 deathStop or fDyingTimer after the kill, else at once; IsDead answers yes from the kill:
-docs/animation.md, "Dying, then dead"). Auto-calculated stats follow the level (docs/gameplay.md). Bleedout
+docs/animation.md, "Dying, then dead"; an actor dies once: of two kills in the same instant, two
+attackers' lethal blows on one frame or a blow and a script's Kill, the first is its death and
+its killer and the second does nothing, so its death is told once, its base's dead count rises
+by one and its scripts hear one OnDeath. Told twice, the death of one of Helgen Keep's two
+Imperials was both of them to MQ101QuestScript.SetStageOnDeadCount, and stage 280 came with the
+officer alive: `src/scripting/runtime/actor-engine.test.ts`,
+`tests/sim-helgen-keep-key.int.test.ts`). Auto-calculated stats follow the level (docs/gameplay.md). Bleedout
 (essential and protected actors, its recovery), combat, detection and the AI's state are the
 stage's ([ai.md](ai.md#combat), [Combat AI](ai.md#combat-ai), [Detection](ai.md#detection);
 the natives and conditions read them through the WorldBridge: `combat`, `detects`, ...); the

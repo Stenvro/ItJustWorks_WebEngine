@@ -1039,6 +1039,13 @@ export class ActorEngine {
     // Immortal mode (tim): the player's Kill does nothing (observed in the original).
     if (reference === PLAYER_REF && this.#runtime.debug.immortal) return;
     const state = this.#runtime.state.actor(reference);
+    // It dies once. Asked above, two kills of the same instant (two attackers' lethal blows on
+    // one frame, a blow and an arrow or a spell, a blow and a script's Kill) each found it alive
+    // before either had marked it dead, and both went on: its death told twice, its base's dead
+    // count 2, OnDeath twice. (MQ101QuestScript counts the OnDeath calls of Helgen Keep's two
+    // Imperials up to 2: one told twice set stage 280 with the officer alive.) So it is asked
+    // again here, with nothing between the question and the mark; the first to come is its killer.
+    if (state.dead === true) return;
     state.dead = true;
     if (killer !== undefined) state.killer = killer;
     const base = await this.#runtime.baseOf(reference);
