@@ -139,9 +139,17 @@ iterations × tau over the two bodies' inverse inertia about the axis and the st
 past too). An ankle between a 3 kg foot and a calf is 94 N·m a radian: Hulda, killed 1 to 4.5 s
 into her lean at the counter, no longer stands on locked ankles and knees
 (tests/conformance/animation/ragdolls-death.test.ts, all ten phases; docs/physics.md, "A limit's
-give"). The race skeletons' ragdolls settle better with it (45, 48 and 45 of 52 at rest within
-20 s pushed, still and lifted, against 34, 35 and 32 on this tip without it); that this tip
-without it no longer reaches the 48, 51 and 50 of the earlier rounds was not looked into.
+give"). A ragdoll joint's cone gives by the same rule, as one limit about the axis its twist
+axes turn about (its spring is the two swings' motors together; the solver's cone row, which
+held a load in the spring's place and pushed back where the load pressed between the two
+swings, now only stops what swings into the cone): a 10 kg weight on a joint with a 45° cone
+rests 0.46° to 0.50° past it whichever way it swings, by the rule 0.49° (it was 0.12° on a
+swing's axis and 0.04° between them). A limit only pushes back (its spring held a joint a
+little within it before), and its stiffness follows the step (Slow Time)
+(src/physics/physics-world.test.ts, "physics constraints"). The race skeletons' ragdolls
+settle better with the give (47, 41 and 46 of 52 at rest within 20 s pushed, still and lifted,
+49 still within 40 s, against 34, 35 and 32 within 20 s on this tip without it); that this
+tip without it no longer reaches the 48, 51 and 50 of the earlier rounds was not looked into.
 
 ## Meshes
 

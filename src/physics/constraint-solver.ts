@@ -16,7 +16,8 @@
 //   standing stood on its locked ankles and knees): limitGive.
 // - Solver deactivation: a slow body is slowed down further (slowBodyFactor).
 // - The cone: a ragdoll joint's twist axis stays within its cone about the first body's (Havok's
-//   cone limit; Rapier's limits are a box of two swings, wider on its diagonals).
+//   cone limit; Rapier's limits are a box of two swings, wider on its diagonals). A cone that
+//   gives is held by its spring (PhysicsWorld.#giveLimits); what swings into it is stopped here.
 // - Motors: a powered ragdoll's joints pull their second body's turn toward a target relative to
 //   the first (Havok's position motors, as the behavior graph's powered ragdoll controls drive
 //   them: a knocked-down actor matching its get-up pose); a joint's motor takes the place of its
@@ -120,10 +121,11 @@ export interface SolverJoint {
   /** Its motor while its ragdoll is powered (none: limp, its friction holds it). */
   motor?: JointMotor | undefined;
   /**
-   * A ragdoll joint one of whose swing limits' springs is on (PhysicsWorld.#giveLimits): the
-   * spring brings it back, so its cone only takes out the speed further past it.
+   * A ragdoll joint whose cone gives (PhysicsWorld.#giveLimits): a spring holds the joint past
+   * its cone and brings it back, and the solver only takes out the speed its bodies have
+   * further past the cone, as Havok's limit takes out the speed into it (solveJoints).
    */
-  sprung?: boolean;
+  coneGives?: boolean;
 }
 
 // --- Vectors ------------------------------------------------------------------------------------
@@ -318,6 +320,13 @@ function solved({ a, b }: SolverJoint): boolean {
  * Before a step of `step` seconds (`gravity`: the world's, Havok units/s²; `substeps`:
  * Rapier's for the step): the joints' friction, as changes of their bodies' velocities (Rapier
  * then steps them, with the joints' pivots, limits and contacts).
+ *
+ * First, the cones that give (SolverJoint.coneGives): a joint past such a cone loses the speed
+ * its bodies have further past it, as Havok's limit takes out the speed into it. That is
+ * solved on the bodies' velocities as they are, without the step's gravity: what presses the
+ * joint past its cone (its weight, what lies on it) is held by the cone's spring, and counted
+ * here, gravity's speed of the step was taken out with the rest, every step: the cone held
+ * the load in the spring's place and the joint gave less than the rule (limitGive).
  */
 export function solveJoints(
   joints: Iterable<SolverJoint>,
@@ -326,7 +335,25 @@ export function solveJoints(
   substeps: number,
   settings: SolverSettings = SOLVER_DEFAULTS,
 ): void {
-  const share = gravityShare(substeps);
+  const taken = [...joints].filter(solved);
+  if (taken.some((joint) => joint.coneGives === true)) {
+    solvePass(taken, step, gravity, 0, settings, true);
+  }
+  solvePass(taken, step, gravity, gravityShare(substeps), settings, false);
+}
+
+/**
+ * One solve of the joints' rows and pivots with `share` of the step's gravity speed: the stops
+ * of the cones that give (`stops`), or everything else.
+ */
+function solvePass(
+  joints: readonly SolverJoint[],
+  step: number,
+  gravity: RAPIER.Vector,
+  share: number,
+  settings: SolverSettings,
+  stops: boolean,
+): void {
   const states = new Map<number, BodyState>();
   const stateOf = (body: RAPIER.RigidBody): BodyState => {
     let state = states.get(body.handle);
@@ -338,12 +365,23 @@ export function solveJoints(
   };
   const groups: { readonly rows: Row[]; readonly pivot: Pivot | undefined }[] = [];
   for (const joint of joints) {
-    if (!solved(joint)) continue;
     const { a: bodyA, b: bodyB, constraint: c } = joint;
-    const a = stateOf(bodyA);
-    const b = stateOf(bodyB);
+    const gives = joint.coneGives === true && c.cone !== undefined;
+    if (stops && !gives) continue;
     const qa = bodyA.rotation();
     const qb = bodyB.rotation();
+    // How far the second twist axis lies past the cone, and the axis the two turn about.
+    let excess = 0;
+    let across: V | undefined;
+    if (c.cone !== undefined && step > 0) {
+      const ta = rotate(qa, c.a.axes[0]);
+      const tb = rotate(qb, c.b.axes[0]);
+      excess = Math.acos(Math.max(-1, Math.min(1, dot(ta, tb)))) - Math.abs(c.cone);
+      if (excess > 0) across = unit(cross(ta, tb));
+    }
+    if (stops && !across) continue;
+    const a = stateOf(bodyA);
+    const b = stateOf(bodyB);
     const rows: Row[] = [];
     // A malleable constraint's rows: their virtual mass × its strength.
     const strength = Math.max(0, c.strength ?? 1);
@@ -356,43 +394,39 @@ export function solveJoints(
         rows.push({ a, b, n, ia, ib, mass: strength / k, lo, hi, bias, gain, impulse: 0 });
       }
     };
-    const motor = joint.motor;
-    if (motor && motor.maxForce > 0 && step > 0) {
-      // Its motor, about the world's axes: the turn left to the target, recovered at tau of it
-      // a step, no faster than its recovery velocities allow.
-      const error = turnBetween(qb, multiplyQuat(qa, motor.target));
-      const angle = Math.hypot(error.x, error.y, error.z);
-      const most = motor.proportionalRecoveryVelocity * angle + motor.constantRecoveryVelocity;
-      const speed = angle > 1e-9 ? Math.min((motor.tau * angle) / step, Math.max(0, most)) : 0;
-      const along = angle > 1e-9 ? speed / angle : 0;
-      const force = motor.maxForce * step;
-      const gain = Math.min(1, Math.max(0, motor.damping));
-      row(v3(1, 0, 0), -force, force, error.x * along, gain);
-      row(v3(0, 1, 0), -force, force, error.y * along, gain);
-      row(v3(0, 0, 1), -force, force, error.z * along, gain);
+    if (stops) {
+      // A cone that gives: no speed further past it.
+      row(across, -Infinity, 0);
     } else {
-      // Friction about the first body's frame axes (a ragdoll's three, a hinge's axle).
-      const limit = c.maxFriction * step;
-      if (limit > 0) {
-        const twist = rotate(qa, c.a.axes[0]);
-        const plane = rotate(qa, c.a.axes[1]);
-        const axes = c.type === 'ragdoll' ? [twist, plane, unit(cross(twist, plane))] : [twist];
-        for (const n of axes) row(n, -limit, limit);
+      const motor = joint.motor;
+      if (motor && motor.maxForce > 0 && step > 0) {
+        // Its motor, about the world's axes: the turn left to the target, recovered at tau of
+        // it a step, no faster than its recovery velocities allow.
+        const error = turnBetween(qb, multiplyQuat(qa, motor.target));
+        const angle = Math.hypot(error.x, error.y, error.z);
+        const most = motor.proportionalRecoveryVelocity * angle + motor.constantRecoveryVelocity;
+        const speed = angle > 1e-9 ? Math.min((motor.tau * angle) / step, Math.max(0, most)) : 0;
+        const along = angle > 1e-9 ? speed / angle : 0;
+        const force = motor.maxForce * step;
+        const gain = Math.min(1, Math.max(0, motor.damping));
+        row(v3(1, 0, 0), -force, force, error.x * along, gain);
+        row(v3(0, 1, 0), -force, force, error.y * along, gain);
+        row(v3(0, 0, 1), -force, force, error.z * along, gain);
+      } else {
+        // Friction about the first body's frame axes (a ragdoll's three, a hinge's axle).
+        const limit = c.maxFriction * step;
+        if (limit > 0) {
+          const twist = rotate(qa, c.a.axes[0]);
+          const plane = rotate(qa, c.a.axes[1]);
+          const axes = c.type === 'ragdoll' ? [twist, plane, unit(cross(twist, plane))] : [twist];
+          for (const n of axes) row(n, -limit, limit);
+        }
       }
-    }
-    // The cone: a second twist axis past it turns back toward the first's, by tau × the
-    // ragdoll limits' tau factor of the excess a step (pushed back only, never held in).
-    if (c.cone !== undefined && step > 0) {
-      const ta = rotate(qa, c.a.axes[0]);
-      const tb = rotate(qb, c.b.axes[0]);
-      const swing = Math.acos(Math.max(-1, Math.min(1, dot(ta, tb))));
-      const excess = swing - Math.abs(c.cone);
-      if (excess > 0) {
-        // (Where a swing limit's spring holds the joint past its limit, and so past its cone,
-        // the spring brings it back: pushed back here as well, every step against the load
-        // that holds it there, its bodies shook and never slept.)
-        const back = joint.sprung ? 0 : (settings.tau * RAGDOLL_LIMIT_TAU_FACTOR * excess) / step;
-        row(unit(cross(ta, tb)), -Infinity, 0, -back);
+      // The cone (one that does not give: a cone of one angle): a second twist axis past it
+      // turns back toward the first's, by tau × the ragdoll limits' tau factor of the excess a
+      // step (pushed back only, never held in).
+      if (across && !gives) {
+        row(across, -Infinity, 0, -(settings.tau * RAGDOLL_LIMIT_TAU_FACTOR * excess) / step);
       }
     }
     // The pivot: its two points' velocities kept together.
@@ -576,11 +610,15 @@ export interface LimitGive {
  *
  * TODO(M13): inferred from Havok's documented solver (sequential impulses without a warm start,
  * tau as the share of an error corrected a step); the turn taken back between the rows is taken
- * as all of it. Measured against the placed ragdoll poses (the Creation Kit's settled Havok
- * state, `node tools/ragdoll-info.ts --limits`; docs/physics.md, "A limit's give"): a human
- * head (4 kg, its centre 0.05 m from its neck joint) held level rests 1.2° past its cone by
- * this rule, and the placed heads lie up to 1.8° past theirs; forearms 0.5° to 1.5° past the
- * elbow's straight limit, upper arms 1° to 3° past the shoulder's plane.
+ * as all of it. Held against the placed ragdoll poses (the Creation Kit's settled Havok
+ * state: `node tools/ragdoll-info.ts --limits` counts, by joint, the poses that lie more than
+ * 0.25°, 1° and 5° past each limit; docs/physics.md, "A limit's give"), which show that
+ * limits give under a corpse's own weight and by about how much, not the rule itself: by it a
+ * human head (4 kg, its centre 0.05 m from its neck joint) held level rests 1.2° past its
+ * cone, and of the 896 placed heads 204 lie more than 0.25° past theirs, 89 more than 1° and
+ * 6 more than 5° (18.6° the most: more than a head's own weight gives); of 2,002 elbows 842,
+ * 424 and 15 lie that far past the straight limit (18.9° the most), and of 1,842 shoulders
+ * 481, 384 and 141 past the plane's upper limit (25.5° the most).
  */
 export function limitGive(
   free: number,
@@ -595,12 +633,13 @@ export function limitGive(
 
 /**
  * The give of a joint's limit about one of its first body's frame axes (0: a hinge's axle or a
- * ragdoll's twist axis; 1: the plane axis; 2: the third), with the bodies as they lie now
- * (limitGive; `factor`: the limit's tau factor).
+ * ragdoll's twist axis; 1: the plane axis; 2: the third) or about its cone's axis ('cone': the
+ * one its two twist axes turn about from each other; none while they are in line), with the
+ * bodies as they lie now (limitGive; `factor`: the limit's tau factor).
  */
 export function jointLimitGive(
   joint: SolverJoint,
-  axis: 0 | 1 | 2,
+  axis: 0 | 1 | 2 | 'cone',
   factor: number,
   step: number,
   settings: SolverSettings = SOLVER_DEFAULTS,
@@ -610,7 +649,14 @@ export function jointLimitGive(
   const qa = a.rotation();
   const first = rotate(qa, c.a.axes[0]);
   const second = rotate(qa, c.a.axes[1]);
-  const n = axis === 0 ? first : axis === 1 ? second : unit(cross(first, second));
+  const n =
+    axis === 0
+      ? first
+      : axis === 1
+        ? second
+        : axis === 2
+          ? unit(cross(first, second))
+          : unit(cross(first, rotate(b.rotation(), c.b.axes[0])));
   if (!n) return undefined;
   let free = 0;
   for (const body of [a, b]) {

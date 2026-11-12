@@ -778,7 +778,9 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   her hips and knees in the box but past the cone and held there by their friction; with the
   cone she slumps to the floor (`ragdolls-death.test.ts`) when killed 0.5 or 5 s into her lean
   idle. Killed at 1 to 4.5 s she stood on, bent over the counter on locked legs, until her
-  limits gave (next).
+  limits gave (next). The solver's push back is now only a cone's that holds one angle: every
+  other cone gives, held and brought back by its spring (next), and the solver only takes out
+  the speed further past it.
 - **A limit's give** (inferred from Havok's solver, TODO(M13); `limitGive`,
   `PhysicsWorld.#giveLimits`): Havok's solver takes each constraint's rows in turn, four times
   a step, each step from no impulse. Each time, a limit's row drives its two bodies' relative
@@ -805,19 +807,49 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   spring of the limit's stiffness, the joint's motor on that axis toward the limit (force
   based, solved with the contacts in Rapier's step; damped by 0.2 × its stiffness × the step:
   with more, Rapier's motor, solved once a substep, holds less than its spring's torque), on
-  from where the joint passes the limit until it is back within it by 0.005 radians (a joint
-  resting at its limit would turn it on and off, and each change wakes its bodies); Rapier's
-  own limit stands 0.02 radians past where the joint is, so what swings into the limit is
-  stopped there (Havok's limit takes the speed into it out) and what presses on it moves it on
-  a step at a time until the spring holds the load; it follows the joint only once it has
-  moved half of that. A joint far past its limit (more than 0.05 radians: a dying actor's
-  animated pose let go) comes back by tau of its excess a step at most. A limit of one angle (the Dwemer spider's) stays Rapier's own. While a swing limit's spring
-  holds a ragdoll joint past its limit, and so past its cone, the cone (above) only takes out
-  the speed further past it and leaves the push back to the spring: pushed back by both, every
-  step against the load that holds it there, the bodies shook and did not sleep (a human let
-  go standing came to rest after 28 s; 8 s so). TODO(M13): the turn taken back between the rows is
-  taken as all of it (a hanging limb's pivot gives back less: a stiffer limit); how far a
-  swing into a limit goes through in a step (0.02 radians here).
+  from 0.001 radians past the limit until the joint is back at it: a limit only pushes back.
+  (On from the limit itself, a joint resting at it turned the spring on and off, and each
+  change wakes its bodies; left on until the joint was 0.005 radians within the limit, as it
+  first was, the spring held the joint there against anything lighter than its stiffness ×
+  that: a limb swung up against its cone hung on it against its weight.) For those 0.005
+  radians within the limit only the spring's damping stays, so that a joint bouncing on its
+  limit comes to rest on it. The stiffness goes by the step squared and by how the two bodies
+  lie, so it is measured again every step and the motor set where it changed by more than 2 %
+  (in Slow Time, at half the step, a limit is four times as stiff; measured once as the
+  spring came on, it stayed the full step's). Rapier's own limit stands 0.02 radians past
+  where the joint is, so what swings into the limit is stopped there (Havok's limit takes the
+  speed into it out) and what presses on it moves it on a step at a time until the spring
+  holds the load; it follows the joint only once it has moved half of that. A joint far past
+  its limit (more than 0.05 radians: a dying actor's animated pose let go) comes back by tau
+  of its excess a step at most. A limit of one angle (the Dwemer spider's) stays Rapier's own.
+  A ragdoll joint has three such limits: its twist's, its plane's (the swing toward its plane
+  axis, where that is narrower than the cone) and its cone, which is one limit about the axis
+  its two twist axes turn about from each other, whichever way they swing. Rapier's motors
+  are about the joint's own axes, so the cone's spring is the two swings' motors together:
+  each takes the cone's torque by the share of the cone's direction along its axis (the two
+  shares are the sines of half the two swing angles over the sine of half the angle between
+  the twist axes), toward a target that far back, and holds it with four times that share
+  squared of the cone's stiffness, the whole of it at the most. A joint swung along one swing
+  is so held by that motor alone, and between the two their torques add up to the cone's,
+  straight back toward it. What swings a joint past its cone is stopped by the constraint
+  solver, which takes out the speed its bodies have further past the cone (not pushing it
+  back), solved before the rest on the velocities as they are, without the step's gravity.
+  Counted with gravity's speed, as the cone's row was while a swing's spring was on, the row
+  held the load in the spring's place, and where the load pressed between the two swings no
+  spring was on at all. Measured with a 10 kg weight 60 units out on a ragdoll joint with a
+  cone of 45° between a fixed bracket and an inertia of 1 (the rule: 0.49° past the cone):
+  0.12° on a swing's own axis and 0.04° between them then, 0.46° to 0.50° at 0°, 15°, 45°, 75°
+  and 90° from the swing axis now; with an inertia of 0.2, 1.87° then and 2.37° now against
+  2.36°; a limited hinge between the same two, 0.43° against 0.39° (`physics-world.test.ts`,
+  "lets a ragdoll joint's cone give …", "… plane limit give …", "measures a … limit's give
+  again as the step changes", "lets a joint swing back off a limit …"; `constraint-solver.test.ts`,
+  "leaves the load on a cone that gives …"). TODO(M13): the turn taken back between the rows
+  is taken as all of it (a hanging limb's pivot gives back less: a stiffer limit); how far a
+  swing into a limit goes through in a step (0.02 radians here); what the two swings' motors
+  hold along the cone's direction they also hold across it for the step (none on a swing's
+  own axis, the whole stiffness halfway between the two), so a joint pressed past its cone
+  slides along it slower than Havok's, whose cone is one row about its own axis; the damping
+  within the limit is ours.
   Hulda, killed 1 to 4.5 s into her lean: her upper body tips forward over the counter until
   her hips are at their cone, and its weight then bears on her legs through their limits (the
   foot capsules point 36° toe down at the skeleton's rest, and the ankle's limit, 3.6°, leaves
@@ -831,10 +863,14 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   limit, and she stood. With this rule (her ankles 96 N·m a radian) her calves come forward
   over her feet, her knees fold and she is down within 1.5 s in every phase from 0.5 to 5 s
   (head at 13–24 units 5 s on; `ragdolls-death.test.ts`). The race skeletons' ragdolls settle
-  better with it than without (`node tools/ragdoll-info.ts`, on this tip: 45 pushed, 48 still
-  and 45 lifted of 52 at rest within 20 s, against 34, 35 and 32 without the give; the 48, 51
-  and 50 measured in earlier rounds are not reached on this tip either way, which was not
-  looked into here). Tried before and not kept: Rapier at 4 or 5 substeps (she slumped, the
+  better with it than without (`node tools/ragdoll-info.ts`, on this tip: 47 pushed, 41 let
+  go still and 46 lifted of 52 at rest within 20 s, and 49 let go still within 40 s, against
+  34, 35 and 32 within 20 s without the give; while the cone's row still held its loads, 45,
+  48 and 45, and 48 let go still within 40 s: let go still, more of them now take longer than
+  20 s, and one more rests in the end. The counts move by three or so with any small change
+  (seven variants of the springs' damping, of the thresholds they are set again at and of
+  the cone's stop gave 38 to 45 let go still), so they say no more than that. The 48, 51 and 50 measured in earlier rounds are not
+  reached on this tip either way, which was not looked into here). Tried before and not kept: Rapier at 4 or 5 substeps (she slumped, the
   race skeletons settled worse; with the still bodies' lift she stood at four too), her
   joints' friction at 0 or 1.5 times, lifting her out of the floor her animated feet start 6
   units into, and a give in proportion to a load read off the bodies' momentum (the two

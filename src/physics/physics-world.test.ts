@@ -650,6 +650,213 @@ describe('physics constraints', () => {
     expect(Math.abs(rest(0, 0))).toBeLessThan(0.002);
   });
 
+  /**
+   * The weight of the test above on a ragdoll joint whose twist axis runs along it (y), its
+   * plane axis `alpha` from x in the plane across it: let go level, it swings down about x,
+   * which is the swing the cone alone limits at alpha 0 and the swing toward the plane axis
+   * at 90°.
+   */
+  function onRagdoll(
+    alpha: number,
+    limits: { cone: number; planeMin?: number; planeMax?: number },
+    mass = 10,
+  ): CollisionData {
+    const bracket = body(box([-5, -5, -5], [5, 5, 5]));
+    const at = new Float32Array(IDENTITY);
+    at[13] = 60;
+    const weight: CollisionBody = {
+      ...body(box([-10, -10, -10], [10, 10, 10])),
+      node: 'Weight',
+      transform: at,
+      motion: 'dynamic',
+      layer: Layer.clutter,
+      mass,
+      inertia: [1, 1, 1],
+    };
+    const axes = (pivot: [number, number, number]) => ({
+      pivot,
+      axes: [
+        [0, 1, 0],
+        [Math.cos(alpha), 0, Math.sin(alpha)],
+        [Math.sin(alpha), 0, -Math.cos(alpha)],
+      ] as [[number, number, number], [number, number, number], [number, number, number]],
+    });
+    return {
+      bodies: [bracket, weight],
+      constraints: [
+        {
+          bodyA: 1,
+          bodyB: 0,
+          data: {
+            type: 'ragdoll',
+            a: axes([0, -60, 0]),
+            b: axes([0, 0, 0]),
+            coneMaxAngle: limits.cone,
+            planeMinAngle: limits.planeMin ?? -3,
+            planeMaxAngle: limits.planeMax ?? 3,
+            twistMinAngle: -0.5,
+            twistMaxAngle: 0.5,
+            maxFriction: 0,
+            motor: { type: 'none' },
+          },
+        },
+      ],
+      skipped: [],
+    };
+  }
+  /** How far below level a weight hangs from the origin (radians). */
+  const below = (weight: { translation(): { x: number; y: number; z: number } }): number => {
+    const t = weight.translation();
+    return Math.atan2(-t.z, Math.hypot(t.x, t.y));
+  };
+  /** The torque of the 10 kg weight hung `angle` below level, 60 units out (Havok's units). */
+  const load = (angle: number): number => 10 * GRAVITY * (60 / 69.99125) * Math.cos(angle);
+
+  // The rule of the test above for a ragdoll's limits (their tau factor is 0.8): a spring of
+  // 4 × 0.48 × 60² = 6912 N·m a radian between the bracket and an inertia of 1, about whatever
+  // axis the joint is pressed past its cone, so the weight (74 N·m at that angle) rests 0.6°
+  // past a cone of 0.5 rad whichever way it swings into it. The cone's own row in the
+  // constraint solver, which counted gravity's speed of the step, held the weight in the
+  // spring's place: it rested 0.15° past the cone on either swing's own axis, and between the
+  // two, where the swings' limits had no spring, the row alone held it, still turning (0.02
+  // rad/s) as it was sent to sleep.
+  it.each([0, 15, 45, 75, 90])(
+    "lets a ragdoll joint's cone give under a load by the same rule, swung %s° from its swing axis",
+    (degrees) => {
+      const physics = new PhysicsWorld(matrix, GRAVITY);
+      const data = onRagdoll((degrees * Math.PI) / 180, { cone: 0.5 });
+      const placed = physics.addObject(data, IDENTITY, { reference: 1, kind: 'object' }, false);
+      for (const { body: held } of placed.bodies) physics.release(held);
+      const weight = placed.bodies[1]?.body;
+      expect(weight).toBeDefined();
+      if (!weight) return;
+      let most = 0;
+      for (let i = 0; i < 360; i++) {
+        physics.step(1 / 60);
+        most = Math.max(most, below(weight));
+      }
+      const speed = weight.angvel();
+      expect(Math.hypot(speed.x, speed.y, speed.z)).toBeLessThan(0.01);
+      const give = load(0.5) / (4 * 0.48 * 3600);
+      expect(below(weight) - 0.5).toBeGreaterThan(give * 0.7);
+      expect(below(weight) - 0.5).toBeLessThan(give * 1.3);
+      // What swung into the cone was stopped a little past it (not let through to the corner
+      // of the two swings' limits, 0.2 rad on).
+      expect(most - 0.5).toBeLessThan(0.03);
+      // It hangs straight down from where it was: back in its cone, not beside it.
+      expect(Math.abs(weight.translation().x) * 69.99125).toBeLessThan(1);
+      physics.free();
+    },
+  );
+
+  // The swing toward the plane axis has the plane's limits too: narrower than the cone, they
+  // give by the same rule (the cone is not reached: only the plane's spring holds the weight).
+  it("lets a ragdoll joint's plane limit give under a load where it is narrower than the cone", () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const data = onRagdoll(Math.PI / 2, { cone: 0.8, planeMin: -0.3, planeMax: 0.3 });
+    const placed = physics.addObject(data, IDENTITY, { reference: 1, kind: 'object' }, false);
+    for (const { body: held } of placed.bodies) physics.release(held);
+    const weight = placed.bodies[1]?.body;
+    expect(weight).toBeDefined();
+    if (!weight) return;
+    for (let i = 0; i < 360; i++) physics.step(1 / 60);
+    const give = load(0.3) / (4 * 0.48 * 3600);
+    expect(below(weight) - 0.3).toBeGreaterThan(give * 0.7);
+    expect(below(weight) - 0.3).toBeLessThan(give * 1.3);
+    physics.free();
+  });
+
+  // A limit only pushes back. A light weight let go 0.5 rad past a cone of 0.3 rad comes back
+  // into it by tau of the way a step, swings on up through level to the cone's other side,
+  // and falls back from there to hang on its lower side again. (A spring left on a little
+  // within the limit held it up there against its weight, asleep.)
+  it('lets a joint swing back off a limit it came to rest on', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const data = onRagdoll(Math.PI / 4, { cone: 0.3 }, 0.1);
+    const placed = physics.addObject(data, IDENTITY, { reference: 1, kind: 'object' }, false);
+    for (const { body: held } of placed.bodies) physics.release(held);
+    const weight = placed.bodies[1]?.body;
+    expect(weight).toBeDefined();
+    if (!weight) return;
+    const far = 60 / 69.99125;
+    weight.setTranslation({ x: 0, y: far * Math.cos(0.8), z: -far * Math.sin(0.8) }, true);
+    weight.setRotation({ x: -Math.sin(0.4), y: 0, z: 0, w: Math.cos(0.4) }, true);
+    const angles: number[] = [];
+    for (let i = 0; i < 480; i++) {
+      physics.step(1 / 60);
+      angles.push(below(weight));
+    }
+    // Back by tau (0.6 × 0.8) of the 0.5 rad at the most in the first step, not at once.
+    expect(angles[0]).toBeGreaterThan(0.8 - 0.48 * 0.5 - 0.01);
+    expect(angles[0]).toBeLessThan(0.8);
+    // Up to the cone's other side, and no further than a little past it.
+    const highest = Math.min(...angles);
+    expect(highest).toBeLessThan(-0.25);
+    expect(highest).toBeGreaterThan(-0.35);
+    // And down again: it hangs at the cone's lower side.
+    expect(below(weight)).toBeGreaterThan(0.28);
+    expect(below(weight)).toBeLessThan(0.32);
+    physics.free();
+  });
+
+  // The rule goes by the step squared: in Slow Time (the world's time multiplier ½: steps
+  // half as long) the same limit is four times as stiff, and a weight pressing on it comes
+  // to rest at a quarter of the give. (Measured once as its spring came on, the stiffness
+  // stayed the full step's.) The step changes while the weight still bounces on the limit,
+  // half a second after it met it: one that rests is asleep, and stays as it lies.
+  it.each(['limited-hinge', 'ragdoll'] as const)(
+    "measures a %s's limit's give again as the step changes",
+    (type) => {
+      const physics = new PhysicsWorld(matrix, GRAVITY);
+      const hinge: CollisionData = {
+        ...onRagdoll(0, { cone: 0.5 }),
+        constraints: [
+          {
+            bodyA: 1,
+            bodyB: 0,
+            data: {
+              type: 'limited-hinge',
+              a: frame([0, -60, 0]),
+              b: frame([0, 0, 0]),
+              minAngle: -0.5,
+              maxAngle: 0.5,
+              maxFriction: 0,
+              motor: { type: 'none' },
+            },
+          },
+        ],
+      };
+      const data = type === 'ragdoll' ? onRagdoll(0, { cone: 0.5 }) : hinge;
+      const placed = physics.addObject(data, IDENTITY, { reference: 1, kind: 'object' }, false);
+      for (const { body: held } of placed.bodies) physics.release(held);
+      const weight = placed.bodies[1]?.body;
+      expect(weight).toBeDefined();
+      if (!weight) return;
+      let most = 0;
+      for (let i = 0; i < 30; i++) {
+        physics.step(1 / 60);
+        most = Math.max(most, below(weight));
+      }
+      expect(most).toBeGreaterThan(0.5);
+      physics.timeScale = () => 0.5;
+      // Where it hangs: the middle of its last bounces on the limit before it sleeps (Havok's
+      // deactivation sends it to sleep a second on wherever it then is, a hair up or down).
+      const awake: number[] = [];
+      for (let i = 0; i < 600 && !weight.isSleeping(); i++) {
+        physics.step(1 / 120);
+        awake.push(below(weight));
+      }
+      expect(weight.isSleeping()).toBe(true);
+      const last = awake.slice(-36);
+      const hangs = last.reduce((sum, angle) => sum + angle, 0) / last.length;
+      const tau = type === 'ragdoll' ? 0.48 : 0.6;
+      const give = load(0.5) / (4 * tau * 3600 * 4);
+      expect(hangs - 0.5).toBeGreaterThan(give * 0.7);
+      expect(hangs - 0.5).toBeLessThan(give * 1.3);
+      physics.free();
+    },
+  );
+
   it('break when a step pulls on them harder than their threshold', () => {
     const rope = {
       type: 'stiff-spring' as const,

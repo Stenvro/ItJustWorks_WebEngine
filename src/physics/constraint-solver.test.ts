@@ -153,6 +153,70 @@ describe('the constraint solver', () => {
     world.free();
   });
 
+  // A 1 kg rod on a fixed point, hanging 0.5 rad below level against a cone of 0.3 rad, its
+  // weight pressing it further down: how fast the solve leaves it turning down (rad/s).
+  const pastCone = (coneGives: boolean, speed = 0): number => {
+    const world = new RAPIER.World({ x: 0, y: 0, z: -9.8 });
+    const anchor = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    const down = unitQuat(0, 1, 0, 0.5);
+    const centre = rotateVec(down, [0.5, 0, 0]);
+    const bob = world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(centre[0], centre[1], centre[2])
+        .setRotation(down)
+        // Turning down about the fixed point at `speed`.
+        .setAngvel({ x: 0, y: speed, z: 0 })
+        .setLinvel(centre[2] * speed, 0, -centre[0] * speed)
+        .setCanSleep(false),
+    );
+    world.createCollider(
+      RAPIER.ColliderDesc.capsule(0.5, 0.02)
+        .setRotation({ x: 0, y: 0, z: Math.SQRT1_2, w: Math.SQRT1_2 })
+        .setMass(1),
+      bob,
+    );
+    const frame = {
+      pivot: [0, 0, 0] as [number, number, number],
+      axes: [
+        [1, 0, 0],
+        [0, 1, 0],
+      ] as [[number, number, number], [number, number, number]],
+    };
+    const joint: SolverJoint = {
+      a: anchor,
+      b: bob,
+      constraint: {
+        type: 'ragdoll',
+        a: frame,
+        b: { ...frame, pivot: [-0.5, 0, 0] },
+        maxFriction: 0,
+        cone: 0.3,
+      },
+      coneGives,
+    };
+    solveJoints([joint], 1 / 60, world.gravity, 4);
+    const turning = bob.angvel().y;
+    world.free();
+    return turning;
+  };
+
+  it('pushes a joint past its cone back by tau of the way a step, against its weight', () => {
+    // 0.2 rad past: back at 0.6 × 0.8 × 0.2 × 60 = 5.76 rad/s, whatever pressed it there.
+    expect(pastCone(false)).toBeCloseTo(-5.76, 0);
+    expect(pastCone(false, 2)).toBeCloseTo(-5.76, 0);
+  });
+
+  it('leaves the load on a cone that gives to its spring, and takes out the speed further past it', () => {
+    // Its spring's (PhysicsWorld.#giveLimits): the solve does not hold the rod's weight in the
+    // spring's place (held here, the joint gave less than the rule: the weight's speed of
+    // the step, 0.134 rad/s, is not what it takes out) nor push the joint back.
+    expect(pastCone(true)).toBeCloseTo(0, 5);
+    // What swings further past the cone is stopped, as Havok's limit takes out the speed
+    // into it; what turns back into it is left.
+    expect(Math.abs(pastCone(true, 2))).toBeLessThan(0.05);
+    expect(pastCone(true, -2)).toBeCloseTo(-2, 4);
+  });
+
   it("takes the engine's solver settings at its step", () => {
     expect(solverSettings(1 / 60, 1 / 60, 0.5)).toEqual({ tau: 0.6, damping: 1, iterations: 4 });
     // A step half the engine's: tau and the iterations fall with it.
