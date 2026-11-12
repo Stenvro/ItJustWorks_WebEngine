@@ -3351,10 +3351,11 @@ engine's ([Combat movement](#combat-movement)).
   of friend or better or a friend combat reaction a friend; an ally reaction or a shared faction
   an ally; an enemy reaction an enemy; else neutral. The combat reactions (FACT XNAM, scripts'
   SetAlly / SetEnemy) are those of the actor's factions towards the other's, one way: the
-  other's towards the actor's never count (docs/gameplay.md "Factions and reactions"). A faction both are
-  in that names no reaction to itself makes them allies unless it is Special Combat (the town,
-  crime and guard factions: Whiterun's citizens and guards help each other), and one that names
-  a reaction to itself counts by that reaction alone (BanditFaction is its own ally; MQ101's keep
+  other's towards the actor's never make the actor's reaction (docs/gameplay.md "Factions and
+  reactions"; inferred from the data, TODO(M13)). A faction both are in that names no reaction to
+  itself makes them allies unless it is Special Combat (the town, crime and guard factions:
+  Whiterun's citizens and guards help each other) or the other's factions name one of the actor's
+  an enemy (inferred, TODO(M13)), and one that names a reaction to itself counts by that reaction alone (BanditFaction is its own ally; MQ101's keep
   fight needs it: Ralof and the two Imperials share MQ101TemporaryFriendsFaction, which stage 270
   sets neutral to itself, and their CW NPC factions are enemies;
   `tests/sim-helgen-keep-fight.int.test.ts`; TODO(M13): the precedence is inferred). Two who are members of one

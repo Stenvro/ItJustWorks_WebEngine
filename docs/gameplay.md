@@ -1431,7 +1431,7 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
   soldiers fought the player alone (`tests/sim-helgen-keep-fight.int.test.ts`).
   `tools/faction-reactions.ts <EditorID...>` prints a faction's flags, its reaction to itself
   and its other reactions. The reactions go one way: the other's factions towards the actor's
-  never make the actor's view. The data is built so: of the 905 XNAM reactions between two
+  never make the actor's view (inferred from the data, TODO(M13)). The data is built so: of the 905 XNAM reactions between two
   factions, 56 differ from the other side's (MQ101AlduinFaction is neutral to MQ101SoldierFaction,
   which names it an enemy) and 123 are named on one side only (ChickenFaction's enemies,
   HunterFaction among them, name no chickens), and

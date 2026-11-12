@@ -109,7 +109,8 @@ export interface FactionFacts {
  * factions towards each of the other's (`factionReactions`; a faction both are in that names a
  * reaction to itself among them as any other pair), and whether they share a faction that names
  * no reaction to itself and is not Special Combat (`sameFaction`). The reactions go one way: only
- * the actor's own factions say how it regards the other, never the other's towards it (the data
+ * the actor's own factions say how it regards the other, never the other's towards it (inferred
+ * from the data, TODO(M13): the data
  * is built so: 123 XNAM reactions are named on one side only, and DLC2CultistAmbush, whose
  * location is a town or a capital, places DLC2LvlCultistNonHostile cultists in
  * DLC2CultistFaction, which names IsGuardFaction an enemy, unaggressive (Aggression 0,
