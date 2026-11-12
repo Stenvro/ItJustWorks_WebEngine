@@ -38,7 +38,12 @@ beforeAll(async () => {
   await initPhysics();
 });
 
-function standing(): { physics: PhysicsWorld; character: CharacterBody } {
+/** A character standing on flat ground (and `others` at their feet beside it). */
+function standing(...others: [number, number, number][]): {
+  physics: PhysicsWorld;
+  character: CharacterBody;
+  others: CharacterBody[];
+} {
   const physics = new PhysicsWorld(matrix, GRAVITY);
   const body = physics.world.createRigidBody(
     RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0, h(-10)),
@@ -53,11 +58,19 @@ function standing(): { physics: PhysicsWorld; character: CharacterBody } {
     reference: 2,
     kind: 'actor',
   });
+  const placed = others.map(
+    (feet, i) =>
+      new CharacterBody(physics, { radius: 14, height: 130 }, SETTINGS, feet, {
+        reference: 3 + i,
+        kind: 'actor',
+      }),
+  );
   for (let i = 0; i < 10; i++) {
     character.step(STEP);
+    for (const other of placed) other.step(STEP);
     physics.step(STEP);
   }
-  return { physics, character };
+  return { physics, character, others: placed };
 }
 
 /**
@@ -137,25 +150,221 @@ describe("a character's way in the steps a frame is handed (movePace)", () => {
     physics.free();
   });
 
-  it('falls by the step, not by the pace', () => {
+  it("falls by the frames' time, as its wanted way goes", () => {
     const { physics, character } = standing();
     const timer = new FrameTimer();
     for (let i = 0; i < 10; i++) timer.step(1 / 10);
     character.teleport([0, 0, 2000]);
     character.velocity = [0, 0];
+    // In the air (two steps to leave the ground it stood on: the first sweeps from there).
+    for (let i = 0; i < 2; i++) {
+      character.step(STEP);
+      physics.step(STEP);
+    }
+    expect(character.grounded).toBe(false);
+    const top = character.feet[2];
+    const speed = -character.verticalSpeed;
     let steps = 0;
+    let clock = 0;
     for (let frame = 0; frame < 5; frame++) {
-      steps += physics.step(timer.step(1 / 10), (size) => {
+      const step = timer.step(1 / 10);
+      clock += step;
+      steps += physics.step(step, (size) => {
         character.step(size, size * physics.movePace);
       });
     }
-    // 15 steps of free fall (g × the fall's multiplier of 1): about ½ g t² in game units, not
-    // the 4.7 times as far the frames' 0.54 s would make it.
+    // 15 steps handed, 0.25 s, but its fall covered the frames' 0.54 s: about v t + ½ g t² over
+    // that (g × the fall's multiplier of 1, in game units), 4.7 times as far as the steps' own
+    // time would make it.
     expect(steps).toBe(15);
-    const t = steps * STEP;
-    const fell = 2000 - character.feet[2];
-    expect(fell).toBeGreaterThan(0.5 * GRAVITY * HAVOK_SCALE * t * t * 0.75);
-    expect(fell).toBeLessThan(0.5 * GRAVITY * HAVOK_SCALE * t * t * 1.25);
+    const fell = top - character.feet[2];
+    const g = GRAVITY * HAVOK_SCALE;
+    const free = speed * clock + 0.5 * g * clock * clock;
+    expect(fell).toBeGreaterThan(free * 0.97);
+    expect(fell).toBeLessThan(free * 1.05);
+    expect(-character.verticalSpeed).toBeCloseTo(speed + g * clock, 0);
     physics.free();
+  });
+});
+
+/** A plane tilted `degrees` about y, going down along +x, and a character standing on it. */
+function onSlope(degrees: number): { physics: PhysicsWorld; character: CharacterBody } {
+  const physics = new PhysicsWorld(matrix, GRAVITY);
+  const angle = (degrees * Math.PI) / 180;
+  const body = physics.world.createRigidBody(
+    RAPIER.RigidBodyDesc.fixed()
+      .setTranslation(0, 0, 0)
+      .setRotation({ x: 0, y: Math.sin(angle / 2), z: 0, w: Math.cos(angle / 2) }),
+  );
+  const collider = physics.world.createCollider(
+    RAPIER.ColliderDesc.cuboid(h(200000), h(2000), h(10)),
+    body,
+  );
+  physics.register(collider, Layer.static, { reference: 1, kind: 'object' });
+  physics.step(STEP);
+  const character = new CharacterBody(physics, { radius: 14, height: 130 }, SETTINGS, [0, 0, 40], {
+    reference: 2,
+    kind: 'actor',
+  });
+  for (let i = 0; i < 60; i++) {
+    character.step(STEP);
+    physics.step(STEP);
+  }
+  return { physics, character };
+}
+
+/** A timer whose history holds `rate` frames a second alone. */
+function timerAt(rate: number): FrameTimer {
+  const timer = new FrameTimer();
+  for (let i = 0; i < 10; i++) timer.step(1 / rate);
+  return timer;
+}
+
+/**
+ * Walking down a slope of `degrees` for 8 s at `rate` frames a second: the share of the physics
+ * steps it ended on the ground (where the player's controls are taken), and how far it went
+ * against its speed times the clock.
+ */
+function downhill(rate: number, degrees: number): { grounded: number; went: number } {
+  const { physics, character } = onSlope(degrees);
+  const timer = timerAt(rate);
+  character.velocity = [SPEED, 0];
+  const from = character.feet[0];
+  let clock = 0;
+  let steps = 0;
+  let grounded = 0;
+  for (let frame = 0; frame < 8 * rate; frame++) {
+    const step = timer.step(1 / rate);
+    clock += step;
+    physics.step(step, (size) => {
+      character.step(size, size * physics.movePace);
+      steps++;
+      if (character.grounded) grounded++;
+    });
+  }
+  const went = (character.feet[0] - from) / (SPEED * clock);
+  physics.free();
+  return { grounded: grounded / steps, went };
+}
+
+describe('a character walking down a slope at any frame rate', () => {
+  for (const degrees of [5, 10, 20]) {
+    it(`keeps to ${String(degrees)} degrees as at 60 frames a second`, () => {
+      // At 60 frames a second it stays on the slope (Rapier's controller left it, its foot ever
+      // higher above it, and it fell to it: on 20 degrees off the ground three steps of five).
+      const base = downhill(60, degrees);
+      expect(base.grounded).toBeGreaterThan(0.97);
+      for (const rate of [30, 15, 10, 7]) {
+        const run = downhill(rate, degrees);
+        // In one long move a step: grounded 67% of the steps on 10 degrees at 15 frames a second.
+        expect(Math.abs(run.grounded - base.grounded), `${String(rate)} a second`).toBeLessThan(
+          0.03,
+        );
+        // The frame's whole way is still gone.
+        expect(Math.abs(run.went - base.went), `${String(rate)} a second`).toBeLessThan(0.04);
+      }
+    });
+  }
+});
+
+/**
+ * A running jump on flat ground at `rate` frames a second (after `owed` frames of 0.1083 s that
+ * leave physics time to make up): how far it lands from where it jumped and how high its feet
+ * went. Where it lands is reckoned from its last step in the air, by its fall from there.
+ */
+function runningJump(rate: number, owed = 0): { reach: number; height: number } {
+  const { physics, character } = standing();
+  const timer = timerAt(rate);
+  character.velocity = [SPEED, 0];
+  for (let frame = 0; frame < owed; frame++) {
+    physics.step(0.1083, (size) => {
+      character.step(size, size * physics.movePace);
+    });
+  }
+  for (let frame = 0; frame < rate / 2; frame++) {
+    physics.step(timer.step(1 / rate), (size) => {
+      character.step(size, size * physics.movePace);
+    });
+  }
+  expect(character.grounded).toBe(true);
+  const [x0, , z0] = character.feet;
+  character.jump(300);
+  const g = GRAVITY * HAVOK_SCALE;
+  let height = 0;
+  let air: { x: number; z: number; vz: number } | undefined;
+  let landed = false;
+  for (let frame = 0; frame < 10 * rate && !landed; frame++) {
+    physics.step(timer.step(1 / rate), (size) => {
+      if (landed) return;
+      character.step(size, size * physics.movePace);
+      const [x, , z] = character.feet;
+      height = Math.max(height, z - z0);
+      if (character.grounded && air) landed = true;
+      else if (!character.grounded) air = { x, z: z - z0, vz: character.verticalSpeed };
+    });
+  }
+  physics.free();
+  expect(landed).toBe(true);
+  if (!air) throw new Error('never in the air');
+  const t = (air.vz + Math.sqrt(air.vz * air.vz + 2 * g * air.z)) / g;
+  return { reach: air.x + SPEED * t - x0, height };
+}
+
+describe("a character's running jump at any frame rate", () => {
+  it('goes as far and as high as at 60 frames a second', () => {
+    const base = runningJump(60);
+    // ½ v² / g: some 65 units up; v / g × 2 × 370: some 320 units along.
+    expect(base.height).toBeGreaterThan(55);
+    expect(base.reach).toBeGreaterThan(280);
+    for (const rate of [30, 15, 10, 7]) {
+      const run = runningJump(rate);
+      // With the way paced and the fall by the step: 462 units at 15 a second, 1054 at 7.
+      expect(run.reach / base.reach, `${String(rate)} a second`).toBeGreaterThan(0.95);
+      expect(run.reach / base.reach, `${String(rate)} a second`).toBeLessThan(1.05);
+      expect(run.height / base.height, `${String(rate)} a second`).toBeGreaterThan(0.95);
+      expect(run.height / base.height, `${String(rate)} a second`).toBeLessThan(1.05);
+    }
+    // While physics makes up time it owes (a third of a frame's time a step): no shorter (it
+    // was 111 units).
+    const owed = runningJump(60, 40);
+    expect(owed.reach / base.reach).toBeGreaterThan(0.95);
+    expect(owed.reach / base.reach).toBeLessThan(1.05);
+    expect(owed.height / base.height).toBeGreaterThan(0.95);
+    expect(owed.height / base.height).toBeLessThan(1.05);
+  });
+});
+
+describe('two characters walking together at any frame rate', () => {
+  /** B just ahead of A, both walking along x at `rate` for 3 s: how far apart they end. */
+  function together(rate: number): number {
+    const {
+      physics,
+      character: a,
+      others: [b],
+    } = standing([36, 0, 1]);
+    if (!b) throw new Error('no second character');
+    const timer = timerAt(rate);
+    a.velocity = [SPEED, 0];
+    b.velocity = [SPEED, 0];
+    for (let frame = 0; frame < 3 * rate; frame++) {
+      physics.step(timer.step(1 / rate), (size) => {
+        a.step(size, size * physics.movePace);
+        b.step(size, size * physics.movePace);
+      });
+    }
+    const apart = b.feet[0] - a.feet[0];
+    physics.free();
+    return apart;
+  }
+
+  it('the one behind shoves the one ahead no more at a low frame rate', () => {
+    // Some 43 units apart at 60 frames a second, centre to centre.
+    const base = together(60);
+    expect(base).toBeLessThan(50);
+    for (const rate of [15, 10]) {
+      // By its paced speed against the other's own the one behind shoved the one ahead on (0.2
+      // of its speed at 15 frames a second, 0.6 at 10): 66 and 82 units apart.
+      expect(together(rate) - base, `${String(rate)} a second`).toBeLessThan(15);
+    }
   });
 });
