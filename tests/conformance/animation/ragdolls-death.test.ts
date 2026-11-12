@@ -432,28 +432,52 @@ describe.skipIf(!hasGamedata())(
         await sim.until(() => bodies.driven(HULDA)?.dynamic === true, 20);
       }
       expect(bodies.driven(HULDA)?.dynamic).toBe(true);
-      // The blow lands on the body of her ragdoll farthest from her first (her head or a hand,
-      // not her pelvis; not her bumper, which nothing pushes: no mass, and about as far from
-      // her pelvis as her head is).
-      const states = bodies.bodyStates(HULDA).filter((state) => state.mass > 0);
+      // Her bodies: her ragdoll's 18, and her skeleton's character bumper, which has no mass
+      // (nothing pushes it) and whose origin lies farther from her pelvis than any of them
+      // (81 units; her feet 61, her head 53).
+      const all = bodies.bodyStates(HULDA);
+      const states = all.filter((state) => state.mass > 0);
+      const bumper = all.find((state) => state.mass === 0);
+      expect(states).toHaveLength(18);
+      expect(bumper?.node).toBe('CharacterBumper');
       const first = states[0];
       expect(first).toBeDefined();
-      if (!first) return;
-      // Driven by her graph she stands as she did: her head well above her pelvis.
-      const head = states.find((state) => /head/i.test(state.node));
-      expect((head?.at[2] ?? 0) - first.at[2]).toBeGreaterThan(25);
+      if (!first || !bumper) return;
+      // Driven by her graph she stands at the counter as her pose has her, her joints' limits
+      // giving or not: her head 48 units above her pelvis and her feet 60 below it (47.9 to
+      // 48.0 and 59.6 to 60.0 with limits that do not yield, 48.2 to 48.6 and 59.2 to 60.3
+      // with the give).
+      const above = (pattern: RegExp): number[] =>
+        states.filter((state) => pattern.test(state.node)).map((s) => s.at[2] - first.at[2]);
+      expect(above(/Head/)).toHaveLength(1);
+      expect(above(/Foot/)).toHaveLength(2);
+      for (const height of above(/Head/)) {
+        expect(height).toBeGreaterThan(47);
+        expect(height).toBeLessThan(49.5);
+      }
+      for (const height of above(/Foot/)) {
+        expect(height).toBeGreaterThan(-61);
+        expect(height).toBeLessThan(-58.5);
+      }
       const far = (s: (typeof states)[number]): number =>
         Math.hypot(s.at[0] - first.at[0], s.at[1] - first.at[1], s.at[2] - first.at[2]);
+      // The blow lands on the body of her ragdoll farthest from her first (a foot, not her
+      // pelvis).
       const target = [...states].sort((a, b) => far(b) - far(a))[0];
       expect(target).toBeDefined();
       if (!target) return;
-      expect(far(target)).toBeGreaterThan(20);
+      expect(far(target)).toBeGreaterThan(55);
+      expect(far(bumper)).toBeGreaterThan(far(target));
       const before = target.velocity;
       expect(bodies.feedback(HULDA, [1, 0, 0], target.at)).toBe(target.node);
       // fFeedbackImpulseMult (500 game units of momentum) made Havok's: 500 / 69.99 on its mass.
       const after = bodies.bodyStates(HULDA).find((s) => s.node === target.node)?.velocity;
       const gained = (after?.[0] ?? 0) - before[0];
       expect(gained).toBeCloseTo(500 / HAVOK_SCALE / target.mass, 3);
+      // A blow that lands nearest her bumper strikes the body of her ragdoll nearest there (it
+      // struck the bumper, and pushed nothing).
+      const struck = bodies.feedback(HULDA, [1, 0, 0], bumper.at);
+      expect(states.map((state) => state.node)).toContain(struck);
       await sim.step(0.5);
       expect(bodies.feedbackGain(HULDA)).toBeLessThan(0.8);
       await sim.step(1);
