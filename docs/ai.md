@@ -1613,7 +1613,9 @@ from the original game's behaviour only (in our words):
   as a package's place that names it is): weighed at the spot it died on, a body that fell or was
   knocked farther from there than the place's radius (the key's Find looks within 101 units of
   the officer) was outside a search centred on itself, and Ralof wandered about it for good
-  (`tests/conformance/ai/corpse-search.test.ts`).
+  (`tests/conformance/ai/corpse-search.test.ts`). A Find that found nothing reads its place
+  again at each search (inferred, TODO(M13)): a place a reference gives is where the reference
+  is now, not where it was as the Find began (a body still falling then, an actor walking on).
 - **Patrol:** at a point with an idle time (REFR XPRD) it waits that long; furniture it uses for
   at least fAIPatrolMinSecondsAtNormalFurniture (30 s).
 - **Wander:** each walk at least its Min Wander Distance (its slot 3, a number the engine reads;

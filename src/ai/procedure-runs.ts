@@ -1095,7 +1095,7 @@ async function playerWithin(run: ProcedureRun, place: PackagePlace): Promise<boo
  * TODO(M13): whether the engine sorts them together by distance, and whether its own come first.
  */
 const find: ProcedureRunner = async (run) => {
-  const place = await placeIn(run, 0);
+  let place = await placeIn(run, 0);
   const criteria = run.inputs.target(1);
   if (!place || !criteria) return 'failure';
   // Finding nothing, it looks again while its package runs (beside it in a Simultaneous a Travel
@@ -1123,6 +1123,12 @@ const find: ProcedureRunner = async (run) => {
     if (run.stopped()) return 'failure';
     await run.wait(FIND_AGAIN_SECONDS);
     if (run.stopped()) return 'failure';
+    // Its place is where it is now: one a reference gives (MQ101RalofGetDoorKey: within 101
+    // units of the officer) moves with the reference, and a body still falling, or an actor
+    // walking on, as the Find began is elsewhere by the next search. Kept as it was at the
+    // Find's start, the search went on round a spot the reference had left. (Inferred,
+    // TODO(M13) with the Find's update above: a place gone meanwhile keeps the last one.)
+    place = (await placeIn(run, 0)) ?? place;
   }
 };
 
