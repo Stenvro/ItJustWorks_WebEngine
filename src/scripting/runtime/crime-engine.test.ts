@@ -546,10 +546,27 @@ describe('how actors regard each other', () => {
     },
   } as unknown as ScriptRuntime);
 
-  it("count the other's factions' reactions where the actor's name none of the other's", async () => {
+  it("go one way: an enmity named by the other's factions cancels a shared faction, no more", async () => {
     // MQ304AlduinFaction names MQAncientHeroFaction an enemy; the heroes' factions name none of
-    // Alduin's. Both are in FavorExcludedFaction, which weighs less than the enmity.
+    // Alduin's. Both are in FavorExcludedFaction, which weighs less than the enmity, and makes
+    // the heroes no allies of his: they are neutral to him (they take up his fight as the
+    // player's allies), not hostile by his enmity.
     expect(await crime.reaction(ALDUIN, HERO)).toBe('hostile');
-    expect(await crime.reaction(HERO, ALDUIN)).toBe('hostile');
+    expect(await crime.reaction(HERO, ALDUIN)).toBe('neutral');
+  });
+
+  it("do not read the other's enmity as the actor's own (DLC2CultistAmbush's cultists)", async () => {
+    // DLC2CultistFaction names IsGuardFaction an enemy; IsGuardFaction names none of the
+    // cultists' factions: the guards let the unaggressive cultists come to the player.
+    const GUARD = 0x302;
+    const CULTIST = 0x303;
+    const IS_GUARD = 0x86eee;
+    const CULTISTS = 0x4034fbc;
+    factions.set(GUARD, [[IS_GUARD, 0]]);
+    factions.set(CULTIST, [[CULTISTS, 0]]);
+    reactions.set(`${String(CULTISTS)}>${String(CULTISTS)}`, 2);
+    reactions.set(`${String(CULTISTS)}>${String(IS_GUARD)}`, 1);
+    expect(await crime.reaction(CULTIST, GUARD)).toBe('hostile');
+    expect(await crime.reaction(GUARD, CULTIST)).toBe('neutral');
   });
 });

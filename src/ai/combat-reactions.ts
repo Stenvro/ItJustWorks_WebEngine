@@ -20,8 +20,9 @@
 //   a friend combat reaction: a friend; an ally reaction: an ally; an enemy reaction: an enemy;
 //   a shared faction: an ally; else neutral. The combat reactions are those (FACT XNAM: 0 neutral,
 //   1 enemy, 2 ally, 3 friend; scripts' SetAlly / SetEnemy over them) of each faction the actor
-//   is a member of (rank 0 or more) towards each faction the other is a member of; where they
-//   name none of the other's, the other's factions towards the actor's count. A faction both are in that names a reaction to
+//   is a member of (rank 0 or more) towards each faction the other is a member of, never the
+//   other's towards the actor's (one way; where the other's name one of the actor's an enemy, a
+//   faction they share makes no alliance). A faction both are in that names a reaction to
 //   itself counts by that reaction as any other pair of their factions, its membership adding
 //   nothing (BanditFaction: its own ally; MQ101TemporaryFriendsFaction: its own friend, neutral
 //   from MQ101 stage 270); one that names none makes its members allies unless it is Special

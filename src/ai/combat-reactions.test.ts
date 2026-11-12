@@ -106,8 +106,10 @@ describe('combat reactions', () => {
     // The wolf: an enemy to bandits, a friend to prisoners; the prisoner is both a prisoner
     // and (not yet a member: rank −1) a bandit.
     expect(await combatReaction(facts(), WOLF, PRISONER)).toBe(FightReaction.friend);
-    // The bandit's factions name no wolf faction; the wolf's view of bandits counts.
-    expect(await combatReaction(facts(), BANDIT, WOLF)).toBe(FightReaction.enemy);
+    // The bandit's factions name no wolf faction: neutral, whatever the wolf's view of bandits
+    // (reactions go one way: DLC2CultistFaction names IsGuardFaction an enemy, and the guards
+    // let its unaggressive cultists come to the player).
+    expect(await combatReaction(facts(), BANDIT, WOLF)).toBe(FightReaction.neutral);
     expect(await combatReaction(facts(), WOLF, BANDIT)).toBe(FightReaction.enemy);
   });
 

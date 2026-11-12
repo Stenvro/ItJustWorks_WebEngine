@@ -1430,10 +1430,20 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
   fight by their CW factions' enmity; as allies by its membership, Ralof stood by while both
   soldiers fought the player alone (`tests/sim-helgen-keep-fight.int.test.ts`).
   `tools/faction-reactions.ts <EditorID...>` prints a faction's flags, its reaction to itself
-  and its other reactions. A shared faction weighs less than a named enmity, and where the
-  actor's factions name none of the other's, the other's towards the actor's count (both
-  inferred: Sovngarde's heroes and Alduin share FavorExcludedFaction, only MQ304AlduinFaction
-  names MQAncientHeroFaction, an enemy, and MQ305 has them fight).
+  and its other reactions. The reactions go one way: the other's factions towards the actor's
+  never make the actor's view. The data is built so: of the 905 XNAM reactions between two
+  factions, 56 differ from the other side's (MQ101AlduinFaction is neutral to MQ101SoldierFaction,
+  which names it an enemy) and 123 are named on one side only (ChickenFaction's enemies,
+  HunterFaction among them, name no chickens), and
+  DLC2CultistAmbush, whose location is a town or a capital, sends DLC2LvlCultistNonHostile
+  cultists of DLC2CultistFaction (which names IsGuardFaction an enemy) to the player
+  unaggressive (Aggression 0, WEPlayerFriend, dunPrisonerFaction) until its stage 10 turns them
+  on the player and so on the guards (WEPlayerEnemy, Aggression 1): were the guards to read the
+  cultists' enmity as theirs, they would fall on them as they come. A shared faction weighs less
+  than a named enmity, and makes no alliance where the other's factions name one of the
+  actor's an enemy (both inferred, TODO(M13): Sovngarde's heroes and Alduin share
+  FavorExcludedFaction, only MQ304AlduinFaction names MQAncientHeroFaction, an enemy, and MQ305
+  has the heroes, neutral to him, take up his fight as the player's allies).
   `attacksOnSight(aggression, reaction)`: aggressive actors attack
   enemies, very aggressive neutrals too, frenzied anyone. TODO(M13): inferred: the engine's
   precedence, and that a named reaction to itself goes before membership.
