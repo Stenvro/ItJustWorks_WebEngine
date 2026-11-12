@@ -35,10 +35,11 @@ const ESSENTIAL_NPC = 0x2bfa7;
  * An actor's own data without an AI process: 25 health damage, Two-handed (7) at 35; its life
  * state (the fifth state byte) `life`.
  */
-function actorData(w: EssWriter, life = 0): EssWriter {
+function actorData(w: EssWriter, life = 0, killer: readonly [number, number] = [0, 0]): EssWriter {
   const stateBits = new Uint8Array(18);
   stateBits[4] = life;
-  w.u8(0).bytes(new Uint8Array(52)).refId(0, 0).bytes(stateBits).refId(0, 0).u8(0);
+  // Its killer: the reference before the state bits.
+  w.u8(0).bytes(new Uint8Array(52)).refId(killer[0], killer[1]).bytes(stateBits).refId(0, 0).u8(0);
   for (let i = 0; i < 5; i++) w.refId(0, 0);
   w.u32(3).f32(0).f32(0).f32(-25);
   for (let i = 0; i < 3; i++) w.u32(3).f32(0).f32(0).f32(0);
@@ -740,9 +741,12 @@ describe('the global data tables of controls, references and sky cells', () => {
 
   it('send the OnDeath of an actor saved dying as the load ends, none for the dead', () => {
     const DYING = 0x1c1b2;
+    const SLAIN = 0x1c1b3;
+    const BURNT = 0x1c1b4;
+    const KILLER = 0x1c1b5;
     const flags = ChangeRefr.moved | ChangeRefr.lifeState;
-    /** An NPC in Breezehome, no AI process, no extras: its life state `life`. */
-    const actor = (life: number): Uint8Array =>
+    /** An NPC in Breezehome, no AI process, no extras: its life state `life`, its killer. */
+    const actor = (life: number, killer: readonly [number, number] = [0, 0]): Uint8Array =>
       actorData(
         new EssWriter()
           .refId(1, BREEZEHOME)
@@ -755,6 +759,7 @@ describe('the global data tables of controls, references and sky cells', () => {
           .u32(0xffffffff)
           .u32(0),
         life,
+        killer,
       ).done();
     const bytes = writeSyntheticEss({
       playerName: 'Dragonborn',
@@ -769,6 +774,11 @@ describe('the global data tables of controls, references and sky cells', () => {
         // Life state 1 (dying) and 2 (dead).
         { refId: [1, DYING], type: 1, flags, data: actor(1) },
         { refId: [1, DEAD], type: 1, flags, data: actor(2) },
+        // Dying and dead by another actor's hand, and by the player's (0x14).
+        { refId: [1, SLAIN], type: 1, flags, data: actor(1, [1, KILLER]) },
+        { refId: [1, BURNT], type: 1, flags, data: actor(2, [1, 0x14]) },
+        // A living actor keeps none, whatever the reference says.
+        { refId: [1, KILLER], type: 1, flags, data: actor(0, [1, DEAD]) },
       ],
       formIds: [],
     });
@@ -777,8 +787,19 @@ describe('the global data tables of controls, references and sky cells', () => {
     const state = runtime.state as unknown as GameState;
     expect(state.actors.get(DYING)?.dead).toBe(true);
     expect(state.actors.get(DEAD)?.dead).toBe(true);
-    // As our own save's dying (ActorEngine.dyingSaveData): the load sends its OnDeath.
-    expect(runtime.engines?.dying).toEqual([[DYING, 0]]);
+    // As our own save's dying (ActorEngine.dyingSaveData): the load sends its OnDeath, to one
+    // killed by an actor with that actor as its akKiller.
+    expect(runtime.engines?.dying).toEqual([
+      [DYING, 0],
+      [SLAIN, KILLER],
+    ]);
+    // The dead and the dying keep their killers.
+    expect(state.actors.get(SLAIN)?.killer).toBe(KILLER);
+    expect(state.actors.get(BURNT)?.killer).toBe(0x14);
+    expect(state.actors.get(DYING)?.killer).toBeUndefined();
+    expect(state.actors.get(DEAD)?.killer).toBeUndefined();
+    expect(state.actors.get(KILLER)?.dead).toBe(false);
+    expect(state.actors.get(KILLER)?.killer).toBeUndefined();
   });
 
   it("take the Miscellaneous objectives' byte as the journal's choice once one is shown", () => {

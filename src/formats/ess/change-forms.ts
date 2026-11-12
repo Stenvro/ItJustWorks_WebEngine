@@ -199,6 +199,11 @@ export interface EssActorData {
   readonly processLevel: number;
   /** The actor's state word written before its reference data (TODO(M13): its bits). */
   readonly actorState: number;
+  /**
+   * The actor that killed it (the reference written before its state bits; 0: none): set on
+   * the dead and the dying a blow or a spell killed, none on those a script killed.
+   */
+  readonly killer?: number;
   /** The actor's 18 bytes of state bits after its process's timers (life state among them). */
   readonly stateBits?: Uint8Array;
   /** Its AI process's state (process.ts), when it has a process. */
@@ -1429,7 +1434,7 @@ function readActor(
   }
   reader.u8();
   reader.skip(13 * 4); // timers, counters and the time since its last update
-  ref();
+  actor.killer = ref(); // who killed it
   actor.stateBits = reader.bytes(18); // its state bits
   ref();
   const casters = reader.u8();
