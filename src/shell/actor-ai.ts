@@ -383,6 +383,11 @@ export class ActorAi {
     return packages?.push(kind, runner, target) ?? false;
   }
 
+  /** An actor leaves its engine package of a kind (ActorPackages.leave): whether it ran one. */
+  leaveEngine(reference: number, kind: EnginePackage): boolean {
+    return this.#actors.get(reference)?.packages.leave(kind) ?? false;
+  }
+
   /** The engine package an actor runs now in front of its own, if any. */
   engineOf(reference: number): EnginePackage | undefined {
     return this.#actors.get(reference)?.packages.engine();

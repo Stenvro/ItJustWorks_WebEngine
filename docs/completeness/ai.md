@@ -247,9 +247,18 @@ the readers ask for by name.
       crime by the player's rules (the faction's Ignore flags, Do Not Report Crimes Against
       Members, overlooking; inferred). src/ai/engine-packages.ts fleeFrom; crime-engine.ts
       #noticed; tests/conformance/ai/crime.test.ts.
-- [ ] Crime: the answering guard's Alarm package. Built (alarmPackage: it runs to the criminal and
-      fights it once it detects it), but in the headless Bannered Mare it did not find the fleeing
-      criminal in 20 s, so the guard still fights at once (the combat AI's search).
+- [x] Crime: the guard's Alarm package (alarmPackage), given to each guard that answers an NPC's
+      crime (it runs to the criminal and fights it once it detects it), to the guard that arrests
+      the player (it comes within fAIMinGreetingDistance and force-greets, alarmed on the package
+      through the conversation: GetAlarmed) and to one that attacks them but only heard the alarm;
+      it calls after the criminal with PursueIdleTopic lines. An engine package put in front while
+      the actor's packages are weighed keeps the one chosen from starting under it (what walked
+      the guard out of the inn before). src/shell/actor-crime.ts, src/ai/engine-packages.ts,
+      tests/conformance/ai/crime.test.ts. Inferred: the procedure's way, its 60 s and 8 s, the
+      arresting actor set at the force greet.
+- [ ] Crime: the pursuit lines DialogueCrimeGuards keeps for the arresting actor
+      (GetArrestingActor: "That'll teach you to break the law on my watch."); when the original
+      says them is not known.
 - [ ] Crime: a guard of another faction taking an NPC's crime over.
 - [x] fCrimeFavorMult, iCrimeFavorBaseValue: the favor check, a favor's price (the base value plus
       the cost × the mult) within the favor points of the relationship rank (factions.ts doesFavor,

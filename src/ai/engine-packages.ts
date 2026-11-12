@@ -403,17 +403,23 @@ export const followCommander: EngineRunner = async (run) => {
 
 // --- Crime: Alarm and the criminal's Flee ----------------------------------------------------------
 //
-// An NPC's crime (docs/gameplay.md, "Crimes and witnesses"; the stage: src/shell/actor-crime.ts):
-// each guard that answers it (one that witnessed it, else the first guard of the crime's faction
-// or its crime group to hear the alarm; iNumberGuardsCrimeResponse at most) fights the criminal,
-// and the criminal, fighting no one, is given Flee aimed at the first of them (the engine's own
-// kAlarm and kFlee packages, CommonLibSSE PACKAGE_TYPE). TODO(M13): Alarm is built but not yet
-// given to the guard: in the headless Bannered Mare it did not find the fleeing criminal in 20 s,
-// so the guard fights at once and the combat AI's search takes it there (actor-crime.ts).
-// - **Alarm.** Once it detects the criminal it starts combat with it and the package ends (the
-//   combat AI takes it on); until then it runs to where the criminal is now, heading anew as the
-//   criminal gets away from the spot it heads for. It gives up once the criminal is dead, in
-//   another cell or worldspace, gone from the stage, or not found in ALARM_SECONDS.
+// A crime the guards answer (docs/gameplay.md, "Crimes and witnesses"; the stage:
+// src/shell/actor-crime.ts). An NPC's: each guard that answers it (one that witnessed it, else
+// the first guard of the crime's faction or its crime group to hear the alarm;
+// iNumberGuardsCrimeResponse at most) is given Alarm aimed at the criminal, and the criminal,
+// fighting no one, is given Flee aimed at the first of them (the engine's own kAlarm and kFlee
+// packages, CommonLibSSE PACKAGE_TYPE). The player's: the guard that arrests them, and one that
+// is to attack them but only heard the alarm, are given Alarm aimed at them.
+// - **Alarm.** It runs to where the criminal is now, heading anew as the criminal gets away from
+//   the spot it heads for, and calls after it now and then (the topic subtype PursueIdleTopic:
+//   DialogueCrimeGuards' "Stop, in the name of the Jarl!", the orc strongholds' "Halt,
+//   outlander!"). Once it has the criminal before it (it detects it; for an arrest also within
+//   the greeting distance, fAIMinGreetingDistance) it confronts it: it starts combat with it
+//   (the combat AI takes it on) and the package ends, or it arrests the player with its force
+//   greet (the dialogue quest's ForceGreet topic, whose lines ask GetAlarmed: an actor on its
+//   Alarm is alarmed) and stays on the package until the arrest is over. It gives up once the
+//   criminal is dead, in another cell or worldspace, gone from the stage, or not confronted in
+//   ALARM_SECONDS.
 // - **Flee.** The criminal runs from the guard, counting as fleeing (IsFleeing), until it has
 //   been beyond fFleeDoneDistanceExterior (inside: fFleeDoneDistanceInterior) of it for
 //   fFleeIsSafeTimer (the Flee procedure's rule: procedure-runs.ts fleeSafe), running off again
@@ -422,7 +428,8 @@ export const followCommander: EngineRunner = async (run) => {
 //
 // Inferred, TODO(M13): the original's two procedures were not followed: the Alarm's way to the
 // criminal (ours: its live position, as the alarm tells where the crime was), its giving up
-// (ALARM_SECONDS), Flee's spot (ours: on the far side of the guard, the done distance from it,
+// (ALARM_SECONDS), how often it calls (ALARM_CALL_SECONDS), that a fight starts from wherever it
+// detects the criminal and that the force greet is the package's own step, Flee's spot (ours: on the far side of the guard, the done distance from it,
 // turned up to 60° where the straight one is not walkable) and whether it flees only a guard it
 // detects (ours: as the guard answers).
 
@@ -430,8 +437,12 @@ export const followCommander: EngineRunner = async (run) => {
 const ALARM_REACH = 128;
 /** The criminal this far from the spot the Alarm heads for, it heads anew (units; ours). */
 const ALARM_RETARGET = 256;
-/** The Alarm gives up after this long without detecting the criminal (real seconds; ours). */
+/** The Alarm gives up after this long without confronting the criminal (real seconds; ours). */
 export const ALARM_SECONDS = 60;
+/** A pursuing guard calls after the criminal this often (real seconds; ours). */
+export const ALARM_CALL_SECONDS = 8;
+/** The pursuit's lines: the topic subtype PursueIdleTopic. */
+const PURSUE_IDLE = 'PURS';
 /** A fleeing criminal looks again this often whether it is safe (real seconds; ours). */
 const FLEE_LOOK = 0.5;
 /** It runs off again at most this often in one flight before it holds where it got to (ours). */
@@ -448,15 +459,36 @@ async function presentAt(run: EngineRun, reference: number): Promise<Vec3 | unde
   return run.mind.livePosition?.(reference) ?? other?.position;
 }
 
-/** What the Alarm asks the stage: detection, and the fight it starts. */
+/** What the Alarm asks the stage: detection, and what the guard does about the criminal. */
 export interface AlarmHooks {
   /** Whether the actor detects the other now. */
   detects(actor: number, other: number): boolean;
-  /** The actor starts combat with the other (the combat AI). */
-  fight(actor: number, other: number): void;
+  /**
+   * How near the criminal the guard has to be to confront it (units): an arrest's force greet
+   * needs it within the greeting distance; undefined: from wherever it detects it (a fight).
+   */
+  reach?(actor: number, other: number): number | undefined;
+  /**
+   * The guard has the criminal before it: it fights it (the combat AI takes it from here) or
+   * arrests it (its force greet). The package lasts as long as this does: the guard stays on
+   * its Alarm through the arrest's conversation.
+   */
+  confront(actor: number, other: number): void | Promise<void>;
 }
 
-/** Alarm: the guard goes after the criminal (its target) and fights it once it detects it. */
+/** Whether the Alarm has the criminal before it: detected, and within the reach asked for. */
+export function alarmConfronts(
+  detects: boolean,
+  distance: number,
+  reach: number | undefined,
+): boolean {
+  return detects && (reach === undefined || distance <= reach);
+}
+
+/**
+ * Alarm: the guard goes after the criminal (its target), calling out as it pursues
+ * (PursueIdleTopic), and confronts it once it has it before it.
+ */
 export function alarmPackage(hooks: AlarmHooks): EngineRunner {
   return async (run) => {
     const criminal = run.target;
@@ -465,19 +497,24 @@ export function alarmPackage(hooks: AlarmHooks): EngineRunner {
     const halt = (): void => {
       if (leg && !leg.done && !run.stopped()) run.body.stop();
     };
+    let called = 0;
     for (let searched = 0; !run.stopped(); searched += STEP) {
-      if (hooks.detects(run.actor, criminal)) {
-        halt();
-        hooks.fight(run.actor, criminal);
-        return;
-      }
       const there = await presentAt(run, criminal);
       const here = run.body.position();
       if (!there || !here || searched >= ALARM_SECONDS || run.stopped()) {
         halt();
         return;
       }
-      const near = flat(here, there) <= ALARM_REACH;
+      const distance = flat(here, there);
+      const reach = hooks.reach?.(run.actor, criminal);
+      if (alarmConfronts(hooks.detects(run.actor, criminal), distance, reach)) {
+        halt();
+        run.body.face(headingTo(here, there));
+        await hooks.confront(run.actor, criminal);
+        return;
+      }
+      const arrive = Math.min(ALARM_REACH, reach ?? ALARM_REACH);
+      const near = distance <= arrive;
       if (!near && (!leg || leg.done || flat(leg.goal, there) > ALARM_RETARGET)) {
         halt();
         const current = { goal: there, done: false };
@@ -485,11 +522,14 @@ export function alarmPackage(hooks: AlarmHooks): EngineRunner {
         const arrived = (): void => {
           current.done = true;
         };
-        void run.body
-          .travel([there[0], there[1], there[2]], 'run', ALARM_REACH)
-          .then(arrived, arrived);
+        void run.body.travel([there[0], there[1], there[2]], 'run', arrive).then(arrived, arrived);
       } else if (near) {
         run.body.face(headingTo(here, there));
+      }
+      // It calls after the one it pursues, now and then.
+      if (!near && searched >= called) {
+        called = searched + ALARM_CALL_SECONDS;
+        void run.body.say(PURSUE_IDLE, { target: criminal });
       }
       await run.wait(STEP);
     }

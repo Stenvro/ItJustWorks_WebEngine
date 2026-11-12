@@ -268,8 +268,10 @@ telling on the game's real time and the touch; by active effect key, an Accumula
 effect's rate and hold and the share of a value effect done at once; the summons fading out
 (seconds left); the casts going on (`SavedCast`: the actor, the hand or source, dual, its
 phase and the seconds since it began: its item is read again and its hand goes on where it
-was, ready after the rest of its charge, nothing paid or told again) and the voice keys held
-(the actor and the seconds held, which go on counting).
+was, ready after the rest of its charge, nothing paid or told again), the voice keys held
+(the actor and the seconds held, which go on counting) and each actor's last cast by its combat
+AI's Script caster (`scriptCasts`: the actor, the seconds since and the AI Delay Time noted with
+it; docs/ai.md, Shouts and the voice's recovery).
 
 ## World state kept while unloaded
 

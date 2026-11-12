@@ -1106,8 +1106,13 @@ export class ActorSenses implements ScriptSenses {
     return kept?.at;
   }
 
+  /**
+   * Whether an actor is alarmed (GetAlarmed, IsAlarmed): it raised or heard an alarm lately, or
+   * it is on its Alarm package (a guard after a criminal, through the arrest: its force greet's
+   * lines ask for it).
+   */
   alarmed(actor: number): boolean {
-    return this.detections.alarmed(actor);
+    return this.detections.alarmed(actor) || this.#options.ai.engineOf(actor) === 'alarm';
   }
 
   attacked(actor: number): boolean {

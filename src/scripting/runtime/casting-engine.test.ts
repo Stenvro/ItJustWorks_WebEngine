@@ -511,4 +511,29 @@ describe("the casting engine's save", () => {
     // The voice key still held, its time going on from the save's.
     expect(again.engine.shoutHeld(NPC)).toBeCloseTo(0.75 + 0.4, 6);
   });
+
+  it('keeps the Script caster’s note of its last cast: its delay goes on after a load', () => {
+    const w = world();
+    const flames = ITEMS.get(FLAMES);
+    expect(flames).toBeDefined();
+    if (!flames) return;
+    // An NPC whose combat AI started a Script cast 20 s ago, noted with an AI delay of 60 s (a
+    // concentration spell is not asked whether its target carries it).
+    w.engine.loadData({ lastCast: [], lesserUsed: [], scriptCasts: [[NPC, 20, 60]] });
+    expect(w.engine.scriptCastReady(NPC, flames)).toBe(false);
+    w.engine.update(5);
+    const saved = JSON.parse(JSON.stringify(w.engine.saveData())) as ReturnType<
+      typeof w.engine.saveData
+    >;
+    expect(saved.scriptCasts).toEqual([[NPC, 25, 60]]);
+
+    const again = world();
+    again.engine.loadData(saved);
+    again.engine.update(34);
+    expect(again.engine.scriptCastReady(NPC, flames)).toBe(false);
+    again.engine.update(2);
+    expect(again.engine.scriptCastReady(NPC, flames)).toBe(true);
+    // One who never cast by it has none.
+    expect(again.engine.scriptCastReady(PLAYER_REF, flames)).toBe(true);
+  });
 });

@@ -4,33 +4,75 @@
 // spell the casting engine chooses against the target (the one worth most through the
 // target's resistances and weaknesses: CastingEngine.spellWorth), each staff it carries with
 // charge left (its enchantment's worth against the target), and the shout in its voice (its
-// known words' spell). An option's damage is that worth; its reach its projectile's range.
+// known words' spell, where the combat inventory's score is above nothing and gives it a caster:
+// shoutOffered; one with the Script caster while that caster's own check holds). An option's
+// damage is that worth; its reach its projectile's range. A cast the combat AI starts here is
+// noted for the Script caster's next check where the Script caster cast it (scriptCastBegan).
 // Its other casting (healing, potions, summons, wards, buffs) is the combat AI's support
 // (CombatCasting.support). Notes: docs/ai.md, "Combat AI".
 
 import type { CombatCasting, CombatSupport } from './actor-combat-ai.ts';
 import { MAGIC_REACH, type ActorCasting } from './actor-casting.ts';
 import type { EquipOption } from '../ai/combat-tactics.ts';
-import { shoutAttacks } from '../gameplay/combat/spell-score.ts';
+import { shoutOffered } from '../gameplay/combat/spell-score.ts';
 import type { GameSession } from './game-session.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { Delivery, type MagicItemRecord } from '../world/magic-records.ts';
 import { CastType } from '../world/spell-records.ts';
 
-/** Whether a shout's word is an attack (shoutAttacks: some effect of its spell is hostile). */
-async function attacks(runtime: ScriptRuntime, wordSpell: MagicItemRecord): Promise<boolean> {
-  const effects = [];
-  for (const entry of wordSpell.effects) {
-    const effect = await runtime.magic.effect(entry.effect);
-    if (effect) effects.push(effect);
-  }
-  return shoutAttacks(effects);
+/**
+ * Whether a shout's word is an option against a target now: its spell scores more than nothing
+ * by a caster the fight shouts with (shoutOffered), and a Script caster's own check holds (the
+ * AI delay noted with the actor's last Script cast, the spell not on the one it lands on
+ * already: scriptCastReady).
+ */
+async function shouts(
+  runtime: ScriptRuntime,
+  actor: number,
+  wordSpell: MagicItemRecord,
+  target: number | undefined,
+): Promise<boolean> {
+  const score = await runtime.casting.spellScore(actor, wordSpell, 'attack', target);
+  if (!shoutOffered(score)) return false;
+  return score.caster !== 'script' || runtime.casting.scriptCastReady(actor, wordSpell, target);
 }
+
+/** The spell of the last word an actor knows of the shout in its voice, with the shout. */
+async function voiceWord(
+  runtime: ScriptRuntime,
+  actor: number,
+): Promise<{ readonly shout: number; readonly spell: MagicItemRecord } | undefined> {
+  const voice = (await runtime.equipment.of(actor)).voice;
+  const shout = voice === undefined ? undefined : await runtime.casting.shout(voice);
+  const words = shout ? runtime.casting.wordsKnown(actor, shout) : 0;
+  const word = shout?.words[Math.max(0, Math.min(words, shout.words.length) - 1)];
+  const spell = word && words > 0 ? await runtime.magic.item(word.spell) : undefined;
+  return shout && spell ? { shout: shout.formId, spell } : undefined;
+}
+
+/** What an option casts: its spell, its staff's enchantment or its shout's word's spell. */
+async function optionItem(
+  runtime: ScriptRuntime,
+  actor: number,
+  chosen: EquipOption,
+): Promise<MagicItemRecord | undefined> {
+  if (chosen.kind === 'shout') return (await voiceWord(runtime, actor))?.spell;
+  if (chosen.id === undefined) return undefined;
+  if (chosen.kind === 'magic') return runtime.magic.item(chosen.id);
+  if (chosen.kind !== 'staff') return undefined;
+  return (await runtime.casting.staffs(actor)).find((one) => one.staff === chosen.id)?.item;
+}
+
+/** What the combat AI's casting asks of the stage's casting (src/shell/actor-casting.ts). */
+export type CombatStage = Pick<
+  ActorCasting,
+  'castAt' | 'shoutAt' | 'drinkPotion' | 'healSelf' | 'summon' | 'reanimate'
+>;
 
 /** The NPCs' casting as the combat AI asks for it (of a session: its script runtime). */
 export function combatCasting(
   session: Pick<GameSession, 'scriptsReady'>,
-  casting: () => ActorCasting | undefined,
+  casting: () => CombatStage | undefined,
 ): CombatCasting {
   return {
     options: async (actor, target) => {
@@ -44,24 +86,28 @@ export function combatCasting(
         if (await runtime.magic.hostile(item))
           options.push(await option(runtime, actor, 'staff', staff, item, target));
       }
-      const voice = (await runtime.equipment.of(actor)).voice;
-      const shout = voice === undefined ? undefined : await runtime.casting.shout(voice);
-      const words = shout ? runtime.casting.wordsKnown(actor, shout) : 0;
-      const word = shout?.words[Math.max(0, Math.min(words, shout.words.length) - 1)];
-      const wordSpell = word ? await runtime.magic.item(word.spell) : undefined;
-      if (shout && words > 0 && wordSpell && (await attacks(runtime, wordSpell))) {
-        options.push(await option(runtime, actor, 'shout', shout.formId, wordSpell, target));
+      const voice = await voiceWord(runtime, actor);
+      if (voice && (await shouts(runtime, actor, voice.spell, target))) {
+        options.push(await option(runtime, actor, 'shout', voice.shout, voice.spell, target));
       }
       return options.filter((one) => one.damage > 0);
     },
     castAt: async (actor, hand, target, chosen) => {
       const stage = casting();
       if (!stage) return false;
-      if (hand === 'voice') return stage.shoutAt(actor, target);
-      // A staff casts from the hand that holds it (the combat AI took it up).
-      return stage.castAt(actor, hand, target, {
-        ...(chosen.kind === 'magic' && chosen.id !== undefined && { spell: chosen.id }),
-      });
+      const runtime = session.scriptsReady;
+      // What it casts, read before the cast (its voice's shout as it begins).
+      const item = runtime ? await optionItem(runtime, actor, chosen) : undefined;
+      const began =
+        hand === 'voice'
+          ? await stage.shoutAt(actor, target)
+          : // A staff casts from the hand that holds it (the combat AI took it up).
+            await stage.castAt(actor, hand, target, {
+              ...(chosen.kind === 'magic' && chosen.id !== undefined && { spell: chosen.id }),
+            });
+      // The Script caster notes its cast as it starts (its AI delay: scriptCastReady).
+      if (began && runtime && item) await runtime.casting.scriptCastBegan(actor, item, target);
+      return began;
     },
     support: async (actor, purpose, target) => support(session, casting, actor, purpose, target),
   };
@@ -70,7 +116,7 @@ export function combatCasting(
 /** One of the combat AI's support casts or potions (CombatSupport): whether it began. */
 async function support(
   session: Pick<GameSession, 'scriptsReady'>,
-  casting: () => ActorCasting | undefined,
+  casting: () => CombatStage | undefined,
   actor: number,
   purpose: CombatSupport,
   target: number | undefined,
@@ -90,12 +136,12 @@ async function support(
     case 'ward':
     case 'buff': {
       const spell = await runtime.casting.chooseSpell(actor, purpose.kind);
-      return (
-        spell !== undefined &&
-        stage.castAt(actor, 'left', purpose.kind === 'ward' ? target : actor, {
-          spell: spell.formId,
-        })
-      );
+      if (!spell) return false;
+      const at = purpose.kind === 'ward' ? target : actor;
+      const began = await stage.castAt(actor, 'left', at, { spell: spell.formId });
+      // A buff by the Script caster (a spriggan's call): its cast noted as it starts.
+      if (began) await runtime.casting.scriptCastBegan(actor, spell, at);
+      return began;
     }
   }
 }

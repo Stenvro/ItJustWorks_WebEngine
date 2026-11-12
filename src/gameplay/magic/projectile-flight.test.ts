@@ -10,6 +10,9 @@ import {
   inRadius,
   launchCone,
   launchFlight,
+  LOBBER_DEFAULTS,
+  lobberAgeMax,
+  lobberOutlived,
   pathHitsActor,
   stepFlight,
   sweepCone,
@@ -166,6 +169,75 @@ describe('a lobber', () => {
     const step = stepFlight(flight, 30);
     expect(step.to).toEqual([0, 70, 0]);
     expect(flight.spent).toBe(false);
+  });
+
+  // DLC2ExpSpiderOilDecal: an alternative trigger without a proximity, no Lifetime: no mine.
+  const oil: FlightData = { ...rune, flags: ProjectileFlag.altTrigger, proximity: 0 };
+
+  it('lives its Lifetime, else fGrenadeAgeMax (90 s), a mine fMineAgeMax (0: no limit)', () => {
+    // The runes: an alternative trigger with a proximity: mines.
+    expect(lobberAgeMax(rune)).toBe(0);
+    expect(lobberAgeMax(oil)).toBe(90);
+    // One thrown without a trigger is no mine either, whatever its proximity says.
+    expect(lobberAgeMax({ ...rune, flags: ProjectileFlag.explosion })).toBe(90);
+    // Its own Lifetime comes first, a mine's too.
+    expect(lobberAgeMax({ ...rune, lifetime: 12 })).toBe(12);
+    expect(lobberAgeMax({ ...oil, lifetime: 12 })).toBe(12);
+    // The settings.
+    expect(lobberAgeMax(oil, { grenadeAgeMax: 30, mineAgeMax: 5 })).toBe(30);
+    expect(lobberAgeMax(rune, { grenadeAgeMax: 30, mineAgeMax: 5 })).toBe(5);
+    // Past it, not at it; never with no limit.
+    expect(lobberOutlived(oil, 90)).toBe(false);
+    expect(lobberOutlived(oil, 90.1)).toBe(true);
+    expect(lobberOutlived(rune, 1e6)).toBe(false);
+    expect(lobberOutlived(oil, 1e6, { grenadeAgeMax: 0, mineAgeMax: 0 })).toBe(false);
+  });
+
+  it('a rune at rest waits without end; a lobber that is no mine is taken away after 90 s, unburst', () => {
+    const waiting = launchFlight(rune, [0, 0, 100], [0, 1, -1]);
+    bounceLobber(waiting, [0, 70, 0], [0, 0, 1]);
+    stepFlight(waiting, 3600);
+    expect(waiting.expired).toBeUndefined();
+    expect(waiting.spent).toBe(false);
+    const pool = launchFlight(oil, [0, 0, 100], [0, 1, -1]);
+    bounceLobber(pool, [0, 70, 0], [0, 0, 1]);
+    stepFlight(pool, 90);
+    expect(pool.expired).toBeUndefined();
+    stepFlight(pool, 0.5);
+    // Taken away, not spent: nothing bursts where it lay.
+    expect(pool.expired).toBe(true);
+    expect(pool.spent).toBe(false);
+    // It ages no further.
+    stepFlight(pool, 10);
+    expect(pool.age).toBeCloseTo(90.5, 5);
+  });
+
+  it('goes by the settings it is given, in flight as at rest', () => {
+    const slow: FlightData = { ...oil, speed: 1, range: 0 };
+    const thrown = launchFlight(slow, [0, 0, 100], [0, 1, 0]);
+    stepFlight(thrown, 31, { ...LOBBER_DEFAULTS, grenadeAgeMax: 30 });
+    expect(thrown.expired).toBe(true);
+    const kept = launchFlight(slow, [0, 0, 100], [0, 1, 0]);
+    stepFlight(kept, 31);
+    expect(kept.expired).toBeUndefined();
+    // A mine with fMineAgeMax set.
+    const mine = launchFlight(rune, [0, 0, 100], [0, 1, -1]);
+    bounceLobber(mine, [0, 70, 0], [0, 0, 1]);
+    stepFlight(mine, 6, { ...LOBBER_DEFAULTS, mineAgeMax: 5 });
+    expect(mine.expired).toBe(true);
+  });
+
+  it('one with a Lifetime is taken away past it, not spent; its timer’s burst comes first', () => {
+    const timed = launchFlight({ ...rune, lifetime: 12 }, [0, 0, 100], [0, 1, -1]);
+    bounceLobber(timed, [0, 70, 0], [0, 0, 1]);
+    stepFlight(timed, 13);
+    expect(timed.expired).toBe(true);
+    expect(timed.spent).toBe(false);
+    const fused = launchFlight({ ...rune, lifetime: 5, timer: 5 }, [0, 0, 100], [0, 1, -1]);
+    bounceLobber(fused, [0, 70, 0], [0, 0, 1]);
+    stepFlight(fused, 6);
+    expect(fused.spent).toBe(true);
+    expect(fused.expired).toBeUndefined();
   });
 
   it('bounces back by its restitution, losing its friction’s share along the surface', () => {

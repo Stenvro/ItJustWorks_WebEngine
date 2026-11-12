@@ -213,6 +213,11 @@ and 290 built-in ones the readers ask for by name.
 - [x] fKnockbackTime, fKnockbackDamageMult, fKnockbackForceMax (with the built-in
       fKnockbackDamageBase, AgilBase, AgilMult): an unblocked hit's push back (knockback.ts;
       round 4). fConcussionTimer: registered, never read (inert).
+- [x] fGrenadeAgeMax (the engine's 90; no plugin sets it) and fMineAgeMax (0): the most a lobbed
+      projectile without a Lifetime lives, a mine (Alt. Trigger with a proximity) by the second;
+      past it it is taken away unburst. The runes are mines (no limit); DLC2ExpSpiderOilDecal
+      lives 90 s (projectile-flight.ts lobberAgeMax; tests/conformance/magic/
+      projectiles-explosions.test.ts).
 - [x] fKillCamBaseOdds (1): read in the original only by the kill camera's odds by level, which
       nothing calls (inert; round 4b).
 - [x] fBlockSkillMult, fBlockAmountWeaponMult, fBlockMax: registered, never read (inert); the
@@ -275,6 +280,20 @@ and 290 built-in ones the readers ask for by name.
 - [x] Magic in combat: casters by purpose, dual casting, concentration, potions.
 - [x] The casters by their spells' combat inventory scores, each with its own check (round 5).
       TODO(M13): a drain's count only for a target that uses the resource (ours: any).
+- [x] The shout in an actor's voice as an inventory item by its word's spell's score and caster,
+      as a spell's: a Script effect adds its MGEF's AI score as it stands and gives the Script
+      caster, also where it adds nothing (Storm Call's and Firestorm's "Script Effect for AI use
+      of Storm Call", 50; a self spell's hostile effects and its hazard are of no kind); only
+      items scoring more than nothing are weighed, so a word of one Script effect without an AI
+      score is never taken up (Clear Skies, the dragons' Unrelenting Force); the Script caster
+      notes the time and its effect's AI Delay Time as the combat AI's cast starts, one note per
+      actor, and casts again once more than that has passed and not while the one the spell
+      lands on carries it (spell-score.ts shoutOffered, scriptCasterDelay, scriptCasterReady;
+      casting-engine.ts scriptCastBegan, scriptCastReady; tests/conformance/combat/
+      inventory.int.test.ts). TODO(M13): whether a dragon's ground fight shouts Unrelenting
+      Force by another way than its inventory; the Script caster's cost and condition checks;
+      its note kept with the fight (ours: with the actor); a word with another support caster
+      (Restore, Ward, Cloak, ...) is not shouted.
 - [x] The dragons' fight: the Flight subtree, perches, breath, landing (flight.ts,
       actor-flight.ts).
 - [x] Flee: the strength ratio, to an ally, through a door, to cover; yield and surrender.

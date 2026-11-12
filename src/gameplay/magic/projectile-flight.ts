@@ -15,6 +15,8 @@
 //   within their cone spread (degrees either side of the aim) as their front passes it.
 // - Lobbers (runes) bounce off a surface by fGrenadeRestitution or rest there; with an
 //   alternative trigger they wait at rest for an actor within their proximity or their timer.
+//   One that outlives its age (its PROJ's Lifetime, else fGrenadeAgeMax, a mine's fMineAgeMax:
+//   lobberAgeMax) is taken away where it is, without bursting.
 // - Where one ends it may burst (its explosion, or the effect's: EXPL radius), and an effect
 //   with an area (feet) reaches every actor within it of that point.
 //
@@ -54,6 +56,8 @@ export interface Flight {
   spent: boolean;
   /** A lobber come to rest on a surface: it waits there for its trigger (restLobber). */
   resting?: boolean;
+  /** A lobber past its age (lobberAgeMax): it is taken away where it is; it does not burst. */
+  expired?: boolean;
 }
 
 /** How a projectile reaches what it hits. */
@@ -107,23 +111,68 @@ export function launchFlight(data: FlightData, origin: Vec3, direction: Vec3): F
 }
 
 /**
- * Flies on for `seconds`: the path of this step (from, to). Gravity bends it; past its range,
- * lifetime or timer it is spent (the step ends at its range).
+ * The most a lobbed projectile lives (seconds; observed in the original, which asks it at each
+ * of the lobber's updates): its PROJ's Lifetime; where that is zero, fGrenadeAgeMax, or for a
+ * mine (one with an alternative trigger and an explosion proximity above zero) fMineAgeMax.
+ * Zero is no limit. Neither setting is in the game's plugins: the engine's own values are 90 and
+ * 0, so the runes (mines, no Lifetime) wait without end, and the one lobber of the load order
+ * that is no mine, DLC2ExpSpiderOilDecal (an alternative trigger without a proximity), lives 90
+ * seconds.
  */
-export function stepFlight(flight: Flight, seconds: number): { from: Vec3; to: Vec3 } {
+export function lobberAgeMax(
+  data: Pick<FlightData, 'flags' | 'lifetime' | 'proximity'>,
+  settings: LobberAges = LOBBER_DEFAULTS,
+): number {
+  if (Math.abs(data.lifetime) > 1e-4) return data.lifetime;
+  const mine = (data.flags & ProjectileFlag.altTrigger) !== 0 && data.proximity > 0;
+  return mine ? settings.mineAgeMax : settings.grenadeAgeMax;
+}
+
+/** Whether a lobber of an age has outlived the most it lives (lobberAgeMax; zero: never). */
+export function lobberOutlived(
+  data: Pick<FlightData, 'flags' | 'lifetime' | 'proximity'>,
+  age: number,
+  settings: LobberAges = LOBBER_DEFAULTS,
+): boolean {
+  const most = lobberAgeMax(data, settings);
+  return most !== 0 && age > most;
+}
+
+/**
+ * A projectile has aged: past its lifetime it is spent, a lobber past its age is taken away
+ * (expired, unless it is spent already: its timer's burst comes first).
+ */
+function aged(flight: Flight, lobbers: LobberAges): void {
+  const data = flight.data;
+  if (data.type === ProjectileType.lobber) {
+    if (!flight.spent && lobberOutlived(data, flight.age, lobbers)) flight.expired = true;
+    return;
+  }
+  if (data.lifetime > 0 && flight.age >= data.lifetime) flight.spent = true;
+}
+
+/**
+ * Flies on for `seconds`: the path of this step (from, to). Gravity bends it; past its range,
+ * lifetime or timer it is spent (the step ends at its range); a lobber past its age is expired.
+ */
+export function stepFlight(
+  flight: Flight,
+  seconds: number,
+  lobbers: LobberAges = LOBBER_DEFAULTS,
+): { from: Vec3; to: Vec3 } {
   const from = flight.position;
-  if (flight.spent || seconds <= 0) return { from, to: from };
+  if (flight.spent || flight.expired === true || seconds <= 0) return { from, to: from };
   const data = flight.data;
   if (flight.resting) {
-    // At rest it only ages (its lifetime, its alternative trigger's timer).
+    // At rest it only ages (its lifetime or age, its alternative trigger's timer).
     flight.age += seconds;
-    if (data.lifetime > 0 && flight.age >= data.lifetime) flight.spent = true;
     if (
       (data.flags & ProjectileFlag.altTrigger) !== 0 &&
       data.timer > 0 &&
       flight.age >= data.timer
     )
       flight.spent = true;
+    aged(flight, lobbers);
     return { from, to: from };
   }
   const fall = data.gravity * WORLD_GRAVITY;
@@ -148,22 +197,37 @@ export function stepFlight(flight: Flight, seconds: number): { from: Vec3; to: V
   }
   flight.traveled += step;
   flight.age += seconds;
-  if (data.lifetime > 0 && flight.age >= data.lifetime) flight.spent = true;
   if ((data.flags & ProjectileFlag.altTrigger) !== 0 && data.timer > 0 && flight.age >= data.timer)
     flight.spent = true;
+  aged(flight, lobbers);
   flight.position = to;
   return { from, to };
 }
 
-/** The lobbers' surface settings (GMSTs; the engine's defaults, Skyrim.esm keeps them). */
+/** The lobbers' settings (GMSTs): their surface (Skyrim.esm's values) and their age. */
 export interface LobberSettings {
   /** fGrenadeRestitution: the share of its speed into the surface it bounces back with. */
   readonly restitution: number;
   /** fGrenadeFriction: the share of its speed along the surface the bounce takes away. */
   readonly friction: number;
+  /** fGrenadeAgeMax: the seconds a lobber without a Lifetime lives (0: no limit). */
+  readonly grenadeAgeMax: number;
+  /** fMineAgeMax: the same for a mine (0: no limit). */
+  readonly mineAgeMax: number;
 }
 
-export const LOBBER_DEFAULTS: LobberSettings = { restitution: 0.01, friction: 5 };
+/** The lobbers' ages alone (lobberAgeMax). */
+export type LobberAges = Pick<LobberSettings, 'grenadeAgeMax' | 'mineAgeMax'>;
+/** The lobbers' surface alone (bounceLobber). */
+export type LobberSurface = Pick<LobberSettings, 'restitution' | 'friction'>;
+
+/** Skyrim.esm's surface values; the ages are the engine's own (no plugin sets them). */
+export const LOBBER_DEFAULTS: LobberSettings = {
+  restitution: 0.01,
+  friction: 5,
+  grenadeAgeMax: 90,
+  mineAgeMax: 0,
+};
 
 /** Below this speed (units a second) off a surface a lobber stops bouncing and lies still. */
 const LOBBER_REST_SPEED = 20;
@@ -188,7 +252,7 @@ export function bounceLobber(
   flight: Flight,
   point: Vec3,
   normal: Vec3 | undefined,
-  settings: LobberSettings = LOBBER_DEFAULTS,
+  settings: LobberSurface = LOBBER_DEFAULTS,
 ): boolean {
   flight.position = [...point];
   const n = normalize(normal ?? [0, 0, 1]);

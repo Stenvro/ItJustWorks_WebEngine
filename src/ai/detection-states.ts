@@ -99,8 +99,8 @@ export class Detections {
   readonly #offences = new Map<number, { act: WitnessedAct; victim: number | undefined }>();
   /** Actors alerted by what they heard, and until when (seconds). */
   readonly #alerted = new Map<number, { at: Vec3; until: number }>();
-  /** Actors that raised or heard an alarm, until when. */
-  readonly #alarmed = new Map<number, number>();
+  /** Actors that raised or heard an alarm: until when, and whose crime it told of. */
+  readonly #alarmed = new Map<number, { until: number; criminal: number | undefined }>();
   /** Actors attacked lately: by whom, until when. */
   readonly #attacked = new Map<number, { attacker: number; until: number }>();
 
@@ -219,7 +219,7 @@ export class Detections {
       }
     }
     for (const [actor, alert] of this.#alerted) if (alert.until <= now) this.#alerted.delete(actor);
-    for (const [actor, until] of this.#alarmed) if (until <= now) this.#alarmed.delete(actor);
+    for (const [actor, alarm] of this.#alarmed) if (alarm.until <= now) this.#alarmed.delete(actor);
     for (const [actor, attack] of this.#attacked) {
       if (attack.until <= now) this.#attacked.delete(actor);
     }
@@ -321,14 +321,19 @@ export class Detections {
     act?: WitnessedAct,
   ): void {
     const until = now + this.#settings().stateExpireTime;
-    this.#alarmed.set(actor, until);
-    for (const hearer of hearers) this.#alarmed.set(hearer, until);
+    this.#alarmed.set(actor, { until, criminal });
+    for (const hearer of hearers) this.#alarmed.set(hearer, { until, criminal });
     this.#emit({ kind: 'alarm', actor, criminal, act });
   }
 
   /** Whether an actor is alarmed (GetAlarmed, IsAlarmed). */
   alarmed(actor: number): boolean {
     return this.#alarmed.has(actor);
+  }
+
+  /** Whose crime the alarm an actor raised or heard told of (undefined: none, or not alarmed). */
+  alarmedBy(actor: number): number | undefined {
+    return this.#alarmed.get(actor)?.criminal;
   }
 
   /** The alarm ends for an actor (StopCombatAlarm). */
@@ -422,7 +427,11 @@ export class Detections {
         at: copy(alert.at),
         left: alert.until - now,
       })),
-      alarmed: [...this.#alarmed].map(([actor, until]) => ({ actor, left: until - now })),
+      alarmed: [...this.#alarmed].map(([actor, alarm]) => ({
+        actor,
+        left: alarm.until - now,
+        ...(alarm.criminal !== undefined && { criminal: alarm.criminal }),
+      })),
       attacked: [...this.#attacked].map(([actor, attack]) => ({
         actor,
         attacker: attack.attacker,
@@ -448,7 +457,9 @@ export class Detections {
     for (const { actor, at, left } of saved.alerted) {
       if (left > 0) this.#alerted.set(actor, { at: copy(at), until: now + left });
     }
-    for (const { actor, left } of saved.alarmed) if (left > 0) this.#alarmed.set(actor, now + left);
+    for (const { actor, left, criminal } of saved.alarmed) {
+      if (left > 0) this.#alarmed.set(actor, { until: now + left, criminal });
+    }
     for (const { actor, attacker, left } of saved.attacked) {
       if (left > 0) this.#attacked.set(actor, { attacker, until: now + left });
     }
@@ -470,7 +481,12 @@ export interface DetectionSave {
     readonly at?: Vec3;
   }[];
   readonly alerted: readonly { readonly actor: number; readonly at: Vec3; readonly left: number }[];
-  readonly alarmed: readonly { readonly actor: number; readonly left: number }[];
+  readonly alarmed: readonly {
+    readonly actor: number;
+    readonly left: number;
+    /** Whose crime the alarm told of (saves before it was kept have none). */
+    readonly criminal?: number;
+  }[];
   readonly attacked: readonly {
     readonly actor: number;
     readonly attacker: number;

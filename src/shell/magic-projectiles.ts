@@ -213,8 +213,11 @@ export class MagicProjectiles {
   readonly #placements = new ImpactPlacements();
   /** The gameplay impulses' settings (src/gameplay/impulses.ts), once read. */
   readonly #impulses: ReturnType<typeof loadImpulseSettings>;
-  /** The lobbers' surface settings (fGrenadeRestitution, fGrenadeFriction), once read. */
-  readonly #lobbers: { current: LobberSettings } = { current: LOBBER_DEFAULTS };
+  /**
+   * The game settings, once read: the lobbers' (fGrenadeRestitution, fGrenadeFriction,
+   * fGrenadeAgeMax, fMineAgeMax) are asked for as they fly, so setgs changes them.
+   */
+  #settings: { number(editorId: string): number | undefined } | undefined;
   /** The cones' waves sweeping out. */
   readonly #waves = new Set<Wave>();
   /**
@@ -234,10 +237,7 @@ export class MagicProjectiles {
     void options.session
       .settings()
       .then((read) => {
-        this.#lobbers.current = {
-          restitution: read.number('fGrenadeRestitution') ?? LOBBER_DEFAULTS.restitution,
-          friction: read.number('fGrenadeFriction') ?? LOBBER_DEFAULTS.friction,
-        };
+        this.#settings = read;
       })
       .catch(() => undefined);
     this.#beams = new MagicBeams({
@@ -1058,9 +1058,16 @@ export class MagicProjectiles {
         });
       }
     if (seconds <= 0 || this.#flying.size === 0) return;
+    const lobbers = this.#lobberSettings();
     for (const flying of [...this.#flying]) {
       if (flying.done) continue;
-      const { from, to } = stepFlight(flying.flight, seconds);
+      const { from, to } = stepFlight(flying.flight, seconds, lobbers);
+      // A lobber past its age (its Lifetime, fGrenadeAgeMax, a mine's fMineAgeMax) is taken away
+      // where it is: no impact, no burst.
+      if (flying.flight.expired === true) {
+        this.#end(flying);
+        continue;
+      }
       this.#options.shotWay?.(from, to);
       this.#options.triggers?.step(
         flying,
@@ -1087,7 +1094,7 @@ export class MagicProjectiles {
         flightKind(flying.projectile) === 'lobber' &&
         (flying.projectile.flags & ProjectileFlag.altTrigger) !== 0
       ) {
-        bounceLobber(flying.flight, pointAt(from, to, hit.t), hit.normal, this.#lobbers.current);
+        bounceLobber(flying.flight, pointAt(from, to, hit.t), hit.normal, lobbers);
         if (flying.instance) {
           flying.instance.world.set(placementOf(flying.flight));
           flying.motion.version++;
@@ -1140,6 +1147,18 @@ export class MagicProjectiles {
         flying.motion.version++;
       }
     }
+  }
+
+  /** The lobbers' settings now (the plugins' values, else Skyrim.esm's and the engine's own). */
+  #lobberSettings(): LobberSettings {
+    const read = this.#settings;
+    if (!read) return LOBBER_DEFAULTS;
+    return {
+      restitution: read.number('fGrenadeRestitution') ?? LOBBER_DEFAULTS.restitution,
+      friction: read.number('fGrenadeFriction') ?? LOBBER_DEFAULTS.friction,
+      grenadeAgeMax: read.number('fGrenadeAgeMax') ?? LOBBER_DEFAULTS.grenadeAgeMax,
+      mineAgeMax: read.number('fMineAgeMax') ?? LOBBER_DEFAULTS.mineAgeMax,
+    };
   }
 
   /**

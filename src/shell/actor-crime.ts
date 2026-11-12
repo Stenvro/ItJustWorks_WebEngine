@@ -3,15 +3,18 @@
 // that detect the criminal (detection's witness hook); each says its line (Steal, Assault,
 // Murder, Trespass and their NC lines for those that do not fight, PickpocketCombat,
 // WereTransformCrime) and raises an alarm that those near hear (src/shell/actor-senses.ts
-// alarm). Guards that learn of a crime, or see a wanted player, arrest them: they come up and
-// force-greet with DialogueCrimeGuards' lines, whose scripts take the fine, send the player to
-// jail or have them resist; or they attack (the combat AI, docs/m10-plan.md 5.2, takes them
-// from world.startCombat and the crime engine's reaction). A trespasser is warned by those who
+// alarm). Guards that learn of a crime, or see a wanted player, are given the engine's Alarm
+// package (src/ai/engine-packages.ts alarmPackage) aimed at the criminal: they run up to it,
+// calling after it (PursueIdleTopic), and arrest the player, force-greeting with
+// DialogueCrimeGuards' lines, whose scripts take the fine, send the player to jail or have them
+// resist; or they attack (the combat AI, docs/m10-plan.md 5.2, takes them from
+// world.startCombat and the crime engine's reaction). A trespasser is warned by those who
 // see them (the Trespass lines, iGuardWarnings), then reported. Leaving the jail unserved is an
 // escape.
 
 import { aiSettingsOf } from '../ai/ai-settings.ts';
-import { fleeFrom, StealWarnings, warnThief } from '../ai/engine-packages.ts';
+import { alarmPackage, fleeFrom, StealWarnings, warnThief } from '../ai/engine-packages.ts';
+import type { EngineRunner } from '../ai/package-runtime.ts';
 import {
   CrimeType,
   guardAnswers,
@@ -47,7 +50,7 @@ const GUARD_SECONDS = 1;
 const RESPONSE_SECONDS = 2;
 /** A guard gives up arresting (the player away or the talk refused) and may try again after. */
 const ARREST_AGAIN_SECONDS = 15;
-/** A guard force-greets from this near (units; the force greet's greeting distance). */
+/** A guard force-greets from this near (units) where fAIMinGreetingDistance is not read. */
 const ARREST_REACH = 150;
 /** A guard gives up a chase farther than this (units). TODO(M13): the engine's distance. */
 const ARREST_GIVE_UP = 4096;
@@ -78,6 +81,15 @@ const ALARMS: Readonly<Record<CrimeAct, 'attack' | 'trespass' | 'steal'>> = {
 
 const flat = (a: Vec3, b: Vec3): number => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
+/** An arrest under way (ActorCrime). */
+interface Arrest {
+  readonly guard: number;
+  readonly since: number;
+  talking: boolean;
+  /** Ends the guard's Alarm package's wait for the arrest's conversation. */
+  over?: () => void;
+}
+
 export class ActorCrime {
   readonly #options: ActorCrimeOptions;
   #runtime: ScriptRuntime | undefined;
@@ -93,11 +105,14 @@ export class ActorCrime {
   readonly #responses = new Map<number, { at: number; response: 'none' | 'arrest' | 'attack' }>();
   /** Guards that attack the player now (told to the combat AI once). */
   readonly #attacking = new Set<number>();
+  /** fAIMinGreetingDistance: how near its Alarm takes a guard before it force-greets. */
+  #greetReach = ARREST_REACH;
   /**
-   * The arrest under way: the guard, since when, and whether it talks with the player now;
-   * when each guard may try again after giving up.
+   * The arrest under way: the guard, since when, whether it talks with the player now, and what
+   * ends its Alarm package's wait for the conversation; when each guard may try again after
+   * giving up.
    */
-  #arrest: { guard: number; since: number; talking: boolean } | undefined;
+  #arrest: Arrest | undefined;
   readonly #arrestAgain = new Map<number, number>();
   /** When a guard last pursued the player (the HUD's and menus' "guards pursuing"). */
   #pursuedAt = -Infinity;
@@ -131,6 +146,9 @@ export class ActorCrime {
       this.#settingsAsked = true;
       void runtime.crime.settings().then((settings) => {
         this.#settings = settings;
+      });
+      void runtime.gameSetting('fAIMinGreetingDistance').then((reach) => {
+        if (typeof reach === 'number' && reach > 0) this.#greetReach = reach;
       });
     }
     if (this.#clock >= this.#reportsDue) {
@@ -237,12 +255,10 @@ export class ActorCrime {
    * those who hear it (within the alarm's reach, of the crime's faction or its crime group, not
    * fighting) need not see the crime, but only the first of them answers it; a guard who
    * witnessed it answers too, and no more than iNumberGuardsCrimeResponse answer one criminal.
-   * Each guard that answers fights the criminal at once (the combat AI's search takes one that
-   * only heard it to where the criminal is); the criminal, fighting no one, flees the first of
-   * them (observed in the original; the engine's Flee package, src/ai/engine-packages.ts).
-   * TODO(M13): the guard's Alarm package. Built as a procedure that runs to the criminal and fights
-   * it once it detects it (alarmPackage), it did not find the fleeing criminal in a headless
-   * Bannered Mare in 20 s, so the combat AI's search keeps that part (docs/gameplay.md).
+   * Each guard that answers is given the engine's Alarm package aimed at the criminal (#pursue:
+   * it runs to it and fights it once it detects it); the criminal, fighting no one, flees the
+   * first of them (observed in the original; the engine's Flee package,
+   * src/ai/engine-packages.ts).
    */
   async #npcCrime(
     runtime: ScriptRuntime,
@@ -270,14 +286,21 @@ export class ActorCrime {
     }
     const answering = this.#answering.get(criminal) ?? new Set<number>();
     this.#answering.set(criminal, answering);
-    for (const guard of answering) if (engaged?.(guard) !== true) answering.delete(guard);
+    // Those that answered before and are neither after it nor fighting any more are done.
+    for (const guard of answering) {
+      if (engaged?.(guard) !== true && ai.engineOf(guard) !== 'alarm') answering.delete(guard);
+    }
     const limit = aiSettingsOf(this.#options.session).guardsCrimeResponse;
     let first: number | undefined;
     for (const guard of guards) {
+      if (answering.has(guard)) {
+        first ??= guard;
+        continue;
+      }
       if (!guardAnswers(answering.size, limit)) break;
       answering.add(guard);
       first ??= guard;
-      runtime.world.startCombat?.(guard, criminal);
+      this.#pursue(runtime, guard, criminal);
     }
     // The criminal, fighting no one, flees the guard that answers.
     const staged = this.#options.get(criminal);
@@ -290,6 +313,24 @@ export class ActorCrime {
     ) {
       ai.pushEngine(criminal, 'flee', fleeFrom, first);
     }
+  }
+
+  /**
+   * A guard goes after a criminal it is to fight (an NPC's crime; the player where its faction
+   * attacks): the engine's Alarm package takes it to the criminal, and it fights it once it
+   * detects it. One with no packages running here (or on another engine package) fights at once:
+   * the combat AI's search takes it there.
+   */
+  #pursue(runtime: ScriptRuntime, guard: number, criminal: number): void {
+    const { ai, senses } = this.#options;
+    const fight = (actor: number, other: number): void => {
+      runtime.world.startCombat?.(actor, other);
+    };
+    const alarm = alarmPackage({
+      detects: (actor, other) => senses.detects(actor, other),
+      confront: fight,
+    });
+    if (!ai.pushEngine(guard, 'alarm', alarm, criminal)) fight(guard, criminal);
   }
 
   /**
@@ -323,9 +364,10 @@ export class ActorCrime {
   // --- Guards ---------------------------------------------------------------------------------
 
   /**
-   * Each guard that sees the player and whose crime faction has a bounty on them (or that was
-   * alarmed by a crime) answers what it does (the crime engine's guardResponse): one arrests
-   * at a time; those that attack are given to the combat AI.
+   * Each guard that sees the player, or heard the alarm of a crime of theirs, and whose crime
+   * faction has a bounty on them answers what it does (the crime engine's guardResponse): one
+   * arrests at a time, on its Alarm package; those that attack are given to the combat AI, one
+   * that does not see them yet by its Alarm package too.
    */
   #guardsFrame(runtime: ScriptRuntime): void {
     const { senses, actors } = this.#options;
@@ -351,7 +393,11 @@ export class ActorCrime {
         void this.#isGuard(runtime, guard);
         continue;
       }
-      if (!known || !senses.detections.detects(guard, PLAYER_REF)) continue;
+      if (!known) continue;
+      // One that only heard the alarm of the player's crime goes after them as well (its Alarm
+      // package takes it there); else a guard answers the player it sees.
+      const sees = senses.detections.detects(guard, PLAYER_REF);
+      if (!sees && senses.detections.alarmedBy(guard) !== PLAYER_REF) continue;
       const kept = this.#responses.get(guard);
       if (!kept || this.#clock - kept.at >= RESPONSE_SECONDS) {
         this.#responses.set(guard, { at: this.#clock, response: kept?.response ?? 'none' });
@@ -370,7 +416,8 @@ export class ActorCrime {
             continue;
           }
           this.#attacking.add(guard);
-          runtime.world.startCombat?.(guard, PLAYER_REF);
+          if (sees) runtime.world.startCombat?.(guard, PLAYER_REF);
+          else this.#pursue(runtime, guard, PLAYER_REF);
         }
       } else if (response === 'arrest') {
         this.#pursuedAt = this.#clock;
@@ -385,51 +432,68 @@ export class ActorCrime {
         if (!this.#arrest && (this.#arrestAgain.get(guard) ?? 0) <= this.#clock)
           this.#startArrest(runtime, staged);
       } else if (this.#attacking.delete(guard)) {
+        this.#options.ai.leaveEngine(guard, 'alarm');
         runtime.world.stopCombat?.(guard);
       }
     }
   }
 
   /**
-   * A guard arrests the player: it runs up to them and opens the conversation with its crime
-   * force greet (DialogueCrimeGuards' ForceGreet topic: "Stop right there, criminal scum" ...).
-   * TODO(M13): the engine's arrest package and the pursuit's lines (PursueIdleTopic).
+   * A guard arrests the player: the engine's Alarm package aimed at them takes it up to them
+   * (within fAIMinGreetingDistance, detecting them), calling after them as it pursues
+   * (PursueIdleTopic: "Stop, in the name of the Jarl!"); there it opens the conversation with
+   * its crime force greet (DialogueCrimeGuards' ForceGreet topic: "By order of the Jarl, stop
+   * right there!"), whose lines ask that it is alarmed (GetAlarmed: it is, on its Alarm
+   * package), and stays on the package until the arrest is over. Inferred, TODO(M13): that the
+   * force greet is the Alarm package's own step, and that the guard is the arresting actor
+   * (GetArrestingActor) from its force greet on, not while it pursues.
    */
   #startArrest(runtime: ScriptRuntime, staged: StagedActor): void {
-    const { movers, ai, session } = this.#options;
+    const { ai, senses } = this.#options;
     const guard = staged.reference;
-    this.#arrest = { guard, since: this.#clock, talking: false };
-    runtime.state.crime.arrestingGuard = guard;
-    // The guard pursues: it is alarmed (GetAlarmed: its force greet's lines ask for it), and
-    // so are those near it.
-    this.#options.senses.alarm(guard, PLAYER_REF, 'steal');
-    ai.hold(guard, true);
-    const player = session.scriptWorld.livePlacement(PLAYER_REF)?.position;
-    const run = async (): Promise<void> => {
-      const near = player !== undefined && flat(staged.position, player) <= ARREST_REACH;
-      const reached =
-        near || (player !== undefined && (await movers.travel(guard, player, 'run', ARREST_REACH)));
-      const at = session.scriptWorld.livePlacement(PLAYER_REF)?.position;
-      if (this.#arrest?.guard !== guard) return;
-      if (!reached || !at || flat(staged.position, at) > ARREST_REACH * 2) {
-        // Not there yet: the next look sends it again (the player moved).
-        this.#endArrest(false);
-        return;
+    const arrest: Arrest = { guard, since: this.#clock, talking: false };
+    const alarm = alarmPackage({
+      detects: (actor, other) => senses.detects(actor, other),
+      reach: () => this.#greetReach,
+      confront: () => this.#forceGreet(runtime, staged, arrest),
+    });
+    // Given up on its way (the player gone, not reached in its time), the arrest is over too.
+    const runner: EngineRunner = async (run) => {
+      try {
+        await alarm(run);
+      } finally {
+        if (this.#arrest === arrest && !arrest.talking) this.#endArrest(false);
       }
-      const line = await runtime.dialogue.subtypeLine(guard, 'PFGT', PLAYER_REF);
-      const menus = session.hud.menus;
-      if (!line || !menus || runtime.dialogueSpeaker !== undefined || this.#fighting()) {
-        this.#endArrest(false);
-        return;
-      }
-      this.#arrest.talking = true;
-      // The story manager's Arrest (TG00ArrestMonitor, DGArrestQuest): the engine raises it as
-      // the arresting guard reaches the criminal, before it speaks.
-      runtime.detach(runtime.storyEvents.guardArrests(guard, PLAYER_REF));
-      menus.talk(staged.placed, line.topic.formId);
     };
-    run().catch(() => {
+    if (!ai.pushEngine(guard, 'alarm', runner, PLAYER_REF)) {
+      this.#arrestAgain.set(guard, this.#clock + ARREST_AGAIN_SECONDS);
+      return;
+    }
+    this.#arrest = arrest;
+  }
+
+  /**
+   * The arresting guard has the player before it: its force greet opens the conversation.
+   * Resolves once the arrest is over (settled or given up).
+   */
+  async #forceGreet(runtime: ScriptRuntime, staged: StagedActor, arrest: Arrest): Promise<void> {
+    const guard = staged.reference;
+    if (this.#arrest !== arrest) return;
+    const line = await runtime.dialogue.subtypeLine(guard, 'PFGT', PLAYER_REF);
+    if (this.#arrest !== arrest) return;
+    const menus = this.#options.session.hud.menus;
+    if (!line || !menus || runtime.dialogueSpeaker !== undefined || this.#fighting()) {
       this.#endArrest(false);
+      return;
+    }
+    arrest.talking = true;
+    runtime.state.crime.arrestingGuard = guard;
+    // The story manager's Arrest (TG00ArrestMonitor, DGArrestQuest): the engine raises it as
+    // the arresting guard reaches the criminal, before it speaks.
+    runtime.detach(runtime.storyEvents.guardArrests(guard, PLAYER_REF));
+    menus.talk(staged.placed, line.topic.formId);
+    await new Promise<void>((resolve) => {
+      arrest.over = resolve;
     });
   }
 
@@ -447,7 +511,9 @@ export class ActorCrime {
     const arrest = this.#arrest;
     if (!arrest) return;
     this.#arrest = undefined;
-    this.#options.ai.hold(arrest.guard, false);
+    // Its Alarm package ends: its wait for the conversation, or the pursuit still under way.
+    if (arrest.over) arrest.over();
+    else this.#options.ai.leaveEngine(arrest.guard, 'alarm');
     if (!settled) this.#arrestAgain.set(arrest.guard, this.#clock + ARREST_AGAIN_SECONDS);
     const runtime = this.#runtime;
     if (runtime?.state.crime.arrestingGuard === arrest.guard)

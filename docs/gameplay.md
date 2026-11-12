@@ -1019,8 +1019,15 @@ same aim; what differs is where they leave from and, for an NPC, what it aims at
   bounceLobber); one with an alternative trigger then lies, or slides down a slope steeper than
   the friction's angle (78.7°) until one holds it, and waits at rest for an actor within its
   proximity (the runes' 150) or its timer, then bursts; without one it bursts on the surface.
-  An actor it meets in flight sets it off. TODO(M13): the slide's law is inferred from the
-  settings' names; fGrenadeAgeMax is not read (the runes wait without a lifetime).
+  An actor it meets in flight sets it off. A lobber's age (observed in the original, asked at
+  each of its updates): the most it lives is its PROJ's Lifetime; where that is zero,
+  fGrenadeAgeMax, or for a mine (Alt. Trigger with an explosion proximity above zero)
+  fMineAgeMax; zero is no limit. Past it the projectile is taken away where it is, without
+  bursting. No plugin sets either: the engine's own values are 90 and 0, and none of the load
+  order's ten lobbers has a Lifetime, so the nine runes (mines) wait without end and
+  DLC2ExpSpiderOilDecal (Alt. Trigger, no proximity: no mine) lives 90 s
+  (projectile-flight.ts lobberAgeMax; the settings are read as the lobbers fly, so setgs
+  changes them). TODO(M13): the slide's law is inferred from the settings' names.
 - Speeds and falls: missiles and arrows fly at the PROJ's speed (an arrow's times the draw) and
   fall by the PROJ's gravity × 9.8 m/s²; beams reach their range at once; flames are sprays,
   one every relaunch interval. fArrowSpeedMult and fArrowGravityBase are not read by the engine.
@@ -1287,12 +1294,10 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
   themselves. Inferred, TODO(M13): the original's own rule for NPCs' crimes was not followed.
 - The guards that answer an actor's crime (`src/shell/actor-crime.ts`): those among its
   witnesses, else the first guard of the crime's group to hear the alarm (observed in the
-  original), iNumberGuardsCrimeResponse at most. Each fights the criminal at once (the combat
-  AI's search takes one that only heard it to where the criminal is). TODO(M13): the engine's
-  Alarm package in between. Ours is built (`alarmPackage`, docs/ai.md "The engine's own
-  packages": it runs to the criminal and fights it once it detects it) but not given: in the
-  headless Bannered Mare the guard did not find the fleeing criminal in 20 s, while the combat
-  AI's search does. The criminal, fighting no one, flees the first of them (observed
+  original), iNumberGuardsCrimeResponse at most. Each is given the engine's Alarm package
+  aimed at the criminal (`alarmPackage`, docs/ai.md "The engine's own packages": it runs to the
+  criminal, calling after it, and fights it once it detects it; one whose packages do not run
+  here fights at once). The criminal, fighting no one, flees the first of them (observed
   in the original) with the engine's Flee package (`fleeFrom`): it runs from the guard,
   counting as fleeing, until it has been beyond fFleeDoneDistanceExterior (2500; inside
   fFleeDoneDistanceInterior, 600) of it for fFleeIsSafeTimer (30 s); caught, the combat AI has
@@ -1351,22 +1356,34 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
 
 ### Guards, fines and jail
 
-- Guards (IsGuard: a guard class, CLAS DATA flag 0x1, or IsGuardFaction) that see the player
-  answer `guardResponse`: an enemy of their faction or one resisting its arrest they attack; a
+- Guards (IsGuard: a guard class, CLAS DATA flag 0x1, or IsGuardFaction) that see the player,
+  or heard the alarm of a crime of theirs (within iCrimeAlarmRecDistance: the alarm tells whose
+  crime it was), answer `guardResponse`: an enemy of their faction or one resisting its arrest they attack; a
   bounty they pursue when a crime alarmed them, or on sight at
   CrimeArrestOnSightViolentThreshold (999) / ...NonViolentThreshold (1000): they arrest where
   the faction arrests (CRVA), else attack where it attacks on sight; at most
   iNumberGuardsCrimeResponse (4) attack at once (observed in the original: the others
-  leave it to them). A guard told to let it go
+  leave it to them); one of them that only heard the alarm goes after the player on the
+  engine's Alarm package and fights them once it detects them. A guard told to let it go
   (SetLastArrestTime: its Variable03) waits a day.
-- An arrest: the guard runs up and force-greets with DialogueCrimeGuards' ForceGreet topic; its
+- An arrest: the guard is given the engine's Alarm package aimed at the player (docs/ai.md,
+  "The engine's own packages"): it runs up to them, calling after them with its pursuit lines
+  (PursueIdleTopic: "Stop, in the name of the Jarl!", "By order of the Jarl, I command you to
+  halt!"), and within fAIMinGreetingDistance (150), detecting them, force-greets with
+  DialogueCrimeGuards' ForceGreet topic ("By order of the Jarl, stop right there!"), whose
+  lines ask GetAlarmed and GetCrimeGold: a guard on its Alarm is alarmed, through the whole
+  conversation. It is the arresting actor (GetArrestingActor) from its force greet on; the
+  arrest over (settled, or the player walked off), its Alarm ends and its own package goes on.
+  Inferred, TODO(M13): that the arresting actor is set as it speaks rather than as it starts
+  after the player; the pursuit lines DialogueCrimeGuards keeps for the arresting actor ("That'll
+  teach you to break the law on my watch.") are not said yet. Its
   lines' scripts do the rest: PlayerPayCrimeGold (the gold and stolen items taken; with
   abGoToJail the player is let out at the exterior jail marker; Fines Paid, the Pay Fine
   event), SendPlayerToJail, SetPlayerResistingArrest (its guards attack: `hostileGuards`, the
   combat AI's reaction), the Thieves Guild's bribe, payoff and persuasion (CrimeGuardsScript,
   FavorDialogueScript: GetBribeAmount; StopCombatAlarm on the player ends the pursuit).
   GetCrimeGold, ...Violent, ...Nonviolent, CanPayCrimeGold, GetArrestingActor, GetBribeSuccess
-  answer them. TODO(M13): the engine's arrest package and pursuit lines (PursueIdleTopic).
+  answer them.
   No arrest mid-fight: while anyone fights the player (a guard struck and the guards who took
   up its fight) the guards fight on, until the player yields (weapon away, no blow: the guards
   accept it as the one struck does); then the arrest. The dialogue menu does not pause the

@@ -599,13 +599,20 @@ export function jogPace(
   return 1 + Math.max(0, Math.min(1, settings.jogInterpolation));
 }
 
-/** A body whose travels go at a pace (a jogging package's) unless one asks for its own. */
-function pacedBody(body: PackageBody, pace: number | undefined): PackageBody {
-  if (pace === undefined) return body;
-  const paced = Object.create(body) as PackageBody & { travel: PackageBody['travel'] };
-  paced.travel = (to, gait, arrive, space, options) =>
-    body.travel(to, gait, arrive, space, { pace, ...options });
-  return paced;
+/**
+ * The body a run commands. Its travels go at a pace (a jogging package's) unless one asks for
+ * its own; and a travel asked for after the run was left goes nowhere (it resolves false): a
+ * procedure that was waiting on something else as its package was set aside (an engine package
+ * put in front of it: a guard's Alarm as its Sandbox looked up its place beyond a load door)
+ * must not walk the actor off after that, least of all through the door.
+ */
+function runBody(body: PackageBody, pace: number | undefined, left: () => boolean): PackageBody {
+  const guarded = Object.create(body) as PackageBody & { travel: PackageBody['travel'] };
+  guarded.travel = (to, gait, arrive, space, options) =>
+    left()
+      ? Promise.resolve(false)
+      : body.travel(to, gait, arrive, space, pace === undefined ? options : { pace, ...options });
+  return guarded;
 }
 
 /**
@@ -920,7 +927,7 @@ export class ActorPackages {
     const settings = this.#mind.settings?.() ?? AI_DEFAULTS;
     const run: EngineRun = {
       actor: this.actor,
-      body: this.#body,
+      body: runBody(this.#body, undefined, () => engine.stopped),
       mind: this.#mind,
       target,
       settings,
@@ -950,9 +957,27 @@ export class ActorPackages {
     return true;
   }
 
+  /** Whether an engine package runs in front of its own now (read anew after each wait). */
+  #behindEngine(): boolean {
+    return this.#engine !== undefined;
+  }
+
   /** The engine package that runs in front of its own, if any. */
   engine(): EnginePackage | undefined {
     return this.#engine?.kind;
+  }
+
+  /**
+   * Its engine package of a kind is left (what it answered is over: an arrest given up): its own
+   * packages are chosen again. False: it runs none of that kind.
+   */
+  leave(kind: EnginePackage): boolean {
+    if (this.#engine?.kind !== kind) return false;
+    this.#leaveEngine();
+    this.#body.stop();
+    this.#body.face(undefined);
+    this.#wanted = true;
+    return true;
   }
 
   /** Its engine package is left (it stops at its next wait). */
@@ -1085,7 +1110,10 @@ export class ActorPackages {
       fallout = true;
     }
     const chosen = await this.#choose(undefined);
-    if (this.#running !== current) return;
+    // (An engine package put in front while its packages were weighed: they wait until it ends;
+    // else the one chosen here started under it, and a guard's Sandbox walked it out of the door
+    // it stood at while its Alarm ran.)
+    if (this.#running !== current || this.#behindEngine()) return;
     // Continue If PC Near (PKDT 0x200), observed in the original: a package still running is
     // kept, though another would be chosen (its conditions, its schedule over), while the player
     // is in the actor's parent cell; there is no distance in it.
@@ -1098,7 +1126,7 @@ export class ActorPackages {
     ) {
       return;
     }
-    if (this.#running !== current) return;
+    if (this.#running !== current || this.#behindEngine()) return;
     // Its fallout: a package that ended and stays chosen, without Skip Fallout Behavior.
     if (fallout && current && chosen?.id === current.id && !restart) this.#fallout(current);
     // A loaded save's package, chosen again first: it goes on where it was.
@@ -1125,7 +1153,7 @@ export class ActorPackages {
         return;
       }
       if (!current.stopped && (await this.#branchesHold(current))) return;
-      if (this.#running !== current) return;
+      if (this.#running !== current || this.#behindEngine()) return;
       this.#retake(current, chosen);
       return;
     }
@@ -1552,7 +1580,9 @@ export class ActorPackages {
     const flags = packageFlags(running.pack, running.overrides);
     const result = await runner({
       actor: this.actor,
-      body: pacedBody(this.#body, jogPace(flags, this.#mind.settings?.() ?? AI_DEFAULTS)),
+      body: runBody(this.#body, jogPace(flags, this.#mind.settings?.() ?? AI_DEFAULTS), () =>
+        isStopped(running),
+      ),
       mind: this.#mind,
       inputs,
       pack: running.pack,

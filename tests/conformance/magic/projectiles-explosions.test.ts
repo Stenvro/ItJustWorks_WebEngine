@@ -14,6 +14,11 @@
 //   Hit Event (DATA 0x10: it sends no OnHit), xEdit's TES5 MGEF; Painless (DATA 0x4000000: a
 //   hostile effect's target does not cry out in pain, Creation Kit "Magic Effect"); the
 //   enchantment flag Extend Duration On Recast (ENIT 0x4, Creation Kit "Enchantment").
+// - A lobbed projectile's age, observed in the original: the most it lives is its PROJ's
+//   Lifetime; where that is zero, fGrenadeAgeMax (the engine's 90 s; no plugin sets it), or for a
+//   mine (Alt. Trigger with an explosion proximity above zero) fMineAgeMax (the engine's 0: no
+//   limit); past it the projectile is taken away without bursting. The load order's ten lobbers
+//   (PROJ type Lobber) have no Lifetime: nine runes, mines, and DLC2ExpSpiderOilDecal.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -27,15 +32,16 @@ import {
   bounceLobber,
   launchFlight,
   LOBBER_DEFAULTS,
+  lobberAgeMax,
   stepFlight,
-  type LobberSettings,
+  type LobberSurface,
 } from '../../../src/gameplay/magic/projectile-flight.ts';
 import type { Vec3 } from '../../../src/render/math.ts';
-import { ProjectileType } from '../../../src/world/projectile-data.ts';
+import { parseProjectile, ProjectileType } from '../../../src/world/projectile-data.ts';
 import { ActorValue } from '../../../src/world/actor-values.ts';
 import { EffectFlag } from '../../../src/world/magic-effects.ts';
 import { parseMagicItem, type MagicItemRecord } from '../../../src/world/magic-records.ts';
-import { hasGamedata, openSim, type Sim } from '../../helpers/sim.ts';
+import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 const WARD_POWER = 63;
 const BANNERED_MARE = 0x1605e;
@@ -309,6 +315,96 @@ describe.skipIf(!hasGamedata())('a fireball’s burst and other hits on actors (
     await magic.apply(item, target.reference, { caster: caster.reference });
     expect(on()).toEqual([6]);
   }, 120_000);
+
+  it('the runes wait without end; the oil spider’s oil lives fGrenadeAgeMax (90 s), then is taken away', async () => {
+    const ages = new Map<string, number>();
+    for (const formId of sim.db.formIdsOfType('PROJ')) {
+      const record = await sim.db.get(formId);
+      const projectile = record && parseProjectile(record);
+      if (projectile?.type !== ProjectileType.lobber) continue;
+      // None has a Lifetime of its own: the settings decide.
+      expect(projectile.lifetime).toBe(0);
+      ages.set(record?.editorId ?? '', lobberAgeMax(projectile));
+    }
+    // The maintainer's load order (Skyrim.esm, the DLCs, the Creation Club files), 2026-11-12.
+    expect(ages.size).toBe(10);
+    // Mines (Alt. Trigger, proximity 150): fMineAgeMax, 0: no limit.
+    for (const rune of ['RuneFireProjectile', 'RuneFrostProjectile', 'TrapRuneFireProjectile']) {
+      expect(ages.get(rune)).toBe(0);
+    }
+    // Alt. Trigger without a proximity: no mine. It is the only one fGrenadeAgeMax bounds.
+    expect(ages.get('DLC2ExpSpiderOilDecal')).toBe(90);
+    expect([...ages.values()].filter((age) => age !== 0)).toEqual([90]);
+    // Neither setting is in the plugins: the engine's own values stand.
+    const settings = await sim.world.session.settings();
+    expect(settings.number('fGrenadeAgeMax')).toBeUndefined();
+    expect(settings.number('fMineAgeMax')).toBeUndefined();
+    // At rest it ages: past 90 s it is expired (taken away), not spent (no burst).
+    const record = await sim.db.get(await sim.formId('PROJ', 'DLC2ExpSpiderOilDecal'));
+    const oil = record && parseProjectile(record);
+    expect(oil).toBeDefined();
+    if (!oil) return;
+    const flight = launchFlight(oil, [0, 0, 10], [0, 0, -1]);
+    bounceLobber(flight, [0, 0, 0], [0, 0, 1]);
+    expect(flight.resting).toBe(true);
+    stepFlight(flight, 90);
+    expect(flight.expired).toBeUndefined();
+    stepFlight(flight, 1 / 60);
+    expect(flight.expired).toBe(true);
+    expect(flight.spent).toBe(false);
+  }, 120_000);
+
+  it('a rune past fMineAgeMax (set to 4 s) is taken away where it lies, unburst', async () => {
+    const runtime = sim.runtime;
+    const projectiles = sim.world.stage.projectiles;
+    const at = await sim.position(PLAYER_REF);
+    const record = await sim.db.get(await sim.formId('SPEL', 'FireRune'));
+    const item = record ? parseMagicItem(record) : undefined;
+    expect(at && item).toBeTruthy();
+    if (!at || !item) return;
+    const settings = await sim.world.session.settings();
+    const rune = (): boolean =>
+      [...projectiles.flying()].some((entry) => entry.projectile === 'RuneFireProjectile');
+    const lay = async (): Promise<void> => {
+      await projectiles.launch(
+        {
+          caster: PLAYER_REF,
+          item,
+          via: 'spell',
+          dual: false,
+          cost: await runtime.casting.cost(PLAYER_REF, { item, via: 'spell' }),
+        },
+        [at[0], at[1], at[2] + 100],
+        [0, 0.2, -1],
+      );
+      await sim.step(1);
+    };
+    // What bursts goes through the casting engine's explode.
+    const casting = runtime.casting;
+    const explode = casting.explode.bind(casting);
+    let bursts = 0;
+    casting.explode = (...args) => {
+      bursts++;
+      return explode(...args);
+    };
+    // With the engine's own fMineAgeMax (0) it waits: there after 6 s.
+    await lay();
+    expect(rune()).toBe(true);
+    await sim.step(6);
+    expect(rune()).toBe(true);
+    projectiles.clear();
+    expect(rune()).toBe(false);
+    // With an age of 4 s it is gone 5 s after it was laid, and nothing burst.
+    settings.set('fMineAgeMax', 4);
+    await lay();
+    expect(rune()).toBe(true);
+    await sim.step(4);
+    expect(rune()).toBe(false);
+    await sim.step(1);
+    expect(bursts).toBe(0);
+    settings.set('fMineAgeMax', 0);
+    casting.explode = explode;
+  }, 120_000);
 });
 
 describe('a lobber on a slope', () => {
@@ -325,7 +421,7 @@ describe('a lobber on a slope', () => {
   };
 
   /** It falls onto a plane through the origin with this normal; how far along the plane it went. */
-  const onSlope = (degrees: number, settings: LobberSettings): number => {
+  const onSlope = (degrees: number, settings: LobberSurface): number => {
     const a = (degrees * Math.PI) / 180;
     const normal: Vec3 = [0, -Math.sin(a), Math.cos(a)];
     const flight = launchFlight(lobber, [0, 0, 10], [0, 0, 1]);
