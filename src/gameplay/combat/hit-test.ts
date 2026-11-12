@@ -135,7 +135,10 @@ export function strikeTargets(
 
 /**
  * Whether a blocker facing `heading` covers a hit from `from` (fCombatHitConeAngle in degrees
- * either side of its facing; TODO(M13): whether the setting is the half or the whole cone).
+ * either side of its facing). Observed in the original: the setting is the angle off the
+ * facing, the cone's half-width, where a blocker anticipates an attacker's blow (and where a
+ * strike without attack data is aimed). TODO(M13): the blocked hit's own test of the facing was
+ * not read; ours takes the same cone.
  */
 export function blockCovers(
   blocker: readonly [number, number, number],
