@@ -587,6 +587,11 @@ async function main(): Promise<void> {
         courtyardFoes: [...k.courtyard],
         hits: k.hits.filter(h => h.stage >= 160),
         deaths: k.deaths.filter(d => d.stage >= 160),
+        // An actor dies once: those whose death was told more than once, and the foes' blows that fell
+        // after MQ101 called the fight over (280 counts the two Imperials' OnDeath calls: a death told
+        // twice set it with the officer alive).
+        deathsToldTwice: [...new Set(k.deaths.filter((d, i, all) => d.dead && all.findIndex(o => o.dead && o.actor === d.actor) !== i).map(d => d.actor))],
+        foeBlowsAfter280: k.hits.filter(h => h.stage >= 280 && foes.some(r => k.name(r) === h.a)).length,
         status: k.status(),
         menus: k.menus,
         frames: { n: f.length, median: f[Math.floor(f.length / 2)], p95: f[Math.floor(f.length * 0.95)], fps: 1000 / f[Math.floor(f.length / 2)] },
@@ -597,7 +602,14 @@ async function main(): Promise<void> {
     path.join(OUT, 'keep-fight.json'),
     JSON.stringify({ outcome, fights: fought, blocks, jumpBlock, result }, null, 1),
   );
-  log(JSON.stringify({ outcome, fights: fought }));
+  log(
+    JSON.stringify({
+      outcome,
+      fights: fought,
+      deathsToldTwice: (result as { deathsToldTwice?: string[] } | undefined)?.deathsToldTwice,
+      foeBlowsAfter280: (result as { foeBlowsAfter280?: number } | undefined)?.foeBlowsAfter280,
+    }),
+  );
   cdp.close();
 }
 

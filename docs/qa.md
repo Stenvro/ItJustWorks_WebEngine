@@ -25,7 +25,9 @@ for regressions.
   keep or `--after-fight-minutes` (18) after the fight without 300. `keep-fight.json`: the
   outcome, every blow from MQ101 150 on (the courtyard and the fight; those on the player with
   whether their guard was up, how far off their facing the attacker stood and how far away),
-  the deaths, who fought the player in the courtyard, the player's attack actions with the
+  the deaths (`deathsToldTwice`: the actors whose death was told more than once, which must be
+  none; `foeBlowsAfter280`: the Imperials' blows after MQ101 called the fight over, which a
+  death told twice made 20 s of fighting), who fought the player in the courtyard, the player's attack actions with the
   state of each refused one, each block held and whether the guard went up (with the player's
   states through it, the graph's answer to each block asked, the player's graphs' block events
   and the blows that fell meanwhile), a block held through a jump once the fight is won
