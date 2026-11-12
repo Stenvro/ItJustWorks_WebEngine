@@ -380,6 +380,12 @@ describe.skipIf(!hasGamedata())('sandbox: an inn’s evening (headless simulatio
   // on the last after leaving it; the next to come stopped beside them: 0 on, 63 short. Counted
   // by the nearest marker of the inn rather than the one taken, an actor seated in furniture or
   // standing at its sandbox point beside a marker counted as short of it.)
+  // Who takes an idle marker, and when, is each sandboxer's own pick (its dice): the evening
+  // runs on past the two minutes, to five at most, until they stood on their markers 20 times.
+  // In the first two minutes Saadia and Sinmir stood on markers 37 times while actors glided to
+  // their furniture in the idle they stood in; walking to it (a walk to furniture plays its
+  // movement's actions) they come and go at other moments, Sinmir's next pick is furniture, and
+  // Saadia alone stands on a marker 17 times in those two minutes.
   const tracks = new Map<number, [number, number][]>();
   let onMarker = 0;
   let shortOfMarker = 0;
@@ -399,7 +405,7 @@ describe.skipIf(!hasGamedata())('sandbox: an inn’s evening (headless simulatio
         const at = await sim.position(reference);
         if (at) markers.set(reference, [at[0], at[1]]);
       }
-      for (let sample = 0; sample < 60; sample++) {
+      for (let sample = 0; sample < 150 && (sample < 60 || onMarker < 20); sample++) {
         for (const actor of sim.actors()) {
           if (sim.package(actor.reference)?.procedure?.toLowerCase() !== 'sandbox') continue;
           const at = await sim.position(actor.reference);
@@ -418,10 +424,14 @@ describe.skipIf(!hasGamedata())('sandbox: an inn’s evening (headless simulatio
         }
         await sim.step(2);
       }
+      console.info(
+        `[sandbox] at their idle markers: ${String(onMarker)} times on, ${String(shortOfMarker)} short, ` +
+          `in ${String(2 * Math.max(...[...tracks.values()].map((track) => track.length)))} s`,
+      );
     } finally {
       await sim.close();
     }
-  }, 300_000);
+  }, 600_000);
 
   it('keeps its sandboxers going between spots (none stands at one place throughout)', () => {
     // Those of the browser's report: SaadiaRef (WITavernServerSandbox), Brenuin

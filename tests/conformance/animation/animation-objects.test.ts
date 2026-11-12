@@ -179,7 +179,17 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
           loads.push({ actor: source.reference, editorId: event.payload });
       }
     });
-    for (let second = 0; second < 60; second++) {
+    // A minute of the evening, and on until Hulda has wiped the counter (four minutes at most).
+    // From the counter's idle loop her graph goes to one of two actions about every 20 s, by
+    // its own draw (mt_behavior.hkx, AnimObjectBarCounterRandomActionRight_Behavior: a random
+    // start state, AnimObjectBarCounterWipeRight or AnimObjectBarCounterRightToArm, the arms
+    // folded, each of probability 1): which one comes first is the graph's dice. She wiped at
+    // 3 s while actors glided to their furniture in the idle they stood in; walking to the
+    // counter (a walk to furniture plays its movement's actions), her graph draws the folded
+    // arms twice and wipes at 64 s.
+    const wiped = (): boolean =>
+      loads.some((load) => load.actor === HULDA && load.editorId === 'AnimObjectBarRag');
+    for (let second = 0; second < 240 && (second < 60 || !wiped()); second++) {
       await sim.step(1);
       for (const staged of sim.actors()) {
         for (const held of sim.world.stage.animObjects.held(staged.reference)) {
