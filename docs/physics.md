@@ -861,8 +861,9 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   stiffness; killed 1 s in, 1.5 s on): her left ankle 6.1° past its limit (19 N·m), her right
   4.1° (13 N·m), her left knee 2.3° past straight (46 N·m), her left hip 1.2° past its swing
   limit, and she stood. With this rule (her ankles 96 N·m a radian) her calves come forward
-  over her feet, her knees fold and she is down within 1.5 s in every phase from 0.5 to 5 s
-  (head at 13–24 units 5 s on; `ragdolls-death.test.ts`). The race skeletons' ragdolls settle
+  over her feet, her knees fold and she is down within 2 s in every phase from 0.5 to 5 s
+  (her head, at 115–118 units as she dies, at 81–95 units 1 s on, 24–72 at 1.5 s, 10–17 at 2
+  s and 9–24 units 5 s on; `ragdolls-death.test.ts`). The race skeletons' ragdolls settle
   better with it than without (`node tools/ragdoll-info.ts`, on this tip: 47 pushed, 41 let
   go still and 46 lifted of 52 at rest within 20 s, and 49 let go still within 40 s, against
   34, 35 and 32 within 20 s without the give; while the cone's row still held its loads, 45,

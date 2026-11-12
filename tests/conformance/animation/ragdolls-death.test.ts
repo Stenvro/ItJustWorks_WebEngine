@@ -216,7 +216,8 @@ describe.skipIf(!hasGamedata())('Hulda killed at the bar counter (headless simul
   // foot and her calf, is a spring of 96 N·m a radian, and her weight bore on it with 13 to
   // 19 N·m (measured while it still held, against a spring twice as stiff): it yields the 8°
   // and more that bring her calves forward over her feet, her knees fold and she goes down
-  // within 1.5 s (head at 13–24 units 5 s on). Inferred from Havok's solver (TODO(M13)).
+  // within 2 s (her head at 81–95 units 1 s after the kill, 10–17 at 2 s, 9–24 units 5 s
+  // on). Inferred from Havok's solver (TODO(M13)).
 });
 
 // The engine's own drive of a ragdoll ([RagdollAnim], the engine's built-in defaults; their use
