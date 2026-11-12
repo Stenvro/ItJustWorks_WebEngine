@@ -278,8 +278,31 @@ describe('the dying life state', () => {
     const state = (loaded.log.runtime as unknown as { state: GameState }).state;
     state.actor(GUARD).dead = true;
     state.actor(GUARD).killer = 0x1234;
-    await loaded.actors.finishSavedDying([...saved, [0x5001, 0]]);
+    loaded.actors.finishSavedDying([...saved, [0x5001, 0]]);
     expect(loaded.log.calls).toEqual(['OnDeath 5000 (actor 1234)']);
+  });
+
+  it('does not hold the load on an OnDeath handler that waits', async () => {
+    // A saved dying actor's OnDeath handler waits on a latent call (what it waits for moves
+    // only once the load is done): the load goes on, and the next one hears its OnDeath too.
+    const loaded = dyingEngine();
+    const runtime = loaded.log.runtime as unknown as {
+      state: GameState;
+      sendEvent: (target: number, event: string) => Promise<void>;
+    };
+    const heard: number[] = [];
+    runtime.sendEvent = (target) => {
+      heard.push(target);
+      return target === GUARD ? new Promise<void>(() => undefined) : Promise.resolve();
+    };
+    runtime.state.actor(GUARD).dead = true;
+    runtime.state.actor(0x5001).dead = true;
+    loaded.actors.finishSavedDying([
+      [GUARD, 0x1234],
+      [0x5001, 0],
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(heard).toEqual([GUARD, 0x5001]);
   });
 });
 
