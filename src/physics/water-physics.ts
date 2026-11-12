@@ -347,8 +347,7 @@ export class WaterPhysics {
     this.#time += seconds;
     const gravity = -this.#physics.world.gravity.z;
     const seen = new Set<number>();
-    this.#physics.world.bodies.forEach((body) => {
-      if (!body.isDynamic() || body.isSleeping() || !body.isEnabled()) return;
+    this.#physics.forEachAwake((body) => {
       const handle = body.handle;
       seen.add(handle);
       const com = body.worldCom();

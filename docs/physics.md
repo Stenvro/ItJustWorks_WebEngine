@@ -15,10 +15,21 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   until its clock reaches what it was handed, so its last step is at or a little ahead of the
   frame's time; the player's camera and the actors are drawn between the last two steps at the
   frame's time, so 144 Hz screens see smooth motion. The step and its cap scale with the world's
-  time multiplier (TODO(M13): ours stay at fMaxTime under Slow Time). The engine's "complex"
-  mode, fMaxTimeComplex with uMaxNumPhysicsStepsPerUpdateComplex 1, is there
-  (`PhysicsWorld.complex`), and nothing turns it on: TODO(M13), what does in the original is not
-  identified; fTimePerSubStep and iMinNumSubSteps are read by nothing.
+  time multiplier (TODO(M13): ours stay at fMaxTime under Slow Time). fTimePerSubStep and
+  iMinNumSubSteps are read by nothing.
+- **The complex mode** (`PhysicsWorld.complex`): the engine's step is handed a mode in which it
+  steps fMaxTimeComplex (1/30 s), at most uMaxNumPhysicsStepsPerUpdateComplex (1) times a frame
+  (observed in the original), with its solver's iterations and tau for that step (`solverSettings`:
+  twice the iterations). It is on while the scene is complex: as many living actors in the high
+  process as iAINumberActorsComplexScene (20) or more, the count the idles and detection go by
+  (`ActorStage.complexScene`). TODO(M13): inferred from the settings' names; what hands the
+  engine's step its mode was not read. In it a frame of a crowd takes one step where it took up
+  to three, every other frame at 60 frames a second, and a long frame no longer makes the next one
+  longer by its steps (below 30 frames a second the world then runs slow, as it does below 20
+  out of the mode). Rapier takes twice its iterations for the longer step, and the contacts'
+  force threshold is over the longer step (a soft landing is heard in either mode). The cut
+  head at Helgen's block stays in its basket at that step over the launches about the chop's
+  but the shallowest (`tests/head-in-basket.int.test.ts`).
 - **The world's bounds** (inferred, TODO(M13): the original's size and what its broad phase's
   border does with an entity were not read): a simulated body past 16,384 Havok units along an
   axis, beyond every worldspace's cells, goes out of the simulation and stays as it is

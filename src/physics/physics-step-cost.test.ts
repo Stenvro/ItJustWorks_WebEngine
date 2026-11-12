@@ -9,6 +9,7 @@ import type { Mat4 } from '../render/math.ts';
 import { CharacterBody } from './character.ts';
 import type { CollisionBody, CollisionData } from './collision-data.ts';
 import { CollisionMatrix, Layer } from './collision-layers.ts';
+import { WaterPhysics } from './water-physics.ts';
 import {
   GRAVITY,
   HandlePairs,
@@ -134,6 +135,64 @@ describe('the physics step', () => {
     const walk = vi.spyOn(physics.world, 'mapNewSoftBodies');
     expect(physics.step(3 / 60)).toBe(3);
     expect(walk).not.toHaveBeenCalled();
+    physics.free();
+  });
+
+  it('looks for the awake among the bodies that can be simulated, not every body', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    physics.addObject(box(Layer.static, [-500, -500, -20], [500, 500, 0]), IDENTITY, {
+      reference: 1,
+      kind: 'object',
+    });
+    const falling = physics.addObject(
+      box(Layer.clutter, [-5, -5, 40], [5, 5, 50], 'dynamic'),
+      IDENTITY,
+      { reference: 2, kind: 'object' },
+    );
+    // Held where it was placed (not settling): simulated only once something touches it.
+    const held = physics.addObject(
+      box(Layer.clutter, [100, -5, 0], [110, 5, 10], 'dynamic'),
+      IDENTITY,
+      { reference: 3, kind: 'object' },
+      false,
+    );
+    // A body made outside addObject, simulated as its collider is registered.
+    const raw = physics.world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic().setTranslation(3, 0, 2).setGravityScale(0),
+    );
+    physics.register(physics.world.createCollider(RAPIER.ColliderDesc.ball(0.1), raw), 5, {
+      reference: 4,
+      kind: 'object',
+    });
+    const awake = (): number[] => {
+      const handles: number[] = [];
+      physics.forEachAwake((body) => handles.push(body.handle));
+      return handles.sort((a, b) => a - b);
+    };
+    const fallingBody = falling.bodies[0]?.body;
+    const heldBody = held.bodies[0]?.body;
+    if (!fallingBody || !heldBody) throw new Error('bodies');
+    expect(awake()).toEqual([fallingBody.handle, raw.handle].sort((a, b) => a - b));
+    // The step's own passes (the speeds before it, the top speeds, the deactivation, the
+    // bounds) and the water's walk no whole world.
+    const walk = vi.spyOn(physics.world.bodies, 'forEach');
+    const water = new WaterPhysics(physics, () => undefined);
+    for (let i = 0; i < 30; i++) {
+      physics.step(1 / 60, (seconds) => {
+        water.step(seconds);
+      });
+    }
+    expect(walk).not.toHaveBeenCalled();
+    // The speed it had before the step is known all the same (velocityBefore).
+    raw.setLinvel({ x: 1, y: 0, z: 0 }, true);
+    physics.step(1 / 60);
+    expect(physics.velocityBefore(raw).x).toBeCloseTo(1, 5);
+    // Released, the held one is among them; removed, a body is not.
+    physics.release(heldBody);
+    expect(awake()).toContain(heldBody.handle);
+    physics.remove(held);
+    physics.world.removeRigidBody(raw);
+    expect(awake()).toEqual(fallingBody.isSleeping() ? [] : [fallingBody.handle]);
     physics.free();
   });
 

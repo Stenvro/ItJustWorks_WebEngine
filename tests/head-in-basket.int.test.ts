@@ -152,6 +152,21 @@ describe.skipIf(!hasGamedata())('a cut head and the basket before the block', ()
     expect(out).toEqual([]);
     // Unbent by a swing (the neck's line, 10 degrees down) it goes over the far rim.
     expect(inBasket(landed(6, 10))).toBe(false);
+    // The opening's scene is complex (some eighty actors in the high process), and its physics
+    // steps fMaxTimeComplex (1/30 s): the same launches at that step, but the shallowest (32
+    // degrees down: at that step five of its six go off the near rim and 150 to 200 units away;
+    // the edge named above lies two degrees nearer the chop's 37.9).
+    physics.complex = true;
+    const outComplex: string[] = [];
+    for (const azimuth of AZIMUTHS) {
+      for (const pitch of PITCHES.slice(1)) {
+        if (!inBasket(landed(azimuth, pitch))) {
+          outComplex.push(`${String(azimuth)}/${String(pitch)}`);
+        }
+      }
+    }
+    expect(outComplex).toEqual([]);
+    expect(inBasket(landed(6, 10))).toBe(false);
     physics.world.free();
     await play.db.close();
     await play.vfs.close();

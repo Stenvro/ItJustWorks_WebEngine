@@ -26,6 +26,7 @@ import {
   Layer,
   readCollisionMatrix,
 } from '../../../src/physics/collision-layers.ts';
+import { HAVOK_TAU_RATIO, solverSettings } from '../../../src/physics/constraint-solver.ts';
 import {
   DEBRIS_QUALITY,
   GRAVITY,
@@ -41,7 +42,7 @@ import { Vfs } from '../../../src/vfs/vfs.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
 import { openGameFolder } from '../../../tools/gamedata-path.ts';
 import { CollisionCache, settleCell, type CellSettling } from '../../../tools/settle-audit.ts';
-import { hasGamedata, openSim, type Sim } from '../../helpers/sim.ts';
+import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const matrix = new CollisionMatrix([
@@ -155,8 +156,7 @@ describe('the step (the engine’s rule)', () => {
     expect(physics.currentStep).toBeCloseTo(PHYSICS_STEP, 9);
     physics.free();
   });
-  // What turns the mode on in the original is not identified (TODO(M13) in physics-world.ts);
-  // nothing here does. The mode itself:
+  // The mode itself; a complex scene turns it on (below: inferred, TODO(M13) in physics-world.ts).
   it('steps fMaxTimeComplex (1/30 s) once a frame in the engine’s complex mode', () => {
     const physics = new PhysicsWorld(new CollisionMatrix([]), GRAVITY);
     expect(physics.complex).toBe(false);
@@ -169,6 +169,95 @@ describe('the step (the engine’s rule)', () => {
     physics.step(1 / 60);
     expect(physics.currentStep).toBeCloseTo(PHYSICS_STEP, 9);
     physics.free();
+  });
+
+  it('takes a step every other frame of 1/60 s in the complex mode, and never three', () => {
+    const physics = new PhysicsWorld(new CollisionMatrix([]), GRAVITY);
+    physics.complex = true;
+    expect([1, 2, 3, 4, 5, 6].map(() => physics.step(1 / 60))).toEqual([1, 0, 1, 0, 1, 0]);
+    // Long frames (20 a second): one step each, where the plain mode takes its three.
+    expect([1, 2, 3].map(() => physics.step(0.05))).toEqual([1, 1, 1]);
+    physics.free();
+    const plain = new PhysicsWorld(new CollisionMatrix([]), GRAVITY);
+    expect([1, 2, 3].map(() => plain.step(0.05))).toEqual([3, 3, 3]);
+    plain.free();
+  });
+
+  it('solves a complex step as the engine does: twice the iterations (solverSettings)', () => {
+    // Observed in the original: the iterations are 4 × the step over fMaxTime, tau follows it.
+    expect(solverSettings(1 / 30, 1 / 60, HAVOK_TAU_RATIO)).toEqual({
+      tau: 0.6 * 1.5,
+      damping: 1,
+      iterations: 8,
+    });
+    const physics = new PhysicsWorld(new CollisionMatrix([]), GRAVITY);
+    const plain = physics.world.integrationParameters.numSolverIterations;
+    expect(physics.complexSolver.iterations).toBe(2 * physics.solver.iterations);
+    physics.complex = true;
+    physics.step(1 / 30);
+    // Ours (Rapier's): as many more as the step is longer.
+    expect(physics.world.integrationParameters.numSolverIterations).toBe(2 * plain);
+    physics.complex = false;
+    physics.step(1 / 60);
+    expect(physics.world.integrationParameters.numSolverIterations).toBe(plain);
+    physics.free();
+  });
+
+  it('a body falls as far and is heard landing as well in the complex mode', () => {
+    const drop = (complex: boolean): { fell: number; heard: number; rest: number } => {
+      const physics = new PhysicsWorld(matrix, GRAVITY);
+      physics.complex = complex;
+      const floor = clutter(200);
+      const base = floor.bodies[0];
+      if (!base) throw new Error('no body');
+      physics.addObject(
+        {
+          bodies: [
+            {
+              ...base,
+              motion: 'fixed',
+              layer: Layer.static,
+              mass: 0,
+              shapes: base.shapes.map((s) => ({ ...s, layer: Layer.static })),
+            },
+          ],
+          skipped: [],
+        },
+        new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -400, 1]),
+        { reference: 2, kind: 'object' },
+        false,
+      );
+      // From 14 units up it lands at about 137 units a second and bounces up to land again at
+      // about 68: above fMinSoundVel (60), and under twice it (a contact's force is its impulse
+      // over the step, half as much over a step twice as long: the second landing went unheard
+      // in the complex mode).
+      const at = new Float32Array(IDENTITY);
+      at[14] = 14;
+      const placed = physics.addObject(clutter(5), at, { reference: 1, kind: 'object' }, false);
+      const body = placed.bodies[0]?.body;
+      if (!body) throw new Error('no body');
+      physics.release(body);
+      let heard = 0;
+      let fell = 0;
+      for (let frame = 0; frame < 120; frame++) {
+        physics.step(1 / 60);
+        heard += physics.drainImpacts().length;
+        if (frame === 3) fell = 14 - body.translation().z * 69.99125;
+      }
+      const rest = body.translation().z * 69.99125;
+      physics.free();
+      return { fell, heard, rest };
+    };
+    const plain = drop(false);
+    const complex = drop(true);
+    // Four frames of falling (1/15 s: about 2 game units), the same either way to within a
+    // step's own error.
+    expect(plain.fell).toBeGreaterThan(1);
+    expect(Math.abs(complex.fell - plain.fell)).toBeLessThan(1);
+    expect(plain.heard).toBe(2);
+    expect(complex.heard).toBe(2);
+    expect(plain.rest).toBeCloseTo(0, 0);
+    expect(complex.rest).toBeCloseTo(0, 0);
   });
 });
 
@@ -369,5 +458,29 @@ describe.skipIf(!hasGamedata())(
         expect(Math.abs((placed.get(trap) ?? 0) - (after.get(trap) ?? Infinity))).toBeLessThan(4);
       }
     });
+
+    // Inferred (TODO(M13) in physics-world.ts): the settings' names; what hands the engine's step
+    // its complex mode was not read. The scene's count is the idles' and detection's.
+    it('steps in the complex mode while iAINumberActorsComplexScene (20) actors are in the high process', async () => {
+      const physics = sim.world.play?.physics;
+      if (!physics) throw new Error('no physics');
+      const stage = sim.world.stage;
+      expect(stage.complexScene).toBe(false);
+      expect(physics.complex).toBe(false);
+      expect(physics.currentStep).toBeCloseTo(PHYSICS_STEP, 9);
+      const chicken = await sim.formId('NPC_', 'EncChicken');
+      const flock: number[] = [];
+      for (let i = 0; i < 20; i++) flock.push(await sim.place(chicken, PLAYER_REF));
+      await sim.step(1);
+      expect(stage.complexScene).toBe(true);
+      expect(physics.complex).toBe(true);
+      expect(physics.currentStep).toBeCloseTo(1 / 30, 9);
+      // The dead do not count: with the flock killed the scene is plain again.
+      for (const one of flock) await sim.kill(one);
+      await sim.step(1);
+      expect(stage.complexScene).toBe(false);
+      expect(physics.complex).toBe(false);
+      expect(physics.currentStep).toBeCloseTo(PHYSICS_STEP, 9);
+    }, 600_000);
   },
 );
