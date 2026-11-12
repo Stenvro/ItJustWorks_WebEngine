@@ -811,12 +811,26 @@ had ended falls out again). One at a time (TODO(M13): which may replace which).
   plus a second, it is given Surface, unless it runs that already (`Breath`; ours asks every
   physics step, `ActorMovers` with its run's speed). Only the player drowns. TODO(M13): its
   breath refills at once with its head out (the engine sets it elsewhere).
-- **Alarm** (`alarmPackage`; built, not yet given: TODO(M13), the answering guard fights at
-  once, docs/gameplay.md "Crimes and witnesses"): aimed at the criminal, once it detects it it
-  starts combat with it and the package ends; until then it runs to where the criminal is now,
-  heading anew as the criminal gets 256 units from the spot it heads for; it gives up once the
-  criminal is dead, in another cell or worldspace, gone, or not found in 60 s. Inferred,
-  TODO(M13): the procedure (its way, its reach of 128 units, the 60 s).
+- **Alarm** (`alarmPackage`, given by the crime stage, `src/shell/actor-crime.ts`: to each
+  guard that answers an actor's crime, to the guard that arrests the player, and to one that is
+  to attack the player but only heard the alarm; docs/gameplay.md "Crimes and witnesses"):
+  aimed at the criminal, it runs to where the criminal is now, heading anew as the criminal
+  gets 256 units from the spot it heads for, and calls after it every 8 s with a line of the
+  topic subtype PursueIdleTopic (DialogueCrimeGuards: "Stop, in the name of the Jarl!", "Come
+  quietly or taste the Jarl's justice!"; DialogueCrimeOrcs: "Halt, outlander!"). Once it has
+  the criminal before it, it confronts it: detecting it, it starts combat with it and the
+  package ends; for an arrest it must also be within fAIMinGreetingDistance (150) of the
+  player, where it opens the conversation with its force greet and stays on the package until
+  the arrest is over. An actor on its Alarm is alarmed (GetAlarmed, IsAlarmed): the force
+  greet's lines ask for it. It gives up once the criminal is dead, in another cell or
+  worldspace, gone, or not confronted in 60 s. Inferred, TODO(M13): the procedure (its way,
+  its reach of 128 units, the 60 s and the 8 s, a fight from wherever it detects the criminal,
+  the force greet as the package's own step).
+- An engine package put in front while the actor's packages are being weighed keeps the one
+  chosen from starting under it (`ActorPackages`): a guard placed at an inn's door and given
+  its Alarm a moment later was walked out of the door by its own Sandbox, started beneath the
+  Alarm, which is why the Alarm once seemed not to find a fleeing criminal. A travel asked for
+  by a run that was left goes nowhere.
 - **Flee** (`fleeFrom`): the criminal of an actor's crime, fighting no one, is given it aimed at
   the first guard that answers (observed in the original: the criminal flees that guard). It
   runs from the guard, counting as fleeing (IsFleeing), until it has been beyond

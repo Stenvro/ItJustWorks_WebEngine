@@ -395,7 +395,7 @@ describe.skipIf(!hasGamedata())('killing a wild creature (headless simulation)',
     expect(owed).toBe(0);
   });
 
-  it('a guard who only hears an NPC’s alarm answers it; the criminal flees it', async () => {
+  it('a guard who only hears an NPC’s alarm answers it on its Alarm package; the criminal flees it', async () => {
     const { runtime } = sim;
     const whiterun = await sim.formId('FACT', 'CrimeFactionWhiterun');
     const placedGuard = await sim.place(await guardBase(sim, whiterun), PLAYER_REF);
@@ -438,9 +438,22 @@ describe.skipIf(!hasGamedata())('killing a wild creature (headless simulation)',
       witnesses: [victim],
     });
     await sim.step(0.5);
-    expect(started).toContainEqual([placedGuard, criminal]);
+    // The guard that answers is given the engine's Alarm package aimed at the criminal, and is
+    // alarmed on it (GetAlarmed).
+    expect(pushed).toContainEqual([placedGuard, 'alarm', criminal]);
+    expect(senses.alarmed(placedGuard)).toBe(true);
     // The criminal, fighting no one, flees the guard that answers (the engine's Flee package).
     expect(pushed).toContainEqual([criminal, 'flee', placedGuard]);
+    // The Alarm takes the guard after the criminal: it fights it once it detects it, and the
+    // package is over.
+    const fights = (): boolean =>
+      started.some(([actor, target]) => actor === placedGuard && target === criminal);
+    expect(await sim.until(fights, 30)).toBe(true);
+    // It stayed in the inn after the criminal: its own package (a Sandbox in Whiterun, through
+    // the door it was placed at) waited behind the Alarm.
+    expect(sim.actor(placedGuard)).toBeDefined();
+    await sim.step(0.5);
+    expect(ai.engineOf(placedGuard)).toBeUndefined();
     ai.pushEngine = push;
     runtime.world.startCombat = start;
   }, 120_000);
@@ -509,6 +522,116 @@ async function guardBase(sim: Sim, faction: number): Promise<number> {
   }
   throw new Error('no guard base');
 }
+
+// The player steals in a citizen's sight in the Bannered Mare, a guard of the hold across the
+// room: the citizen's alarm reaches the guard, which is given the engine's Alarm package aimed at
+// the player, runs up to them and arrests them with DialogueCrimeGuards' force greet (PFGT: its
+// lines ask GetAlarmed and GetCrimeGold; UESP "Skyrim:Crime": "a guard will approach and
+// confront you").
+
+describe.skipIf(!hasGamedata())('a guard arrests the player (headless simulation)', () => {
+  let sim: Sim;
+  beforeAll(async () => {
+    sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
+    await sim.step(1);
+  }, 600_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it('the guard that hears the alarm comes up on its Alarm package and force-greets  [UESP Crime]', async () => {
+    const { runtime } = sim;
+    const { stage } = sim.world;
+    const { ai, senses } = stage;
+    const whiterun = await sim.formId('FACT', 'CrimeFactionWhiterun');
+    const player = await sim.position(PLAYER_REF);
+    expect(player).toBeDefined();
+    if (!player) return;
+    const far = (actor: { readonly position: readonly [number, number, number] }): number =>
+      Math.hypot(actor.position[0] - player[0], actor.position[1] - player[1]);
+    // The citizen of the hold farthest from the player (and from the door they stand at).
+    let citizen: number | undefined;
+    let farthest = 0;
+    for (const actor of sim.actors()) {
+      if (actor.dead) continue;
+      if ((await runtime.actors.crimeFaction(actor.reference)) !== whiterun) continue;
+      if (await runtime.crime.isGuard(actor.reference)) continue;
+      if (far(actor) > farthest) {
+        farthest = far(actor);
+        citizen = actor.reference;
+      }
+    }
+    expect(citizen).toBeDefined();
+    if (citizen === undefined) return;
+    // Farther than a force greet reaches: the guard has to come up.
+    expect(farthest).toBeGreaterThan(400);
+    const guard = await sim.place(await guardBase(sim, whiterun), citizen);
+    expect(await sim.until(() => sim.actor(guard) !== undefined, 20)).toBe(true);
+    const push = ai.pushEngine.bind(ai);
+    const pushed: [number, string, number | undefined][] = [];
+    ai.pushEngine = (reference, kind, runner, target) => {
+      pushed.push([reference, kind, target]);
+      return push(reference, kind, runner, target);
+    };
+    // The senses take the guard up a moment after it is staged; then the theft, seen by the
+    // citizen alone, whose alarm the guard hears.
+    const before = sim.menus().length;
+    await sim.step(1);
+    const crime = await runtime.crime.commit(CrimeType.steal, PLAYER_REF, {
+      act: 'steal',
+      victim: citizen,
+      faction: whiterun,
+      value: 100,
+      witnesses: [citizen],
+    });
+    expect(crime).toBeDefined();
+    expect(runtime.state.factions.get(whiterun)?.crimeGold).toBe(50);
+    expect(senses.detections.alarmedBy(guard)).toBe(PLAYER_REF);
+    // The guard is given the Alarm package aimed at the player, and is alarmed on it.
+    expect(
+      await sim.until(
+        () =>
+          pushed.some(
+            ([actor, kind, target]) => actor === guard && kind === 'alarm' && target === PLAYER_REF,
+          ),
+        10,
+      ),
+    ).toBe(true);
+    expect(ai.engineOf(guard)).toBe('alarm');
+    expect(senses.alarmed(guard)).toBe(true);
+    // Not the arresting actor while it pursues.
+    expect(runtime.state.crime.arrestingGuard).toBeUndefined();
+    // It comes up to the player and opens the conversation with its crime force greet.
+    const topics = await sim.listen(guard, 40);
+    expect(topics).toBeDefined();
+    const menu = sim
+      .menus()
+      .slice(before)
+      .find((entry) => entry.reference === guard);
+    expect(menu?.opening).toBe(await sim.formId('DIAL', 'DGCrimeForcegreetTopic'));
+    const guardAt = sim.actor(guard);
+    const playerAt = await sim.position(PLAYER_REF);
+    expect(guardAt && playerAt).toBeTruthy();
+    if (!guardAt || !playerAt) return;
+    // Within fAIMinGreetingDistance (150) of them, as its Alarm's reach asks.
+    expect(
+      Math.hypot(guardAt.position[0] - playerAt[0], guardAt.position[1] - playerAt[1]),
+    ).toBeLessThanOrEqual(150);
+    // The arrest's choices: the fine, jail, resisting.
+    expect(topics?.some((text) => /jail/i.test(text))).toBe(true);
+    expect(topics?.some((text) => /rather die/i.test(text))).toBe(true);
+    // The arresting actor from its force greet on, still on its Alarm (GetAlarmed) while they talk.
+    expect(runtime.state.crime.arrestingGuard).toBe(guard);
+    expect(ai.engineOf(guard)).toBe('alarm');
+    expect(senses.alarmed(guard)).toBe(true);
+    // The player walks off: the arrest is given up for now, the guard's Alarm ends.
+    sim.goodbye();
+    await sim.step(2.5);
+    expect(ai.engineOf(guard)).toBeUndefined();
+    expect(runtime.state.crime.arrestingGuard).toBeUndefined();
+    ai.pushEngine = push;
+  }, 300_000);
+});
 
 describe.skipIf(!hasGamedata())('jailed with a follower (headless simulation)', () => {
   let sim: Sim;

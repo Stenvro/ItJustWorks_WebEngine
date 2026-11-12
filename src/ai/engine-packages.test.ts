@@ -4,7 +4,9 @@
 import { describe, expect, it } from 'vitest';
 import { lasting, pack, packageActor, procedure, tick } from '../../tests/helpers/packages.ts';
 import {
+  ALARM_CALL_SECONDS,
   ALARM_SECONDS,
+  alarmConfronts,
   alarmPackage,
   avoidPlayer,
   avoidsPlayer,
@@ -366,7 +368,7 @@ describe('an NPC criminal, the guard that answers', () => {
     await tick(actor, 1);
     const hooks = {
       detects: () => Math.hypot(at.here[0] - criminal[0], at.here[1] - criminal[1]) < 500,
-      fight: (guard: number, other: number) => {
+      confront: (guard: number, other: number) => {
         fights.push([guard, other]);
       },
     };
@@ -399,7 +401,9 @@ describe('an NPC criminal, the guard that answers', () => {
     await tick(actor, 1);
     const hooks = {
       detects: () => false,
-      fight: (_guard: number, other: number) => fights.push(other),
+      confront: (_guard: number, other: number) => {
+        fights.push(other);
+      },
     };
     expect(actor.push('alarm', alarmPackage(hooks), CRIMINAL)).toBe(true);
     await tick(actor, 0.25);
@@ -411,6 +415,197 @@ describe('an NPC criminal, the guard that answers', () => {
     for (let i = 0; i < 4; i++) await tick(actor, 0.25);
     expect(actor.engine()).toBeUndefined();
     expect(fights).toEqual([]);
+  });
+
+  it('Alarm with a reach (an arrest): it comes that near before it confronts, calling after the criminal', async () => {
+    const at: { here: [number, number, number] } = { here: [2000, 0, 0] };
+    const criminal: [number, number, number] = [0, 0, 0];
+    const said: [number | string, number | undefined][] = [];
+    const arrivals: number[] = [];
+    let confronted = 0;
+    let over: (() => void) | undefined;
+    const { actor } = packageActor(
+      [pack(1, procedure('lasting'))],
+      { lasting },
+      {
+        mind: { livePosition: () => criminal },
+        body: {
+          position: () => at.here,
+          travel: (to, _gait, arrive) => {
+            arrivals.push(arrive);
+            at.here = [(at.here[0] + to[0]) / 2, (at.here[1] + to[1]) / 2, to[2]];
+            return Promise.resolve(true);
+          },
+          say: (topic, options) => {
+            said.push([topic, options?.target]);
+          },
+        },
+      },
+    );
+    await tick(actor, 1);
+    const hooks = {
+      // It sees the criminal all along: seeing it is not enough for an arrest.
+      detects: () => true,
+      reach: () => 150,
+      confront: () => {
+        confronted++;
+        return new Promise<void>((resolve) => {
+          over = resolve;
+        });
+      },
+    };
+    expect(alarmConfronts(true, 2000, 150)).toBe(false);
+    expect(alarmConfronts(true, 150, 150)).toBe(true);
+    expect(alarmConfronts(false, 100, 150)).toBe(false);
+    expect(alarmConfronts(true, 2000, undefined)).toBe(true);
+    expect(actor.push('alarm', alarmPackage(hooks), CRIMINAL)).toBe(true);
+    await tick(actor, 0.25);
+    expect(confronted).toBe(0);
+    // Its pursuit's line (PursueIdleTopic), to the criminal; it arrives within the reach.
+    expect(said).toEqual([['PURS', CRIMINAL]]);
+    expect(arrivals[0]).toBeLessThanOrEqual(150);
+    for (let i = 0; i < 12 && confronted === 0; i++) await tick(actor, 0.25);
+    expect(confronted).toBe(1);
+    expect(at.here[0]).toBeLessThanOrEqual(150);
+    // The package lasts through the confrontation (the arrest's conversation), then ends.
+    for (let i = 0; i < 8; i++) await tick(actor, 0.25);
+    expect(actor.engine()).toBe('alarm');
+    expect(confronted).toBe(1);
+    over?.();
+    await tick(actor, 0.25);
+    expect(actor.engine()).toBeUndefined();
+  });
+
+  it('Alarm calls after the criminal every ALARM_CALL_SECONDS of its pursuit', async () => {
+    let calls = 0;
+    const { actor } = packageActor(
+      [pack(1, procedure('lasting'))],
+      { lasting },
+      {
+        mind: { livePosition: () => [5000, 0, 0] },
+        body: {
+          position: () => [0, 0, 0],
+          travel: () => new Promise<boolean>(() => undefined),
+          say: () => {
+            calls++;
+          },
+        },
+      },
+    );
+    await tick(actor, 1);
+    const hooks = { detects: () => false, confront: () => undefined };
+    expect(actor.push('alarm', alarmPackage(hooks), CRIMINAL)).toBe(true);
+    for (let i = 0; i < ALARM_CALL_SECONDS * 4 - 2; i++) await tick(actor, 0.25);
+    expect(calls).toBe(1);
+    for (let i = 0; i < 4; i++) await tick(actor, 0.25);
+    expect(calls).toBe(2);
+  });
+
+  it('an Alarm left (the arrest given up) gives the actor its own package back', async () => {
+    const { actor } = packageActor(
+      [pack(1, procedure('lasting'))],
+      { lasting },
+      {
+        mind: { livePosition: () => [5000, 0, 0] },
+        body: { position: () => [0, 0, 0], travel: () => new Promise<boolean>(() => undefined) },
+      },
+    );
+    await tick(actor, 1);
+    const hooks = { detects: () => false, confront: () => undefined };
+    expect(actor.push('alarm', alarmPackage(hooks), CRIMINAL)).toBe(true);
+    await tick(actor, 0.25);
+    expect(actor.leave('flee')).toBe(false);
+    expect(actor.engine()).toBe('alarm');
+    expect(actor.leave('alarm')).toBe(true);
+    expect(actor.engine()).toBeUndefined();
+    await tick(actor, 1);
+    expect(actor.current?.id).toBe(1);
+  });
+
+  it('a package set aside for the Alarm no longer walks its actor off', async () => {
+    let go: (() => void) | undefined;
+    const travels: string[] = [];
+    // A procedure that looks something up, then travels (a Sandbox on its way to its place
+    // beyond a load door, as the guard is given its Alarm).
+    const wanders: ProcedureRunner = async (run) => {
+      await new Promise<void>((resolve) => {
+        go = resolve;
+      });
+      await run.body.travel([900, 0, 0], 'walk', 32);
+      return 'success';
+    };
+    const { actor } = packageActor(
+      [pack(1, procedure('wanders'))],
+      { wanders },
+      {
+        mind: { livePosition: () => [5000, 0, 0] },
+        body: {
+          position: () => [0, 0, 0],
+          travel: (to) => {
+            travels.push(to.join());
+            return new Promise<boolean>(() => undefined);
+          },
+        },
+      },
+    );
+    await tick(actor, 1);
+    expect(go).toBeDefined();
+    const hooks = { detects: () => false, confront: () => undefined };
+    expect(actor.push('alarm', alarmPackage(hooks), CRIMINAL)).toBe(true);
+    await tick(actor, 0.25);
+    // The Alarm's own leg, after the criminal.
+    expect(travels).toEqual(['5000,0,0']);
+    // What its own package waited for comes back: it was left, it goes nowhere.
+    go?.();
+    await tick(actor, 0.25);
+    expect(travels).toEqual(['5000,0,0']);
+    expect(actor.engine()).toBe('alarm');
+  });
+
+  it('packages being weighed as the Alarm is put in front wait until it ends', async () => {
+    let release: (() => void) | undefined;
+    let weighing = 0;
+    const travels: string[] = [];
+    const walks: ProcedureRunner = async (run) => {
+      await run.body.travel([900, 0, 0], 'walk', 32);
+      return lasting(run);
+    };
+    const packs = [pack(1, procedure('walks'))];
+    const { actor } = packageActor(
+      packs,
+      { walks },
+      {
+        mind: {
+          livePosition: () => [5000, 0, 0],
+          // Its package list takes a moment to read: its choice is under way meanwhile.
+          packagesOf: () =>
+            new Promise<number[]>((resolve) => {
+              weighing++;
+              release = () => {
+                resolve(packs.map((entry) => entry.formId));
+              };
+            }),
+        },
+        body: {
+          position: () => [0, 0, 0],
+          travel: (to) => {
+            travels.push(to.join());
+            return new Promise<boolean>(() => undefined);
+          },
+        },
+      },
+    );
+    await tick(actor, 1);
+    expect(weighing).toBe(1);
+    const hooks = { detects: () => false, confront: () => undefined };
+    expect(actor.push('alarm', alarmPackage(hooks), CRIMINAL)).toBe(true);
+    await tick(actor, 0.25);
+    release?.();
+    await tick(actor, 0.25);
+    // Only the Alarm's leg: the package chosen meanwhile does not start under it.
+    expect(travels).toEqual(['5000,0,0']);
+    expect(actor.current).toBeUndefined();
+    expect(actor.engine()).toBe('alarm');
   });
 
   it('Flee: the criminal runs beyond fFleeDoneDistanceExterior of the guard, fleeing until safe', async () => {
