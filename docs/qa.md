@@ -55,13 +55,17 @@ node tools/qa-run.ts --list
 
 The frame time of the new-game opening has a runner of its own, without the monitors (they cost
 frame time themselves): `node tools/qa-perf.ts --out <folder> [--minutes 16] [--every 30]
-[--window 6] [--width 1280 --height 720]` (Vite on 5201, Chrome on 9401 by default). It drives the
-opening as the `opening` scenario does and every `--every` seconds measures `--window` seconds of
-plain frames (fps, percentiles, the GPU's time per frame from timestamps round every pass,
-physics steps, path searches by the actor that searched), then the same time under the CPU
-profiler (a `.cpuprofile` per window, summarised per function and per file in `perf.md`), and
-takes a screenshot. The numbers of 2026-11-09 are in [rendering.md](rendering.md) ("The
-opening's frame").
+[--window 6] [--width 1280 --height 720] [--from-stage N]` (Vite on 5201, Chrome on 9401 by
+default). It drives the opening as the `opening` scenario does and every `--every` seconds
+measures `--window` seconds of plain frames (fps, percentiles, the GPU's time per frame from
+timestamps round every pass, path searches by the actor that searched; the physics by frame: the
+steps of each `PhysicsWorld.step`, their mean and the most in one frame, and its milliseconds'
+median, 95th percentile and maximum), then the same time under the CPU profiler (a `.cpuprofile`
+per window, summarised per function and per file in `perf.md`), and takes a screenshot. Each
+window also lists the simulated bodies awake at its end (`<n>-<stage>.awake.json`: whose they
+are, their layer, speed and spin, how far from the player, for how long they have been awake);
+`--from-stage` leaves the windows before an MQ101 stage out. The numbers of 2026-11-09 and
+2026-11-12 are in [rendering.md](rendering.md) ("The opening's frame", "The opening's physics").
 
 The output folder holds `summary.md` / `summary.json` (all scenarios: counts per system, frame
 times, the worst anomalies per system) and per scenario `report.md`, `report.json` (every
