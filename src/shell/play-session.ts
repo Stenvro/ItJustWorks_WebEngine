@@ -1688,13 +1688,12 @@ export class PlaySession {
    * distance's prompt, the fade itself (here only its time passes); whether the distance is the
    * player's feet or their character's middle.
    *
-   * A door takes the player through as an activation of theirs: none does while they may not
-   * activate (Player.allows: on their way through a door already or behind a loading screen,
-   * or Game.DisablePlayerControls' abActivate), neither as they come near nor once its fade has
-   * passed. The doors near are kept meanwhile, so one they stood by all along does not take
-   * them when they may activate again. TODO(M13): inferred for abActivate (an automatic door
-   * is the player's activation of it; what the original does with activation switched off is
-   * not known).
+   * None takes the player while they are on their way through a door already or behind a
+   * loading screen (Player.inputHeld: playerAway), neither as they come near nor once its fade
+   * has passed; the doors near are kept meanwhile, so one they stood by all along does not take
+   * them once they are there. Game.DisablePlayerControls' abActivate does not stop one: the game
+   * data needs it to take them, since MQ101 keeps activation off from stage 0 to 240 and its way
+   * into HelgenKeep01 is the automatic doors 25fae and 25fb2.
    */
   #watchAutoDoors(): void {
     const doors = this.autoDoors?.();
@@ -1709,7 +1708,8 @@ export class PlaySession {
     }
     const watched = this.#seenAutoDoors;
     this.#seenAutoDoors = seen;
-    const may = this.player.allows('Activate');
+    const away = (): boolean => this.player.inputHeld?.() === true;
+    const may = !away();
     for (const reference of near) {
       // Coming near: one the player arrives by (just loaded) does not send them back.
       if (this.#nearAutoDoors.has(reference) || !watched.has(reference)) continue;
@@ -1720,7 +1720,7 @@ export class PlaySession {
       }
       const seconds = this.player.ini.number('General', 'fAutoDoorFadeSecs');
       setTimeout(() => {
-        if (this.player.allows('Activate')) this.onAutoDoor?.(reference);
+        if (!away()) this.onAutoDoor?.(reference);
       }, seconds * 1000);
     }
     this.#nearAutoDoors = near;
