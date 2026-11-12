@@ -2020,11 +2020,14 @@ export class PhysicsWorld {
    *
    * A ragdoll's limits are its twist's, its plane's (the swing toward its plane axis) and its
    * cone (its twist axes within an angle of each other, whichever way they swing). The cone is
-   * one spring about the axis the two twist axes turn about, straight back toward the cone: its
-   * torque goes to the two swings' motors by the share of that direction along each (each
-   * holding it with CONE_HOLD of the stiffness), so a joint swung along one of them is held by
-   * that one alone and the other is free, and between the two the springs' torques add up to
-   * the cone's. The swing toward the plane axis has the plane's spring too where it lies past
+   * one spring about the axis the two twist axes turn about (the swing of the joint's turn
+   * taken apart into a swing and then a twist), straight back toward the cone however far the
+   * joint is twisted: its torque goes to the two swings' motors by the share of that axis
+   * along each (each holding it with CONE_HOLD of the stiffness), so a joint swung along one
+   * of them is held by that one alone and the other is free, and between the two the springs'
+   * torques add up to the cone's. (Rapier's own two swing parts of the turn lie turned by half
+   * the twist from that axis: shared by them, the push on a twisted joint went aside too.)
+   * The swing toward the plane axis has the plane's spring too where it lies past
    * the plane's limits. Rapier's limits on the two swings (the box about the cone) stand as
    * for the others, and what swings a joint past the cone between them is stopped by the
    * constraint solver: it takes out the speed the bodies have further past a cone that gives,
@@ -2157,11 +2160,22 @@ export class PhysicsWorld {
       const near = !on && giving.coned && excess > -GIVE_SLACK;
       const spring = (on || near) && half > 1e-6 ? give('cone') : undefined;
       if (spring) {
+        // The axis the twist axes turn about. The turn (w, x, y, z), x about the twist axis, is a
+        // swing s about an axis across it, then a twist t about it: w = cos s/2 cos t/2,
+        // x = cos s/2 sin t/2, and (y, z) is the swing's own sin s/2 × axis turned back by t/2.
+        // So (w y - x z, w z + x y) is that axis × sin s/2 cos s/2. Shared by Rapier's (y, z),
+        // the push on a twisted joint went aside too: a 10 kg weight on a cone of 0.5 rad came
+        // to rest 2.3, 5.4 and 7.2 units beside its lowest point at 0.2, 0.45 and 0.7 rad of
+        // twist ("lets a twisted ragdoll joint's cone give …").
+        const twist = Math.sin(jointAngle(joint, RAPIER.JointAxis.AngX) / 2);
+        const w = Math.sqrt(Math.max(0, 1 - twist * twist - half * half));
+        const swing = [w * parts[0] - twist * parts[1], w * parts[1] + twist * parts[0]] as const;
+        const length = Math.hypot(swing[0], swing[1]);
         for (let i = 0; i < axes.length; i++) {
           const axis = axes[i];
           const push = pushes[i];
-          if (!axis || !push || axis.index === 0) continue;
-          const along = parts[axis.index === 1 ? 0 : 1] / half;
+          if (!axis || !push || axis.index === 0 || length < 1e-9) continue;
+          const along = swing[axis.index === 1 ? 0 : 1] / length;
           if (along * along < CONE_SHARE) continue;
           const share = Math.min(1, CONE_HOLD * along * along);
           if (on) add(push, spring.stiffness, excess * along, share);

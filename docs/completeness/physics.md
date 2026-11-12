@@ -144,7 +144,10 @@ axes turn about (its spring is the two swings' motors together; the solver's con
 held a load in the spring's place and pushed back where the load pressed between the two
 swings, now only stops what swings into the cone): a 10 kg weight on a joint with a 45° cone
 rests 0.46° to 0.50° past it whichever way it swings, by the rule 0.49° (it was 0.12° on a
-swing's axis and 0.04° between them). A limit only pushes back (its spring held a joint a
+swing's axis and 0.04° between them), and on a twisted joint at the cone's lowest point (the
+spring's direction is the swing of the joint's turn taken apart from its twist, where Rapier's
+two swing parts lie turned by half the twist: the weight rested up to 7.2 units aside at
+0.7 rad of twist). A limit only pushes back (its spring held a joint a
 little within it before), and its stiffness follows the step (Slow Time)
 (src/physics/physics-world.test.ts, "physics constraints"). The race skeletons' ragdolls
 settle better with the give (47, 41 and 46 of 52 at rest within 20 s pushed, still and lifted,

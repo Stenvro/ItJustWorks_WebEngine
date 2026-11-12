@@ -824,14 +824,17 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   of its excess a step at most. A limit of one angle (the Dwemer spider's) stays Rapier's own.
   A ragdoll joint has three such limits: its twist's, its plane's (the swing toward its plane
   axis, where that is narrower than the cone) and its cone, which is one limit about the axis
-  its two twist axes turn about from each other, whichever way they swing. Rapier's motors
-  are about the joint's own axes, so the cone's spring is the two swings' motors together:
-  each takes the cone's torque by the share of the cone's direction along its axis (the two
-  shares are the sines of half the two swing angles over the sine of half the angle between
-  the twist axes), toward a target that far back, and holds it with four times that share
-  squared of the cone's stiffness, the whole of it at the most. A joint swung along one swing
-  is so held by that motor alone, and between the two their torques add up to the cone's,
-  straight back toward it. What swings a joint past its cone is stopped by the constraint
+  its two twist axes turn about from each other, whichever way they swing and however far the
+  joint is twisted. Rapier's motors are about the joint's own axes, so the cone's spring is
+  the two swings' motors together: each takes the cone's torque by the share of the cone's
+  direction along its axis, toward a target that far back, and holds it with four times that
+  share squared of the cone's stiffness, the whole of it at the most. The direction is the
+  swing of the joint's turn taken apart into a swing across the twist axis and then a twist
+  about it: with the turn (w, x, y, z), x about the twist axis, it is (w y − x z, w z + x y)
+  over its length. Rapier's own two swing parts of the turn, (y, z), lie turned from it by
+  half the twist; shared by them, the push on a twisted joint went aside too. A joint swung
+  along one swing is so held by that motor alone, and between the two their torques add up
+  to the cone's, straight back toward it. What swings a joint past its cone is stopped by the constraint
   solver, which takes out the speed its bodies have further past the cone (not pushing it
   back), solved before the rest on the velocities as they are, without the step's gravity.
   Counted with gravity's speed, as the cone's row was while a swing's spring was on, the row
@@ -840,8 +843,12 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   cone of 45° between a fixed bracket and an inertia of 1 (the rule: 0.49° past the cone):
   0.12° on a swing's own axis and 0.04° between them then, 0.46° to 0.50° at 0°, 15°, 45°, 75°
   and 90° from the swing axis now; with an inertia of 0.2, 1.87° then and 2.37° now against
-  2.36°; a limited hinge between the same two, 0.43° against 0.39° (`physics-world.test.ts`,
-  "lets a ragdoll joint's cone give …", "… plane limit give …", "measures a … limit's give
+  2.36°; a limited hinge between the same two, 0.43° against 0.39°. On the tests' cone of
+  0.5 rad (the rule: 0.61°), 0.61° to 0.62° at those five swing axes, and twisted 0.2, 0.45
+  and 0.7 rad within its twist limits 0.59° to 0.61°, at rest 0.00 to 0.09 units from the
+  cone's lowest point; shared by Rapier's two parts, 2.3, 5.4 and 7.2 units aside
+  (`physics-world.test.ts`, "lets a ragdoll joint's cone give …", "lets a twisted ragdoll
+  joint's cone give …", "… plane limit give …", "measures a … limit's give
   again as the step changes", "lets a joint swing back off a limit …"; `constraint-solver.test.ts`,
   "leaves the load on a cone that gives …"). TODO(M13): the turn taken back between the rows
   is taken as all of it (a hanging limb's pivot gives back less: a stiffer limit); how far a

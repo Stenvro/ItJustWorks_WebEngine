@@ -658,7 +658,7 @@ describe('physics constraints', () => {
    */
   function onRagdoll(
     alpha: number,
-    limits: { cone: number; planeMin?: number; planeMax?: number },
+    limits: { cone: number; planeMin?: number; planeMax?: number; twist?: number },
     mass = 10,
   ): CollisionData {
     const bracket = body(box([-5, -5, -5], [5, 5, 5]));
@@ -694,8 +694,8 @@ describe('physics constraints', () => {
             coneMaxAngle: limits.cone,
             planeMinAngle: limits.planeMin ?? -3,
             planeMaxAngle: limits.planeMax ?? 3,
-            twistMinAngle: -0.5,
-            twistMaxAngle: 0.5,
+            twistMinAngle: -(limits.twist ?? 0.5),
+            twistMaxAngle: limits.twist ?? 0.5,
             maxFriction: 0,
             motor: { type: 'none' },
           },
@@ -715,7 +715,8 @@ describe('physics constraints', () => {
   // The rule of the test above for a ragdoll's limits (their tau factor is 0.8): a spring of
   // 4 × 0.48 × 60² = 6912 N·m a radian between the bracket and an inertia of 1, about whatever
   // axis the joint is pressed past its cone, so the weight (74 N·m at that angle) rests 0.6°
-  // past a cone of 0.5 rad whichever way it swings into it. The cone's own row in the
+  // past a cone of 0.5 rad whichever way it swings into it (untwisted here; twisted, the next
+  // test). The cone's own row in the
   // constraint solver, which counted gravity's speed of the step, held the weight in the
   // spring's place: it rested 0.15° past the cone on either swing's own axis, and between the
   // two, where the swings' limits had no spring, the row alone held it, still turning (0.02
@@ -745,6 +746,38 @@ describe('physics constraints', () => {
       expect(most - 0.5).toBeLessThan(0.03);
       // It hangs straight down from where it was: back in its cone, not beside it.
       expect(Math.abs(weight.translation().x) * 69.99125).toBeLessThan(1);
+      physics.free();
+    },
+  );
+
+  // A twisted joint: the weight let go level, turned about its own (twist) axis within the
+  // twist's limits, falls into its cone and comes to rest at the cone's lowest point, by the
+  // same give as untwisted. Rapier's two swing parts of the joint's turn lie turned by half the
+  // twist from the axis the two twist axes turn about; pushed along them, the weight came to
+  // rest beside the lowest point: 2.3, 5.4 and 7.2 units aside at these twists.
+  it.each([0.2, 0.45, 0.7])(
+    "lets a twisted ragdoll joint's cone give back toward its lowest point, twisted %s rad",
+    (twist) => {
+      const physics = new PhysicsWorld(matrix, GRAVITY);
+      const data = onRagdoll(0, { cone: 0.5, twist: 1.5 });
+      const placed = physics.addObject(data, IDENTITY, { reference: 1, kind: 'object' }, false);
+      for (const { body: held } of placed.bodies) physics.release(held);
+      const weight = placed.bodies[1]?.body;
+      expect(weight).toBeDefined();
+      if (!weight) return;
+      weight.setRotation({ x: 0, y: Math.sin(twist / 2), z: 0, w: Math.cos(twist / 2) }, true);
+      for (let i = 0; i < 600; i++) physics.step(1 / 60);
+      const speed = weight.angvel();
+      expect(Math.hypot(speed.x, speed.y, speed.z)).toBeLessThan(0.01);
+      // Still twisted as it was: the twist of its turn taken apart into a swing across y and
+      // then a twist about it.
+      const q = weight.rotation();
+      expect(Math.abs(2 * Math.atan2(q.y, q.w) - twist)).toBeLessThan(0.02);
+      const give = load(0.5) / (4 * 0.48 * 3600);
+      expect(below(weight) - 0.5).toBeGreaterThan(give * 0.7);
+      expect(below(weight) - 0.5).toBeLessThan(give * 1.3);
+      // At the cone's lowest point, not beside it.
+      expect(Math.abs(weight.translation().x) * 69.99125).toBeLessThan(0.5);
       physics.free();
     },
   );
