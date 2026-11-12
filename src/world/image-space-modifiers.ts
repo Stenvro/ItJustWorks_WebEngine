@@ -10,6 +10,7 @@
 // the record says "use target" (IMAD DNAM 0xC8, 0xE0); others keep the record's centre and focus.
 // Notes: docs/rendering.md ("Image-space modifiers").
 
+import { stepSince } from './frame-timer.ts';
 import {
   NO_SCREEN_EFFECTS,
   type ImageSpace,
@@ -230,6 +231,22 @@ export class ImageSpaceModifiers {
     this.#applied.clear();
     this.#chain.length = 0;
     this.#leaving = [];
+  }
+
+  /** The clock at the last advanceTo (seconds). */
+  #clock: number | undefined;
+
+  /**
+   * Advances the timelines to `clock` (seconds): the session's frame clock, the sum of the frame
+   * timer's steps (frame-timer.ts), so a frame moves them by the step every system takes; only a
+   * gap (no frame asked meanwhile) is shortened (stepSince). The first call sets the clock.
+   * TODO(M13): inferred that the timelines run on the frame's real-time step (they run on in
+   * menus; before, on the real clock itself, up to 0.25 s a frame).
+   */
+  advanceTo(clock: number): void {
+    const last = this.#clock;
+    this.#clock = clock;
+    if (last !== undefined) this.advance(stepSince(clock - last));
   }
 
   /** Advances the timelines and cross-fades; animated modifiers end after their duration. */

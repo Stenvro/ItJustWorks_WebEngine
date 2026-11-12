@@ -1,8 +1,9 @@
 // The session's image-space modifiers (IMAD): what scripts (ImageSpaceModifier.Apply, ...)
 // and the shell (the menus' ISMTween, low health) put on the screen by form id, loaded from
-// the records, running in real time and laid over the viewers' imagespace each frame (the
-// weather's in exteriors, the cell's indoors). The modifiers themselves:
-// src/world/image-space-modifiers.ts.
+// the records, running on the session's frame clock (real time as the frame timer counts it:
+// they run on in menus, and a long frame moves them no further than the rest of the game) and
+// laid over the viewers' imagespace each frame (the weather's in exteriors, the cell's indoors).
+// The modifiers themselves: src/world/image-space-modifiers.ts.
 
 import { NEUTRAL_IMAGE_SPACE, type ImageSpace } from '../world/image-space.ts';
 import { parseImageSpaceModifier, type ImageSpaceModifier } from '../world/image-space-modifier.ts';
@@ -15,9 +16,6 @@ import {
 import type { RecordDatabase } from '../world/record-db.ts';
 import type { Terminal } from './terminal.ts';
 
-/** The longest step the timelines take at once (a frame after the tab was hidden). */
-const MAX_STEP_SECONDS = 0.25;
-
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
@@ -28,11 +26,16 @@ export class ScreenModifiers {
   readonly #records = new Map<number, Promise<ImageSpaceModifier | undefined>>();
   /** Requests run in order (a Remove after an Apply waits for the Apply's record). */
   #queue: Promise<void> = Promise.resolve();
-  #last: number | undefined;
+  readonly #clock: () => number;
 
-  constructor(db: Promise<RecordDatabase>, terminal: Terminal) {
+  /**
+   * `clock`: the session's frame clock (seconds; GameSession.frameSeconds), which every viewer's
+   * frame reads the timelines' step off.
+   */
+  constructor(db: Promise<RecordDatabase>, terminal: Terminal, clock: () => number) {
     this.#db = db;
     this.#terminal = terminal;
+    this.#clock = clock;
   }
 
   /** The view the screen is seen from (modifiers that aim at their target: an explosion). */
@@ -89,13 +92,12 @@ export class ScreenModifiers {
   }
 
   /**
-   * The imagespace with the modifiers laid over it; advances their timelines to `now`
-   * (milliseconds). Without modifiers the imagespace itself.
+   * The imagespace with the modifiers laid over it; advances their timelines to the frame clock
+   * (ImageSpaceModifiers.advanceTo: by the frame's step, as the frame timer handed it out for
+   * every system). Without modifiers the imagespace itself.
    */
-  imageSpace(base: ImageSpace | undefined, now = performance.now()): ImageSpace | undefined {
-    const seconds = this.#last === undefined ? 0 : Math.max(0, (now - this.#last) / 1000);
-    this.#last = now;
-    this.#stack.advance(Math.min(MAX_STEP_SECONDS, seconds));
+  imageSpace(base: ImageSpace | undefined): ImageSpace | undefined {
+    this.#stack.advanceTo(this.#clock());
     if (this.#stack.empty) return base;
     return this.#stack.modify(base ?? NEUTRAL_IMAGE_SPACE, this.view?.());
   }

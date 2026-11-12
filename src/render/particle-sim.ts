@@ -17,6 +17,31 @@ import type {
   ParticleSystemData,
   ParticleTrack,
 } from './particle-data.ts';
+import { stepSince } from '../world/frame-timer.ts';
+
+/**
+ * Longest step of a system that was left out of the last update (out of view, far away, hidden):
+ * back, it goes on by this much, not by the time it missed.
+ */
+export const PARTICLE_MAX_STEP = 0.1;
+
+/**
+ * A system's step (seconds) at an update at `seconds` of the renderer's clock: `updated` is when
+ * it last ran, `previous` when the update before this one was. One that ran in that update takes
+ * the clock's whole step, as the frame timer cut it for every system (stepSince: a frame below
+ * 10 a second is longer than PARTICLE_MAX_STEP, and cut to that the particles ran slower than
+ * the actors that cast them); one that was left out takes at most PARTICLE_MAX_STEP.
+ */
+export function particleStep(
+  seconds: number,
+  updated: number | undefined,
+  previous: number | undefined,
+): number {
+  if (updated === undefined) return 0;
+  const since = seconds - updated;
+  if (previous !== undefined && updated >= previous) return stepSince(since);
+  return Math.max(0, Math.min(PARTICLE_MAX_STEP, since));
+}
 
 /** Floats per drawn particle: position, size, RGBA, atlas rect, axis, rotation. */
 export const PARTICLE_FLOATS = 16;

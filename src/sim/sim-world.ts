@@ -678,6 +678,7 @@ export class SimWorld {
       real = this.#frameTimer.step(seconds);
     }
     this.#frameStep = real;
+    session.frameSeconds += real;
     // The game's clock stands still in menus; Slow Time runs it slower (main.ts's frame clock).
     const frame = session.menuMode ? 0 : real * session.time.multiplier;
     this.clock.advance(seconds);

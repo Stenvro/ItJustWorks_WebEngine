@@ -452,7 +452,6 @@ export class WorldSky {
     this.#imageSpace = underwaterImageSpace(
       this.#session.imageSpaceModifiers.imageSpace(
         spaces.length > 0 ? blendImageSpaces(spaces) : undefined,
-        now,
       ),
       this.#underwaterImageSpace,
     );
