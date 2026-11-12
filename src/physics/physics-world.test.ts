@@ -589,6 +589,67 @@ describe('physics constraints', () => {
     physics.free();
   });
 
+  // Havok's solver leaves a limit as stiff as its iterations make it (constraint-solver.ts,
+  // limitGive): a 10 kg weight held out level, 60 units from its hinge, presses on the limit
+  // 0.1 rad down with 10 × 9.81 × 60 / 69.99 ≈ 84 N·m; between a fixed bracket and an inertia
+  // of 1 about the axle the limit is a spring of 4 × 0.6 × 60² = 8640 N·m a radian, so the
+  // weight rests about 0.0097 rad past it. Rapier's own limit held it at 0.1 to the hair.
+  it("let a limited hinge's limit give under a load as Havok's solver leaves it", () => {
+    const bracket = body(box([-5, -5, -5], [5, 5, 5]));
+    const at = new Float32Array(IDENTITY);
+    at[13] = 60;
+    const weight: CollisionBody = {
+      ...body(box([-10, -10, -10], [10, 10, 10])),
+      node: 'Weight',
+      transform: at,
+      motion: 'dynamic',
+      layer: Layer.clutter,
+      mass: 10,
+      inertia: [1, 1, 1],
+    };
+    const rest = (minAngle: number, maxAngle: number): number => {
+      const physics = new PhysicsWorld(matrix, GRAVITY);
+      const placed = physics.addObject(
+        {
+          bodies: [bracket, weight],
+          constraints: [
+            {
+              bodyA: 1,
+              bodyB: 0,
+              data: {
+                type: 'limited-hinge',
+                a: frame([0, -60, 0]),
+                b: frame([0, 0, 0]),
+                minAngle,
+                maxAngle,
+                maxFriction: 0,
+                motor: { type: 'none' },
+              },
+            },
+          ],
+          skipped: [],
+        },
+        IDENTITY,
+        { reference: 1, kind: 'object' },
+        false,
+      );
+      for (const { body: held } of placed.bodies) physics.release(held);
+      for (let i = 0; i < 300; i++) physics.step(1 / 60);
+      const t = placed.bodies[1]?.body.translation();
+      const speed = placed.bodies[1]?.body.angvel();
+      physics.free();
+      // At rest.
+      expect(Math.hypot(speed?.x ?? 1, speed?.y ?? 1, speed?.z ?? 1)).toBeLessThan(0.05);
+      return Math.atan2(-(t?.z ?? 0), t?.y ?? 1);
+    };
+    const give = (10 * 9.81 * (60 / 69.99125) * Math.cos(0.1)) / (4 * 0.6 * 3600);
+    const down = rest(-0.1, 0.1);
+    expect(down - 0.1).toBeGreaterThan(give * 0.7);
+    expect(down - 0.1).toBeLessThan(give * 1.3);
+    // A limit of one angle stays stiff.
+    expect(Math.abs(rest(0, 0))).toBeLessThan(0.002);
+  });
+
   it('break when a step pulls on them harder than their threshold', () => {
     const rope = {
       type: 'stiff-spring' as const,

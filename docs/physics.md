@@ -739,7 +739,9 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   through by them within Rapier's step (a chicken's ankle 40° past its cone at rest), and its
   push back, left in or taken off, kept the bodies creeping or shaking (32 of 52 race skeletons
   at rest within 20 s). Easing every excess changes nothing for a body standing on its joints'
-  limits (Hulda below): they lie at their limits, not past them.
+  limits (Hulda below): they lie at their limits, not past them. Only a limit of one angle is
+  eased so now: the others give (below, "A limit's give") and come back by their spring, by
+  tau of their excess a step at most.
 - **Error clipping:** Havok clips a constraint's positional error to the world's maximum
   constraint violation (0.05 Havok units, above): a ragdoll or limited hinge joint whose two
   pivots lie farther apart (a ragdoll pulled apart: a limb pushed out of a rock the rest lies in)
@@ -775,58 +777,68 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   leans at the Bannered Mare's counter (a Ragdoll death, no blow), stayed asleep on her feet,
   her hips and knees in the box but past the cone and held there by their friction; with the
   cone she slumps to the floor (`ragdolls-death.test.ts`) when killed 0.5 or 5 s into her lean
-  idle. Killed at 1 to 4.5 s her upper body tips onto the counter while her hips bend to
-  their limit and her knees straighten to theirs, her feet flat at the ankles' limit: her legs
-  stand as a locked strut and she stays draped over the counter (head at 96–99 units). It is
-  the solver's give, not the limits' softness: Rapier at 4 or 5 substeps (the original's world
-  solves with four iterations) leaves the strut loose enough to buckle and she slumps in every
-  phase, but the race skeletons' ragdolls then settle worse (`node tools/ragdoll-info.ts`: at 5,
-  46 of 52 still and 47 of 52 pushed rest within 20 s, at 4 46 and 46, against 51 and 48 at 8;
-  Rapier's internal iterations at 2 stiffen it again). Lifting her out of the floor her animated
-  feet start 6 units into, or her joints' friction at 0 or 1.5 times, does not change it.
-  Observed in the original (round 5): a dead actor's ragdoll is set up with nothing of its own.
-  Its constraints are its files' (the behavior's ragdoll takes the mesh's constraint data as it
-  is: the limits, their tau factors, the friction, no motor), solved in the world's solver
-  (above: no per-ragdoll tau, damping or iterations), and made dynamic it is only woken and its
-  still bodies lifted (below). With today's joints and that lift, Rapier at four substeps keeps
-  her standing too (head at 91–93 units at 1, 2, 2.5 and 3 s; 44 of 52 still and 45 of 52 pushed
-  at rest within 20 s); only two substeps buckle the strut. The foot capsules point 36° toe
-  down at the skeleton's rest, and the ankle's limit (3.6°) leaves them 5° short of flat: a
-  foot pressed flat holds its calf leaning back, the knee behind the line from hip to ankle,
-  locked at its limit. Traced at 1, 2 and 3 s (and swept at 1 to 4.5 s): within a second of the
-  kill her feet are pressed flat onto that limit and her knees straightened to theirs, then her
-  thighs spread to their plane limits and every joint of her legs lies at a limit, the hips at the
-  cone. Her bodies fall asleep about 2 s after the kill, but sleep is not what holds her: kept
-  from sleeping (bodies created unable to sleep, and the solver deactivation off) she still stands
-  5 s on. That one limit
-  decides it: 8° more dorsiflexion and she slumps at 1 and 2 s (at 3 s her other knee stays
-  locked). The placed ragdoll poses (the Creation Kit's settled Havok state) lie past their
-  limits often (`node tools/ragdoll-info.ts --limits`, mirrored, of the 1,257 complete poses;
-  the tool prints each joint's limits as the file gives them, lower the minimum angle, upper
-  the maximum): of 1,992 ankles (NPC Foot to NPC Calf, -34° to 3.6°) 83 past the upper limit,
-  the dorsiflexion's, by more than 1° and 23 by more than 5° (240 and 161 past the lower); of
-  2,034 knees (NPC Calf to NPC Thigh, -110° bent to 0° straight, as skeleton.nif and
-  skeleton_female.nif both give it) 38 and 9 past the straight limit, the upper one (82 and 5
-  past the bent one); of 2,002 elbows (0° to 110°) 424 and 15 past the 0° limit; of 1,842
-  shoulders' planes (-75° to 5°) 384 and 141 past the 5° limit. So Havok's limits give under a
-  corpse's own weight, by a few degrees and in some poses far more, the knees' straight side
-  and the ankles' dorsiflexion among them. Tried and not kept: a give in proportion to the load
-  a limit carries (the load's torque impulse × the step over the iterations × the joint's own
-  inertia × tau, as a Gauss-Seidel solve of a light link under a heavy load in four iterations
-  falls short). The load was read twice, from the step's change of momentum of each side of the
-  joint less gravity and its contacts' normal impulses (the contacts' friction impulses were not
-  read), and the two readings never agreed: from her foot's side her ankle and her knee came out
-  at about 3 N·m pressed on their limits, from the other side (through the counter's contacts)
-  about 50 times more, and which of the two is nearer is not known (the floor's friction on her
-  feet is missing from the one, the counter's from the other). The give took the lesser of the
-  two readings, and none where they did not both press the limit, so at her ankle it was at most
-  what 3 N·m earns, a fraction of a degree, by construction, far from the 8° that let her slump.
-  The race skeletons settled a little worse with it (49, 48 and 48 of 52 at rest within 20 s,
-  still, pushed and lifted, against 51, 48 and 50). This rules out that reading of the load, not
-  a give of Havok's limits under her load. TODO(M13): the load her ankles and knees carry at
-  their limits is unmeasured (the two readings disputed, the contacts' friction not counted);
-  with it measured, whether her limits' give at four iterations buckles the strut, or something
-  other than the limits does.
+  idle. Killed at 1 to 4.5 s she stood on, bent over the counter on locked legs, until her
+  limits gave (next).
+- **A limit's give** (inferred from Havok's solver, TODO(M13); `limitGive`,
+  `PhysicsWorld.#giveLimits`): Havok's solver takes each constraint's rows in turn, four times
+  a step, each step from no impulse. Each time, a limit's row drives its two bodies' relative
+  turn about its axis to the speed that closes tau (× the limit's tau factor) of the excess in
+  the step, with an impulse of that speed over the two bodies' inverse inertia about the axis;
+  what else holds the bodies (their pivot, their contacts, their other joints) takes that turn
+  back between the rows. So a limit pushes back with iterations × tau × excess / (step × that
+  inverse inertia) a step at most: it is a spring of iterations × tau / (inverse inertia ×
+  step²) a radian, and a load pressing on it holds the joint past it in proportion, the more
+  the lighter its bodies. A human ankle (a 3 kg foot of 0.012 kg·m² about the axle, a calf of
+  0.12) is 94 N·m a radian, a knee 570, a hip 630, a neck 150, a head on its neck 90. The
+  placed ragdoll poses (the Creation Kit's settled Havok state) lie past their limits as that
+  gives (`node tools/ragdoll-info.ts --limits`, of the 1,257 complete poses, mirrored; the tool
+  prints each joint's limits as the file gives them, lower the minimum angle, upper the
+  maximum, and how many lie past each by more than 0.25°, 1° and 5°): of 1,992 ankles (NPC
+  Foot to NPC Calf, -34° to 3.6°) 1,013 lie past the lower limit, a foot hanging with its toes
+  down, by more than 0.25° and 240 by more than 1° (188 and 83 past the upper, the
+  dorsiflexion's); of 2,002 elbows (0° to 110°) 842 and 424 past the straight limit; of 1,972
+  wrists (-5° to 20°) 661 and 141 past the upper; of 976 necks (NPC Neck to NPC Spine2, a cone
+  of 5° that carries the head) 800 and 634 past the cone; of 2,034 knees (-110° bent to 0°
+  straight) 315 and 38 past the straight limit. By the rule a head held level (4 kg, its
+  centre 0.05 m from its neck joint) rests 1.2° past its cone and a neck that carries it (10 N·m)
+  3.8°. Rapier's limits do not yield at all. So a joint past such a limit is pushed back by a
+  spring of the limit's stiffness, the joint's motor on that axis toward the limit (force
+  based, solved with the contacts in Rapier's step; damped by 0.2 × its stiffness × the step:
+  with more, Rapier's motor, solved once a substep, holds less than its spring's torque), on
+  from where the joint passes the limit until it is back within it by 0.005 radians (a joint
+  resting at its limit would turn it on and off, and each change wakes its bodies); Rapier's
+  own limit stands 0.02 radians past where the joint is, so what swings into the limit is
+  stopped there (Havok's limit takes the speed into it out) and what presses on it moves it on
+  a step at a time until the spring holds the load; it follows the joint only once it has
+  moved half of that. A joint far past its limit (more than 0.05 radians: a dying actor's
+  animated pose let go) comes back by tau of its excess a step at most. A limit of one angle (the Dwemer spider's) stays Rapier's own. While a swing limit's spring
+  holds a ragdoll joint past its limit, and so past its cone, the cone (above) only takes out
+  the speed further past it and leaves the push back to the spring: pushed back by both, every
+  step against the load that holds it there, the bodies shook and did not sleep (a human let
+  go standing came to rest after 28 s; 8 s so). TODO(M13): the turn taken back between the rows is
+  taken as all of it (a hanging limb's pivot gives back less: a stiffer limit); how far a
+  swing into a limit goes through in a step (0.02 radians here).
+  Hulda, killed 1 to 4.5 s into her lean: her upper body tips forward over the counter until
+  her hips are at their cone, and its weight then bears on her legs through their limits (the
+  foot capsules point 36° toe down at the skeleton's rest, and the ankle's limit, 3.6°, leaves
+  them 5° short of flat: a foot pressed flat holds its calf leaning back, the knee straight at
+  its limit). With limits that do not yield that is a strut, and she stood (head at 96–101
+  units; on this tip in all ten phases from 0.5 to 5 s, the two that slumped before among
+  them: the pose she dies in decides it); kept from sleeping she still stood 5 s on, and 8° more dorsiflexion let her slump.
+  Measured with the ankle a spring of 181 N·m a radian (a first rule, twice this one's
+  stiffness; killed 1 s in, 1.5 s on): her left ankle 6.1° past its limit (19 N·m), her right
+  4.1° (13 N·m), her left knee 2.3° past straight (46 N·m), her left hip 1.2° past its swing
+  limit, and she stood. With this rule (her ankles 96 N·m a radian) her calves come forward
+  over her feet, her knees fold and she is down within 1.5 s in every phase from 0.5 to 5 s
+  (head at 13–24 units 5 s on; `ragdolls-death.test.ts`). The race skeletons' ragdolls settle
+  better with it than without (`node tools/ragdoll-info.ts`, on this tip: 45 pushed, 48 still
+  and 45 lifted of 52 at rest within 20 s, against 34, 35 and 32 without the give; the 48, 51
+  and 50 measured in earlier rounds are not reached on this tip either way, which was not
+  looked into here). Tried before and not kept: Rapier at 4 or 5 substeps (she slumped, the
+  race skeletons settled worse; with the still bodies' lift she stood at four too), her
+  joints' friction at 0 or 1.5 times, lifting her out of the floor her animated feet start 6
+  units into, and a give in proportion to a load read off the bodies' momentum (the two
+  readings of it never agreed).
 - **Made dynamic** (observed in the original: the behavior's ragdoll driver set to dynamic):
   every body of it that is then of a dynamic motion type and moves slower than 0.5 Havok units
   a second is activated and given 0.5 Havok units a second more upward speed, so that nothing

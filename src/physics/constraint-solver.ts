@@ -11,6 +11,9 @@
 // - Soft limits: a joint let go past its limits (a dying actor's animated pose) comes back by
 //   the solver's tau (× the limit's tau factor) of the way each step, not within one step
 //   (Rapier's limits are stiff: a body flew off at 2,000 units a second): easedLimits.
+// - A limit's give: a load pressing a joint on its limit holds it past it, by the stiffness
+//   the solver's iterations leave the limit (Rapier's limits do not yield: a body let go
+//   standing stood on its locked ankles and knees): limitGive.
 // - Solver deactivation: a slow body is slowed down further (slowBodyFactor).
 // - The cone: a ragdoll joint's twist axis stays within its cone about the first body's (Havok's
 //   cone limit; Rapier's limits are a box of two swings, wider on its diagonals).
@@ -116,6 +119,11 @@ export interface SolverJoint {
   readonly constraint: SolverConstraint;
   /** Its motor while its ragdoll is powered (none: limp, its friction holds it). */
   motor?: JointMotor | undefined;
+  /**
+   * A ragdoll joint one of whose swing limits' springs is on (PhysicsWorld.#giveLimits): the
+   * spring brings it back, so its cone only takes out the speed further past it.
+   */
+  sprung?: boolean;
 }
 
 // --- Vectors ------------------------------------------------------------------------------------
@@ -380,7 +388,10 @@ export function solveJoints(
       const swing = Math.acos(Math.max(-1, Math.min(1, dot(ta, tb))));
       const excess = swing - Math.abs(c.cone);
       if (excess > 0) {
-        const back = (settings.tau * RAGDOLL_LIMIT_TAU_FACTOR * excess) / step;
+        // (Where a swing limit's spring holds the joint past its limit, and so past its cone,
+        // the spring brings it back: pushed back here as well, every step against the load
+        // that holds it there, its bodies shook and never slept.)
+        const back = joint.sprung ? 0 : (settings.tau * RAGDOLL_LIMIT_TAU_FACTOR * excess) / step;
         row(unit(cross(ta, tb)), -Infinity, 0, -back);
       }
     }
@@ -534,7 +545,90 @@ export function easedLimit(
  * correction of so little is no snap, and joints held at a single angle (the Dwemer spider's,
  * whose limits are a point) lay a hair past it every step, eased for good, and never slept.
  */
-const EASED_EXCESS = 0.05;
+export const EASED_EXCESS = 0.05;
+
+// --- A limit's give -----------------------------------------------------------------------------
+
+/**
+ * How an angular limit yields to a load that presses on it (limitGive): the torque it pushes
+ * back with for each radian its joint lies past it, and the share of that excess it comes back
+ * by in a step when nothing presses.
+ */
+export interface LimitGive {
+  /** Havok's torque units (kg·m²/s²) per radian past the limit. */
+  readonly stiffness: number;
+  /** The share of the excess closed in a step. */
+  readonly back: number;
+}
+
+/**
+ * The give of an angular limit as Havok's solver leaves it. The solver takes a constraint's
+ * rows in turn, `iterations` times a step, each step from no impulse. In each iteration the
+ * limit's row drives the two bodies' relative turn about its axis to the speed that closes tau
+ * of the excess in the step, with an impulse of that speed over `free` (the two bodies'
+ * inverse inertia about the axis: the row's inverse mass); what else holds the bodies (their
+ * pivot, their contacts, their other joints) takes that turn back between the rows. So over
+ * the step the limit pushes back with iterations × tau × excess / (step × free) at most, and a
+ * load pressing on it holds the joint where that is the load's impulse of the step: the limit
+ * is a spring of iterations × tau / (free × step²) per radian, softest between light bodies (a
+ * foot under a standing body: a few degrees), and with no load the excess shrinks by tau a
+ * step. Undefined when nothing turns.
+ *
+ * TODO(M13): inferred from Havok's documented solver (sequential impulses without a warm start,
+ * tau as the share of an error corrected a step); the turn taken back between the rows is taken
+ * as all of it. Measured against the placed ragdoll poses (the Creation Kit's settled Havok
+ * state, `node tools/ragdoll-info.ts --limits`; docs/physics.md, "A limit's give"): a human
+ * head (4 kg, its centre 0.05 m from its neck joint) held level rests 1.2° past its cone by
+ * this rule, and the placed heads lie up to 1.8° past theirs; forearms 0.5° to 1.5° past the
+ * elbow's straight limit, upper arms 1° to 3° past the shoulder's plane.
+ */
+export function limitGive(
+  free: number,
+  tau: number,
+  iterations: number,
+  step: number,
+): LimitGive | undefined {
+  if (!(free > 0) || !(tau > 0) || !(step > 0)) return undefined;
+  const n = Math.max(1, Math.round(iterations));
+  return { stiffness: (n * tau) / (free * step * step), back: Math.min(1, tau) };
+}
+
+/**
+ * The give of a joint's limit about one of its first body's frame axes (0: a hinge's axle or a
+ * ragdoll's twist axis; 1: the plane axis; 2: the third), with the bodies as they lie now
+ * (limitGive; `factor`: the limit's tau factor).
+ */
+export function jointLimitGive(
+  joint: SolverJoint,
+  axis: 0 | 1 | 2,
+  factor: number,
+  step: number,
+  settings: SolverSettings = SOLVER_DEFAULTS,
+): LimitGive | undefined {
+  const { a, b, constraint: c } = joint;
+  if (!a.isValid() || !b.isValid()) return undefined;
+  const qa = a.rotation();
+  const first = rotate(qa, c.a.axes[0]);
+  const second = rotate(qa, c.a.axes[1]);
+  const n = axis === 0 ? first : axis === 1 ? second : unit(cross(first, second));
+  if (!n) return undefined;
+  let free = 0;
+  for (const body of [a, b]) {
+    if (!body.isDynamic()) continue;
+    // Its inverse inertia about the axis, from its principal inertia (a body just let go has
+    // no world inertia yet).
+    const principal = body.principalInertia();
+    const frame = multiplyQuat(body.rotation(), body.principalInertiaLocalFrame());
+    for (const [e, inertia] of [
+      [rotate(frame, [1, 0, 0]), principal.x],
+      [rotate(frame, [0, 1, 0]), principal.y],
+      [rotate(frame, [0, 0, 1]), principal.z],
+    ] as const) {
+      if (inertia > 0) free += dot(n, e) ** 2 / inertia;
+    }
+  }
+  return limitGive(free, settings.tau * factor, settings.iterations, step);
+}
 
 // --- Solver deactivation ------------------------------------------------------------------------
 
