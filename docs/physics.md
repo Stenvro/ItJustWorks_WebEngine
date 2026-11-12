@@ -12,8 +12,8 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   frame. Observed in the original: a frame hands Havok its time plus the time still owed, at most that many
   steps of it (the frame's time is the frame timer's step, as every system takes it:
   docs/animation.md, "Frame time"; below 20 frames a second it is more than the three steps, so
-  the bodies and the characters moving in the steps fall behind the clock and run three steps a
-  frame until they have caught up once frames are short again);
+  the simulated bodies fall behind the clock and run three steps a frame until they have caught
+  up once frames are short again; nothing else touches the time owed);
   the rest stays owed (a slow frame is made up in the frames after it, not lost), and
   a frame under a millisecond hands nothing (its time is owed too). Havok then steps fMaxTime
   until its clock reaches what it was handed, so its last step is at or a little ahead of the
@@ -23,6 +23,25 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   mode, fMaxTimeComplex with uMaxNumPhysicsStepsPerUpdateComplex 1, is there
   (`PhysicsWorld.complex`), and nothing turns it on: TODO(M13), what does in the original is not
   identified; fTimePerSubStep and iMinNumSubSteps are read by nothing.
+- **A character's way in the steps.** Observed in the original: a character's controller is
+  given, once a frame, the way it wants to go in that frame (its movement over the frame's
+  step), and where Havok steps it, it goes that way at the speed that covers it in the time
+  Havok was handed, not in the frame's time: the frame's whole way in the steps the frame takes.
+  So a character keeps up with its animation and with the clock at any frame rate, also while
+  the bodies are behind (below 20 frames a second) and while the time owed is made up at three
+  steps a frame; its fall, pushes and what carries it go by the step. Ours:
+  `PhysicsWorld.movePace` is the frame's time over the time handed, and what moves a character
+  in the steps (`Player`, `ActorMovers`) moves it by a step times that
+  (`CharacterBody.step(seconds, covers)`): the wanted velocity, and swimming the vertical speed,
+  cover `covers`; gravity, a knock, pushes and the carrier go by `seconds`. Moved by the steps
+  alone, at 15 frames a second the player and the actors walked at 72% of their speed while
+  their graphs ran the frame's whole step (the feet slid), at 10 a second at 46%, at 7 at 32%,
+  and at three times their speed against the frame while the time owed was made up
+  (`src/physics/character-pace.test.ts`, `tests/conformance/animation/frame-time.test.ts`).
+  TODO(M13): the horses' cart and a grabbed object's spring still go by the step (their hooks
+  are not the controller's); inferred that the swimming vertical speed is covered like the
+  rest (the original keeps the vertical part of the wanted way in one of its states, taken
+  here to be swimming).
 - **The world's bounds** (inferred, TODO(M13): the original's size and what its broad phase's
   border does with an entity were not read): a simulated body past 16,384 Havok units along an
   axis, beyond every worldspace's cells, goes out of the simulation and stays as it is

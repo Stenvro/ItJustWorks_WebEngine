@@ -109,3 +109,42 @@ describe.skipIf(!hasGamedata())('one step for the whole frame (original)', () =>
     }, 600_000);
   }
 });
+
+// A character goes the frame's whole way in the physics steps the frame is handed. Observed in
+// the original (docs/physics.md, "Steps"): below 20 frames a second a frame hands Havok three
+// steps of fMaxTime, less than the frame's step, and a character's controller goes the way it
+// wants in the frame over the time Havok was handed, so the player and the actors keep up with
+// their animations while the simulated bodies fall behind. Moved by the steps alone, the player
+// ran at 32% of their speed at 7 frames a second and at 46% at 10.
+describe.skipIf(!hasGamedata())("a character's way at a low frame rate (original)", () => {
+  it('lets the player run as far as the clock says at 7 and 10 frames a second', async () => {
+    const sim = await openSim({ interior: BANNERED_MARE, hour: 20 });
+    try {
+      await sim.step(2);
+      const start: [number, number, number] = [...sim.world.player.feet];
+      const yaw = sim.world.player.yaw;
+      /** Units a second of the game's clock the player covers running from the start. */
+      const speed = async (frame: number, frames: number): Promise<number> => {
+        await sim.moveTo(start, yaw);
+        for (let i = 0; i < LEAD_IN; i++) await sim.step(frame, frame);
+        const [x, y] = sim.world.player.feet;
+        const clock = sim.time;
+        sim.press('Forward', true);
+        for (let i = 0; i < frames; i++) await sim.step(frame, frame);
+        sim.press('Forward', false);
+        const [nx, ny] = sim.world.player.feet;
+        return Math.hypot(nx - x, ny - y) / (sim.time - clock);
+      };
+      // Half a second of running each: the room is clear that far from the door.
+      const reference = await speed(1 / 60, 30);
+      expect(reference).toBeGreaterThan(100);
+      for (const rate of [10, 7]) {
+        const at = await speed(1 / rate, Math.round(rate / 2));
+        expect(at / reference, `${String(rate)} frames a second`).toBeGreaterThan(0.9);
+        expect(at / reference, `${String(rate)} frames a second`).toBeLessThan(1.1);
+      }
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+});

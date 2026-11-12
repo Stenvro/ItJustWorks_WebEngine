@@ -458,10 +458,12 @@ original, in our words:
 - **Evened out.** With [Display] bCompensateUnstableFrameTime (on by default) the step is evened
   out over the last iUnstableFrameTimeHistorySize frames (8; sizes of 3 to 254 count, others
   switch it off): their times' sum less the shortest and less the longest, the longest for at
-  most 0.05 s, over the size less two. The history starts at 0.016 s a frame. At a steady 20
-  frames a second or more that is the frame's own time; one long frame's time beyond 0.05 s is
-  handed out over the frames after it; at a steady rate below 20 the step is a little longer than
-  the frame (0.0694 s at 15 a second, 0.1083 s at 10, 0.1583 s at 7, 0.1861 s from 6 down).
+  most 0.05 s, over the size less two. The history starts at 0.016 s a frame. What follows from
+  that rule (worked out, not measured in the original): at a steady 20 frames a second or more
+  the step is the frame's own time; one long frame's time beyond 0.05 s is handed out over the
+  frames after it; at a steady rate below 20 the step is a little longer than the frame
+  (0.0694 s at 15 a second, 0.1083 s at 10, 0.1583 s at 7, 0.1861 s from 6 down), so between 6
+  and 20 frames a second the game runs up to 11.7% faster than the clock.
 - **iFPSClamp.** [General] iFPSClamp of 1 to 199 makes every frame count 1 / iFPSClamp s whatever
   the clock says (0, the default: off).
 - **The game's step** is that real-time step times the global time multiplier (Slow Time).
@@ -470,11 +472,24 @@ Ours: the page's frame loop (`src/main.ts`) and the headless simulation (`SimWor
 of that many seconds on the real clock) each run one `FrameTimer`, and every system takes its
 time from the step it hands out: the game's clock (and with it the graphs near and far, the
 player's body, the actors' AI and movers, the particles, what physics is handed), the scripts'
-clock and the game's hour. No system cuts a frame again: a system that reads its step off the
-game's clock takes the clock's whole step (`stepSince`), shortened only across a gap longer than
-any frame (a third of a second: it was left out of the frames meanwhile, an actor not animated,
-a view not drawn). What physics does with the time it is handed is its own rule
-(docs/physics.md, "Steps": at most uMaxNumPhysicsStepsPerUpdate steps a frame, the rest owed).
+clock, and the session's frame clock (`GameSession.frameSeconds`, the steps' sum, running on in
+menus), on which the game's hour and the image-space modifiers' timelines run. No system cuts a
+frame again: a system that reads its step off a clock takes the clock's whole step
+(`stepSince`), shortened only across a gap longer than any frame (a third of a second: it was
+left out of the frames meanwhile, an actor not animated, a view not drawn; a particle system
+left out of an update goes on by 0.1 s as before, `particleStep`). What physics does with the
+time it is handed is its own rule (docs/physics.md, "Steps": at most
+uMaxNumPhysicsStepsPerUpdate steps a frame, the rest owed; the characters go the frame's whole
+way in those steps, "A character's way in the steps").
+
+Not on the frame's step yet (TODO(M13); they read the real clock themselves, so below 20 frames
+a second they run a little behind the game, and a frame longer than 1/6 s moves them further
+than it moves the game): the placed objects' graphs and sequences (`object-graphs.ts`'s clock:
+doors, activators), a door's swing (`open-close.ts`), the furniture's turn timer and the
+actors' door memory (`actor-furniture.ts`, `actor-doors.ts`), destruction debris
+(`destruction-looks.ts`), the combat impacts' and the screen blood's clocks, the displacement
+and the point lights' flicker in the viewers, the volumetrics, the menus' own animations, and
+the player's body while a menu animates it (real time, by `stepSince`).
 
 Before, each system cut a long frame by its own rule: the game's clock ran up to 0.25 s a frame,
 a graph updated every frame 0.1 s, a far graph updated ahead its whole interval, the player's
@@ -487,8 +502,9 @@ and the three others updated every frame animated 3.5 s, those behind the camera
 With the timer and no other cut, all animate the 5.54 s the clock moves in those frames, the
 ones updated ahead to within their interval (`tests/conformance/animation/frame-time.test.ts`).
 
-TODO(M13): inferred that the scripts' clock and the game's hour run on the frame's step (nothing
-else was found to move them), and that nothing cuts a graph's update again.
+TODO(M13): inferred that the scripts' clock, the game's hour and the image-space modifiers run
+on the frame's step (nothing else was found to move them), and that nothing cuts a graph's
+update again.
 
 ## How often graphs update
 

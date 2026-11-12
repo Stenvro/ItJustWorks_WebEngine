@@ -1031,7 +1031,9 @@ export class Player implements Camera {
     // A press waits for the next physics step (a frame may have none).
     if (this.#take('Jump')) this.#jumpRequested = true;
     physics.step(deltaSeconds, (step) => {
-      if (!held) this.#move(step);
+      // The player moves by the frame's time shared over its steps, not by the step: the whole
+      // frame's way in the steps the frame is handed (PhysicsWorld.movePace).
+      if (!held) this.#move(step * physics.movePace, step);
       this.onStep?.(step);
     });
     // Third-person zoom moves to its target at fMouseWheelZoomSpeed (of the zoom's range) a
@@ -1232,7 +1234,11 @@ export class Player implements Camera {
     return { x, y, running: this.#alwaysRun !== this.#event('Run') };
   }
 
-  #move(seconds: number): void {
+  /**
+   * One physics step of the player. `seconds`: the time their movement covers (the frame's time
+   * shared over the frame's steps); `step`: the physics step their body falls by.
+   */
+  #move(seconds: number, step: number): void {
     const jump = this.#jumpRequested;
     this.#jumpRequested = false;
     const { movement } = this.#setup;
@@ -1391,7 +1397,7 @@ export class Player implements Camera {
         this.onBorder?.();
       }
     }
-    character.step(seconds);
+    character.step(step, seconds);
     // Standing on a turning body (a platform, a lift), it turns with it.
     this.yaw += character.carriedTurn;
     // Landed from a fall (not in water): its height, for falling damage (GameSession).

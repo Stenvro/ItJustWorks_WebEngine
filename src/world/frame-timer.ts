@@ -9,10 +9,12 @@
 // is then evened out over the last iUnstableFrameTimeHistorySize frames (8; a size of 3 to 254
 // counts): the mean of their times without the shortest and without the longest, the longest
 // left out for at most 0.05 s, (sum − min(longest, 0.05) − shortest) / (size − 2). The history
-// starts at 0.016 s a frame. At a steady rate of 20 frames a second or more that is the frame's
-// own time; a single long frame's time beyond 0.05 s is handed out over the frames after it; at
-// a steady rate below 20 the step comes out a little longer than the frame (0.1083 s at 10 a
-// second, 0.1583 s at 7). [General] iFPSClamp of 1 to 199 sets every frame's time to
+// starts at 0.016 s a frame. What follows from that rule (worked out, not measured in the
+// original): at a steady rate of 20 frames a second or more that is the frame's own time; a
+// single long frame's time beyond 0.05 s is handed out over the frames after it; at a steady
+// rate below 20 the step comes out a little longer than the frame (0.1083 s at 10 a second,
+// 0.1583 s at 7: the game runs up to 11.7% faster than the clock between 6 and 20 frames a
+// second). [General] iFPSClamp of 1 to 199 sets every frame's time to
 // 1 / iFPSClamp s, whatever the clock says (0: off). That step is the real-time step; the game's
 // step is it times the global time multiplier (Slow Time: src/shell/time-flow.ts).
 //

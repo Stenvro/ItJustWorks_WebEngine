@@ -675,7 +675,9 @@ export class ActorMovers {
    */
   readonly #heldTriggers = new Map<number, Set<number>>();
   readonly #step = (step: number): void => {
-    this.#stepAll(step);
+    // The actors move by the frame's time shared over its steps, not by the step: the whole
+    // frame's way in the steps the frame is handed (PhysicsWorld.movePace).
+    this.#stepAll(step * (this.#world?.physics.movePace ?? 1), step);
   };
 
   constructor(options: ActorMoversOptions) {
@@ -2810,8 +2812,12 @@ export class ActorMovers {
     return this.#catalog;
   }
 
-  /** One physics step of every moved actor: what it wants, then its controller's movement. */
-  #stepAll(step: number): void {
+  /**
+   * One physics step of every moved actor: what it wants, then its controller's movement.
+   * `step`: the time the actors' movement covers (the frame's time shared over the frame's
+   * steps); `own`: the physics step their bodies fall by.
+   */
+  #stepAll(step: number, own: number): void {
     this.#stepped += step;
     // What the player walked into in this step (each step's contacts are its own).
     if (this.#world) this.#bumped(this.#world);
@@ -2936,7 +2942,7 @@ export class ActorMovers {
           character.supported,
         );
       }
-      mover.character.step(step);
+      mover.character.step(own, step);
       if (
         mover.jumped &&
         !mover.character.goingUp &&

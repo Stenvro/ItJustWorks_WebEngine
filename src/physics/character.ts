@@ -1339,8 +1339,16 @@ export class CharacterBody {
     return [knock.velocity[0] * share, knock.velocity[1] * share];
   }
 
-  /** One fixed step: gravity, the wanted movement, sliding and stepping. Before world.step. */
-  step(seconds: number): void {
+  /**
+   * One fixed step of `seconds`: gravity, the wanted movement, sliding and stepping. Before
+   * world.step. `covers`: the time the wanted movement (`velocity`; swimming, the vertical speed
+   * too) covers in this step: the step times PhysicsWorld.movePace, the frame's time shared over
+   * the frame's steps, so the character goes the frame's whole way in them (observed in the
+   * original: PhysicsWorld.movePace). Gravity, pushes, a knock and what carries it go by the
+   * step.
+   */
+  step(seconds: number, covers = seconds): void {
+    const pace = seconds > 0 ? covers / seconds : 1;
     // Carried by what it stands on (#carrier): first by what that moved since its last step (a
     // script set it there: TranslateTo, SetPosition), so the shape stands on it again. Not for a
     // simulated body: where the solver left it differs from the step's forecast each time, and
@@ -1419,12 +1427,12 @@ export class CharacterBody {
     const knock = this.#knocked(seconds);
     const [vx, vy] = recoveringVelocity(
       [
-        this.velocity[0] +
+        this.velocity[0] * pace +
           this.#pushed[0] +
           this.#leftWith[0] +
           knock[0] +
           (off ? off[0] * slide : 0),
-        this.velocity[1] +
+        this.velocity[1] * pace +
           this.#pushed[1] +
           this.#leftWith[1] +
           knock[1] +
@@ -1435,7 +1443,7 @@ export class CharacterBody {
     const desired = {
       x: toHavok(vx * seconds),
       y: toHavok(vy * seconds),
-      z: toHavok(this.verticalSpeed * seconds),
+      z: toHavok(this.verticalSpeed * seconds * (this.swimming ? pace : 1)),
     };
     // On stairs (surfaces of a stair material) whole steps are climbed; elsewhere only what
     // the shape's lower cone rides over.
