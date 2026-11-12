@@ -29,6 +29,7 @@ import { LightFlag, parseLight, parseReference } from '../src/world/cell-records
 import { parseHazard } from '../src/world/hazard-records.ts';
 import { parseImpact, parseImpactDataSet } from '../src/world/impact-records.ts';
 import { parseMagicEffect } from '../src/world/magic-effects.ts';
+import { parseMagicItem } from '../src/world/magic-records.ts';
 import { parseProjectile } from '../src/world/projectile-data.ts';
 import { itemGlow } from '../src/gameplay/magic/enchantment-glow.ts';
 import { flightKind } from '../src/gameplay/magic/projectile-flight.ts';
@@ -282,10 +283,29 @@ if (all || values.glow) {
     let enchanted = 0;
     let glowing = 0;
     let withArt = 0;
+    // The enchantments' effect entries: with a Hit Shader (shown on whom the effect is on, the
+    // wearer of an armour), and FX Persist (MGEF flag 0x1000) with none.
+    let entries = 0;
+    let persistentOnly = 0;
+    const hitShaders = new Map<string, number>();
     for (const formId of db.formIdsOfType(type)) {
       const record = await db.get(formId);
-      if (record?.formIdField('EITM') === undefined) continue;
+      const enchantmentId = record?.formIdField('EITM');
+      if (enchantmentId === undefined) continue;
       enchanted++;
+      const enchantmentRecord = await db.get(enchantmentId);
+      const enchantment = enchantmentRecord && parseMagicItem(enchantmentRecord);
+      for (const entry of enchantment?.effects ?? []) {
+        const effectRecord = await db.get(entry.effect);
+        if (effectRecord?.type !== 'MGEF') continue;
+        const effect = parseMagicEffect(effectRecord);
+        entries++;
+        if (effect.hitShader !== undefined) {
+          const persist = (effect.flags & 0x1000) !== 0 ? ' (FX Persist)' : '';
+          const name = (await db.get(effect.hitShader))?.editorId ?? effect.hitShader.toString(16);
+          count(hitShaders, name + persist);
+        } else if ((effect.flags & 0x1000) !== 0) persistentOnly++;
+      }
       const glow = await itemGlow(get, formId);
       if (!glow) continue;
       if (glow.shader !== undefined) {
@@ -296,5 +316,12 @@ if (all || values.glow) {
     }
     console.log(`  ${type}: ${enchanted} enchanted, ${glowing} with a shader, ${withArt} with art`);
     for (const [key, n] of sorted(shaders).slice(0, 12)) console.log(`    ${n}  ${key}`);
+    const hits = [...hitShaders.values()].reduce((sum, n) => sum + n, 0);
+    console.log(
+      `    ${entries} effect entries: ${hits} with a Hit Shader, ${persistentOnly} FX Persist with none`,
+    );
+    if (type === 'ARMO') {
+      for (const [key, n] of sorted(hitShaders)) console.log(`      ${n}  hit shader ${key}`);
+    }
   }
 }
