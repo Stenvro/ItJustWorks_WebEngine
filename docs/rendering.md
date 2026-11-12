@@ -576,14 +576,31 @@ vanilla weapons and 2,819 of 2,847 enchanted armours have a shader (`node tools/
 
 Worn armour shows no glow. The armour enchantments' effects carry shaders of their own
 (EnchArmorMagickaFXS on 1,142 armours, ...StaminaFXS 758, ...HealthFXS 329, ...FireFXS 324,
-...FrostFXS 134, ...ShockFXS 128): a membrane that fades from full to a 5% persistent share in
-a second, no particles. But CommonLibSSE names one reference effect controller for enchanted
-items, the weapon's (`WeaponEnchantmentController`, with a visitor that refreshes the enchanted
+...FrostFXS 134, ...ShockFXS 128), as their Enchant Shader; of the armour enchantments' 3,147
+effect entries four have a Hit Shader (`node tools/effect-audit.ts --glow`). What
+the data says of them (`node tools/effects-info.ts EnchArmorMagickaFXS`, which prints the
+fill's and the edge's times, their persistent and full ratios and their pulse; the six alike):
+flags 0x3000C (Membrane Greyscale Alpha, No Particle Shader: their particle data is not used;
+the fire's 0x3000E, also Membrane Greyscale Colour), an additive membrane with no fade in and
+no full time, whose fill stays at 5% to 10% (the full and the persistent ratio are the same,
+no pulse) and whose edge, in the enchantment's colour, stays at 40% (the fire's) to 90% (the
+magicka's and the shock's) and pulses by 10% (the fire's 20%) once every 2.5 to 4 seconds,
+with a fade out of a second. Shown on a worn piece for as long
+as it is worn, that would be a coloured rim on every one of the 2,819 enchanted armours with a
+shader at all times, which the game does not look like; the second of fade out with nothing
+before it fits a shader that is started and stopped at once (a flash as the piece is put on),
+but nothing in the records says where the engine plays it. The armours that show on their
+wearer do it another way: the Ebony Mail's effect has a Hit Shader (DA02ArmorShadow) and FX
+Persist, which the magic system shows on the wearer as any active effect's (the four entries
+with a Hit Shader are all FX Persist: two of DA02ArmorShadow, one of WaterBreathingFXS, one of
+EnchArmorStaminaFXS; 219 entries are FX Persist without a Hit Shader and show nothing by
+it). And CommonLibSSE names one reference effect controller for enchanted items,
+the weapon's (`WeaponEnchantmentController`, with a visitor that refreshes the enchanted
 weapons), and none for armour; the worn enchantments' visitors cast, dispel, preload and unload
-their abilities (the effects' own hit visuals, which the magic system shows). So the worn armour
-stays as it is, as is remembered of the game. TODO(M13): confirm in the original (what the
-armour shaders were made for; whether armour lying in the world glows, which we show as a
-weapon's).
+their abilities. So the worn armour stays without a glow of its own, as is remembered of the
+game. TODO(M13): confirm in the original what plays the armour's Enchant Shader (a flash on
+equipping is not shown; armour lying in the world glows as a weapon does here, which may be
+the same mistake the other way).
 
 The art an enchanted weapon shows (its Enchant Art: Chillrend's frost, the bound weapons'
 flames, the Draugr weapons' streaks) hangs where the weapon's root is: on its hand node while

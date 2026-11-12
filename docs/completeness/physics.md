@@ -18,7 +18,7 @@ settings reader or named in the code. A field with one value in every mesh that 
 the physics counts as done with that reason. The mechanics are kept by hand below, against
 docs/physics.md. The count after an item is how many blocks (records) use it.
 
-## Count (2026-11-06, round 9)
+## Count (2026-11-12, round 11)
 
 | Part                          | Items | Done | Open |
 | ----------------------------- | ----: | ---: | ---: |
@@ -31,8 +31,8 @@ docs/physics.md. The count after an item is how many blocks (records) use it.
 | Explosions (EXPL)             |    16 |   16 |    0 |
 | Material types, impact data   |    17 |   17 |    0 |
 | Game settings (GMST)          |    45 |   45 |    0 |
-| Mechanics (by hand)           |    36 |   32 |    4 |
-| Total                         |   378 |  374 |    4 |
+| Mechanics (by hand)           |    36 |   33 |    3 |
+| Total                         |   378 |  375 |    3 |
 
 Round 1 wrote the sweep and this list, and fixed deactivation: Havok deactivates a simulation
 island as a whole, ours put a body to sleep on its own while something still moved on it (a
@@ -130,6 +130,32 @@ fast), and the traps' material, initial flag and cloud traps (traps.test.ts). Th
 so a cloud trap is only a mod's; the vanilla gas traps are scripts on trigger volumes and
 explosions (TrapPoisonGas: OnTrigger places its levelled explosion on each living actor inside
 without the gas keyword's effect; TrapExplosiveGas: a fire hit sets it off).
+
+Round 11 (374 to 375): a body let go standing on its joints' limits falls. Rapier's angular
+limits do not yield; Havok's are as stiff as its four iterations leave them, a spring of
+iterations × tau over the two bodies' inverse inertia about the axis and the step squared
+(inferred from its solver; the placed ragdoll poses lie past their limits as that gives:
+`node tools/ragdoll-info.ts --limits`, which now counts the cones and the angles more than 0.25°
+past too). An ankle between a 3 kg foot and a calf is 94 N·m a radian: Hulda, killed 1 to 4.5 s
+into her lean at the counter, no longer stands on locked ankles and knees
+(tests/conformance/animation/ragdolls-death.test.ts, all ten phases; docs/physics.md, "A limit's
+give"). A ragdoll joint's cone gives by the same rule, as one limit about the axis its twist
+axes turn about (its spring is the two swings' motors together; the solver's cone row, which
+held a load in the spring's place and pushed back where the load pressed between the two
+swings, now only stops what swings into the cone): a 10 kg weight on a joint with a 45° cone
+rests 0.46° to 0.50° past it whichever way it swings, by the rule 0.49° (it was 0.12° on a
+swing's axis and 0.04° between them), and on a twisted joint at the cone's lowest point (the
+spring's direction is the swing of the joint's turn taken apart from its twist, where Rapier's
+two swing parts lie turned by half the twist: the weight rested up to 7.2 units aside at
+0.7 rad of twist). A limit only pushes back (its spring held a joint a
+little within it before), and its stiffness follows the step (Slow Time)
+(src/physics/physics-world.test.ts, "physics constraints"). The race skeletons' ragdolls
+settle better with the give (40, 43 and 42 of 52 at rest within 20 s pushed, still and lifted,
+49, 47 and 49 within 40 s, against 34, 35 and 32 within 20 s on this tip without it; 47, 41
+and 46 while the cone's push still went aside on a twisted joint, which held some joints
+still short of where their load lies straight across the cone: they now slide there, slowly,
+see docs/physics.md, "A limit's give"); that this
+tip without it no longer reaches the 48, 51 and 50 of the earlier rounds was not looked into.
 
 ## Meshes
 
@@ -260,10 +286,11 @@ without the gas keyword's effect; TrapExplosiveGas: a fire hit sets it off).
       given that much more upward speed (PhysicsWorld.liftStill; round 5).
 - [x] The paralysed's stiff fall: fixed joints hold its ragdoll in its pose while it is paralysed
       (PhysicsWorld.stiffen; round 8). TODO(M13): how the original holds it.
-- [ ] A body let go
-      standing on its joints' limits (Hulda killed at the Bannered Mare's counter 1, 2.5 or 3 s
-      into her lean stays draped over it: Havok's give at four iterations, which Rapier at 4 or
-      5 substeps has only with worse settling; round 3).
+- [x] A body let go
+      standing on its joints' limits (Hulda killed at the Bannered Mare's counter 1 to 4.5 s
+      into her lean stood on, bent over it): a limit gives under a load as Havok's four
+      iterations leave it (inferred: constraint-solver.ts limitGive, PhysicsWorld.#giveLimits;
+      round 11).
 - [x] Projectiles' flight: gravity, speed, bounces, sticking, impacts.
 - [x] Explosions' impulses (force, falloff, the gameplay impulse settings).
 - [x] An explosion's vertical offset (above; round 2).

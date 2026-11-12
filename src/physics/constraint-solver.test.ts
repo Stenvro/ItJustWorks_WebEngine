@@ -3,6 +3,8 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import {
   easedLimit,
   gravityShare,
+  jointLimitGive,
+  limitGive,
   slowBodyFactor,
   solveJoints,
   solverSettings,
@@ -89,6 +91,130 @@ describe('the constraint solver', () => {
     expect(hi).toBe(0.5);
     expect(easedLimit(0.52, -0.2, 0.5, tau)).toBeUndefined();
     expect(easedLimit(0, -0.2, 0.5, tau)).toBeUndefined();
+  });
+
+  it("gives a limit the stiffness the solver's iterations leave it, softest between light bodies", () => {
+    // A human ankle (a limited hinge: tau factor 1): a 3 kg foot (0.012 kg·m² about the axle)
+    // on a calf (0.12). Four iterations of tau 0.6 a step of 1/60 s: 4 × 0.6 × 3600 / (1/0.012
+    // + 1/0.12) ≈ 94 N·m a radian, so the 20 N·m a standing body presses on it give 12°.
+    const ankle = limitGive(1 / 0.012 + 1 / 0.12, 0.6, 4, 1 / 60);
+    expect(ankle?.stiffness).toBeCloseTo(94.25, 1);
+    expect(ankle?.back).toBeCloseTo(0.6);
+    // A head on its neck (a ragdoll's cone: tau factor 0.8), 0.026 kg·m² each: 90 N·m a
+    // radian; held level its 4 kg, 0.05 m out, rest 1.2° past the cone.
+    const neck = limitGive(2 / 0.026, 0.6 * 0.8, 4, 1 / 60);
+    expect(((4 * 9.81 * 0.05) / (neck?.stiffness ?? 1)) * (180 / Math.PI)).toBeCloseTo(1.25, 1);
+    // Heavier bodies hold more, a longer step less (the square of it), nothing that turns none.
+    expect(limitGive(2 / 0.25, 0.48, 4, 1 / 60)?.stiffness).toBeCloseTo(864, 0);
+    expect(limitGive(2 / 0.25, 0.48, 4, 1 / 30)?.stiffness).toBeCloseTo(216, 0);
+    expect(limitGive(0, 0.6, 4, 1 / 60)).toBeUndefined();
+  });
+
+  it("measures a joint's limit by its two bodies' inertia about the axis", () => {
+    const world = new RAPIER.World({ x: 0, y: 0, z: 0 });
+    const make = (inertia: number, dynamic: boolean): RAPIER.RigidBody => {
+      const made = world.createRigidBody(
+        dynamic ? RAPIER.RigidBodyDesc.dynamic() : RAPIER.RigidBodyDesc.fixed(),
+      );
+      world.createCollider(
+        RAPIER.ColliderDesc.ball(0.05).setMassProperties(
+          1,
+          { x: 0, y: 0, z: 0 },
+          { x: inertia, y: inertia * 2, z: inertia * 4 },
+          { x: 0, y: 0, z: 0, w: 1 },
+        ),
+        made,
+      );
+      return made;
+    };
+    const frame = {
+      pivot: [0, 0, 0] as [number, number, number],
+      axes: [
+        [1, 0, 0],
+        [0, 1, 0],
+      ] as [[number, number, number], [number, number, number]],
+    };
+    const joint = (a: RAPIER.RigidBody, b: RAPIER.RigidBody): SolverJoint => ({
+      a,
+      b,
+      constraint: { type: 'limited-hinge', a: frame, b: frame, maxFriction: 0 },
+    });
+    const light = make(0.01, true);
+    const heavy = make(0.1, true);
+    const fixed = make(0.1, false);
+    // About the axle (x): 1/0.01 + 1/0.1; about the third axis (z): a quarter of that.
+    const axle = jointLimitGive(joint(light, heavy), 0, 1, 1 / 60);
+    expect(axle?.stiffness).toBeCloseTo((4 * 0.6 * 3600) / 110, 1);
+    const third = jointLimitGive(joint(light, heavy), 2, 1, 1 / 60);
+    expect(third?.stiffness).toBeCloseTo((4 * 0.6 * 3600) / (110 / 4), 1);
+    // A body nothing moves adds none; two of them give no limit.
+    expect(jointLimitGive(joint(light, fixed), 0, 1, 1 / 60)?.stiffness).toBeCloseTo(86.4, 1);
+    expect(jointLimitGive(joint(fixed, fixed), 0, 1, 1 / 60)).toBeUndefined();
+    world.free();
+  });
+
+  // A 1 kg rod on a fixed point, hanging 0.5 rad below level against a cone of 0.3 rad, its
+  // weight pressing it further down: how fast the solve leaves it turning down (rad/s).
+  const pastCone = (coneGives: boolean, speed = 0): number => {
+    const world = new RAPIER.World({ x: 0, y: 0, z: -9.8 });
+    const anchor = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    const down = unitQuat(0, 1, 0, 0.5);
+    const centre = rotateVec(down, [0.5, 0, 0]);
+    const bob = world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(centre[0], centre[1], centre[2])
+        .setRotation(down)
+        // Turning down about the fixed point at `speed`.
+        .setAngvel({ x: 0, y: speed, z: 0 })
+        .setLinvel(centre[2] * speed, 0, -centre[0] * speed)
+        .setCanSleep(false),
+    );
+    world.createCollider(
+      RAPIER.ColliderDesc.capsule(0.5, 0.02)
+        .setRotation({ x: 0, y: 0, z: Math.SQRT1_2, w: Math.SQRT1_2 })
+        .setMass(1),
+      bob,
+    );
+    const frame = {
+      pivot: [0, 0, 0] as [number, number, number],
+      axes: [
+        [1, 0, 0],
+        [0, 1, 0],
+      ] as [[number, number, number], [number, number, number]],
+    };
+    const joint: SolverJoint = {
+      a: anchor,
+      b: bob,
+      constraint: {
+        type: 'ragdoll',
+        a: frame,
+        b: { ...frame, pivot: [-0.5, 0, 0] },
+        maxFriction: 0,
+        cone: 0.3,
+      },
+      coneGives,
+    };
+    solveJoints([joint], 1 / 60, world.gravity, 4);
+    const turning = bob.angvel().y;
+    world.free();
+    return turning;
+  };
+
+  it('pushes a joint past its cone back by tau of the way a step, against its weight', () => {
+    // 0.2 rad past: back at 0.6 × 0.8 × 0.2 × 60 = 5.76 rad/s, whatever pressed it there.
+    expect(pastCone(false)).toBeCloseTo(-5.76, 0);
+    expect(pastCone(false, 2)).toBeCloseTo(-5.76, 0);
+  });
+
+  it('leaves the load on a cone that gives to its spring, and takes out the speed further past it', () => {
+    // Its spring's (PhysicsWorld.#giveLimits): the solve does not hold the rod's weight in the
+    // spring's place (held here, the joint gave less than the rule: the weight's speed of
+    // the step, 0.134 rad/s, is not what it takes out) nor push the joint back.
+    expect(pastCone(true)).toBeCloseTo(0, 5);
+    // What swings further past the cone is stopped, as Havok's limit takes out the speed
+    // into it; what turns back into it is left.
+    expect(Math.abs(pastCone(true, 2))).toBeLessThan(0.05);
+    expect(pastCone(true, -2)).toBeCloseTo(-2, 4);
   });
 
   it("takes the engine's solver settings at its step", () => {

@@ -28,6 +28,8 @@ import {
   solverSettings,
   solveJoints,
   easedLimit,
+  EASED_EXCESS,
+  jointLimitGive,
   HINGE_LIMIT_TAU_FACTOR,
   RAGDOLL_LIMIT_TAU_FACTOR,
   type JointMotor,
@@ -926,6 +928,7 @@ interface RawJointLimits {
       damping: number,
     ): void;
     jointConfigureMotorVelocity(handle: number, axis: number, target: number, factor: number): void;
+    jointConfigureMotorModel(handle: number, axis: number, model: number): void;
     jointSetMotorMaxForce(handle: number, axis: number, maxForce: number): void;
   };
   readonly handle: number;
@@ -967,6 +970,123 @@ function rotateVector(q: RAPIER.Rotation, v: RAPIER.Vector): RAPIER.Vector {
 
 /** An eased limit is set again only when it moves by more than this (radians: #easeLimits). */
 const EASED_CHANGE = 1e-3;
+
+/**
+ * How far past a limit that gives (#giveLimits) Rapier's own limit stands, and so the most a
+ * joint goes further past it in a step (radians): what swings a joint over its limit is
+ * stopped there and the limit's spring takes it up from the next step, as Havok's limit takes
+ * the speed into it out and yields to the load only. TODO(M13): inferred (Havok's limit lets
+ * the share of the speed through that its iterations leave).
+ */
+const GIVE_STEP = 0.02;
+/**
+ * How far past its limit (radians) a joint lies before the limit's spring comes on; it goes
+ * off again when the joint is back at the limit: a limit only pushes back. (A joint resting
+ * at its limit would turn a spring that came on at the limit itself on and off, and each
+ * change wakes its bodies; one that stayed on a little within the limit held the joint there:
+ * a limb swung up against its cone hung on it against its weight.)
+ */
+const GIVE_ON = 1e-3;
+/**
+ * How far back within its limit (radians) a joint whose spring was on keeps the spring's
+ * damping (GIVE_DAMPING; no spring): a joint bouncing on its limit comes to rest on it. With
+ * none within the limit a light weight coming back to its cone bounced off it and was sent to
+ * sleep a little within it (0.04° to 0.08°), and of the race skeletons' ragdolls 5 fewer of
+ * 156 came to rest (`node tools/ragdoll-info.ts`, pushed, --still and --lift). TODO(M13):
+ * ours, as the damping.
+ */
+const GIVE_SLACK = 0.005;
+/**
+ * The spring's damping, as the share of its stiffness × the step: a little, so that a limb on
+ * its limit comes to rest (Havok's limit takes out all the speed into it; with more damping
+ * than this Rapier's motor, solved once a substep, holds less than its spring's torque, and the
+ * race skeletons' ragdolls settle worse: `node tools/ragdoll-info.ts`, 44 of 52 at rest within
+ * 20 s at 0.2, 41 at 0, 39 at 0.5, 34 at 1, measured before the cone had its spring; with
+ * it, twice the damping left 40 of 52 at rest let go still, against 41).
+ */
+const GIVE_DAMPING = 0.2;
+/** A limit narrower than this (radians) holds one angle and stays Rapier's own (stiff). */
+const POINT_LIMIT = 0.02;
+/** A joint axis's motor's force when it is on (Rapier's own default: unbounded). */
+const MOTOR_FORCE = 3e38;
+
+/**
+ * A spring is set again when its stiffness changes by more than this share of it (it follows
+ * the step and how the bodies lie: constraint-solver.ts, limitGive).
+ */
+const GIVE_STIFFNESS_CHANGE = 0.02;
+/**
+ * The least share of a cone's push that an axis's spring takes (the square of the share of the
+ * cone's direction along it): below it the axis is left to the other.
+ */
+const CONE_SHARE = 1e-3;
+/**
+ * How much of the cone's stiffness a swing's motor holds its share of the cone's torque with:
+ * this × the square of the share of the cone's direction along it, the whole of it at the
+ * most. Rapier's motor is a spring about the joint's own axis, solved within the step: the two
+ * swings' motors together hold the joint along the cone's direction with the cone's whole
+ * stiffness where each has a quarter of the direction or more (within 30° of the middle
+ * between them), and with 93 % of it at the least nearer one of them. Held with less (each
+ * its share squared: half the stiffness between the two), the rest of the torque stood still
+ * over the step while the joint moved, and a weight on the cone bounced on it without end
+ * (±0.5° about where it should rest, 4 s on). What the motors hold along the cone's direction
+ * they also hold across it for the step (none on a swing's own axis, the whole stiffness
+ * between the two): TODO(M13), a joint pressed past its cone slides along it slower than
+ * Havok's, whose cone is one row about its own axis.
+ */
+const CONE_HOLD = 4;
+
+/** An axis of a joint whose limit gives under a load (PhysicsWorld.#giveLimits). */
+interface GivingAxis {
+  /** The axis of the first body's frame (constraint-solver.ts, jointLimitGive). */
+  readonly index: 0 | 1 | 2;
+  readonly axis: RAPIER.JointAxis;
+  /** Where Rapier's own limits stand while the joint is within them (axisLimits). */
+  readonly min: number;
+  readonly max: number;
+  /**
+   * The limit of its own that its spring pushes back from (a hinge's angle, a ragdoll's twist
+   * and plane); a ragdoll's other swing has none: what limits it is the cone.
+   */
+  readonly own: { readonly min: number; readonly max: number } | undefined;
+  /**
+   * The limit of its own its spring pushes back from now, or did and the joint is still near
+   * (GIVE_SLACK): 1 the upper, −1 the lower, 0 neither.
+   */
+  side: number;
+  /**
+   * Its spring now (Rapier's motor on the axis): its stiffness (0: none), where it pulls to
+   * and its damping (0 with no stiffness: off).
+   */
+  stiffness: number;
+  target: number;
+  damping: number;
+  /** Rapier's limits on it now. */
+  lo: number;
+  hi: number;
+}
+
+/** A joint whose limits give under a load (PhysicsWorld.#giveLimits). */
+interface GivingJoint {
+  readonly axes: GivingAxis[];
+  /** A ragdoll's cone (radians) where it gives (its two swings both do). */
+  readonly cone: number | undefined;
+  /** Whether the cone's spring is on, or was and the joint is still near (GIVE_SLACK). */
+  coned: boolean;
+}
+
+/** What the springs of a giving joint ask of one of its axes in a step. */
+interface AxisPush {
+  /** The torque wanted about it (Havok's units), the stiffness it is held with, the damping. */
+  torque: number;
+  stiffness: number;
+  damping: number;
+  /** The stiffest of the springs on it. */
+  most: number;
+  /** How far back along it the limits lie (radians, signed), and whether any lies far. */
+  move: number;
+  far: boolean;
+}
 
 /** A ragdoll's or limited hinge's inner data (a malleable one's). */
 function articulated(
@@ -1232,6 +1352,8 @@ export class PhysicsWorld {
   >();
   /** The joints whose limits are eased back to them, with their bounds now (#easeLimits). */
   readonly #easing = new Map<PlacedJoint, readonly number[]>();
+  /** The joints in the world whose limits give under a load, by axis (#giveLimits). */
+  readonly #giving = new Map<PlacedJoint, GivingJoint>();
   /** Bodies settling after being placed: silent until they first sleep (or this time). */
   readonly #settling = new Map<number, number>();
   /**
@@ -1960,11 +2082,255 @@ export class PhysicsWorld {
         if (needed && !placed.joint) {
           const scale = this.#jointScales.get(placed) ?? 1 / HAVOK_SCALE;
           placed.joint = this.#createJoint(placed.constraint.data, a, b, scale);
+          this.#giving.delete(placed);
+          this.#giveLimits(placed);
           this.#easeLimits(placed);
         } else if (!needed && placed.joint) {
           if (placed.joint.isValid()) this.world.removeImpulseJoint(placed.joint, false);
           placed.joint = undefined;
+          this.#giving.delete(placed);
         }
+      }
+    }
+  }
+
+  /**
+   * A limit's give (constraint-solver.ts, limitGive): Havok's solver leaves a ragdoll's or a
+   * limited hinge's angular limit as stiff as its iterations make it, so a load pressing a joint
+   * on its limit holds it past it in proportion (a light link under a heavy load most of all: a
+   * foot under a standing body), where Rapier's limit does not yield at all and a body let go
+   * standing stayed standing on its locked ankles and knees. A joint past such a limit is
+   * pushed back by a spring of the limit's stiffness (the joint's motor on that axis, toward the
+   * limit, solved with the contacts in Rapier's step), and Rapier's own limit stands GIVE_STEP
+   * past where the joint is: what swings into the limit is stopped, what presses on it moves it
+   * on a step at a time until the spring holds the load. A joint far past its limit (let go so:
+   * a dying actor's animated pose) comes back by tau of its excess a step at most, as Havok
+   * brings it back. A limit of one angle stays Rapier's own and is eased (#easeLimits).
+   *
+   * A ragdoll's limits are its twist's, its plane's (the swing toward its plane axis) and its
+   * cone (its twist axes within an angle of each other, whichever way they swing). The cone is
+   * one spring about the axis the two twist axes turn about (the swing of the joint's turn
+   * taken apart into a swing and then a twist), straight back toward the cone however far the
+   * joint is twisted: its torque goes to the two swings' motors by the share of that axis
+   * along each (each holding it with CONE_HOLD of the stiffness), so a joint swung along one
+   * of them is held by that one alone and the other is free, and between the two the springs'
+   * torques add up to the cone's. (Rapier's own two swing parts of the turn lie turned by half
+   * the twist from that axis: shared by them, the push on a twisted joint went aside too.)
+   * The swing toward the plane axis has the plane's spring too where it lies past
+   * the plane's limits. Rapier's limits on the two swings (the box about the cone) stand as
+   * for the others, and what swings a joint past the cone between them is stopped by the
+   * constraint solver: it takes out the speed the bodies have further past a cone that gives,
+   * without the step's gravity, and does not push it back (SolverJoint.coneGives).
+   *
+   * A spring is on from GIVE_ON past its limit until the joint is back at it, and for
+   * GIVE_SLACK within the limit its damping stays. The springs follow the step and how the
+   * bodies lie: each step they are measured again, and set where they changed.
+   */
+  #giveLimits(placed: PlacedJoint): void {
+    const joint = placed.joint;
+    const solved = this.#solverJoints.get(placed);
+    const inner = articulated(placed.constraint.data);
+    if (!joint?.isValid() || !solved || !inner) {
+      this.#giving.delete(placed);
+      if (solved) solved.coneGives = false;
+      return;
+    }
+    const raw = joint as unknown as RawJointLimits;
+    const factor = inner.type === 'ragdoll' ? RAGDOLL_LIMIT_TAU_FACTOR : HINGE_LIMIT_TAU_FACTOR;
+    const give = (index: 0 | 1 | 2 | 'cone') =>
+      jointLimitGive(solved, index, factor, this.#size, this.solver);
+    let giving = this.#giving.get(placed);
+    if (!giving) {
+      const axes: GivingAxis[] = [];
+      const limits = axisLimits(placed.constraint.data);
+      for (let i = 0; i < limits.length && i < 3; i++) {
+        const limit = limits[i];
+        const index = i as 0 | 1 | 2;
+        if (!limit || limit.max - limit.min < POINT_LIMIT) continue;
+        const { axis, min, max } = limit;
+        // Its own limit: the hinge's, the twist's, the plane's (not cut to the cone, which
+        // has its own spring).
+        let own: GivingAxis['own'];
+        if (inner.type === 'limited-hinge' || index === 0) own = { min, max };
+        else if (index === 2) {
+          own = {
+            min: Math.min(-inner.planeMaxAngle, -inner.planeMinAngle),
+            max: Math.max(-inner.planeMaxAngle, -inner.planeMinAngle),
+          };
+        }
+        // A spring of the stiffness as it is (Rapier's own model scales it by the bodies'
+        // masses); off until the joint lies past a limit.
+        raw.rawSet.jointConfigureMotorModel(raw.handle, axis, RAPIER.MotorModel.ForceBased);
+        raw.rawSet.jointSetMotorMaxForce(raw.handle, axis, 0);
+        axes.push({
+          index,
+          axis,
+          min,
+          max,
+          own,
+          side: 0,
+          stiffness: 0,
+          target: 0,
+          damping: 0,
+          lo: min,
+          hi: max,
+        });
+      }
+      // The cone gives where the swing it alone limits does.
+      const cone =
+        inner.type === 'ragdoll' && axes.some((axis) => axis.index === 1)
+          ? Math.abs(inner.coneMaxAngle)
+          : undefined;
+      giving = { axes, cone, coned: false };
+      this.#giving.set(placed, giving);
+    } else if (placed.a.body.isSleeping() && placed.b.body.isSleeping()) {
+      // Asleep, it stays as it is (a joint changed wakes its bodies).
+      return;
+    }
+    const { axes } = giving;
+    const angles = axes.map((axis) => jointAngle(joint, axis.axis));
+    const pushes: AxisPush[] = axes.map(() => ({
+      torque: 0,
+      stiffness: 0,
+      damping: 0,
+      most: 0,
+      move: 0,
+      far: false,
+    }));
+    // A spring's share on an axis: its torque for how far past the limit the joint lies along
+    // it, held with `share` of its stiffness, and that share of its damping.
+    const add = (push: AxisPush, stiffness: number, past: number, share: number): void => {
+      push.torque -= stiffness * past;
+      push.stiffness += stiffness * share;
+      push.damping += stiffness * share * this.#size * GIVE_DAMPING;
+      push.most = Math.max(push.most, stiffness);
+      push.move -= past;
+    };
+    // Each axis's own limit.
+    for (let i = 0; i < axes.length; i++) {
+      const axis = axes[i];
+      const push = pushes[i];
+      const own = axis?.own;
+      if (!axis || !push || !own) continue;
+      const angle = angles[i] ?? 0;
+      const excess = angle > own.max ? angle - own.max : angle < own.min ? angle - own.min : 0;
+      // The spring comes on GIVE_ON past the limit and stays on while the joint is past it at
+      // all; back within it, only its damping stays, for GIVE_SLACK.
+      const side = Math.abs(excess) > GIVE_ON || axis.side !== 0 ? Math.sign(excess) : 0;
+      const near =
+        side === 0 &&
+        (axis.side > 0
+          ? angle > own.max - GIVE_SLACK
+          : axis.side < 0 && angle < own.min + GIVE_SLACK);
+      const spring = side !== 0 || near ? give(axis.index) : undefined;
+      if (!spring) {
+        axis.side = 0;
+      } else if (side !== 0) {
+        axis.side = side;
+        add(push, spring.stiffness, angle - (side > 0 ? own.max : own.min), 1);
+        if (Math.abs(excess) > EASED_EXCESS) push.far = true;
+      } else {
+        push.damping += spring.stiffness * this.#size * GIVE_DAMPING;
+      }
+    }
+    // The cone: Rapier's two swing angles are 2 asin of the turn's parts about the plane axis
+    // and the third, and the sine of half the angle between the twist axes is the two's length.
+    // (The solver takes out what swings the joint further past it: SolverJoint.coneGives.)
+    solved.coneGives = giving.cone !== undefined;
+    if (giving.cone !== undefined) {
+      const parts = [
+        Math.sin(jointAngle(joint, RAPIER.JointAxis.AngY) / 2),
+        Math.sin(jointAngle(joint, RAPIER.JointAxis.AngZ) / 2),
+      ] as const;
+      const half = Math.min(1, Math.hypot(parts[0], parts[1]));
+      const excess = 2 * Math.asin(half) - giving.cone;
+      // On and off as an axis's own (above).
+      const on = excess > GIVE_ON || (giving.coned && excess > 0);
+      const near = !on && giving.coned && excess > -GIVE_SLACK;
+      const spring = (on || near) && half > 1e-6 ? give('cone') : undefined;
+      if (spring) {
+        // The axis the twist axes turn about. The turn (w, x, y, z), x about the twist axis, is a
+        // swing s about an axis across it, then a twist t about it: w = cos s/2 cos t/2,
+        // x = cos s/2 sin t/2, and (y, z) is the swing's own sin s/2 × axis turned back by t/2.
+        // So (w y - x z, w z + x y) is that axis × sin s/2 cos s/2. Shared by Rapier's (y, z),
+        // the push on a twisted joint went aside too: a 10 kg weight on a cone of 0.5 rad came
+        // to rest 2.3, 5.4 and 7.2 units beside its lowest point at 0.2, 0.45 and 0.7 rad of
+        // twist ("lets a twisted ragdoll joint's cone give …").
+        const twist = Math.sin(jointAngle(joint, RAPIER.JointAxis.AngX) / 2);
+        const w = Math.sqrt(Math.max(0, 1 - twist * twist - half * half));
+        const swing = [w * parts[0] - twist * parts[1], w * parts[1] + twist * parts[0]] as const;
+        const length = Math.hypot(swing[0], swing[1]);
+        for (let i = 0; i < axes.length; i++) {
+          const axis = axes[i];
+          const push = pushes[i];
+          if (!axis || !push || axis.index === 0 || length < 1e-9) continue;
+          const along = swing[axis.index === 1 ? 0 : 1] / length;
+          if (along * along < CONE_SHARE) continue;
+          const share = Math.min(1, CONE_HOLD * along * along);
+          if (on) add(push, spring.stiffness, excess * along, share);
+          else push.damping += spring.stiffness * share * this.#size * GIVE_DAMPING;
+          if (excess > EASED_EXCESS) push.far = true;
+        }
+      }
+      giving.coned = spring !== undefined;
+    }
+    const back = Math.min(1, this.solver.tau * factor);
+    const differs = (now: number, before: number): boolean =>
+      Math.abs(now - before) > GIVE_STIFFNESS_CHANGE * Math.max(now, before);
+    for (let i = 0; i < axes.length; i++) {
+      const axis = axes[i];
+      const push = pushes[i];
+      if (!axis || !push) continue;
+      const angle = angles[i] ?? 0;
+      if (push.stiffness > 0 || push.damping > 0) {
+        // Set where it changed: its stiffness or its damping, or its torque by what a
+        // thousandth of a radian is to its stiffest spring (setting a joint wakes its bodies).
+        const target = push.stiffness > 0 ? angle + push.torque / push.stiffness : angle;
+        const held = axis.stiffness * (axis.target - angle);
+        const off = axis.stiffness === 0 && axis.damping === 0;
+        if (
+          off ||
+          differs(push.stiffness, axis.stiffness) ||
+          differs(push.damping, axis.damping) ||
+          Math.abs(push.torque - held) > push.most * EASED_CHANGE
+        ) {
+          raw.rawSet.jointConfigureMotorPosition(
+            raw.handle,
+            axis.axis,
+            target,
+            push.stiffness,
+            push.damping,
+          );
+          if (off) raw.rawSet.jointSetMotorMaxForce(raw.handle, axis.axis, MOTOR_FORCE);
+          axis.stiffness = push.stiffness;
+          axis.damping = push.damping;
+          axis.target = target;
+        }
+      } else if (axis.stiffness !== 0 || axis.damping !== 0) {
+        raw.rawSet.jointSetMotorMaxForce(raw.handle, axis.axis, 0);
+        axis.stiffness = 0;
+        axis.damping = 0;
+      }
+      // Past Rapier's limit with no spring (nothing of the two turns yet): the limit as it is,
+      // until there is one.
+      const excess = angle > axis.max ? angle - axis.max : angle < axis.min ? angle - axis.min : 0;
+      const sprung = axis.stiffness > 0 || Math.abs(excess) <= GIVE_ON;
+      const low = Math.min(axis.min, angle);
+      const high = Math.max(axis.max, angle);
+      let lo = sprung ? low - GIVE_STEP : axis.min;
+      let hi = sprung ? high + GIVE_STEP : axis.max;
+      // Rapier's limit follows a joint past it only once the joint has moved half a step's
+      // give (a joint creeping to rest is not woken by every hair it moves).
+      if (sprung && axis.lo <= low - GIVE_STEP / 2 && axis.lo >= lo - GIVE_STEP / 2) lo = axis.lo;
+      if (sprung && axis.hi >= high + GIVE_STEP / 2 && axis.hi <= hi + GIVE_STEP / 2) hi = axis.hi;
+      // Far past a limit: back by tau of the way a step at most.
+      if (sprung && push.far && push.move < -EASED_CHANGE) lo = angle + back * push.move;
+      else if (sprung && push.far && push.move > EASED_CHANGE) hi = angle + back * push.move;
+      // Only a change is set (setting a joint wakes its bodies).
+      if (Math.abs(lo - axis.lo) > EASED_CHANGE || Math.abs(hi - axis.hi) > EASED_CHANGE) {
+        setJointLimits(joint, axis.axis, lo, hi);
+        axis.lo = lo;
+        axis.hi = hi;
       }
     }
   }
@@ -1995,10 +2361,16 @@ export class PhysicsWorld {
     const before = this.#easing.get(placed);
     const bounds: number[] = [];
     const limits = axisLimits(data);
+    const giving = this.#giving.get(placed);
     for (let i = 0; i < limits.length; i++) {
       const limit = limits[i];
       if (!limit) continue;
       const { axis, min, max } = limit;
+      // A limit that gives comes back by its spring (#giveLimits).
+      if (giving?.axes.some((given) => given.axis === axis)) {
+        bounds.push(min, max);
+        continue;
+      }
       const wasLo = before?.[2 * i];
       const wasHi = before?.[2 * i + 1];
       const eased = easedLimit(jointAngle(joint, axis), min, max, tau);
@@ -2035,6 +2407,7 @@ export class PhysicsWorld {
     this.#groupErrors.delete(placed);
     this.#jointScales.delete(placed);
     this.#easing.delete(placed);
+    this.#giving.delete(placed);
     this.#clipped.delete(placed);
     this.#linksClipped.delete(placed);
     this.#chainLinks.delete(placed);
@@ -2653,6 +3026,7 @@ export class PhysicsWorld {
     for (const [placed, joint] of this.#solverJoints) {
       const made = placed.joint;
       if (!made?.isValid()) continue;
+      this.#giveLimits(placed);
       active.push(joint);
       this.#clipViolation(placed, made, joint, joint.constraint.a.pivot, joint.constraint.b.pivot);
     }

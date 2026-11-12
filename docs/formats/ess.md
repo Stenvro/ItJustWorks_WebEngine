@@ -291,8 +291,9 @@ everywhere (the original reserves one byte and widens it when the count is known
   (hazards): six u32 and two refIds.
 - **Actors** (ACHR): the AI process level i32 (−1: none) and the state flags u32 come first,
   then the reference data. With a process, its data follows (see "AI process"). Then, for every
-  actor: a byte, 13 u32 (timers and counters), a
-  refId, the actor state (18 bytes), a refId, a byte of which of the four magic casters follow
+  actor: a byte, 13 u32 (timers and counters), its killer's
+  refId (0: none; below), the actor state (18 bytes), a refId, a byte of which of the four magic
+  casters follow
   (each: the common part, u32, refId, u32, a vsval-sized animation block), the four spells and
   the power in hand (refIds), the modifier sets of health, magicka, stamina and voice points
   (each u32 3, then permanent, temporary and damage f32; damage is negative), the actor value
@@ -623,8 +624,14 @@ ess)` reads those places ahead);
   on the opening's executed and killed, 0 on the living; 6 restrained, 3 unconscious): dead,
   restrained, unconscious; one saved dying (1) is dead and kept as our own save keeps the dying
   (`RuntimeSave.engines.dying`), so its scripts hear the OnDeath it was still waiting for as the
-  load ends (docs/formats/save.md); its killer is not taken (where the save keeps it is not
-  known: none, TODO(M13));
+  load ends (docs/formats/save.md), with its killer as the akKiller. The killer is the
+  reference written just before the state bytes (`EssActorData.killer`), kept on the dead too
+  (`ActorState.killer`). Measured on the two saves read: of their 4,727 actors (2,362 and
+  2,365) only two keep one, both in the second save and both dead (life state 2) with their
+  timers still set, a townsman and a soldier of Helgen, and it is MQ101AlduinREF, the dragon
+  whose fire killed them; the opening's executed prisoners
+  (killed by their scripts) and the placed corpses keep none, nor does any living actor
+  (`src/save/ess-import.test.ts`, on a synthetic save);
 - locks (the Lock extra: level, flags with bit 0 locked, key): the level and whether locked;
 - the scenes playing (SCEN): the first state word is the phase (−1: not begun, a start
   waiting); each action's last two bytes are running and done (package actions that run on

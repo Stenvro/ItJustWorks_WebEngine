@@ -120,17 +120,12 @@ describe.skipIf(!hasGamedata())('the death idles and furniture of the load order
 const BANNERED_MARE = 0x1605e;
 const HULDA = 0x1a66e;
 /**
- * Seconds into her lean (after she settles into it) at which she is killed and slumps. Killed
- * at 1 to 4.5 s she stands draped over the counter (STANDING_PHASES). Which phases slump depends
- * on the pose she dies in, so on how her lean began and whom she looks at: since her walk to the
- * counter ends with its path end's canned turn into the entry (ActionPathEnd: NPC_TurnLeft90),
- * 2 s stands too (it slumped when she turned in place by her steering alone), and since she
- * chooses whom she looks at by head tracking's own rule, 1.5 s stands and 0.5 and 4 s slump; since
- * a far graph hears an event at once (src/animation/animated-skeleton.ts), a few frames sooner,
- * 4 and 4.5 s stand and 0.5 and 5 s slump.
+ * Seconds into her lean (after she settles into it) at which she is killed: she slumps at every
+ * one. While her joints' limits were Rapier's own, which do not yield, she stood on, bent over
+ * the counter on locked legs (below): killed at 1 to 4.5 s, and with the poses she dies in on
+ * this tip at 0.5 and 5 s too (all ten, head at 99–101 units).
  */
-const PHASES = [0.5, 5] as const;
-const STANDING_PHASES = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5] as const;
+const PHASES = [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5] as const;
 
 /** One kill at the counter. */
 interface CounterDeath {
@@ -211,21 +206,18 @@ describe.skipIf(!hasGamedata())('Hulda killed at the bar counter (headless simul
     },
   );
 
-  // In the other phases her upper body tips onto the counter while her hips bend to their 45°
-  // limit and her knees straighten to theirs: her legs stand as a locked strut (feet flat at the
-  // ankles' limit, head at 96–99 units). The original sets her ragdoll up with nothing of its
-  // own (its files' constraints, the world's solver; made dynamic, its still bodies lifted:
-  // PhysicsWorld.liftStill), and with all of that Rapier at four substeps (Havok's world solves
-  // with four iterations) keeps her standing too (head at 91–93 units); only two buckle the
-  // strut, and fewer substeps settle the race skeletons' ragdolls worse. Easing every limit
-  // the joints lie past (by tau of the error a step, as Havok's soft limits correct) changes
-  // nothing: the strut's joints lie at their limits, not past them. A give in proportion to the
-  // load a limit carries was tried and not kept (docs/physics.md, the cone), but the load her
-  // ankles and knees carry is unmeasured: TODO(M13), measure it, then Havok's limits' give at
-  // four iterations under it, with the settling of the eight.
-  for (const phase of STANDING_PHASES) {
-    it.todo(`killed ${phase} s into her lean, her body slumps below the counter’s height`);
-  }
+  // Killed 1 to 4.5 s into her lean her upper body tips forward over the counter until her
+  // hips are at their cone (45°), and its weight then bears on her legs through their limits:
+  // the hips', the knees' straight one and the ankles' dorsiflexion (3.6°: her feet flat, her
+  // calves leaning back). With limits that do not yield (Rapier's) that is a strut, and she
+  // stood bent over the counter (head at 99–101 units: every case above failed).
+  // Havok's limits are as stiff as its solver's four iterations leave them
+  // (constraint-solver.ts, limitGive; PhysicsWorld.#giveLimits): an ankle's, between a 3 kg
+  // foot and her calf, is a spring of 96 N·m a radian, and her weight bore on it with 13 to
+  // 19 N·m (measured while it still held, against a spring twice as stiff): it yields the 8°
+  // and more that bring her calves forward over her feet, her knees fold and she goes down
+  // within 2 s (her head at 81–95 units 1 s after the kill, 10–17 at 2 s, 9–24 units 5 s
+  // on). Inferred from Havok's solver (TODO(M13)).
 });
 
 // The engine's own drive of a ragdoll ([RagdollAnim], the engine's built-in defaults; their use
@@ -441,23 +433,52 @@ describe.skipIf(!hasGamedata())(
         await sim.until(() => bodies.driven(HULDA)?.dynamic === true, 20);
       }
       expect(bodies.driven(HULDA)?.dynamic).toBe(true);
-      // The blow lands on the body farthest from her first (her head or a hand, not her pelvis).
-      const states = bodies.bodyStates(HULDA);
+      // Her bodies: her ragdoll's 18, and her skeleton's character bumper, which has no mass
+      // (nothing pushes it) and whose origin lies farther from her pelvis than any of them
+      // (81 units; her feet 61, her head 53).
+      const all = bodies.bodyStates(HULDA);
+      const states = all.filter((state) => state.mass > 0);
+      const bumper = all.find((state) => state.mass === 0);
+      expect(states).toHaveLength(18);
+      expect(bumper?.node).toBe('CharacterBumper');
       const first = states[0];
       expect(first).toBeDefined();
-      if (!first) return;
+      if (!first || !bumper) return;
+      // Driven by her graph she stands at the counter as her pose has her, her joints' limits
+      // giving or not: her head 48 units above her pelvis and her feet 60 below it (47.9 to
+      // 48.0 and 59.6 to 60.0 with limits that do not yield, 48.2 to 48.6 and 59.2 to 60.3
+      // with the give).
+      const above = (pattern: RegExp): number[] =>
+        states.filter((state) => pattern.test(state.node)).map((s) => s.at[2] - first.at[2]);
+      expect(above(/Head/)).toHaveLength(1);
+      expect(above(/Foot/)).toHaveLength(2);
+      for (const height of above(/Head/)) {
+        expect(height).toBeGreaterThan(47);
+        expect(height).toBeLessThan(49.5);
+      }
+      for (const height of above(/Foot/)) {
+        expect(height).toBeGreaterThan(-61);
+        expect(height).toBeLessThan(-58.5);
+      }
       const far = (s: (typeof states)[number]): number =>
         Math.hypot(s.at[0] - first.at[0], s.at[1] - first.at[1], s.at[2] - first.at[2]);
+      // The blow lands on the body of her ragdoll farthest from her first (a foot, not her
+      // pelvis).
       const target = [...states].sort((a, b) => far(b) - far(a))[0];
       expect(target).toBeDefined();
       if (!target) return;
-      expect(far(target)).toBeGreaterThan(20);
+      expect(far(target)).toBeGreaterThan(55);
+      expect(far(bumper)).toBeGreaterThan(far(target));
       const before = target.velocity;
       expect(bodies.feedback(HULDA, [1, 0, 0], target.at)).toBe(target.node);
       // fFeedbackImpulseMult (500 game units of momentum) made Havok's: 500 / 69.99 on its mass.
       const after = bodies.bodyStates(HULDA).find((s) => s.node === target.node)?.velocity;
       const gained = (after?.[0] ?? 0) - before[0];
       expect(gained).toBeCloseTo(500 / HAVOK_SCALE / target.mass, 3);
+      // A blow that lands nearest her bumper strikes the body of her ragdoll nearest there (it
+      // struck the bumper, and pushed nothing).
+      const struck = bodies.feedback(HULDA, [1, 0, 0], bumper.at);
+      expect(states.map((state) => state.node)).toContain(struck);
       await sim.step(0.5);
       expect(bodies.feedbackGain(HULDA)).toBeLessThan(0.8);
       await sim.step(1);

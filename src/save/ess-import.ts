@@ -778,10 +778,11 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   /** The actors with the package each ran (and whom it fought), where the save has them. */
   const savedActors: SavedActor[] = [];
   /**
-   * The actors saved dying (life state 1): their OnDeath was still to come, so the load sends it
-   * as it does for our own save's dying (RuntimeSave.engines.dying, ActorEngine.finishSavedDying).
+   * The actors saved dying (life state 1), each with its killer (0: none): their OnDeath was
+   * still to come, so the load sends it as it does for our own save's dying
+   * (RuntimeSave.engines.dying, ActorEngine.finishSavedDying).
    */
-  const dying = new Set<number>();
+  const dying = new Map<number, number>();
   let savedPlayer: SavedPlayer | undefined;
   /** The actors' graphs (by actor) and the player's: they go on as they are placed. */
   const actorGraphs = new Map<number, ActorGraphState>();
@@ -1205,9 +1206,15 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       const actor = state.actor(formId);
       if (life === LifeState.dying || life === LifeState.dead) actor.dead = true;
       else if (life === LifeState.alive) actor.dead = false;
+      // Its killer: the reference the actor's data keeps before its state bits (the dead and
+      // the dying a blow or a spell killed name theirs; one a script killed names none).
+      const killer = actor.dead && form.actor.killer ? (ours(form.actor.killer) ?? 0) : 0;
+      if (killer !== 0) actor.killer = killer;
+      else delete actor.killer;
       // Saved dying, it is dead as the load ends, and its scripts hear the OnDeath they were
-      // waiting for (src/world/dying.ts); its OnDying was heard before the save.
-      if (life === LifeState.dying) dying.add(formId);
+      // waiting for (src/world/dying.ts), with its killer; its OnDying was heard before the
+      // save.
+      if (life === LifeState.dying) dying.set(formId, killer);
       else dying.delete(formId);
       actor.unconscious = life === LifeState.unconscious;
       actor.restrained = life === LifeState.restrained;
@@ -2457,10 +2464,9 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     ...((scenesSaved.length > 0 || scenesWaiting.length > 0) && {
       scenes: { playing: scenesSaved, waiting: scenesWaiting },
     }),
-    // The dying, each with no killer: where the original's save keeps an actor's killer is not
-    // known, so their OnDeath names none (inferred, TODO(M13)).
+    // The dying, each with its killer (0: none), whom their OnDeath names.
     ...(dying.size > 0 && {
-      engines: { dying: [...dying].map((actor) => [actor, 0] as const) },
+      engines: { dying: [...dying].map(([actor, killer]) => [actor, killer] as const) },
     }),
   };
   const skipped = skips.lines();

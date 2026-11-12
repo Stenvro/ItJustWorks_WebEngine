@@ -364,12 +364,13 @@ async function auditLimits(): Promise<void> {
   };
   // How far each joint lies past its limits (mirrored), by its two bodies' nodes with the side
   // left out (the left and right ankles together), past its lower and its upper limit (as the
-  // file gives them: an ankle's upper limit is its dorsiflexion's): the give of Havok's soft
-  // limits under a corpse's own weight.
+  // file gives them: an ankle's upper limit is its dorsiflexion's), and a ragdoll joint's twist
+  // axes past its cone: the give of Havok's limits under a corpse's own weight
+  // (src/physics/constraint-solver.ts, limitGive).
   interface Past {
     all: number;
-    lower: [number, number];
-    upper: [number, number];
+    lower: [number, number, number];
+    upper: [number, number, number];
     most: number;
     /** How often each pair of limits (in whole degrees, "min..max") comes up. */
     limits: Map<string, number>;
@@ -378,8 +379,8 @@ async function auditLimits(): Promise<void> {
   const tallyPast = (key: string, angle: number, min: number, max: number): void => {
     const entry = past.get(key) ?? {
       all: 0,
-      lower: [0, 0],
-      upper: [0, 0],
+      lower: [0, 0, 0],
+      upper: [0, 0, 0],
       most: 0,
       limits: new Map<string, number>(),
     };
@@ -390,10 +391,12 @@ async function auditLimits(): Promise<void> {
     const lower = (min + angle) * degrees;
     const upper = (-angle - max) * degrees;
     entry.all++;
-    if (lower > 1) entry.lower[0]++;
-    if (lower > 5) entry.lower[1]++;
-    if (upper > 1) entry.upper[0]++;
-    if (upper > 5) entry.upper[1]++;
+    if (lower > 0.25) entry.lower[0]++;
+    if (lower > 1) entry.lower[1]++;
+    if (lower > 5) entry.lower[2]++;
+    if (upper > 0.25) entry.upper[0]++;
+    if (upper > 1) entry.upper[1]++;
+    if (upper > 5) entry.upper[2]++;
     entry.most = Math.max(entry.most, lower, upper);
   };
   const sideless = (node: string | undefined): string =>
@@ -444,6 +447,11 @@ async function auditLimits(): Promise<void> {
         tally('ragdoll plane', angle(r.z), d.planeMinAngle, d.planeMaxAngle);
         tallyPast(`twist ${joint}`, angle(r.x), d.twistMinAngle, d.twistMaxAngle);
         tallyPast(`plane ${joint}`, angle(r.z), d.planeMinAngle, d.planeMaxAngle);
+        // The cone: the angle between the two twist axes (the second's in the first's frame is
+        // the turn's x axis), past it on the upper side.
+        const swing = Math.acos(Math.max(-1, Math.min(1, 1 - 2 * (r.y * r.y + r.z * r.z))));
+        const cone = Math.abs(d.coneMaxAngle);
+        tallyPast(`cone ${joint}`, -swing, -cone, cone);
       }
     }
   }
@@ -457,11 +465,11 @@ async function auditLimits(): Promise<void> {
   // that which side is which can be read off: a knee's upper limit (0°) is its straight side,
   // an ankle's upper limit its dorsiflexion.
   console.log(
-    'past their limits (mirrored), the joints of the most poses (by > 1°, > 5°), their limits:',
+    'past their limits (mirrored), the joints of the most poses (by > 0.25°, > 1°, > 5°), their limits:',
   );
-  const rows = [...past].sort((x, y) => y[1].all - x[1].all).slice(0, 30);
-  const pair = ([one, five]: [number, number]): string =>
-    `${String(one).padStart(4)} ${String(five).padStart(4)}`;
+  const rows = [...past].sort((x, y) => y[1].all - x[1].all).slice(0, 40);
+  const pair = ([quarter, one, five]: [number, number, number]): string =>
+    `${String(quarter).padStart(4)} ${String(one).padStart(4)} ${String(five).padStart(4)}`;
   for (const [key, { all, lower, upper, most, limits }] of rows) {
     const common = [...limits].sort((x, y) => y[1] - x[1])[0]?.[0] ?? '?';
     console.log(

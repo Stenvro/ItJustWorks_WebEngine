@@ -290,6 +290,10 @@ export class ActorBodies {
    * `direction` by fFeedbackImpulseMult (game units of momentum, made Havok's: / HAVOK_SCALE),
    * and the drive yields to it a while (src/physics/ragdoll-anim.ts). The struck body's node
    * (undefined: none pushed, its ragdoll not driven with bodies simulated, or feedback off).
+   * Only a body with mass is struck: the skeleton's character bumper (CharacterBumper, no
+   * mass: nothing pushes it) is among an actor's bodies, its origin 80 units from a human's
+   * pelvis, and a blow that landed nearest it pushed nothing. TODO(M13): inferred (the
+   * original pushes the ragdoll's rigid body the hit is on).
    */
   feedback(reference: number, direction: Vec3, point?: Vec3): string | undefined {
     const entry = this.#bodies.get(reference);
@@ -304,6 +308,7 @@ export class ActorBodies {
       const at: Vec3 = [point[0] / HAVOK_SCALE, point[1] / HAVOK_SCALE, point[2] / HAVOK_SCALE];
       let nearest = Infinity;
       for (const { body } of entry.bodies) {
+        if (!(body.body.mass() > 0)) continue;
         const d = distance(physics.bodyFrame(body).position, at);
         if (d < nearest) {
           nearest = d;
