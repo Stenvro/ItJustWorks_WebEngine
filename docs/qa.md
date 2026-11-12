@@ -19,14 +19,21 @@ for regressions.
   new game (the cart, the execution, the race menu) to MQ101 160, follows the guide with the
   follow bot (god mode) and, where the bot stalls, enters the keep as MQ101SetStage220 has it;
   in the keep the player takes Gunjar's gear and fights the two Imperials by mouse buttons
-  (taps, held power attacks, blocks held on their own and in the middle of a swing), closes the
-  tutorials that come up (the low health one) with E, and stops at MQ101 300 (won) or the
-  player's death. `keep-fight.json`: the outcome, every blow from MQ101 150 on (the courtyard
-  and the fight), who fought the player in the courtyard, the player's attack actions with the
+  (taps, held power attacks, blocks held on their own and in the middle of a swing, each until
+  a blow falls on the player, 2.5 s at most), closes the tutorials that come up (the low health
+  one) with E, and stops at MQ101 300 (won), the player's death, `--keep-minutes` (18) in the
+  keep or `--after-fight-minutes` (18) after the fight without 300. `keep-fight.json`: the
+  outcome, every blow from MQ101 150 on (the courtyard and the fight; those on the player with
+  whether their guard was up, how far off their facing the attacker stood and how far away),
+  the deaths, who fought the player in the courtyard, the player's attack actions with the
   state of each refused one, each block held and whether the guard went up (with the player's
-  states through it and the graph's answer to each block asked), a block held through a jump
-  once the fight is won (`jumpBlock`: the guard up after the landing), the menus and the frame
-  times. Vite 5204 and Chrome 9404 by default. Since the page reloads as its sources
+  states through it, the graph's answer to each block asked, the player's graphs' block events
+  and the blows that fell meanwhile), a block held through a jump once the fight is won
+  (`jumpBlock`: the guard up after the landing), the menus and the frame times. Every 10 s in
+  the keep `host.log` tells where the route stands (the scenes' phases and open actions, the
+  guide's package, place and movement, how far the officer's body lies from where he died).
+  A blow counts as blocked only from within fCombatHitConeAngle of the player's facing, so of
+  two soldiers the one at the side is not blocked. Vite 5204 and Chrome 9404 by default. Since the page reloads as its sources
   change, no edit of `src/` may happen while it runs.
 
 ## Running it
