@@ -546,14 +546,20 @@ export class ActorEngine {
    * A save's dying (dyingSaveData): their dying ends as the load ends, so their scripts hear the
    * OnDeath they were waiting for (an alias's OnDeath setting its quest's stage). That it ends
    * at once rather than going on for what was left of it is inferred, TODO(M13). One no longer
-   * dead hears none.
+   * dead hears none. The events are sent, not waited for: the load goes on while their handlers
+   * run, as any event the engine sends to the scripts (the caller's VM idle then waits for the
+   * threads until they wait). A handler that waits on a latent call would otherwise hold the
+   * load for good: what it waits for (the clock, the world) only moves once the load is done
+   * (found with the Bannered Mare's patrons saved while they died: the load never ended).
    */
-  async finishSavedDying(saved: readonly (readonly [number, number])[] | undefined): Promise<void> {
+  finishSavedDying(saved: readonly (readonly [number, number])[] | undefined): void {
     for (const [actor, killer] of saved ?? []) {
       if (this.#runtime.state.actors.get(actor)?.dead !== true) continue;
-      await this.#runtime.sendEvent(actor, 'OnDeath', [
-        killer === 0 ? null : this.#runtime.actorHandle(killer),
-      ]);
+      this.#runtime
+        .sendEvent(actor, 'OnDeath', [killer === 0 ? null : this.#runtime.actorHandle(killer)])
+        .catch((error: unknown) => {
+          this.#runtime.events.onError('death', error);
+        });
     }
   }
 
