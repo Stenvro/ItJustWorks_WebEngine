@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { ObjectHandle } from '../src/scripting/values.ts';
-import { ActorValue } from '../src/world/actor-values.ts';
+import { ActorValue, actorValueIndex } from '../src/world/actor-values.ts';
 import type { Arrival } from '../src/world/worldspace.ts';
 import { hasGamedata, loadSim, openSim, PLAYER_REF, type Sim } from './helpers/sim.ts';
 
@@ -40,6 +40,8 @@ const OUTRO_SCENE = 0x5195c;
 /** The faction FXAlduinScript puts him in as his soul is torn from him. */
 const MQ_KILL_DRAGON_FACTION = 0x35d62;
 const MQ306 = 0x46ef3;
+/** The actor value Dragonrend's Prevent Flying effects raise (the flier may not fly). */
+const DRAGON_REND = actorValueIndex('DragonRend') ?? -1;
 
 /** The game outside the hall, the heroes at their line (stage 30). */
 let atTheLine: Uint8Array | undefined;
@@ -238,7 +240,8 @@ describe.skipIf(!hasGamedata())('MQ305 Dragonslayer', () => {
   // Alduin fights them all from the air (MQ304AlduinFaction names the heroes' faction an enemy,
   // and they his: a faction both are in, FavorExcludedFaction, does not make them allies). The
   // player's Dragonrend brings him down (MQAlduinIgnoreDragonrend is 0 since 120), again each
-  // time he takes off; on the ground the heroes' blows land, and the player's. Protected, he
+  // time he takes off, and holds him on the ground (he may not fly) while the player's blows fall;
+  // on the ground the heroes' blows land, and the player's. Protected, he
   // dies only by the player's hand (the heroes would bring him to his knees, and his bleedout
   // has no recovery since 120); the rest of a fight that a
   // first level's fists do not win stands in as one blow of theirs for what is left of his health
@@ -275,34 +278,38 @@ describe.skipIf(!hasGamedata())('MQ305 Dragonslayer', () => {
               hit.projectile === undefined &&
               heroes.includes(hit.aggressor ?? 0),
           ).length;
+      const flight = sim.world.stage.flight;
+      const onTheGround = (): boolean => flight.state(alduin) === 0;
+      // The player's Dragonrend follows him with their aim (Sim.shoutAt): one aimed once where he
+      // was before the hold reaches a flier only by chance, and none did here; he came down only
+      // for a ground attack of his own, and took off again as its time ran out.
       const full = (await sim.runtime.actors.value(alduin, ActorValue.health)).current;
-      for (let round = 0; round < 60 && heroBlows() === 0; round++) {
-        if (sim.world.stage.flight.state(alduin) !== 0) {
-          const at = await sim.position(alduin);
-          expect(at).toBeDefined();
-          if (!at) return;
-          sim.look(at);
-          await sim.step(0.2);
-          await shoutAll(sim);
-        }
+      for (let round = 0; round < 30 && heroBlows() === 0; round++) {
+        if (!onTheGround()) await sim.shoutAt(alduin, 15, () => heroBlows() > 0 || onTheGround());
         await sim.step(3);
       }
       expect(heroBlows()).toBeGreaterThan(0);
       expect((await sim.runtime.actors.value(alduin, ActorValue.health)).current).toBeLessThan(
         full,
       );
-      for (let shouts = 0; shouts < 30 && sim.world.stage.flight.state(alduin) !== 0; shouts++) {
+      // Dragonrend on him where he stands, the player near: its Prevent Flying (the DragonRend
+      // actor value, 15 to 22 s by the words) keeps him from taking off while the player's blows
+      // fall. Off the ground his death would be deferred until he lands (his deferred kill).
+      const rended = async (): Promise<boolean> =>
+        (await sim.runtime.actors.value(alduin, DRAGON_REND)).current > 0;
+      let held = false;
+      for (let tries = 0; tries < 4 && !held; tries++) {
+        for (let shouts = 0; shouts < 6 && !onTheGround(); shouts++) {
+          await sim.shoutAt(alduin, 30, onTheGround);
+          await sim.until(onTheGround, 10);
+        }
+        expect(onTheGround()).toBe(true);
         const at = await sim.position(alduin);
-        expect(at).toBeDefined();
-        if (!at) return;
-        sim.look(at);
-        await sim.step(0.2);
-        await shoutAll(sim);
-        await sim.step(3);
+        expect(at && (await sim.walkPath(at, 30, 400))).toBe(true);
+        if (!(await rended())) await sim.shoutAt(alduin, 30, rended);
+        held = (await rended()) && onTheGround();
       }
-      expect(sim.world.stage.flight.state(alduin)).toBe(0);
-      const at = await sim.position(alduin);
-      expect(at && (await sim.walkPath(at, 30, 400))).toBe(true);
+      expect(held).toBe(true);
       const before = (await sim.runtime.actors.value(alduin, ActorValue.health)).current;
       let landed = false;
       for (let swing = 0; swing < 8 && !landed; swing++) {
