@@ -282,6 +282,10 @@ what fills it was not found).
       bRegisterAllVDBViewers, bSendNonVisibleBehaviorGraphsToSPU, bShouldProcessRequests,
       bUseSPUGenerate, bUseVariableCache, bUseWorldLock, sHkxDBNameContextPrefix,
       uVariableCacheSize, iEntityBatchRemoveRate. fJumpAnimDelay: no code of the original reads it.
+- [x] The frame's step ([Display] bCompensateUnstableFrameTime, iUnstableFrameTimeHistorySize,
+      [General] iFPSClamp; observed in the original): at most 1/6 s a frame, evened out over the
+      last frames; one step for every system, graphs near and far alike (docs/animation.md,
+      "Frame time"; `tests/conformance/animation/frame-time.test.ts`).
 - [ ] Read by the original and not by us. bApplyPitchToExtractedMotion (1): a clip's root motion
       turned by the actor's pitch (no effect at pitch 0; the movers' root motion is level);
       bEnableHavokHit (0) with fHavokHit*: off in the game; bFootIKFeedback (1), bForceJumpingFromGraph

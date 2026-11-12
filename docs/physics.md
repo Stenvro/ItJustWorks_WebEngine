@@ -10,7 +10,11 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   own code works in game units and converts at the boundary.
 - **Steps:** fixed `[HAVOK] fMaxTime` (1/60 s), at most `uMaxNumPhysicsStepsPerUpdate` (3) per
   frame. Observed in the original: a frame hands Havok its time plus the time still owed, at most that many
-  steps of it; the rest stays owed (a slow frame is made up in the frames after it, not lost), and
+  steps of it (the frame's time is the frame timer's step, as every system takes it:
+  docs/animation.md, "Frame time"; below 20 frames a second it is more than the three steps, so
+  the bodies and the characters moving in the steps fall behind the clock and run three steps a
+  frame until they have caught up once frames are short again);
+  the rest stays owed (a slow frame is made up in the frames after it, not lost), and
   a frame under a millisecond hands nothing (its time is owed too). Havok then steps fMaxTime
   until its clock reaches what it was handed, so its last step is at or a little ahead of the
   frame's time; the player's camera and the actors are drawn between the last two steps at the
