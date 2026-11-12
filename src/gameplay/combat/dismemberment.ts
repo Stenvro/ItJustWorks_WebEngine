@@ -95,9 +95,10 @@ export function decapitationLaunch(
  * one of the chop's keys (30 a second), its last frame down coming at about 390 units a second and
  * the next creeping sideways at about 60, and which of them a read fell on changed with the frame
  * rate. Its places are kept by how far its animation had run (`time`: its pose's, shownProgress),
- * which a swing is read over, and by the clock (`clock`), which a blow's moment is on: below 10
- * frames a second, where each frame's update is cut to 0.1 s, its animation runs slower than the
- * clock, and 0.1 s of the clock held less than half the axe's last stretch down (in the browser
+ * which a swing is read over, and by the clock (`clock`), which a blow's moment is on: where its
+ * animation runs slower than the clock (its graph held for a clip still being read; before the
+ * frame timer, each update cut to 0.1 s below 10 frames a second), a stretch of the clock holds
+ * less of the swing: 0.1 s of it held less than half the axe's last stretch down (in the browser
  * at 4 frames a second it read 12 units a second where the axe comes down at 390, bent aside by
  * where it stopped, and the head went 207 units from the basket). TODO(M13): inferred; the engine
  * reads its weapon body's velocity, and what stretch of the animation that velocity covers was

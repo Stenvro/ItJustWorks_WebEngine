@@ -3066,7 +3066,7 @@ export class WorldViewer {
     // With the near plane wholly under water the view takes the water's own imagespace (WATR
     // INAM; the renderer measured the near plane before this).
     this.#sky?.setUnderwaterImageSpace(this.#underwater.imageSpace());
-    this.#sky?.frame(performance.now(), camera);
+    this.#sky?.frame(camera);
     // The surroundings once the camera's cell is known (else the world's music would start).
     const world = this.#sky;
     if (world?.located) this.#session?.soundSystem?.setAmbience(this.#ambientState(world));

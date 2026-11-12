@@ -27,6 +27,7 @@ import type { RenderPort } from '../render/render-port.ts';
 import type { GpuScene, InstanceMotion, ModelInstance } from '../render/scene-renderer.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { seededRandom } from '../world/actors.ts';
+import { stepSince } from '../world/frame-timer.ts';
 import { PLAYER_ACTOR } from '../world/player-body.ts';
 import { CAMERA_NODE, FirstPersonBody } from './first-person-body.ts';
 import type { PlacedActor } from './actors.ts';
@@ -39,8 +40,6 @@ import type { SavedGraphs } from '../save/world-save.ts';
 
 /** The Player reference (PlayerRef). */
 const PLAYER_REFERENCE = 0x14;
-/** A frame longer than this (a hitch, a hidden tab) moves the avatar by this much (s). */
-const MAX_STEP = 0.1;
 
 /** The node a seated body's place is read from (its centre of mass). */
 const COM_NODE = 'npc com [com ]';
@@ -91,7 +90,8 @@ export class PlayerAvatar {
   #bodyYaw: number;
   /**
    * The avatar's own clock (s): the game's at the player's pace, and real time while it animates
-   * in a menu; its graphs' updates take at most animateSkeletons' cut of a long frame.
+   * in a menu; it moves by the frame's step (src/world/frame-timer.ts), which its graphs'
+   * updates take whole.
    */
   #clock = 0;
   #last: { readonly seconds: number; readonly real: number } | undefined;
@@ -576,12 +576,11 @@ export class PlayerAvatar {
     // The game's clock stands still in menus; a menu that shows the player animates them on
     // real time.
     const step = !last ? 0 : this.animatesInMenus ? real - last.real : seconds - last.seconds;
-    const dt = Math.min(MAX_STEP, Math.max(0, step));
-    // The clock runs the whole step: the graphs' updates are cut to MAX_STEP by animateSkeletons
-    // as before, which counts an event's lateness on the clock (GraphEvent.late: a blow's moment,
-    // BlowMoment). Cut here, below 10 frames a second an update looked as if it covered only
-    // MAX_STEP of the frame and the lateness came out short.
-    this.#clock += Math.max(0, step);
+    // The frame's whole step, as the frame timer cut it for every system (the avatar's own cut
+    // to 0.1 s is gone: below 10 frames a second the player's body animated slower than the
+    // actors far from the camera); only a gap (the avatar not updated meanwhile) is shortened.
+    const dt = stepSince(step);
+    this.#clock += dt;
     this.stepped = dt;
     if (!this.seated && !this.knocked) this.#drive(dt);
     const body = this.#made.body;

@@ -33,6 +33,7 @@ import type { RenderPort } from '../render/render-port.ts';
 import type { GpuScene, InstanceVisibility } from '../render/scene-renderer.ts';
 import type { DecalLand } from '../render/world-decal.ts';
 import { ragdollOf, referenceMatrix, type CellActor } from '../world/cell-loader.ts';
+import { stepSince } from '../world/frame-timer.ts';
 import { linkedReferences, parseReference } from '../world/cell-records.ts';
 import { actorValueIndex } from '../world/actor-values.ts';
 import { CELL_SIZE } from '../world/land.ts';
@@ -2993,8 +2994,8 @@ export class ActorStage {
   /** Moves the enabled actors' skeletons; far or unseen ones less often (animationRate). */
   animate(seconds: number): void {
     // Their AI first (what they want now), then their movement.
-    const frame =
-      this.#clock === undefined ? 0 : Math.min(0.25, Math.max(0, seconds - this.#clock));
+    // The frame's whole step on the game's clock (src/world/frame-timer.ts), as the graphs take.
+    const frame = this.#clock === undefined ? 0 : stepSince(seconds - this.#clock);
     this.#clock = seconds;
     this.#levelActors(frame);
     this.ai.frame(this.#actors.values(), frame, this.#options.focus?.());

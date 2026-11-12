@@ -68,6 +68,7 @@ import { connectPlayerTime } from '../shell/time-flow.ts';
 import { FlyCamera } from '../render/fly-camera.ts';
 import type { Vfs } from '../vfs/vfs.ts';
 import { cellSceneLighting, pointLights } from '../world/cell-lighting.ts';
+import { FrameTimer, frameTimerSettings } from '../world/frame-timer.ts';
 import { loadedGridRadius } from '../world/loaded-grid.ts';
 import {
   cellArrival,
@@ -641,7 +642,7 @@ export class SimWorld {
   // --- Stepping ---------------------------------------------------------------------------
 
   /**
-   * One fixed step of the game's frame, in the page's order: the player and the physics, the
+   * One frame of `seconds` on the real clock (the fixed step), in the page's order: the player and the physics, the
    * game clock and the sky, the player's body, the actors (AI, senses, combat, magic, movers,
    * graphs), the objects' graphs, then the scripts' clocks. Waits for the work the step
    * started (scripts run until they wait, cells and actors finish loading).
@@ -650,11 +651,35 @@ export class SimWorld {
     return this.#drive(() => this.#step(seconds));
   }
 
+  /** The frame timer (made by the first step, its history at that step). */
+  #frameTimer: FrameTimer | undefined;
+  #frameStep = 0;
+
+  /**
+   * The last frame's real-time step, as the frame timer handed it out (seconds): what every
+   * system moved on by, times the time multiplier for those on the game's clock.
+   */
+  get frameStep(): number {
+    return this.#frameStep;
+  }
+
   async #step(seconds: number): Promise<void> {
     const session = this.session;
     const play = this.#play;
+    // The frame's step, as the page's frame timer hands it out (src/world/frame-timer.ts): a
+    // frame of `seconds` on the real clock moves the game on by this, a long frame cut once for
+    // every system. The simulation starts as a game that has run at its step all along, so at a
+    // steady step of 0.05 s or less (the fixed step) the game's step is the step itself. A step
+    // of no time (a settle) is no frame to the timer.
+    let real = 0;
+    if (seconds > 0) {
+      this.#frameTimer ??= new FrameTimer(frameTimerSettings(session.ini), seconds);
+      this.#frameTimer.configure(frameTimerSettings(session.ini));
+      real = this.#frameTimer.step(seconds);
+    }
+    this.#frameStep = real;
     // The game's clock stands still in menus; Slow Time runs it slower (main.ts's frame clock).
-    const frame = session.menuMode ? 0 : seconds * session.time.multiplier;
+    const frame = session.menuMode ? 0 : real * session.time.multiplier;
     this.clock.advance(seconds);
     this.#time += frame;
     play?.view.update(frame);
@@ -679,7 +704,7 @@ export class SimWorld {
     // them up to date each frame: a burnt web's own collision steps aside, its torn one stands
     // in (without this, nothing that broke in the sim ever let anyone through).
     Array.from(this.#destruction.scenes());
-    session.tickScripts(seconds);
+    session.tickScripts(real);
     if (this.#place?.kind === 'exterior') this.#track(this.#stream());
     if (this.#travel) {
       const travel = this.#travel;

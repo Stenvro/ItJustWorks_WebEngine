@@ -17,6 +17,7 @@ import type {
   SceneRenderer,
 } from '../render/scene-renderer.ts';
 import type { TextureCache } from '../render/texture-cache.ts';
+import { stepSince } from '../world/frame-timer.ts';
 import { flashIntensity } from '../world/lightning.ts';
 import { parsePrecipitation, precipitationAmounts } from '../world/precipitation.ts';
 import type { GpuSky, SkyFrame, SkyRenderer } from '../render/sky.ts';
@@ -404,9 +405,13 @@ export class WorldSky {
    * Advances the clock, runs the sky's weather and shows it, and places the sky objects around
    * the camera; call once per frame.
    */
-  frame(now: number, camera: Vec3): SkyState | undefined {
-    const delta =
-      this.#lastFrame === undefined ? 0 : Math.min(0.25, (now - this.#lastFrame) / 1000);
+  frame(camera: Vec3): SkyState | undefined {
+    // The frame's step, as the frame timer handed it out for every system (the session's frame
+    // clock: src/world/frame-timer.ts). On the real clock, cut here to 0.25 s, a long frame moved
+    // the hour further than it moved the actors and the scripts. TODO(M13): inferred that the
+    // hour runs on the frame's step (the calendar advancing by anything else was not found).
+    const now = this.#session.frameSeconds;
+    const delta = this.#lastFrame === undefined ? 0 : stepSince(now - this.#lastFrame);
     this.#lastFrame = now;
     this.#seconds += delta;
     // The session's clock runs at the TimeScale (times the panel's fast-forward), the clouds

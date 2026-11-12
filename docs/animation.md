@@ -447,6 +447,49 @@ their look: [formats/esm.md](formats/esm.md#actors)).
   camera, farther away a few times a second ahead of time with their poses interpolated
   between ([below](#how-often-graphs-update)).
 
+## Frame time
+
+How far one frame moves the game on (`src/world/frame-timer.ts`, `FrameTimer`). Observed in the
+original, in our words:
+
+- **The step.** A frame's step is the time since the last frame, at most a sixth of a second: a
+  frame longer than 166.67 ms counts as 1/6 s, so below 6 frames a second the whole game runs
+  slower than the clock. The original counts in whole milliseconds; ours takes the clock's time.
+- **Evened out.** With [Display] bCompensateUnstableFrameTime (on by default) the step is evened
+  out over the last iUnstableFrameTimeHistorySize frames (8; sizes of 3 to 254 count, others
+  switch it off): their times' sum less the shortest and less the longest, the longest for at
+  most 0.05 s, over the size less two. The history starts at 0.016 s a frame. At a steady 20
+  frames a second or more that is the frame's own time; one long frame's time beyond 0.05 s is
+  handed out over the frames after it; at a steady rate below 20 the step is a little longer than
+  the frame (0.0694 s at 15 a second, 0.1083 s at 10, 0.1583 s at 7, 0.1861 s from 6 down).
+- **iFPSClamp.** [General] iFPSClamp of 1 to 199 makes every frame count 1 / iFPSClamp s whatever
+  the clock says (0, the default: off).
+- **The game's step** is that real-time step times the global time multiplier (Slow Time).
+
+Ours: the page's frame loop (`src/main.ts`) and the headless simulation (`SimWorld.step`, a frame
+of that many seconds on the real clock) each run one `FrameTimer`, and every system takes its
+time from the step it hands out: the game's clock (and with it the graphs near and far, the
+player's body, the actors' AI and movers, the particles, what physics is handed), the scripts'
+clock and the game's hour. No system cuts a frame again: a system that reads its step off the
+game's clock takes the clock's whole step (`stepSince`), shortened only across a gap longer than
+any frame (a third of a second: it was left out of the frames meanwhile, an actor not animated,
+a view not drawn). What physics does with the time it is handed is its own rule
+(docs/physics.md, "Steps": at most uMaxNumPhysicsStepsPerUpdate steps a frame, the rest owed).
+
+Before, each system cut a long frame by its own rule: the game's clock ran up to 0.25 s a frame,
+a graph updated every frame 0.1 s, a far graph updated ahead its whole interval, the player's
+body 0.1 s on a clock that ran the whole frame, the actors' AI and movers 0.25 s, the player and
+the physics 0.1 s, and the scripts' clock and the game's hour up to 0.25 s of the real clock.
+Below 10 frames a second they came apart: at 7 a second an actor near the camera animated 0.1 s
+of each 0.143 s frame, while the AI, the scripts and a scene's timers ran the whole frame.
+Measured in the simulation in the Bannered Mare over 5 s at 7 frames a second (35 frames): Hulda
+and the three others updated every frame animated 3.5 s, those behind the camera 4.1 to 5.1 s.
+With the timer and no other cut, all animate the 5.54 s the clock moves in those frames, the
+ones updated ahead to within their interval (`tests/conformance/animation/frame-time.test.ts`).
+
+TODO(M13): inferred that the scripts' clock and the game's hour run on the frame's step (nothing
+else was found to move them), and that nothing cuts a graph's update again.
+
 ## How often graphs update
 
 Observed in the original (its graph manager's update), in our words; ours in
@@ -485,15 +528,17 @@ animated objects alike.
   told an event hears it at once, so the clips it starts are known to be still being read before
   any of them moves on; while one reads, the others stand at the clock (the time they ran ahead
   is dropped) and keep their poses; all go on in the update the clip comes in. They are updated
-  every frame, all of them, so none runs ahead of the others and a frame cut to MAX_STEP is cut
-  alike. Updated apart, in the browser with the processor slowed (about 9 and 11 frames a second)
+  every frame, all of them, so none runs ahead of the others (one ahead stands up to its interval
+  on from one updated every frame, and is the one held back while another's clip is read).
+  Updated apart, in the browser with the processor slowed (about 9 and 11 frames a second)
   the headsman's and the guard's chop clips, read only as the first prisoner was beheaded, came
   0.18 to 0.19 s after the prisoner's: his chop ran ahead, his head flew before the axe was down,
   its flight bent by the axe still swinging, and in one of two runs it went over the basket's rim.
-  Below 10 frames a second (the simulation at 4 to 7 a second) the headsman, behind the camera
-  and updated ahead, ran his whole frames while the prisoner, updated every frame as his
-  Decapitate came near, ran 0.1 s of each: the axe was 0.37 s on, rising again, and the head flew
-  up and 180 to 270 units off. Those so kept together also animate all their bones, seen or not
+  Below 10 frames a second (the simulation at 4 to 7 a second), while each graph's update was
+  still cut to 0.1 s ("Frame time" above), the headsman, behind the camera and updated ahead, ran
+  his whole frames while the prisoner, updated every frame as his Decapitate came near, ran 0.1 s
+  of each: the axe was 0.37 s on, rising again, and the head flew up and 180 to 270 units off.
+  Those so kept together also animate all their bones, seen or not
   (the cut and the killer's swing are read off their poses): unseen, the three the block holds
   moved iMinBonesToGenerateWhileSitting bones, the prisoner's head stood 12 units above where his
   chop has it and the headsman's arm and axe stayed while his body turned, and in the browser the
@@ -501,12 +546,12 @@ animated objects alike.
   second 204 units off). TODO(M13): inferred.
 - **How far a pose has run.** Ours: each skeleton keeps how far its graph has run (its updates'
   steps) and how far the pose it shows has (`shownProgress`: a far graph's blend's share of its
-  update). It runs with the clock except where a frame longer than MAX_STEP had its update cut
-  (below 10 frames a second the animation runs slower than the clock): a killer's swing is read
-  over 0.1 s of it, not of the clock ("Dismemberment" below; `SwingTrail`). Read over the clock
-  at 4 frames a second in the browser, the headsman's axe came into the blow at 12 units a second
-  (it comes down at 390), bent aside by where it stopped, and the head went 207 units from the
-  basket.
+  update). It runs with the clock except while its graph is held (a clip of its group still being
+  read) and across a gap in its updates ("Frame time" above): a killer's swing is read over
+  0.1 s of it, not of the clock ("Dismemberment" below; `SwingTrail`). Read over the clock at 4
+  frames a second in the browser, while each update was still cut to 0.1 s, the headsman's axe
+  came into the blow at 12 units a second (it comes down at 390), bent aside by where it stopped,
+  and the head went 207 units from the basket.
 - **Not past a trigger.** The interval is cut to just short (half a frame) of the next trigger or
   annotation a playing clip passes (the engine walks the active clips' triggers), so that what
   the clips raise (a footstep, a sound) is raised at its moment, not up to a quarter of a second
@@ -1336,10 +1381,8 @@ in the update that passes it and tells how long before that update's end it fell
 event: [How often graphs update](#how-often-graphs-update)). The blow's moment is the update's end
 on the animation clock less that (`BlowMoment`; the player's body runs on its avatar's own clock,
 so only the lateness is taken, its update ending at the frame's clock). The lateness is in
-seconds of the clock: a frame longer than `animateSkeletons`' cut (0.1 s, below 10 frames a
-second) has its graph stepped by the cut, and the event's share of that step is put on the whole
-frame (inferred, TODO(M13)); the player's avatar clock runs the whole frame too, at the player's
-pace. Where the actor is shown
+seconds of the clock: a graph's update is the clock's whole step ("Frame time" above), and the
+player's avatar clock runs by that step too, at the player's pace. Where the actor is shown
 as the clock runs, the blow waits for the clock and takes the pose between the two frames shown
 around its moment; where its graph ran ahead and is shown at once (unseen, not interpolated), it
 takes the pose between the one shown before that update and the one after (the graph's at the

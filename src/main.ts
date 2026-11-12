@@ -8,6 +8,7 @@ import { GameSession, MEMORY_BUDGET } from './shell/game-session.ts';
 import { ModelViewer } from './shell/model-viewer.ts';
 import { WorldViewer } from './shell/world-viewer.ts';
 import { showClockSpeed } from './shell/world-sky.ts';
+import { FrameTimer, frameTimerSettings, type FrameTimerSettings } from './world/frame-timer.ts';
 import { nextClockSpeed } from './world/game-time.ts';
 import { forgetPanels, setupHideShortcut, setupPanels } from './shell/panels.ts';
 import { DomTerminal } from './shell/terminal.ts';
@@ -228,8 +229,6 @@ const LOCKED_KEYS: readonly string[] = [
 
 /** `memory`: GPU bytes of the session's models and textures (none without a session). */
 
-/** The game's clock moves at most this much from one frame to the next (seconds). */
-const MAX_FRAME_SECONDS = 0.25;
 /** A loading screen waits this long at most for the player's body and the actors around them (ms). */
 const POPULATE_MS = 20000;
 /**
@@ -241,10 +240,15 @@ const HOSTILES_NEAR_RADIUS = 4096;
 function startRenderLoop(
   renderer: Renderer,
   memory: () => number | undefined,
-  everyFrame: () => void,
+  /** `step`: the frame's real-time step, as the frame timer hands it out (seconds). */
+  everyFrame: (step: number) => void,
   paused: () => boolean,
   /** How fast the game's clock runs against the real one (Slow Time). */
   timeScale: () => number,
+  /** The frame timer's settings (the session's INI; none before a session). */
+  timerSettings: () => FrameTimerSettings | undefined,
+  /** Before the frame is drawn, with its step (the session's frame clock moves on). */
+  beforeFrame: (step: number) => void,
 ): void {
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   let frames = 0;
@@ -254,14 +258,21 @@ function startRenderLoop(
   // particles and the sky's hour stop with it); Slow Time runs it slower (src/shell/time-flow.ts).
   let gameTime = 0;
   let last: number | undefined;
+  // One step for the whole frame (src/world/frame-timer.ts): the game's clock moves by it, and
+  // with the clock the graphs, the player, the movers and what physics is handed; the scripts'
+  // clock and the game's hour move by it too. A long frame is cut here once, so all of them slow
+  // alike (a hidden tab draws no frames: back, the game goes on where it was, the time away not
+  // played at once).
+  const timer = new FrameTimer();
   const frame = (now: number): void => {
-    // A hidden tab draws no frames: back, the game goes on where it was (the time away is not
-    // played at once; the scripts' clock is held the same way).
-    if (last !== undefined && !paused())
-      gameTime += Math.min(MAX_FRAME_SECONDS, (now - last) / 1000) * timeScale();
+    const settings = timerSettings();
+    if (settings) timer.configure(settings);
+    const step = last === undefined ? 0 : timer.step((now - last) / 1000);
+    if (!paused()) gameTime += step * timeScale();
     last = now;
+    beforeFrame(step);
     renderer.render(reducedMotion ? 30 : gameTime, devicePixelRatio);
-    everyFrame();
+    everyFrame(step);
     // Streaming work gets its share of the time until the next frame (frame-work.ts).
     frameWorkFrameEnded();
 
@@ -946,15 +957,16 @@ async function main(): Promise<void> {
         });
     });
   }
-  let lastScriptTick = performance.now() / 1000;
   // Sounds follow the camera; browsers start audio only after a user gesture.
   startRenderLoop(
     renderer,
     () => session?.memory,
-    () => {
-      // The scripts' clocks move on (their waits and updates run as the game's time passes).
-      const now = performance.now() / 1000;
-      session?.tickScripts(Math.min(0.25, now - lastScriptTick));
+    (step) => {
+      // The scripts' clocks move on (their waits and updates run as the game's time passes): by
+      // the frame's step, as the game's clock does. TODO(M13): inferred that the scripts' clock
+      // is the frame timer's (before, it ran on the real clock, up to 0.25 s a frame, and ahead
+      // of the graphs a scene's lines are timed against wherever a long frame was cut).
+      session?.tickScripts(step);
       // The settings Grass Fade and Brightness.
       if (session) {
         renderer.grass.fadeStart = session.ini.number('Grass', 'fGrassStartFadeDistance');
@@ -1009,7 +1021,6 @@ async function main(): Promise<void> {
           ini.lookup('Display', key),
         );
       }
-      lastScriptTick = now;
       session?.soundSystem?.update(renderer.view?.camera);
       // The loading screen while a cell or worldspace loads, until the player stands in it.
       const loading = worldViewer.loading ?? modelViewer.loading;
@@ -1020,6 +1031,10 @@ async function main(): Promise<void> {
     },
     () => session?.menuMode === true,
     () => session?.time.multiplier ?? 1,
+    () => (session ? frameTimerSettings(session.ini) : undefined),
+    (step) => {
+      if (session) session.frameSeconds += step;
+    },
   );
   const resumeAudio = (): void => {
     void session?.sounds().then((sounds) => sounds.engine.resume());

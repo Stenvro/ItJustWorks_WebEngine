@@ -286,6 +286,9 @@ export const INI_DEFAULTS = {
     uMaxSkinDecals: 100,
   },
   Display: {
+    // The frame's step is evened out over the last frames (src/world/frame-timer.ts).
+    bCompensateUnstableFrameTime: 1,
+    iUnstableFrameTimeHistorySize: 8,
     fDecalLOD0: 800,
     fDecalLifetime: 30,
     iMaxSkinDecalsPerFrame: 25,
@@ -410,6 +413,8 @@ export const INI_DEFAULTS = {
   },
   General: {
     bBorderRegionsEnabled: 1,
+    // Every frame counts 1 / iFPSClamp s whatever the clock says (0: off; src/world/frame-timer.ts).
+    iFPSClamp: 0,
     // The engine's Movement Blocked package is made only while this is on (src/ai/engine-packages.ts).
     bUseMovementBlockedPackage: 0,
     // No limb is cut off (src/shell/actor-dismemberment.ts).

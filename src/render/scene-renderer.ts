@@ -120,6 +120,7 @@ import { MAX_FOCUS_LIGHTS, MAX_FOCUS_SHADOWS, type FocusShadow } from './focus-s
 import { boundOf, mergeBounds, orderByBindings, type SceneBound } from './scene-bound.ts';
 import waterShader from './shaders/water.wgsl?raw';
 import type { TextureCache } from './texture-cache.ts';
+import { FRAME_GAP_SECONDS } from '../world/frame-timer.ts';
 import { CELL_SIZE } from '../world/land.ts';
 
 export { GpuModel, type ModelAddon };
@@ -1565,8 +1566,11 @@ export class GpuScene {
 const PARTICLE_UPDATE_DISTANCE = 4096;
 /** Nor farther than this at all (their LOD has faded them out long before). */
 const PARTICLE_MAX_DISTANCE = 16384;
-/** Longest step of a particle update (a long frame or a system that comes back into view). */
-const PARTICLE_MAX_STEP = 0.1;
+/**
+ * Longest step of a particle update: a system that comes back into view goes on by this much (a
+ * frame is never longer: the frame timer cuts it).
+ */
+const PARTICLE_MAX_STEP = FRAME_GAP_SECONDS;
 
 /** Effect shader controlled variables (EffectShaderControlledVariable). */
 const EffectVariable = {

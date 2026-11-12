@@ -155,6 +155,7 @@ import backdropShader from './shaders/backdrop.wgsl?raw';
 import depthResolveShader from './shaders/depth-resolve.wgsl?raw';
 import { HDR_FORMAT, PostProcessor } from './post.ts';
 import { SkyRenderer, type SkyFrame } from './sky.ts';
+import { stepSince } from '../world/frame-timer.ts';
 import type { ImageSpace } from '../world/image-space.ts';
 import { nearPlaneWater, type NearPlaneWater, type UnderwaterFrame } from '../world/underwater.ts';
 import { TerrainRenderer, type GpuTerrainCell } from './terrain.ts';
@@ -655,7 +656,10 @@ export class Renderer {
     const { device, context } = this.#gpu;
     const canvasTexture = context.getCurrentTexture();
     const targets = this.#ensureTargets(canvasTexture.width, canvasTexture.height);
-    const delta = this.#lastTime === undefined ? 0 : Math.min(0.1, timeSeconds - this.#lastTime);
+    // The frame's whole step on the game's clock (the frame timer cut a long frame, once for all:
+    // src/world/frame-timer.ts). Cut here to 0.1 s as well, below 10 frames a second the player
+    // and the physics moved slower than the clock the actors ran on.
+    const delta = this.#lastTime === undefined ? 0 : stepSince(timeSeconds - this.#lastTime);
     this.#lastTime = timeSeconds;
 
     const view = this.#view;
