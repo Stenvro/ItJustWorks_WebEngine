@@ -48,9 +48,21 @@ describe.skipIf(!hasGamedata())(
       const furniture = opened.world.stage.furniture;
       await opened.until(() => furniture.interaction(HULDA)?.state === 3, 60);
       await opened.step(1.5);
-      before = sample();
-      await opened.step(1 / 60);
-      last = sample();
+      // She dies at a moment her lean moves her (a body faster than 20 units a second over a
+      // frame; a minute at most). Which of the counter's actions her graph plays, and when, is
+      // its own draw (mt_behavior.hkx, AnimObjectBarCounterRandomActionRight_Behavior: the wipe
+      // or the folded arms). Before, 1.5 s into her lean a hand moved at some 40 units a second;
+      // found 2026-11-12, her graph draws the folded arms first and she stands nearly still then
+      // (AnimObjectBarCounterIdleArmsLoopRight: 0.8 units a second), unfolding them some 20 s on
+      // (AnimObjectBarCounterArmToRight: 23 units a second).
+      const speed = (): number =>
+        Math.max(...last.map((p, i) => length(minus(p, before[i] ?? p)) * 60 * HAVOK_SCALE));
+      for (let frame = 0; frame < 3600; frame++) {
+        before = sample();
+        await opened.step(1 / 60);
+        last = sample();
+        if (speed() > 20) break;
+      }
       await opened.kill(HULDA, PLAYER_REF);
       after = sample();
       const bodies = opened.world.stage.bodies.placements(HULDA)[0]?.bodies ?? [];
