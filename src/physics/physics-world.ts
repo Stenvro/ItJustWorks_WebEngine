@@ -2577,12 +2577,19 @@ export class PhysicsWorld {
         SOLVER_ITERATIONS * Math.max(1, Math.round(whole / this.#step));
     }
     const owed = this.#owed + seconds;
-    const handed = Math.min(owed, size * (this.complex ? this.complexSteps : this.maxSteps));
+    const most = size * (this.complex ? this.complexSteps : this.maxSteps);
+    const handed = Math.min(owed, most);
     if (handed < MIN_FRAME_SECONDS * scale) {
       this.#owed = owed;
       return 0;
     }
-    this.#owed = owed - handed;
+    // What a long frame could not hand stays owed and is made up in the frames after it, but
+    // no more than one frame hands at most: frames that stay long (below 20 a second; below 30
+    // in the complex mode) owed more each, without end, and once they were short again every
+    // frame took its most steps until minutes of it were made up, the world and everyone walking
+    // in it at up to three times their speed. TODO(M13): ours; what bounds the original's (its
+    // own frame time's clamp, perhaps) was not read.
+    this.#owed = Math.min(owed - handed, most);
     this.#accumulator += handed;
     let steps = 0;
     while (this.#accumulator > STEP_EPSILON) {

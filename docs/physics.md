@@ -16,7 +16,11 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   frame's time; the player's camera and the actors are drawn between the last two steps at the
   frame's time, so 144 Hz screens see smooth motion. The step and its cap scale with the world's
   time multiplier (TODO(M13): ours stay at fMaxTime under Slow Time). fTimePerSubStep and
-  iMinNumSubSteps are read by nothing.
+  iMinNumSubSteps are read by nothing. The time owed is held to what one frame hands at most
+  (ours, TODO(M13): what bounds the original's was not read): frames that stay long (below 20 a
+  second) owed more each, and once they were short again every frame took its three steps until
+  minutes of it were made up, the world and everyone walking in it at up to three times their
+  speed.
 - **The complex mode** (`PhysicsWorld.complex`): the engine's step is handed a mode in which it
   steps fMaxTimeComplex (1/30 s), at most uMaxNumPhysicsStepsPerUpdateComplex (1) times a frame
   (observed in the original), with its solver's iterations and tau for that step (`solverSettings`:
@@ -27,9 +31,12 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   to three, every other frame at 60 frames a second, and a long frame no longer makes the next one
   longer by its steps (below 30 frames a second the world then runs slow, as it does below 20
   out of the mode). Rapier takes twice its iterations for the longer step, and the contacts'
-  force threshold is over the longer step (a soft landing is heard in either mode). The cut
-  head at Helgen's block stays in its basket at that step over the launches about the chop's
-  but the shallowest (`tests/head-in-basket.int.test.ts`).
+  force threshold is over the longer step (a soft landing is heard in either mode). A character
+  controller takes its rise and fall in parts of the world's own step (a jump of fJumpHeightMin
+  went 3 units higher at the complex step taken whole), and an actor set far from its controller
+  (fCharControllerWarpDistSqr) is warped there in a frame without a step too. The cut head at
+  Helgen's block stays in its basket at that step over the launches about the chop's but the
+  shallowest (`tests/head-in-basket.int.test.ts`).
 - **The world's bounds** (inferred, TODO(M13): the original's size and what its broad phase's
   border does with an entity were not read): a simulated body past 16,384 Havok units along an
   axis, beyond every worldspace's cells, goes out of the simulation and stays as it is

@@ -111,6 +111,25 @@ describe('the step (the engine’s rule)', () => {
     physics.free();
   });
 
+  // Ours (TODO(M13) in physics-world.ts): what bounds the time owed in the original was not read.
+  it('owes no more than one frame hands: a slow stretch is not made up for minutes after', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    // Six seconds at ten frames a second: three steps a frame, half of each frame's time owed.
+    for (let frame = 0; frame < 60; frame++) expect(physics.step(0.1)).toBe(3);
+    // Back at sixty: one frame's worth is made up (three steps), not three seconds.
+    const after = Array.from({ length: 10 }, () => physics.step(1 / 60));
+    expect(after).toEqual([3, 2, 1, 1, 1, 1, 1, 1, 1, 1]);
+    physics.free();
+    // In the complex mode the same: one step a frame at twenty frames a second, then a step
+    // every other frame at sixty after one made up.
+    const complex = new PhysicsWorld(matrix, GRAVITY);
+    complex.complex = true;
+    for (let frame = 0; frame < 60; frame++) expect(complex.step(0.05)).toBe(1);
+    const then = Array.from({ length: 8 }, () => complex.step(1 / 60));
+    expect(then.reduce((sum, n) => sum + n, 0)).toBeLessThanOrEqual(5);
+    complex.free();
+  });
+
   it('steps nothing in a frame under a millisecond, and owes its time', () => {
     expect(MIN_FRAME_SECONDS).toBe(0.001);
     const physics = new PhysicsWorld(matrix, GRAVITY);
