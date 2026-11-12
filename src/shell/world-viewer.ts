@@ -148,6 +148,7 @@ import {
   perkActivation,
   PlaySession,
   autoDoorsOf,
+  playerAway,
   type Activatable,
   type CollisionGroup,
 } from './play-session.ts';
@@ -686,6 +687,8 @@ export class WorldViewer {
     return {
       ...target,
       activate: () => {
+        // On the way to another place nothing is activated: not its scripts either.
+        if (playerAway(this.#session)) return;
         runtime.playerActivated(reference, () => {
           target.activate();
         });
@@ -1428,6 +1431,7 @@ export class WorldViewer {
       return runtime ? disabledControlFlags(runtime.controls) : 0;
     };
     player.activationAllowed = () => this.#session?.scriptsReady?.controls.activate !== false;
+    player.inputHeld = () => playerAway(this.#session);
     player.character.walkable = (px, py, pz) =>
       this.#cells
         .get(cellKey(Math.floor(px / CELL_SIZE), Math.floor(py / CELL_SIZE)))
@@ -1547,7 +1551,7 @@ export class WorldViewer {
     });
     play.onAutoDoor = (reference) => {
       const target = this.#defaultActivation(reference);
-      if (!target) return;
+      if (!target || playerAway(this.#session)) return;
       const runtime = this.#session?.scriptsReady;
       if (runtime) {
         runtime.playerActivated(reference, () => {

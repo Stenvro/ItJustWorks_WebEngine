@@ -48,6 +48,7 @@ import {
   perkActivation,
   PlaySession,
   autoDoorsOf,
+  playerAway,
   type Activatable,
   type CellRagdoll,
   type CollisionGroup,
@@ -615,6 +616,26 @@ export class SimWorld {
   /** Goes through a load door to where it leads (as the player's activation of it does). */
   travel(teleport: Teleport): Promise<void> {
     return this.#drive(() => this.#travelTo(teleport));
+  }
+
+  /**
+   * A load door's activation takes the player through it: one journey through a door at a time
+   * (Play's: main.ts onTravel), under way from the activation until they stand in its place
+   * (GameSession.travelling). A door used again meanwhile is not taken a second time: two
+   * travels at once loaded the place again over itself.
+   */
+  #takeDoor(teleport: Teleport): void {
+    if (this.session.travelling) return;
+    const arrived = this.session.beginJourney();
+    const before = this.#travel;
+    this.#travel = (async () => {
+      try {
+        await before;
+        await this.#travelTo(teleport);
+      } finally {
+        arrived();
+      }
+    })();
   }
 
   async #travelTo(teleport: Teleport): Promise<void> {
@@ -1212,6 +1233,7 @@ export class SimWorld {
       povSwitchAllowed(this.runtime.controls) && !this.stage.animObjects.playerHolds;
     player.disabledControls = () => disabledControlFlags(this.runtime.controls);
     player.activationAllowed = () => this.runtime.controls.activate;
+    player.inputHeld = () => playerAway(this.session);
     // No auto vanity camera headless: a long wait would turn the cases' first person into third.
     player.vanityAllowed = () => false;
     player.character.walkable = (x, y, z) =>
@@ -1284,7 +1306,7 @@ export class SimWorld {
       );
     play.onAutoDoor = (reference) => {
       const target = this.#defaultActivation(reference);
-      if (target) {
+      if (target && !playerAway(this.session)) {
         this.runtime.playerActivated(reference, () => {
           target.activate();
         });
@@ -1591,6 +1613,8 @@ export class SimWorld {
     return {
       ...target,
       activate: () => {
+        // On the way to another place nothing is activated: not its scripts either.
+        if (playerAway(this.session)) return;
         this.runtime.playerActivated(reference, () => {
           target.activate();
         });
@@ -1616,7 +1640,7 @@ export class SimWorld {
       {
         name: (teleport) => this.#destinations.get(teleport.door)?.name ?? '',
         go: (teleport) => {
-          this.#travel = this.#travelTo(teleport);
+          this.#takeDoor(teleport);
         },
       },
       (descriptor, at) => void this.session.playSound(descriptor, at),

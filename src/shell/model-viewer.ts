@@ -21,6 +21,7 @@ import {
   perkActivation,
   PlaySession,
   autoDoorsOf,
+  playerAway,
   type Activatable,
   type CellRagdoll,
   type CollisionGroup,
@@ -378,6 +379,8 @@ export class ModelViewer {
     return {
       ...target,
       activate: () => {
+        // On the way to another place nothing is activated: not its scripts either.
+        if (playerAway(this.#session)) return;
         runtime.playerActivated(reference, () => {
           target.activate();
         });
@@ -960,6 +963,7 @@ export class ModelViewer {
       return runtime ? disabledControlFlags(runtime.controls) : 0;
     };
     player.activationAllowed = () => this.#session?.scriptsReady?.controls.activate !== false;
+    player.inputHeld = () => playerAway(this.#session);
     player.character.walkable = (x, y, z) =>
       this.#cell?.navmesh.heightNear(x, y, z, NAVMESH_TOLERANCE) !== undefined;
     player.overEncumbered = () => this.#session?.overEncumbered === true;
@@ -1028,7 +1032,7 @@ export class ModelViewer {
     });
     play.onAutoDoor = (reference) => {
       const target = this.#defaultActivation(reference);
-      if (!target) return;
+      if (!target || playerAway(this.#session)) return;
       const runtime = this.#session?.scriptsReady;
       if (runtime) {
         runtime.playerActivated(reference, () => {

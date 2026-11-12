@@ -1030,7 +1030,10 @@ export class PlayMode {
     // place loads (main.ts onTravel), so what waits here is another kind of journey (a script's
     // move while a door's place loads). TODO(M13): inferred: whether the original runs such a
     // second journey after the first or drops it is not known.
-    const journey = this.#journeys.then(() => this.#journey(go));
+    // Under way from the moment it is asked for, not only once its loading screen is up
+    // (GameSession.travelling): no input reaches the game from here until the player is there.
+    const arrived = this.#session.beginJourney();
+    const journey = this.#journeys.then(() => this.#journey(go)).finally(arrived);
     this.#journeys = journey.catch(() => undefined);
     return journey;
   }
