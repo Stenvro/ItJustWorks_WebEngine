@@ -621,21 +621,24 @@ export class CharacterBody {
   ): 'ground' | RAPIER.Collider | undefined {
     const at = this.#body.translation();
     const from = { x: at.x + moved.x, y: at.y + moved.y, z: at.z + moved.z };
-    const notActor = (collider: RAPIER.Collider): boolean =>
-      predicate(collider) && !this.#otherActor(collider);
+    const ground = this.#ground(predicate);
     const reach = this.settings.stairHeight + CONTROLLER_SHELL + 1;
     const ray = this.physics.world.castRay(
       new RAPIER.Ray(from, { x: 0, y: 0, z: -1 }),
       toHavok(this.shape.height / 2 + reach),
       true,
       RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-      undefined,
+      ground.groups,
       this.#collider,
       undefined,
-      notActor,
+      ground.predicate,
     );
     if (ray) return 'ground';
-    const cast = (keep: (collider: RAPIER.Collider) => boolean, distance: number) =>
+    const cast = (
+      groups: number,
+      keep: ((collider: RAPIER.Collider) => boolean) | undefined,
+      distance: number,
+    ) =>
       this.physics.world.castShape(
         from,
         NO_ROTATION,
@@ -645,17 +648,43 @@ export class CharacterBody {
         toHavok(distance),
         false,
         RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-        undefined,
+        groups,
         this.#collider,
         undefined,
         keep,
       );
-    if (cast(notActor, reach)) return 'ground';
+    if (cast(ground.groups, ground.predicate, reach)) return 'ground';
     // As far as it snaps to the ground (the radius) and its shell.
     return cast(
+      QueryGroups.controllerSolid,
       (collider) => predicate(collider) && this.#otherActor(collider),
       this.shape.radius + CONTROLLER_SHELL + 1,
     )?.collider;
+  }
+
+  /**
+   * A query for what `predicate` (the step's: `touching`, less the controllers it is inside)
+   * takes that is no other actor's: the ground under it, what carries it. Rapier's groups keep it
+   * to what a controller meets that no actor owns (QueryGroups.controllerGround), which leaves a
+   * call back only for what it moves through (`ignored`): its own keyframed bodies lie all
+   * through its shape, and a cast down called back for each of them, every step, to be told they
+   * are its own. A shape that is no actor's (none in the game) asks the predicate as before.
+   */
+  #ground(predicate: (collider: RAPIER.Collider) => boolean): {
+    readonly groups: number;
+    readonly predicate: ((collider: RAPIER.Collider) => boolean) | undefined;
+  } {
+    if (this.owner.kind !== 'actor') {
+      return {
+        groups: QueryGroups.controllerSolid,
+        predicate: (collider) => predicate(collider) && !this.#otherActor(collider),
+      };
+    }
+    const ignored = this.ignored;
+    return {
+      groups: QueryGroups.controllerGround,
+      predicate: ignored.size > 0 ? (collider) => !ignored.has(collider.handle) : undefined,
+    };
   }
 
   /** Another actor's shape its own overlaps where it is now (placed into it), if any. */
@@ -670,7 +699,7 @@ export class CharacterBody {
         return false;
       },
       RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-      undefined,
+      QueryGroups.controllerSolid,
       this.#collider,
       undefined,
       (collider) => predicate(collider) && this.#otherActor(collider),
@@ -1173,7 +1202,7 @@ export class CharacterBody {
         return true;
       },
       RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-      undefined,
+      QueryGroups.controllerSolid,
       this.#collider,
       undefined,
       predicate,
@@ -1187,7 +1216,7 @@ export class CharacterBody {
       across,
       false,
       RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-      undefined,
+      QueryGroups.controllerSolid,
       this.#collider,
       undefined,
       (collider) =>
@@ -1694,6 +1723,7 @@ export class CharacterBody {
     predicate: (collider: RAPIER.Collider) => boolean,
     seconds: number,
   ): { body: RAPIER.RigidBody; collider: RAPIER.Collider; pose: Pose } | undefined {
+    const ground = this.#ground(predicate);
     const hit = this.physics.world.castShape(
       center,
       NO_ROTATION,
@@ -1703,10 +1733,10 @@ export class CharacterBody {
       toHavok(CARRIER_REACH),
       true,
       RAPIER.QueryFilterFlags.EXCLUDE_SENSORS | RAPIER.QueryFilterFlags.EXCLUDE_FIXED,
-      undefined,
+      ground.groups,
       this.#collider,
       undefined,
-      (collider) => predicate(collider) && !this.#otherActor(collider),
+      ground.predicate,
     );
     const body = hit?.collider.parent();
     if (!hit || !body || hit.normal1.z <= 0.05) return undefined;
@@ -1759,7 +1789,7 @@ export class CharacterBody {
       length,
       false,
       RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-      undefined,
+      QueryGroups.controllerSolid,
       this.#collider,
       undefined,
       (collider) => predicate(collider) && !carried(collider) && !this.#otherActor(collider),

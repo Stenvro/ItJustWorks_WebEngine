@@ -202,6 +202,112 @@ describe("the controllers' query groups", () => {
     physics.free();
   });
 
+  it("leaves a phantom out of what a controller meets: its skeleton's CharacterBumper", () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const character = new CharacterBody(physics, { radius: 14, height: 128 }, settings, [0, 0, 0], {
+      reference: 0x14,
+      kind: 'actor',
+    });
+    // The bumper of every humanoid skeleton: a fixed phantom capsule on L_CHARCONTROLLER.
+    const bumper = box(Layer.charController, [-20, -20, 0], [20, 20, 120]);
+    const [body] = bumper.bodies;
+    if (!body) throw new Error('a body');
+    const placed = physics.addObject(
+      { bodies: [{ ...body, phantom: true }], skipped: [] },
+      IDENTITY,
+      { reference: 0x14, kind: 'actor' },
+    );
+    const [collider] = placed.colliders;
+    if (!collider) throw new Error('a collider');
+    expect(collider.isSensor()).toBe(true);
+    expect(((collider.collisionGroups() >>> 16) & QueryGroups.controllerSolid) !== 0).toBe(false);
+    // Nothing of its own that its sweeps would have to be told about.
+    expect(physics.controllerSolidOf(0x14, character.collider)).toBe(0);
+    physics.free();
+  });
+
+  it('keeps what no actor owns in the ground group, and actors’ shapes out of it', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const ground = (collider: RAPIER.Collider | undefined): boolean =>
+      collider !== undefined &&
+      ((collider.collisionGroups() >>> 16) & QueryGroups.controllerGround) !== 0;
+    const floor = physics.addObject(box(Layer.static, [-50, -50, -20], [50, 50, 0]), IDENTITY, {
+      reference: 1,
+      kind: 'object',
+    });
+    const others = physics.addObject(box(Layer.bipedNoCc, [60, 0, 0], [70, 10, 10]), IDENTITY, {
+      reference: 0x99,
+      kind: 'actor',
+    });
+    const unmet = physics.addObject(box(Layer.biped, [80, 0, 0], [90, 10, 10]), IDENTITY, {
+      reference: 2,
+      kind: 'object',
+    });
+    const character = new CharacterBody(physics, { radius: 14, height: 128 }, settings, [0, 0, 0], {
+      reference: 0x14,
+      kind: 'actor',
+    });
+    expect(ground(floor.colliders[0])).toBe(true);
+    expect(ground(others.colliders[0])).toBe(false);
+    expect(ground(unmet.colliders[0])).toBe(false);
+    expect(ground(character.collider)).toBe(false);
+    physics.free();
+  });
+
+  it('a controller standing among its own bodies asks the layers of nothing as it steps', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    physics.addObject(box(Layer.static, [-500, -500, -20], [500, 500, 0]), IDENTITY, {
+      reference: 1,
+      kind: 'object',
+    });
+    // A wall beside it, within its casts' reach.
+    physics.addObject(box(Layer.static, [20, -100, 0], [30, 100, 200]), IDENTITY, {
+      reference: 2,
+      kind: 'object',
+    });
+    // Its own keyframed bodies through its shape (its ragdoll's, on L_BIPED) and its bumper.
+    const own = { reference: 0x14, kind: 'actor' } as const;
+    for (const z of [10, 40, 70, 100]) {
+      const bone = physics.addObject(
+        box(Layer.biped, [-8, -8, z], [8, 8, z + 20], 'dynamic'),
+        IDENTITY,
+        own,
+        false,
+      );
+      physics.keyframe(bone);
+    }
+    const [bumper] = box(Layer.charController, [-20, -20, 0], [20, 20, 120]).bodies;
+    if (!bumper) throw new Error('a body');
+    physics.addObject({ bodies: [{ ...bumper, phantom: true }], skipped: [] }, IDENTITY, own);
+    const character = new CharacterBody(
+      physics,
+      { radius: 14, height: 128 },
+      settings,
+      [0, 0, 0],
+      own,
+    );
+    const step = (): void => {
+      physics.step(1 / 60, (seconds) => {
+        character.step(seconds);
+      });
+    };
+    for (let i = 0; i < 30; i++) step();
+    expect(character.grounded).toBe(true);
+    expect(Math.abs(character.feet[2])).toBeLessThan(2);
+    // Standing, then walking along the wall: Rapier's groups tell what it meets; the layers'
+    // table is asked for no collider (each asking is a call back from inside a sweep or a cast).
+    const asked = vi.spyOn(physics.matrix, 'collides');
+    for (let i = 0; i < 10; i++) step();
+    character.velocity = [0, 120];
+    for (let i = 0; i < 30; i++) step();
+    expect(asked).not.toHaveBeenCalled();
+    asked.mockRestore();
+    expect(character.grounded).toBe(true);
+    expect(character.feet[1]).toBeGreaterThan(50);
+    expect(Math.abs(character.feet[0])).toBeLessThan(2);
+    physics.free();
+  });
+
   it("walks through a body of its own a controller meets, and stops at another actor's", () => {
     const walk = (owner: number): number => {
       const physics = new PhysicsWorld(matrix, GRAVITY);

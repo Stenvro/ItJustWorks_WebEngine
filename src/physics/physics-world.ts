@@ -420,9 +420,13 @@ const QUERY_TRAP = 0x4;
 const QUERY_CONTROLLER = 0x8;
 /**
  * What a character controller meets: a collider whose layer collides with L_CHARCONTROLLER and
- * that is no ragdoll's one-sided copy of a mesh (filterFor's test, made inside Rapier).
+ * that is no ragdoll's one-sided copy of a mesh (filterFor's test, made inside Rapier), nor a
+ * phantom: the controllers' sweeps and casts leave sensors out, so one is nothing they meet
+ * (every humanoid skeleton has one on L_CHARCONTROLLER, its CharacterBumper).
  */
 const QUERY_CONTROLLER_SOLID = 0x10;
+/** Of those, the ones that are no actor's (its controller, its bodies): what holds one up. */
+const QUERY_CONTROLLER_GROUND = 0x20;
 const ALL_GROUPS = 0xffff;
 
 /** Rapier's interaction groups: memberships in the upper 16 bits, the filter in the lower. */
@@ -439,6 +443,12 @@ export const QueryGroups = {
    * the rest over inside Rapier, and need no call back for the layers (character.ts).
    */
   controllerSolid: groups(ALL_GROUPS, QUERY_CONTROLLER_SOLID),
+  /**
+   * Of those, what no actor owns: the ground and the bodies a controller stands on or is
+   * carried by. A controller's casts for them pass every actor's shapes over inside Rapier (its
+   * own keyframed bodies lie all through its shape: a call back for each, every step).
+   */
+  controllerGround: groups(ALL_GROUPS, QUERY_CONTROLLER_GROUND),
 } as const;
 
 /** What a collider belongs to: a placed reference, the landscape, an actor. */
@@ -1414,9 +1424,8 @@ export class PhysicsWorld {
 
   /** Gives a collider its layer, owner and material (colliders made outside this class). */
   register(collider: RAPIER.Collider, layer: number, owner: PhysicsOwner, material = 0): void {
-    this.#setLayer(collider, layer);
     this.#owners.set(collider.handle, owner);
-    this.#countSolid(collider.handle);
+    this.#setLayer(collider, layer);
     if (material !== 0) this.#materials.set(collider.handle, material);
   }
 
@@ -1442,7 +1451,7 @@ export class PhysicsWorld {
       !gone &&
       owner?.kind === 'actor' &&
       layer !== undefined &&
-      this.#controllerSolid(handle, layer)
+      this.#controllerSolid(this.world.getCollider(handle), layer)
         ? owner.reference
         : undefined;
     const was = this.#solidOwner.get(handle);
@@ -1459,9 +1468,16 @@ export class PhysicsWorld {
     }
   }
 
-  /** filterFor(L_CHARCONTROLLER)'s test of a collider on `layer`. */
-  #controllerSolid(handle: number, layer: number): boolean {
-    return !this.#ragdollFaces.has(handle) && this.matrix.collides(Layer.charController, layer);
+  /**
+   * filterFor(L_CHARCONTROLLER)'s test of a collider on `layer`, and that it is no sensor (a
+   * phantom, a trigger volume): no controller's sweep or cast meets one.
+   */
+  #controllerSolid(collider: RAPIER.Collider, layer: number): boolean {
+    return (
+      !collider.isSensor() &&
+      !this.#ragdollFaces.has(collider.handle) &&
+      this.matrix.collides(Layer.charController, layer)
+    );
   }
 
   /** A collider's layer, and the kinds of query that find it (QueryGroups). */
@@ -1471,7 +1487,10 @@ export class PhysicsWorld {
     if ((this.matrix.flags(layer) & LayerFlag.triggerVolume) !== 0) kinds |= QUERY_TRIGGER;
     if (layer === Layer.trap || layer === Layer.cloudTrap) kinds |= QUERY_TRAP;
     if (layer === Layer.charController) kinds |= QUERY_CONTROLLER;
-    if (this.#controllerSolid(collider.handle, layer)) kinds |= QUERY_CONTROLLER_SOLID;
+    if (this.#controllerSolid(collider, layer)) {
+      kinds |= QUERY_CONTROLLER_SOLID;
+      if (this.#owners.get(collider.handle)?.kind !== 'actor') kinds |= QUERY_CONTROLLER_GROUND;
+    }
     collider.setCollisionGroups(groups(kinds, ALL_GROUPS));
     this.#countSolid(collider.handle);
     if (layer === Layer.trap) this.#trapColliders.set(collider.handle, collider);
