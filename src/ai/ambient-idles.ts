@@ -178,11 +178,43 @@ export const COMPLEX_SCENE_ACTORS = 20;
 
 /**
  * Whether a complex scene runs: as many actors in the high process as iAINumberActorsComplexScene
- * (20) or more, the player left out (as detection counts them: src/ai/detection.ts). Inferred
+ * (20) or more, the player left out, counted by sceneActors (detection's count too:
+ * src/ai/detection.ts). Inferred
  * for the idles (TODO(M13)): the setting's name and detection's use of it.
  */
 export function isComplexScene(actors: number, complexSceneActors: number): boolean {
   return actors >= complexSceneActors;
+}
+
+/** An actor as the complex scene's count sees it. */
+export interface SceneActor {
+  readonly reference: number;
+  readonly dead: boolean;
+  readonly visibility: { readonly hidden: boolean };
+}
+
+/**
+ * Whether an actor counts toward a complex scene: alive, shown and in the high process.
+ * `inHighProcess` is the movers' set (ActorMovers.inHighProcess), which holds only actors that
+ * live: not disabled, not placed or reloaded dead (startsDead), with a graph, of a race that
+ * walks. Those it held as of the last frame and killed or disabled since are left out at once.
+ * The one count the idles, detection and the physics' complex mode go by.
+ */
+export function countsInScene(
+  actor: SceneActor,
+  inHighProcess: (reference: number) => boolean,
+): boolean {
+  return !actor.dead && !actor.visibility.hidden && inHighProcess(actor.reference);
+}
+
+/** How many actors count toward a complex scene (countsInScene); the player is not among them. */
+export function sceneActors(
+  actors: Iterable<SceneActor>,
+  inHighProcess: (reference: number) => boolean,
+): number {
+  let count = 0;
+  for (const actor of actors) if (countsInScene(actor, inHighProcess)) count++;
+  return count;
 }
 
 /**

@@ -25,9 +25,14 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   steps fMaxTimeComplex (1/30 s), at most uMaxNumPhysicsStepsPerUpdateComplex (1) times a frame
   (observed in the original), with its solver's iterations and tau for that step (`solverSettings`:
   twice the iterations). It is on while the scene is complex: as many living actors in the high
-  process as iAINumberActorsComplexScene (20) or more, the count the idles and detection go by
-  (`ActorStage.complexScene`). TODO(M13): inferred from the settings' names; what hands the
-  engine's step its mode was not read. In it a frame of a crowd takes one step where it took up
+  process as iAINumberActorsComplexScene (20) or more (`ActorStage.complexScene`), by the one
+  count the idles and detection go by too (`sceneActors`, src/ai/ambient-idles.ts): the actors in
+  the movers' high process as of the last frame (alive, shown, not placed or reloaded dead, with a
+  graph, of a race that walks), less any killed or disabled since; the player is not counted.
+  Disabled actors and corpses near the player never make a scene complex (the many initially
+  disabled and placed dead of Windhelm, Solitude, the Dark Brotherhood Sanctuary and Helgen's
+  keep). TODO(M13): inferred from the settings' names; what hands the engine's step its mode was
+  not read. In it a frame of a crowd takes one step where it took up
   to three, every other frame at 60 frames a second, and a long frame no longer makes the next one
   longer by its steps (below 30 frames a second the world then runs slow, as it does below 20
   out of the mode). Rapier takes twice its iterations for the longer step, and the contacts'

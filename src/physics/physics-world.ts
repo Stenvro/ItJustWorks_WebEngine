@@ -1328,10 +1328,11 @@ export class PhysicsWorld {
    * `complexSteps` (uMaxNumPhysicsStepsPerUpdateComplex) times a frame: with the built-in values
    * one step of 1/30 s, so a crowd's frame takes one step where it took up to three, and no long
    * frame makes the next one longer by its steps. The play turns it on while the scene is
-   * complex (src/shell/actor-stage.ts: as many actors in the high process as
-   * iAINumberActorsComplexScene). TODO(M13): inferred from the settings' names (the engine's
-   * step is handed the mode; what hands it was not read): the scene's count is the one the idles
-   * and detection go by.
+   * complex (src/shell/actor-stage.ts: as many living actors in the high process as
+   * iAINumberActorsComplexScene, counted by sceneActors in src/ai/ambient-idles.ts, the count the
+   * idles and detection go by, which never takes in the disabled or those placed or reloaded
+   * dead). TODO(M13): inferred from the settings' names (the engine's step is handed the mode;
+   * what hands it was not read).
    */
   complex = false;
   complexStep = 1 / 30;

@@ -37,6 +37,7 @@ import {
   type Target,
 } from '../ai/detection.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
+import { countsInScene } from '../ai/ambient-idles.ts';
 import { aliasOverrideLists } from '../ai/detection-records.ts';
 import { commanderOf } from '../ai/combat-profile.ts';
 import type { DetectionReport } from '../ai/combat-groups.ts';
@@ -502,7 +503,8 @@ export class ActorSenses implements ScriptSenses {
     }
     for (const staged of this.#options.actors()) {
       const reference = staged.reference;
-      if (staged.dead || staged.visibility.hidden || !movers.inHighProcess(reference)) continue;
+      // The complex scene's count (src/ai/ambient-idles.ts): the idles and physics go by it too.
+      if (!countsInScene(staged, (one) => movers.inHighProcess(one))) continue;
       const using = furniture.interaction(reference);
       const posture =
         using?.state === 3 ? (using.animationType === 2 ? 'lying' : 'sitting') : 'standing';

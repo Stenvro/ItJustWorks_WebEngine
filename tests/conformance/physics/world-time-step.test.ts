@@ -20,6 +20,8 @@
 //   on ImpTowerOutFloor01's compressed mesh.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { COMPLEX_SCENE_ACTORS, sceneActors } from '../../../src/ai/ambient-idles.ts';
+import { HIGH_PROCESS_DISTANCE } from '../../../src/ai/process-levels.ts';
 import type { CollisionBody, CollisionData } from '../../../src/physics/collision-data.ts';
 import {
   CollisionMatrix,
@@ -501,5 +503,129 @@ describe.skipIf(!hasGamedata())(
       expect(physics.complex).toBe(false);
       expect(physics.currentStep).toBeCloseTo(PHYSICS_STEP, 9);
     }, 600_000);
+
+    // The idles' and detection's count (sceneActors): an actor disabled near the player is no
+    // part of the crowd, though it stands within the high process's reach.
+    it('leaves the disabled out of the complex scene: twenty and more staged near, 19 living', async () => {
+      const physics = sim.world.play?.physics;
+      if (!physics) throw new Error('no physics');
+      const stage = sim.world.stage;
+      // The tower's own living (its bandits), before the flock.
+      const others = (await sceneCount(sim)).counted;
+      expect(others).toBeLessThan(COMPLEX_SCENE_ACTORS);
+      const chicken = await sim.formId('NPC_', 'EncChicken');
+      const flock: number[] = [];
+      for (let i = 0; i < COMPLEX_SCENE_ACTORS; i++)
+        flock.push(await sim.place(chicken, PLAYER_REF));
+      await sim.step(1);
+      expect(stage.complexScene).toBe(true);
+      expect(physics.currentStep).toBeCloseTo(1 / 30, 9);
+      // As many disabled as leave 19 living in the high process.
+      const disabled = flock.slice(0, others + 1);
+      const handle = (reference: number): ReturnType<Sim['runtime']['referenceHandle']> =>
+        sim.runtime.referenceHandle(reference);
+      for (const one of disabled)
+        await sim.native(handle(one), 'ObjectReference', 'Disable', [false]);
+      await sim.step(1);
+      const count = await sceneCount(sim);
+      expect(count.near).toBeGreaterThanOrEqual(others + COMPLEX_SCENE_ACTORS);
+      expect(flock.filter((reference) => sim.actor(reference)?.visibility.hidden)).toEqual(
+        disabled,
+      );
+      expect(count.disabled).toBe(disabled.length);
+      expect(count.counted).toBe(COMPLEX_SCENE_ACTORS - 1);
+      expect(stage.complexScene).toBe(false);
+      expect(physics.complex).toBe(false);
+      expect(physics.currentStep).toBeCloseTo(PHYSICS_STEP, 9);
+      // Enabled again, they count again.
+      for (const one of disabled)
+        await sim.native(handle(one), 'ObjectReference', 'Enable', [false]);
+      await sim.step(1);
+      expect(stage.complexScene).toBe(true);
+      expect(physics.currentStep).toBeCloseTo(1 / 30, 9);
+      for (const each of flock) await sim.kill(each);
+      await sim.step(1);
+      expect(stage.complexScene).toBe(false);
+    }, 600_000);
+  },
+);
+
+/** HelgenKeep01. */
+const HELGEN_KEEP = 0x5de24;
+
+/** The actors staged near the player and how many of them make the scene's count. */
+interface SceneCount {
+  /** Not killed, within the high process's reach (HIGH_PROCESS_DISTANCE) of the player. */
+  readonly near: number;
+  /** Of those, the disabled. */
+  readonly disabled: number;
+  /** Of those, the placed dead (startsDead). */
+  readonly placedDead: number;
+  /** The complex scene's count (sceneActors). */
+  readonly counted: number;
+  readonly complex: boolean;
+  readonly step: number;
+}
+
+async function sceneCount(sim: Sim): Promise<SceneCount> {
+  const player = await sim.position(PLAYER_REF);
+  if (!player) throw new Error('no player');
+  const stage = sim.world.stage;
+  const near = sim
+    .actors()
+    .filter(
+      (staged) =>
+        !staged.dead &&
+        Math.hypot(staged.position[0] - player[0], staged.position[1] - player[1]) <
+          HIGH_PROCESS_DISTANCE,
+    );
+  return {
+    near: near.length,
+    disabled: near.filter((staged) => staged.visibility.hidden).length,
+    placedDead: near.filter((staged) => staged.placed.actor.startsDead).length,
+    counted: sceneActors(sim.actors(), (reference) => stage.movers.inHighProcess(reference)),
+    complex: stage.complexScene,
+    step: sim.world.play?.physics.currentStep ?? 0,
+  };
+}
+
+// The data: HelgenKeep01 [0005DE24], loaded outside the opening, has most of its actors disabled;
+// the Dark Brotherhood Sanctuary places initially disabled actors and actors placed dead
+// (startsDead) in the one cell. Within the high process's reach of the player both stage twenty
+// actors or more that are not killed, too few of them living to make a crowd.
+describe.skipIf(!hasGamedata())(
+  'the disabled and the placed dead make no crowd (headless simulation)',
+  () => {
+    let sim: Sim;
+    let keep: SceneCount;
+    let sanctuary: SceneCount;
+
+    beforeAll(async () => {
+      sim = await openSim({ interior: HELGEN_KEEP, hour: 10 });
+      await sim.step(3);
+      keep = await sceneCount(sim);
+      await sim.openInterior(await sim.formId('CELL', 'DarkBrotherhoodSanctuary'));
+      await sim.step(3);
+      sanctuary = await sceneCount(sim);
+    }, 600_000);
+    afterAll(async () => {
+      await sim.close();
+    });
+
+    it('steps Helgen’s keep at 1/60 s: twenty and more staged near, most of them disabled', () => {
+      expect(keep.near).toBeGreaterThanOrEqual(COMPLEX_SCENE_ACTORS);
+      expect(keep.near - keep.disabled).toBeLessThan(COMPLEX_SCENE_ACTORS);
+      expect(keep.counted).toBeLessThanOrEqual(keep.near - keep.disabled);
+      expect(keep.complex).toBe(false);
+      expect(keep.step).toBeCloseTo(PHYSICS_STEP, 9);
+    });
+
+    it('steps the Dark Brotherhood Sanctuary at 1/60 s: its placed dead and disabled not counted', () => {
+      expect(sanctuary.near).toBeGreaterThanOrEqual(COMPLEX_SCENE_ACTORS);
+      expect(sanctuary.placedDead).toBeGreaterThan(0);
+      expect(sanctuary.counted).toBeLessThan(COMPLEX_SCENE_ACTORS);
+      expect(sanctuary.complex).toBe(false);
+      expect(sanctuary.step).toBeCloseTo(PHYSICS_STEP, 9);
+    });
   },
 );

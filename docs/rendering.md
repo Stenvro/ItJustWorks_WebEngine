@@ -1959,7 +1959,8 @@ What it was, and what changed:
   1/60 s (the cap), the three steps make the next frame as long, and the time a longer frame
   could not hand was owed without end: frames that grew shorter still took three. The engine has
   a mode for this, on now while the scene is complex (as many living actors in the high process
-  as iAINumberActorsComplexScene, 20: `ActorStage.complexScene`): one step of fMaxTimeComplex
+  as iAINumberActorsComplexScene, 20, by the idles' and detection's count, which leaves out the
+  disabled and those placed or reloaded dead: `ActorStage.complexScene`): one step of fMaxTimeComplex
   (1/30 s) a frame at most, every other frame at 60 frames a second (docs/physics.md, "The
   complex mode"; inferred, TODO(M13)). And the time owed is held to what one frame hands (ours,
   TODO(M13)): a slow stretch is not made up for minutes after, at up to three times the world's
@@ -1982,8 +1983,9 @@ What it was, and what changed:
   bodies they meet (`GROUP_RAGDOLL`): half the filter's calls for bodies on meshes.
 
 Plain frames by window, before and after (frame times and the physics of single frames; the
-keep's interior after Helgen: 45–70 fps before, 87–112 after, at 0.3–0.55 steps a frame where
-its scene is complex):
+keep's interior after Helgen: 45–70 fps before, 87–112 after, at 0.3–0.55 steps a frame, the
+complex mode's: that run still counted the keep's disabled and placed dead toward a complex
+scene, which they no longer make, so the keep now steps at 1/60 s; not measured again):
 
 | stage              | run    |  fps | frame p50 / p95 / max (ms) | steps a frame: mean, most | physics a frame p50 / p95 / max (ms) | awake |
 | ------------------ | ------ | ---: | -------------------------: | ------------------------: | -----------------------------------: | ----: |
@@ -2010,6 +2012,12 @@ its scene is complex):
 that one, without the welded meshes' groups either, gave 40.8 and 43.4 fps in the execution and
 22.9–35.1 in the attack. The before run's last window, at the keep's door as its cell loads, had
 71 ms of physics in one frame; the after run's 34 ms is the same moment.)
+
+(Both runs counted the disabled and the placed dead toward a complex scene. In the headless
+simulation of the opening the right count stands at 21–31 living from the carts' arrival to the
+line-up (stages 20–80), where the miscount had 48–61: the exterior stays complex there, by a
+margin of one to eleven. The execution and the attack, as their actors die, may fall below 20
+and step at 1/60 s again; those windows were not measured again.)
 
 What is left (TODO(M13)): the attack is at 28–39 fps on the loaded machine, not 60. Below 30
 frames a second a complex scene's world runs slow (one step of 1/30 s a frame), as the plain one

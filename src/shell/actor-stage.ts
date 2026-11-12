@@ -62,7 +62,7 @@ import { Layer } from '../physics/collision-layers.ts';
 import { inwardOnNavmesh, type NavmeshSet } from '../ai/pathfinding.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
 import type { FledFlights } from '../ai/fled-through-doors.ts';
-import { COMPLEX_SCENE_ACTORS, isComplexScene } from '../ai/ambient-idles.ts';
+import { COMPLEX_SCENE_ACTORS, isComplexScene, sceneActors } from '../ai/ambient-idles.ts';
 import {
   processLevel,
   processListsBudget,
@@ -2975,7 +2975,6 @@ export class ActorStage {
     const runtime = session.scriptsReady;
     const looks = session.scriptWorld.lookTargets;
     const levels = new Map<number, ProcessLevel>();
-    let high = 0;
     for (const staged of this.#actors.values()) {
       const reference = staged.reference;
       const distance = focus
@@ -2993,18 +2992,22 @@ export class ActorStage {
         kept,
       });
       levels.set(reference, level);
-      if (level === ProcessLevel.high && !staged.dead) high++;
     }
     this.process.begin(levels, frame > 0 ? processListsBudget(frame, aiSettingsOf(session)) : 0);
-    // A complex scene steps the physics in its complex mode (PhysicsWorld.complex).
+    // A complex scene steps the physics in its complex mode (PhysicsWorld.complex). Counted as
+    // the idles and detection count it (sceneActors): the living of the movers' high process,
+    // never the disabled or those placed or reloaded dead, however near the player they stand.
+    const high = sceneActors(this.#actors.values(), (one) => this.movers.inHighProcess(one));
     this.complexScene = isComplexScene(high, this.#complexSceneActors);
     if (this.#physics) this.#physics.complex = this.complexScene;
   }
 
   /**
    * Whether the scene is complex: as many living actors in the high process as
-   * iAINumberActorsComplexScene (20) or more, as the idles and detection count them
-   * (src/ai/ambient-idles.ts). While it is, the physics world steps fMaxTimeComplex, at most
+   * iAINumberActorsComplexScene (20) or more, by the count the idles and detection go by
+   * (sceneActors, src/ai/ambient-idles.ts): alive, shown, not placed or reloaded dead, with a
+   * graph, of a race that walks, in the movers' high process as of the last frame (this frame's
+   * killed left out). While it is, the physics world steps fMaxTimeComplex, at most
    * uMaxNumPhysicsStepsPerUpdateComplex times a frame. TODO(M13): inferred (PhysicsWorld.complex).
    */
   complexScene = false;
