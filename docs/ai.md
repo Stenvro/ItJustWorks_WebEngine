@@ -3037,6 +3037,19 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   fCombatRangedDistance, looking again each half second; farther already, it stays); without one it
   holds where it stands, and target selection weighs
   the unreachable target down so a reachable one is fought first (TODO(M13): the weight).
+  Open (found 2026-11-12, TODO(M13)): only a chase's way that could not be found marks a target
+  unreachable. One standing off the navmeshes within the chase distance (CHASE_BEYOND past its
+  reach) is never chased, and its close movement's runs end at once (straightReach 0 from the
+  navmesh's edge; an advance's travel there ends at the island's nearest point), so a melee
+  fighter on the edge stands in Melee's idle facing it for good. In Helgen Keep, with MQ101's
+  hallway Stormcloaks enabled after the hall fell in (stage 305 after 310), Hadvar stood so at
+  876,2775 before the last of them at 917,3038, 266 units off, in the fallen hall that has no
+  navmesh beyond y 2780. From the same save, a build before the execution-at-any-frame-rate
+  merge (b041f00b) got to him only by leaving the navmesh, where straightReach counts the whole
+  way (a start off the navmeshes); the merge's animation changes made the fight go otherwise
+  from about its 40th second (Hadvar chose a far enemy first), and from that merge's own save
+  the builds before it stood just the same. Whether the original's Check Unreachable Target
+  asks the way to a target it does not chase, and what it does then, is not documented.
 - **Acquire Weapon** (Find Weapon Sequence, Move to Weapon, the pick-up; only a race with Can
   Pickup Items, RACE DATA): one that held a weapon
   this fight and has only its fists looks within fCombatAcquireWeaponUnarmed (Disarmed)

@@ -74,7 +74,10 @@ async function keepBy(sim: Sim, actor: number): Promise<void> {
  * HelgenHallCollapseScript). 305 enables the three hallway Stormcloaks in the hall that is about
  * to fall in, and the collapse disables them six seconds later; the other way round they stood
  * in the rubble for good, off the navmeshes, and Hadvar fought them from the corridor instead of
- * leading on (he got to them or not as the fight went: the case passed or ran out of time).
+ * leading on. The last of them stood 266 units beyond the navmesh's edge, never chased and never
+ * marked unreachable, and Hadvar stood facing him for good (docs/ai.md, Check Unreachable
+ * Target: open); whether he got to him first went with the fight (from one save the builds before
+ * and after the execution-at-any-frame-rate merge differed, from another both stood).
  */
 async function passTrigger(sim: Sim, actor: number): Promise<void> {
   const next = TRIGGERS.find(([stage]) => !sim.stageDone(MQ101, stage));
