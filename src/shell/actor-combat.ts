@@ -4659,7 +4659,11 @@ export class ActorCombat implements CombatBridge {
       target: targetBody,
       targetHeld: other.player && !goingAway,
       reach: this.#reach(fighter, false),
-      extents: this.#size(fighter).radius,
+      // As its strike is measured (hit-test.ts strikeContact): from its own centre to the
+      // target's shape. With its own radius here, a fighter in reach of a large target's shape
+      // (Sovngarde's heroes 500 units from Alduin's centre, his radius 320) never began a plain
+      // attack: its combat tree held it there as in reach, and no attack "reached".
+      extents: this.#size(other).radius,
       clearTo: (point) => this.#options.movers.straightReach(fighter.reference, point),
       settings: this.#settings,
     };

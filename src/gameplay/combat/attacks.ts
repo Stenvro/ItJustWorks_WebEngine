@@ -196,7 +196,13 @@ export interface AttackReachContext {
   readonly target: AttackBody;
   /** The target is the player and does not go away from the attacker: its motion counts less. */
   readonly targetHeld: boolean;
-  /** Its weapon's reach, and its own extents (its controller's radius): from its centre. */
+  /**
+   * Its weapon's reach from its centre, and the extents the reach is measured to: its target's
+   * (its controller's radius), as a strike reaches from the attacker's centre to the target's
+   * shape (hit-test.ts). TODO(M13): the original measures between the two actors' bounds; ours
+   * leaves the attacker's own out here as in the strike (a dragon's bite reaches from its
+   * centre).
+   */
   readonly reach: number;
   readonly extents: number;
   /** How far its way is clear towards a point its clip takes it to (none: not asked). */
@@ -215,12 +221,13 @@ export interface AttackReachContext {
  * Whether an attack's target will be in its reach at its hit frame (observed in the original; the
  * melee attack node's check, in our words). Its clip's move by then, or for a flagged attack
  * (attackStart) its own speed by then, is its lunge: the target must first lie within the lunge,
- * its reach, its extents and how far the target goes by then. Then where the attacker will be
+ * its reach, the extents (the context's: its target's, as ours measures a strike) and how far
+ * the target goes by then. Then where the attacker will be
  * (a lunge of more than fCombatAttackStationaryAttackDistance: its clip's offset turned by its
  * facing, its way clear for one past fCombatAttackMovingAttackDistance, short of its end by the
  * allowed overrun; flagged: its velocity on) against where the target will be (the player, unless
  * going away from it: fCombatAttackPlayerAnticipateMult of that), its reach ×
- * fCombatAttackMovingAttackReachMult if it moved past fCombatAttackMovingAttackDistance, plus its
+ * fCombatAttackMovingAttackReachMult if it moved past fCombatAttackMovingAttackDistance, plus the
  * extents. One moving that far must also have its target within the strike angle ×
  * fCombatAttackMovingStrikeAngleMult from there. So a forward power attack, whose clip goes
  * hundreds of units, is an attack from afar and no attack at arm's length.
