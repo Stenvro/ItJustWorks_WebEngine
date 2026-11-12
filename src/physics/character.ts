@@ -1368,6 +1368,20 @@ export class CharacterBody {
     return [knock.velocity[0] * share, knock.velocity[1] * share];
   }
 
+  /**
+   * Gravity over `seconds` of falling (or rising): its vertical speed after (game units a
+   * second), by the gravity of its state (unsupported, falling, rising).
+   */
+  #fall(gravity: number, seconds: number): number {
+    const multiplier = this.#unsupported
+      ? this.settings.unsupportedGravity
+      : this.verticalSpeed < 0
+        ? this.settings.fallingGravity
+        : 1;
+    this.verticalSpeed -= gravity * multiplier * seconds;
+    return this.verticalSpeed;
+  }
+
   /** One fixed step: gravity, the wanted movement, sliding and stepping. Before world.step. */
   step(seconds: number): void {
     // Carried by what it stands on (#carrier): first by what that moved since its last step (a
@@ -1397,12 +1411,22 @@ export class CharacterBody {
     // Moving bodies that hit it push it (#takePushes).
     this.#takePushes(carrier?.body, seconds);
     const gravity = -this.physics.world.gravity.z * HAVOK_SCALE;
+    // How far it rises or falls in this step (game units). A step longer than the world's own
+    // (the complex mode's fMaxTimeComplex, twice fMaxTime) takes its rise and fall in parts of
+    // the world's own step: a jump goes as high and a fall as far whatever the step (taken whole,
+    // a jump of 76 units went 3 units higher in a crowd than alone).
+    const parts = Math.max(1, Math.round(seconds / this.physics.stepSeconds));
+    const part = seconds / parts;
+    let rise = 0;
     if (this.swimming) {
       this.#jumpSpeed = 0;
+      rise = this.verticalSpeed * seconds;
     } else if (this.#jumpSpeed > 0) {
       this.verticalSpeed = this.#jumpSpeed;
       this.#jumpSpeed = 0;
       this.#grounded = false;
+      rise = this.verticalSpeed * part;
+      for (let i = 1; i < parts; i++) rise += this.#fall(gravity, part) * part;
     } else if (this.#grounded) {
       // On the ground it only moves along; snapping to the ground keeps it on slopes and down
       // steps. Pressing down as well makes Rapier's controller hit the floor at the start of
@@ -1410,12 +1434,7 @@ export class CharacterBody {
       // character stutters and sticks on flat floors.
       this.verticalSpeed = 0;
     } else {
-      const multiplier = this.#unsupported
-        ? this.settings.unsupportedGravity
-        : this.verticalSpeed < 0
-          ? this.settings.fallingGravity
-          : 1;
-      this.verticalSpeed -= gravity * multiplier * seconds;
+      for (let i = 0; i < parts; i++) rise += this.#fall(gravity, part) * part;
     }
     const own = this.#collider;
     const filter = this.physics.filterFor(Layer.charController);
@@ -1464,7 +1483,7 @@ export class CharacterBody {
     const desired = {
       x: toHavok(vx * seconds),
       y: toHavok(vy * seconds),
-      z: toHavok(this.verticalSpeed * seconds),
+      z: toHavok(rise),
     };
     // On stairs (surfaces of a stair material) whole steps are climbed; elsewhere only what
     // the shape's lower cone rides over.

@@ -196,6 +196,88 @@ describe('the physics step', () => {
     physics.free();
   });
 
+  it("passes over the half of a welded mesh a body does not meet inside Rapier's groups", () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    // A welded floor (Havok's one-sided welding): its two-sided original and its one-sided copy.
+    const floor = box(Layer.static, [-500, -500, -20], [500, 500, 0]);
+    const [base] = floor.bodies;
+    if (!base) throw new Error('a body');
+    const placed = physics.addObject(
+      {
+        bodies: [
+          {
+            ...base,
+            shapes: [
+              {
+                type: 'mesh',
+                layer: Layer.static,
+                material: 0,
+                vertices: Float32Array.from([
+                  -500, -500, 0, 500, -500, 0, 500, 500, 0, -500, 500, 0,
+                ]),
+                indices: Uint32Array.from([0, 1, 2, 0, 2, 3]),
+                oneSided: true,
+              },
+            ],
+          },
+        ],
+        skipped: [],
+      },
+      IDENTITY,
+      { reference: 1, kind: 'object' },
+    );
+    const [twoSided, faces] = placed.colliders;
+    if (!twoSided || !faces) throw new Error('two colliders');
+    const filter = (collider: RAPIER.Collider): number => collider.collisionGroups() & 0xffff;
+    const member = (collider: RAPIER.Collider): number => collider.collisionGroups() >>> 16;
+    // Loose clutter and a ragdoll's body lying on it.
+    const clutter = physics.addObject(
+      box(Layer.clutter, [-5, -5, 1], [5, 5, 11], 'dynamic'),
+      IDENTITY,
+      { reference: 2, kind: 'object' },
+    );
+    const limb = physics.addObject(
+      box(Layer.biped, [95, -5, 1], [105, 5, 11], 'dynamic'),
+      IDENTITY,
+      { reference: 3, kind: 'actor' },
+    );
+    const [loose] = clutter.colliders;
+    const [bone] = limb.colliders;
+    if (!loose || !bone) throw new Error('colliders');
+    // Each half's filter takes the bodies it meets, and no other's.
+    expect(filter(twoSided) & member(loose)).not.toBe(0);
+    expect(filter(twoSided) & member(bone)).toBe(0);
+    expect(filter(faces) & member(bone)).not.toBe(0);
+    expect(filter(faces) & member(loose)).toBe(0);
+    // The contact filter is asked once a step for each body on the floor (the half it meets),
+    // not twice.
+    const pipeline = physics.world.physicsPipeline;
+    const step = pipeline.step.bind(pipeline);
+    let asked = 0;
+    vi.spyOn(pipeline, 'step').mockImplementation((...args) => {
+      const hooks = args[12];
+      const counted: RAPIER.PhysicsHooks | undefined = hooks && {
+        filterContactPair: (...pair) => {
+          asked++;
+          return hooks.filterContactPair(...pair);
+        },
+        filterIntersectionPair: (...pair) => hooks.filterIntersectionPair(...pair),
+      };
+      args[12] = counted;
+      step(...args);
+    });
+    // (While both are at the floor, moving: a pair is looked at again as its body moves.)
+    for (let i = 0; i < 10; i++) physics.step(1 / 60);
+    expect(asked).toBe(20);
+    // The clutter lies on the floor all the same.
+    const height = (clutter.bodies[0]?.body.translation().z ?? NaN) * 69.99125;
+    for (let i = 0; i < 60; i++) physics.step(1 / 60);
+    expect(height).toBeGreaterThan(-2);
+    expect(height).toBeLessThan(1);
+    expect((clutter.bodies[0]?.body.translation().z ?? NaN) * 69.99125).toBeCloseTo(height, 1);
+    physics.free();
+  });
+
   it('keeps pairs of handles in either order', () => {
     const pairs = new HandlePairs();
     pairs.add(3, 7);

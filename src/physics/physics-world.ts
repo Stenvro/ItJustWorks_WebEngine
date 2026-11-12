@@ -411,10 +411,11 @@ function triangleFront(
 
 /**
  * Kinds of collider some queries want alone, as Rapier collision groups' memberships (bits):
- * the trigger volumes, the traps (L_TRAP, L_CLOUDTRAP) and the character controllers. Every
- * collider's group filter takes all of them, so contacts and the other queries are as without
- * groups; a query for one kind passes the others over inside Rapier, before its predicate,
- * which is a call back into JavaScript for every candidate (the layers stay ours: layerOf).
+ * the trigger volumes, the traps (L_TRAP, L_CLOUDTRAP) and the character controllers. No
+ * collider's group filter goes by them (GROUP_RAGDOLL: its filter), so contacts and the other
+ * queries are as without them; a query for one kind passes the others over inside Rapier, before
+ * its predicate, which is a call back into JavaScript for every candidate (the layers stay ours:
+ * layerOf).
  */
 const QUERY_OTHER = 0x1;
 const QUERY_TRIGGER = 0x2;
@@ -429,6 +430,16 @@ const QUERY_CONTROLLER = 0x8;
 const QUERY_CONTROLLER_SOLID = 0x10;
 /** Of those, the ones that are no actor's (its controller, its bodies): what holds one up. */
 const QUERY_CONTROLLER_GROUND = 0x20;
+/**
+ * Every collider is one of two more: on a ragdoll's layer (RAGDOLL_LAYERS) or not. A collider's
+ * group filter takes both, but a welded mesh's two halves: the two-sided original takes no
+ * ragdoll's body, its one-sided copy only those (PhysicsWorld.#ragdollFaces). So Rapier itself
+ * passes over the half of a mesh a body does not meet; the contact filter (a call back into
+ * JavaScript for every pair of a moving body, every step) said so for each, half of its calls
+ * for bodies on meshes.
+ */
+const GROUP_RAGDOLL = 0x40;
+const GROUP_OTHER = 0x80;
 const ALL_GROUPS = 0xffff;
 
 /** Rapier's interaction groups: memberships in the upper 16 bits, the filter in the lower. */
@@ -1459,8 +1470,9 @@ export class PhysicsWorld {
   #pairFaces(twoSided: RAPIER.Collider, faces: RAPIER.Collider, mesh: WeldedMesh): void {
     this.#twoSided.set(twoSided.handle, mesh);
     this.#ragdollFaces.add(faces.handle);
-    // No surface of its own: out of the controllers' group.
+    // No surface of its own: out of the controllers' group. Each half meets its own bodies.
     this.#setLayer(faces, this.layerOf(faces));
+    this.#setLayer(twoSided, this.layerOf(twoSided));
   }
 
   /** Gives a collider its layer, owner and material (colliders made outside this class). */
@@ -1535,7 +1547,15 @@ export class PhysicsWorld {
       kinds |= QUERY_CONTROLLER_SOLID;
       if (this.#owners.get(collider.handle)?.kind !== 'actor') kinds |= QUERY_CONTROLLER_GROUND;
     }
-    collider.setCollisionGroups(groups(kinds, ALL_GROUPS));
+    // Which bodies it meets at all: a welded mesh's halves each their own (GROUP_RAGDOLL).
+    const meets = this.#ragdollFaces.has(collider.handle)
+      ? GROUP_RAGDOLL
+      : this.#twoSided.has(collider.handle)
+        ? GROUP_OTHER
+        : GROUP_RAGDOLL | GROUP_OTHER;
+    collider.setCollisionGroups(
+      groups(kinds | (RAGDOLL_LAYERS.has(layer) ? GROUP_RAGDOLL : GROUP_OTHER), meets),
+    );
     this.#countSolid(collider.handle);
     if (layer === Layer.trap) this.#trapColliders.set(collider.handle, collider);
     else this.#trapColliders.delete(collider.handle);
