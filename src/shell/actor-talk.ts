@@ -11,8 +11,8 @@ import { AVOID_PLAYER_ACTIONS, avoidPlayer, avoidsPlayer } from '../ai/engine-pa
 import { InterruptFlag } from '../ai/package-records.ts';
 import type { SayOptions } from '../ai/package-runtime.ts';
 import {
-  NO_PACKAGE_INTERRUPTS,
   TalkPlanner,
+  talkInterrupts,
   talkSettings,
   inGameDialoguePlaces,
   sceneLineFaces,
@@ -181,7 +181,7 @@ export class ActorTalk {
       seen.push({
         reference,
         position: staged.position,
-        interrupts: ai.current(reference)?.interrupts ?? NO_PACKAGE_INTERRUPTS,
+        interrupts: this.#interrupts(reference),
         free: this.#available(reference),
         inScene: runtime.scenes.sceneOf(reference) !== undefined,
         canSpeak: staged.placed.look.voiceType !== undefined,
@@ -253,6 +253,12 @@ export class ActorTalk {
     );
   }
 
+  /** The interrupt flags talking sees of an actor now (its package's; none while held). */
+  #interrupts(reference: number): number {
+    const ai = this.#options.ai;
+    return talkInterrupts(ai.current(reference)?.interrupts, ai.held(reference));
+  }
+
   /** Whether an actor can say a line now (available and in no scene). */
   #free(reference: number): boolean {
     const runtime = this.#options.session.scriptsReady;
@@ -304,7 +310,14 @@ export class ActorTalk {
     const spoken = await this.#lineFor(reference, async () =>
       runtime?.dialogue.subtypeLine(reference, HELLO, PLAYER_REF),
     );
-    if (!spoken || !this.#free(reference)) return;
+    // Held meanwhile by the engine's own reaction, it greets no more (talkInterrupts).
+    if (
+      !spoken ||
+      !this.#free(reference) ||
+      (this.#interrupts(reference) & InterruptFlag.hellosToPlayer) === 0
+    ) {
+      return;
+    }
     const stops = (spoken.info.flags & InfoFlag.canMoveWhileGreeting) === 0;
     if (stops) {
       this.#options.ai.holdToTalk(reference, () => this.#scene.player);
@@ -686,8 +699,12 @@ export class ActorTalk {
    * package lets it react to the player's actions.
    */
   bumped(actor: number): void {
-    const interrupts = this.#options.ai.current(actor)?.interrupts ?? NO_PACKAGE_INTERRUPTS;
-    if ((interrupts & InterruptFlag.reactionToPlayerActions) === 0 || !this.#free(actor)) return;
+    if (
+      (this.#interrupts(actor) & InterruptFlag.reactionToPlayerActions) === 0 ||
+      !this.#free(actor)
+    ) {
+      return;
+    }
     this.bark(actor, ACTOR_COLLIDE).catch((error: unknown) => {
       this.#options.terminal.log('actor', `bump: ${describe(error)}`, 'warn');
     });

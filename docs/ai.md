@@ -531,7 +531,10 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   situation names (spectator, observe corpse, guard warn: [Detection](#detection)) comes before
   them all; the engine's own reactions hold its package while they run, as do a conversation
   with another actor and a greeting it stops for ([Talking](#talking)); the package's interrupt
-  flags say whether it greets, chatters, talks with others and comments. In combat its packages
+  flags say whether it greets, chatters, talks with others and comments. Held by the engine's own
+  reaction (a search, a warning, a favor), it does none of these (`talkInterrupts`): a greeting
+  stopped it on the reaction's way and ended the reaction's travel. TODO(M13): inferred; the
+  interrupt flags of the engine's own reactions are not documented. In combat its packages
   wait; its combat override list (ECOR) keeps it to its package's place ([Combat AI](#combat-ai)).
   A package step that asks to move it while it fights (a travel, a walk to furniture) waits for
   the fight's end and has then not got there, as one whose way the fight stopped

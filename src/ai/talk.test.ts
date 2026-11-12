@@ -5,6 +5,7 @@ import {
   TalkPlanner,
   getsUpToTalk,
   sceneLineFaces,
+  talkInterrupts,
   talkSettings,
   triggerDistance,
   VANILLA_TALK,
@@ -69,6 +70,22 @@ describe('greetings', () => {
     expect(talk.update(0.1, [actor(1, 100, { seesPlayer: false })], scene())).toEqual([]);
     expect(talk.update(0.1, [actor(1, 100, { free: false })], scene())).toEqual([]);
     expect(talk.update(0.1, [actor(1, 100)], scene())).toEqual([{ kind: 'hello', actor: 1 }]);
+  });
+
+  it("neither greets nor chatters while the engine's own reaction holds it", () => {
+    // Held (a search, a favor), its package waits: none of its flags, nor all of no package's.
+    expect(talkInterrupts(undefined, true)).toBe(0);
+    expect(talkInterrupts(InterruptFlag.hellosToPlayer, true)).toBe(0);
+    expect(talkInterrupts(undefined, false)).toBe(NO_PACKAGE_INTERRUPTS);
+    expect(talkInterrupts(InterruptFlag.allowIdleChatter, false)).toBe(
+      InterruptFlag.allowIdleChatter,
+    );
+    const talk = planner();
+    const held = actor(1, 100, { interrupts: talkInterrupts(undefined, true) });
+    expect(talk.update(10, [held], scene())).toEqual([]);
+    // Let go, it greets at once.
+    const free = actor(1, 100, { interrupts: talkInterrupts(undefined, false) });
+    expect(talk.update(0.1, [free], scene())).toEqual([{ kind: 'hello', actor: 1 }]);
   });
 
   it('lets one greet at a time, the nearest first (fAIExclusiveGreetingTimer)', () => {
