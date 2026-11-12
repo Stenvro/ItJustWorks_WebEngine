@@ -871,11 +871,18 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   over her feet, her knees fold and she is down within 2 s in every phase from 0.5 to 5 s
   (her head, at 115–118 units as she dies, at 81–95 units 1 s on, 24–72 at 1.5 s, 10–17 at 2
   s and 9–24 units 5 s on; `ragdolls-death.test.ts`). The race skeletons' ragdolls settle
-  better with it than without (`node tools/ragdoll-info.ts`, on this tip: 47 pushed, 41 let
-  go still and 46 lifted of 52 at rest within 20 s, and 49 let go still within 40 s, against
-  34, 35 and 32 within 20 s without the give; while the cone's row still held its loads, 45,
-  48 and 45, and 48 let go still within 40 s: let go still, more of them now take longer than
-  20 s, and one more rests in the end. The counts move by three or so with any small change
+  better with it than without (`node tools/ragdoll-info.ts`, on this tip: 40 pushed, 43 let
+  go still and 42 lifted of 52 at rest within 20 s, and 49, 47 and 49 within 40 s, against
+  34, 35 and 32 within 20 s without the give; while the cone's spring still pushed along
+  Rapier's two swing parts, 47, 41 and 46, and 49, 49 and 52 within 40 s; while the cone's
+  row still held its loads, 45, 48 and 45, and 48 let go still within 40 s). With the
+  spring's push straight back toward the cone, a joint pressed past it slides along it to
+  where its load lies straight across it, at the same excess (0.014 radians on a Riekling's
+  boar while its two swing angles went from 0.247 and 0.375 to 0.238 and 0.380), and its
+  springs are set again as it goes, which wakes its bodies: the boar, at rest at 5.6 s
+  before, at 21.3 s. The push turned aside had held such joints still a little short of it.
+  That slide is slow by the motors' hold across the cone's direction (the TODO(M13) above).
+  The counts move by three or so with any small change
   (seven variants of the springs' damping, of the thresholds they are set again at and of
   the cone's stop gave 38 to 45 let go still), so they say no more than that. The 48, 51 and 50 measured in earlier rounds are not
   reached on this tip either way, which was not looked into here). Tried before and not kept: Rapier at 4 or 5 substeps (she slumped, the

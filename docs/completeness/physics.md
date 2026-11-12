@@ -150,8 +150,11 @@ two swing parts lie turned by half the twist: the weight rested up to 7.2 units 
 0.7 rad of twist). A limit only pushes back (its spring held a joint a
 little within it before), and its stiffness follows the step (Slow Time)
 (src/physics/physics-world.test.ts, "physics constraints"). The race skeletons' ragdolls
-settle better with the give (47, 41 and 46 of 52 at rest within 20 s pushed, still and lifted,
-49 still within 40 s, against 34, 35 and 32 within 20 s on this tip without it); that this
+settle better with the give (40, 43 and 42 of 52 at rest within 20 s pushed, still and lifted,
+49, 47 and 49 within 40 s, against 34, 35 and 32 within 20 s on this tip without it; 47, 41
+and 46 while the cone's push still went aside on a twisted joint, which held some joints
+still short of where their load lies straight across the cone: they now slide there, slowly,
+see docs/physics.md, "A limit's give"); that this
 tip without it no longer reaches the 48, 51 and 50 of the earlier rounds was not looked into.
 
 ## Meshes
