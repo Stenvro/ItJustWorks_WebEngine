@@ -780,12 +780,25 @@ export class IniSettings {
   number<S extends keyof Defaults>(section: S, key: keyof Defaults[S] & string): number {
     const own = this.#overrides?.number(section, key);
     if (own !== undefined) return own;
-    const fallback = INI_DEFAULTS[section][key] as number;
-    const text = this.#ini && iniValue(this.#ini, section, key);
-    if (text === undefined) return fallback;
-    const value = Number.parseFloat(text);
-    return Number.isFinite(value) ? value : fallback;
+    // The files' value, read once per setting (systems ask for theirs every frame).
+    let ofSection = this.#fromFiles.get(section);
+    if (!ofSection) {
+      ofSection = new Map();
+      this.#fromFiles.set(section, ofSection);
+    }
+    let value = ofSection.get(key);
+    if (value === undefined) {
+      const fallback = INI_DEFAULTS[section][key] as number;
+      const text = this.#ini && iniValue(this.#ini, section, key);
+      const parsed = text === undefined ? fallback : Number.parseFloat(text);
+      value = Number.isFinite(parsed) ? parsed : fallback;
+      ofSection.set(key, value);
+    }
+    return value;
   }
+
+  /** The INI files' values (or the defaults) as read, by section and key. */
+  readonly #fromFiles = new Map<string, Map<string, number>>();
 
   /** A setting by its section and key as text ("Interface", "bDialogueSubtitles"), if listed. */
   lookup(section: string, key: string): number | undefined {

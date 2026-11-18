@@ -1313,7 +1313,7 @@ export class ActorStage {
     for (const staged of this.#actors.values()) {
       const fade = staged.placed.instances[0]?.fade;
       if (!fade) continue;
-      const invisible = runtime.magic.aiState(staged.reference).invisible;
+      const invisible = runtime.magic.invisible(staged.reference);
       const veil = invisibilityVeil(invisible, staged.reference === PLAYER_REF, this.#invisibility);
       // An effect shader's holes (NAM7) cut it away besides (actor-effects.ts).
       const whole = 1 - this.effects.holes(staged.reference);

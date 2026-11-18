@@ -2045,6 +2045,79 @@ the movers 1.0), `SceneRenderer.animate` 6.5 and the draws about 10. A standing
 controller still sweeps each step (a rest that leaves it out needs to know that nothing near it
 moved); the living actors' 1,100 keyframed bodies are moved each frame.
 
+### The opening's frame, round three
+
+Measured 2026-11-18 in the headless simulation (docs/qa.md, "Frame time in the simulation"):
+Alduin's attack (the opening played to MQ101 stage 160 and ten seconds on, 81 actors) and the
+Whiterun market at 9:00 (42 actors), twenty seconds at 60 frames a second under the CPU profiler,
+on the shared machine. The opening reaches stage 160 at the same game second (575.95) before and
+after: nothing changed what happens. Where a frame of the attack went, by what it does (ms a
+frame; the played-through run, the integration tip 7a7a981a and after; the machine was busier
+through the first, so the parts not changed came out about a third lower in the second too):
+
+| part                                                          | before | after |
+| ------------------------------------------------------------- | -----: | ----: |
+| the whole frame (the simulation's step)                       |   25.9 |  15.0 |
+| destructible objects (`DestructionLooks.scenes`)              |   1.33 |  0.01 |
+| the invisibility veil (`ActorStage.#veil`)                    |   0.49 |  0.06 |
+| an actor's magic flags and commander (`aiState`, `commander`) |   0.42 |  0.06 |
+| the joints' solver with their limits (`#solveJoints`)         |   1.13 |  0.61 |
+| corpses' poses from their bodies (`Articulation.update`)      |   0.32 |  0.16 |
+| the physics step (Rapier's own step: not changed)             |   7.15 |  4.58 |
+| the actors (`ActorStage.animate`; their graphs: not changed)  |   9.87 |  5.97 |
+
+The same save loaded and stepped by each, twice each, alternately (CPU milliseconds a frame,
+which the machine's load moves less than the wall clock's): the attack 11.09 and 10.96 before,
+9.31 and 9.79 after (wall 8.82 to 7.61 ms, p95 11.8 to 9.8); Whiterun 7.36 and 8.37 before,
+6.62 and 8.05 after (wall 6.17 to 5.85). By system, the attack's means: the shell 1.20 to 0.90,
+the scripts 1.04 to 0.77, the physics' own code 0.80 to 0.69, the world 0.21 to 0.09.
+
+What changed (each keeps what the frame did; the tests next to each say so):
+
+- **Destructible objects.** Every placed reference of a destructible type (statics and trees
+  among them: most of a cell) was looked at each frame, its stage read and whether it is enabled
+  asked through its cell. A reference whose base has no destruction data never takes a stage's
+  look (`DestructionEngine.look`): it is asked once per base and left out after; one with no
+  look of a stage is not asked whether it is enabled; and the walk is a plain loop (a generator
+  made an object for every reference).
+- **An actor's effects.** `MagicEngine.effectsOn` walked every active effect of the world for
+  each actor asked (the veil, the combat AI and detection ask every actor several times a
+  frame). The active effects keep each target's apart (`ActiveEffectMap`, in the whole's order);
+  `aiState` takes its flags in one pass without lists, the veil asks `invisible` alone, and the
+  commander's walk makes no lists.
+- **Distance fades** (`SceneRenderer.#updateFades`, the browser's: 1.3 ms of a frame on
+  2026-11-12): a settled fade (shown whole or hidden) does nothing while its value stays on its
+  side of the threshold that would start it (object-fade.ts `settledFadeReach`); it is passed
+  over until the camera has moved as far from the scene's fade point as its value allows.
+- **Placed sounds** rescheduled their distance curve and place on the Web Audio parameters every
+  frame (1.1 ms of `setTargetAtTime` and `setValueAtTime` on 2026-11-12); now only as the
+  distance or the place changes (the same target again continues the same curve).
+- **Smaller ones:** form lists read once per record (Whiterun's conditions read lists of
+  hundreds every frame: 4 % of its frame); INI settings read from the files once and the
+  player's own looked up without building a key; the joint solver's pivot written out without
+  its small vectors, a joint's turn read once for its limits and cone, and the corpses' poses
+  written into kept matrices (the attack's frames allocated 7.3 MB each, 6.4 now).
+
+One browser run after (`tools/qa-perf.ts --from-stage 150`, 1280×720, with sims of other work
+running on the machine throughout: not a before and after) gave 28 fps as Alduin came and
+16–27 fps in the attack, p50 39–61 ms. In six of its seven windows the exterior was not a complex
+scene (fewer than iAINumberActorsComplexScene living in the high process; the last window's was
+one, at one step a frame), so the physics took up to three steps of 1/60 s a frame (2.1–3.0 a
+frame, 10–21 ms p50), and a frame of three steps is as long as the next: of a 55 ms frame Rapier's
+own code was
+19 ms, the physics' own 5.7, the renderer's 11.6 (`SceneRenderer.animate` 7.6, of it the fades'
+walk over every fading reference 1.4 and the bone palettes 0.8), the actors 8. A frame below
+1/60 s takes one step and stays below it; above, the steps make it longer.
+
+What is left (TODO(M13)): Rapier's step (2–4.6 ms of the simulation's frame), the actors' graphs
+(3–5 ms with every actor animated every frame, as the simulation has no camera) and the
+controllers' sweeps are the largest parts, and none of them changed. Of what remains in the
+scripts, the ambient idles' tries cost most: five actors that want an idle and find none try
+ActionIdle every frame, each about twenty conditions valued asynchronously (the original's
+budget, fSpecialIdlePickTime, counts the search's time; ours counts only its start, the
+conditions being valued after it). The keyframe hierarchy and the conditions are now most of
+what a frame allocates.
+
 ## The lighting technique's flags and the fades (observed in the original)
 
 The original picks a lighting shape's technique from its shader flags alone, the later ones

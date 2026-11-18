@@ -8,6 +8,7 @@ import {
   fadeRange,
   fadeValue,
   neverFades,
+  settledFadeReach,
   stepFade,
   type FadeState,
 } from './object-fade.ts';
@@ -92,5 +93,47 @@ describe('object fade', () => {
     expect(fadeRange('skyCell', 10, settings)).toEqual({ start: 180000, end: 300000 });
     // 0x8000 means something else on items: they still fade.
     expect(neverFades('MISC', HAS_DISTANT_LOD, 0)).toBe(false);
+  });
+});
+
+describe('a settled fade', () => {
+  const start = 4000;
+  const end = 6000;
+  const settled = (shown: boolean): FadeState => ({ alpha: shown ? 1 : 0, shown });
+
+  it('stays as it is while the camera moves less than its reach', () => {
+    for (const shown of [true, false]) {
+      for (let distance = 0; distance <= 9000; distance += 37) {
+        const reach = settledFadeReach(settled(shown), distance, start, end);
+        if (!(reach > 0)) continue;
+        for (const step of [-0.999, -0.5, 0, 0.5, 0.999]) {
+          const state = settled(shown);
+          stepFade(state, fadeValue(distance + step * reach, start, end), 1 / 60, true);
+          expect(state).toEqual(settled(shown));
+        }
+      }
+    }
+  });
+
+  it('reaches as far as its threshold: shown to 30 % out, hidden from 70 % in', () => {
+    // Shown: the out threshold (0.3) lies 70 % into the range, at 5400.
+    expect(settledFadeReach(settled(true), 1000, start, end)).toBeCloseTo(4400, 2);
+    expect(settledFadeReach(settled(true), 5500, start, end)).toBe(0);
+    // Hidden: the in threshold (0.7) lies 30 % into the range, at 4600.
+    expect(settledFadeReach(settled(false), 8000, start, end)).toBeCloseTo(3400, 2);
+    expect(settledFadeReach(settled(false), 4500, start, end)).toBe(0);
+    // Past its threshold the next step starts it: no reach.
+    const hidden = settled(false);
+    stepFade(hidden, fadeValue(4500, start, end), 1 / 60, true);
+    expect(hidden.alpha).toBeGreaterThan(0);
+  });
+
+  it('has none while it fades, and no end for a fade that never changes', () => {
+    expect(settledFadeReach({ alpha: 0.5, shown: false }, 1000, start, end)).toBe(0);
+    expect(settledFadeReach({ alpha: 0.5, shown: true }, 9000, start, end)).toBe(0);
+    expect(settledFadeReach(settled(true), 1e9, start, end, false)).toBe(Infinity);
+    expect(settledFadeReach(settled(true), 1e9, Infinity, Infinity)).toBe(Infinity);
+    // Hidden with a value of 1 for good: it fades in.
+    expect(settledFadeReach(settled(false), 0, start, end, false)).toBe(0);
   });
 });

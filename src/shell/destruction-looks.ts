@@ -74,6 +74,8 @@ interface Destructible {
   frames: number;
   /** Its collision was put aside here (to be given back once its look is its own again). */
   touched: boolean;
+  /** Whether its base has destruction data (undefined: not asked yet). */
+  destructible: boolean | 'asking' | undefined;
 }
 
 interface DebrisPiece {
@@ -88,6 +90,11 @@ export class DestructionLooks {
   readonly #renderer: RenderPort;
   readonly #play: () => PlaySession | undefined;
   readonly #entries = new Map<number, Destructible>();
+  /**
+   * The entries not known to lack destruction data, in the order added: the ones each frame
+   * looks at (the others never change).
+   */
+  readonly #watched = new Set<Destructible>();
   readonly #debris = new Set<DebrisPiece>();
   readonly #textureSets = new Map<number, Promise<readonly string[] | undefined>>();
   readonly #warn: (message: string) => void;
@@ -112,7 +119,7 @@ export class DestructionLooks {
     enabled: () => boolean,
   ): void {
     if (!DESTRUCTIBLE.has(object.baseType) || this.#entries.has(object.reference)) return;
-    this.#entries.set(object.reference, {
+    const entry: Destructible = {
       object,
       world,
       visibility,
@@ -124,7 +131,10 @@ export class DestructionLooks {
       enabledSeen: undefined,
       frames: 0,
       touched: false,
-    });
+      destructible: undefined,
+    };
+    this.#entries.set(object.reference, entry);
+    this.#watched.add(entry);
   }
 
   /** It is no longer shown (its cell unloaded). */
@@ -132,6 +142,7 @@ export class DestructionLooks {
     const entry = this.#entries.get(reference);
     if (!entry) return;
     this.#entries.delete(reference);
+    this.#watched.delete(entry);
     entry.token++;
     this.#drop(entry);
   }
@@ -157,11 +168,30 @@ export class DestructionLooks {
   }
 
   /** Every frame: the looks brought up to date, debris aged; the scenes to draw. */
-  *scenes(): Iterable<GpuScene> {
+  scenes(): GpuScene[] {
+    // A plain loop into a list, not a generator: walking the map inside one made an object
+    // for every reference each frame.
+    const shown: GpuScene[] = [];
     const now = performance.now() / 1000;
     const runtime = this.#session.scriptsReady;
     const play = this.#play();
-    for (const entry of this.#entries.values()) {
+    for (const entry of this.#watched) {
+      // A base without destruction data never takes a stage's look (DestructionEngine.look):
+      // nothing to ask of it again (most of a cell's statics, trees and clutter). Read once
+      // per base.
+      if (entry.destructible === false) continue;
+      if (entry.destructible === undefined && runtime) {
+        entry.destructible = 'asking';
+        runtime.destruction.data(entry.object.base).then(
+          (data) => {
+            entry.destructible =
+              data !== undefined || entry.look !== undefined || entry.hiding || entry.touched;
+            if (!entry.destructible) this.#watched.delete(entry);
+          },
+          // Unknown: it is looked at every frame as before.
+          () => undefined,
+        );
+      }
       // A new play (the player came in): the stage's collision is placed in it again.
       if (entry.look && entry.look.play !== play) entry.stage = -1;
       const stage = runtime?.state.references.get(entry.object.reference)?.destructionStage ?? 0;
@@ -170,6 +200,10 @@ export class DestructionLooks {
         this.#load(runtime, entry);
       }
       const look = entry.look;
+      // Shown as the cell shows it, its collision its own: nothing of it to bring up to date
+      // (most of a cell's references: asking each whether it is enabled was a millisecond of
+      // a Helgen frame).
+      if (!look && !entry.hiding && !entry.touched) continue;
       const enabled = entry.enabled();
       if (look) {
         entry.visibility.hidden = true;
@@ -180,15 +214,16 @@ export class DestructionLooks {
         entry.visibility.hidden = !enabled;
       }
       this.#collide(entry, enabled);
-      if (look?.scene && !look.visibility.hidden) yield look.scene;
+      if (look?.scene && !look.visibility.hidden) shown.push(look.scene);
     }
     for (const piece of [...this.#debris]) {
       if (now >= piece.until) {
         this.#dropPiece(piece);
         continue;
       }
-      if (piece.scene) yield piece.scene;
+      if (piece.scene) shown.push(piece.scene);
     }
+    return shown;
   }
 
   /**

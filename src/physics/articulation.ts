@@ -70,6 +70,9 @@ export class Articulation {
   readonly #links: readonly Link[];
   readonly #fromWorld: Mat4;
   readonly #driven = new Map<number, Float32Array>();
+  /** A body's pose and its node's place from it (update's working matrices). */
+  readonly #bodyPose = new Float32Array(16);
+  readonly #bodyNode = new Float32Array(16);
   /** Whether the pose shows the bodies' last place (sleeping bodies do not move). */
   #synced = false;
 
@@ -98,10 +101,19 @@ export class Articulation {
   update(always = false): void {
     const awake = this.#links.some(({ body }) => !body.body.isSleeping());
     if (!awake && this.#synced && !always) return;
+    // Into matrices kept for the purpose (the pose copies them): new ones for every body of
+    // every corpse each step were much of what the physics frame allocated.
+    const pose = this.#bodyPose;
+    const world = this.#bodyNode;
     for (const { body, node, toNode } of this.#links) {
       if (!body.body.isValid()) continue;
-      const world = multiply(bodyWorld(body), toNode);
-      this.#driven.set(node, multiply(this.#fromWorld, world));
+      multiply(bodyWorld(body, pose), toNode, world);
+      let driven = this.#driven.get(node);
+      if (!driven) {
+        driven = new Float32Array(16);
+        this.#driven.set(node, driven);
+      }
+      multiply(this.#fromWorld, world, driven);
     }
     this.pose.place(this.#driven);
     this.#synced = !awake;
@@ -133,10 +145,11 @@ export class Articulation {
 }
 
 /** A body's pose in the world (game units). */
-function bodyWorld(placed: PlacedBody): Mat4 {
+function bodyWorld(placed: PlacedBody, out?: Mat4): Mat4 {
   const t = placed.body.translation();
   return poseMatrix(
     [t.x * HAVOK_SCALE, t.y * HAVOK_SCALE, t.z * HAVOK_SCALE],
     placed.body.rotation(),
+    out,
   );
 }

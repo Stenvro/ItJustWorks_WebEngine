@@ -55,6 +55,7 @@ import {
   DEFAULT_FADE_TIMING,
   fadeRange,
   fadeValue,
+  settledFadeReach,
   stepFade,
   type FadeKind,
   type FadeSettings,
@@ -976,7 +977,21 @@ interface FadeGroup {
   rangeOf: FadeSettings | undefined;
   start: number;
   end: number;
+  /**
+   * How far the camera may move from the scene's fade point (GpuScene.fadeCamera, of its
+   * `reachOf` count) with this fade staying as it is (settledFadeReach), its centre then the
+   * one it had (`reachCenter`): it is passed over until then.
+   */
+  reach: number;
+  reachOf: number;
+  reachCenter: readonly number[] | undefined;
 }
+
+/**
+ * How far the camera goes before a scene's fades are all worked out again from where it stands
+ * (units): those settled are passed over until it moves as far as their reach.
+ */
+const FADE_POINT_DISTANCE = 256;
 
 /** A draw that changes every frame (animated, or turning to the camera). */
 interface AnimatedDraw {
@@ -1407,6 +1422,13 @@ export class GpuScene {
   readonly weaponBlood: readonly WeaponBloodDraw[];
   /** Instances that fade out with distance (ModelInstance.fade). */
   fades: readonly FadeGroup[] = [];
+  /**
+   * Where the camera stood as the fades were last all worked out (FadeGroup.reach), with the
+   * settings and timing they were worked out by, and the count of such points.
+   */
+  fadeCamera: Vec3 | undefined;
+  fadeCameraOf: { settings: FadeSettings; timing: FadeTiming } | undefined;
+  fadePoints = 0;
   /** Each draw's lights this frame (light-lists.ts), by its uniform slot. */
   lightLists: SceneLightLists | undefined;
   /**
@@ -2772,6 +2794,9 @@ export class SceneRenderer {
             rangeOf: undefined,
             start: 0,
             end: 0,
+            reach: 0,
+            reachOf: -1,
+            reachCenter: undefined,
           };
           fadeGroups.set(instance.fade, fade);
         }
@@ -5104,9 +5129,40 @@ export class SceneRenderer {
     if (scene.fades.length === 0) return;
     const uints = new Uint32Array(scene.uniformData);
     const runs = new UniformRuns(this.#device, scene.uniforms, scene.uniformData);
+    // How far the camera has gone from the scene's fade point; past FADE_POINT_DISTANCE (or
+    // with other settings) it is the point again, and every fade is worked out.
+    let point = scene.fadeCamera;
+    let moved = Infinity;
+    const of = scene.fadeCameraOf;
+    if (point && of?.settings === this.objectFade && of.timing === this.fadeTiming) {
+      const px = camera[0] - point[0];
+      const py = camera[1] - point[1];
+      const pz = camera[2] - point[2];
+      moved = Math.sqrt(px * px + py * py + pz * pz);
+    }
+    if (!point || moved > FADE_POINT_DISTANCE) {
+      point = [camera[0], camera[1], camera[2]];
+      scene.fadeCamera = point;
+      scene.fadeCameraOf = { settings: this.objectFade, timing: this.fadeTiming };
+      scene.fadePoints++;
+      moved = 0;
+    }
+    const points = scene.fadePoints;
     for (const group of scene.fades) {
       const center = group.draws[0]?.center;
       if (!center) continue;
+      // Settled, and the camera not as far from the point as its fade's reach: stepFade would
+      // leave it as it is (and nothing veils it or makes it refract): passed over.
+      if (
+        group.reachOf === points &&
+        moved < group.reach &&
+        group.reachCenter === center &&
+        !group.of?.veil &&
+        !group.of?.refraction
+      ) {
+        group.updated = seconds;
+        continue;
+      }
       // Its range, worked out again only when the fade settings change.
       if (group.rangeOf !== this.objectFade) {
         const range = fadeRange(group.kind, group.radius, this.objectFade);
@@ -5128,6 +5184,25 @@ export class SceneRenderer {
         stepFade(group.state, value, Math.max(0, seconds - group.updated), seen, this.fadeTiming);
         group.updated = seconds;
       }
+      // How far the camera may go from the scene's fade point with this fade staying (from the
+      // point's distance: the camera's own lies within `moved` of it). None while veiled.
+      let reach = 0;
+      if (!group.of?.veil && !group.of?.refraction) {
+        const qx = center[0] - point[0];
+        const qy = center[1] - point[1];
+        const qz = center[2] - point[2];
+        reach = settledFadeReach(
+          group.state,
+          Math.sqrt(qx * qx + qy * qy + qz * qz),
+          start,
+          end,
+          group.of?.byDistance !== false,
+          this.fadeTiming,
+        );
+      }
+      group.reach = reach;
+      group.reachOf = points;
+      group.reachCenter = center;
       // Drawn with refraction besides (an invisible actor): its lit draws' emissive alpha holds
       // the strength, as a refraction shape's does.
       const refraction = Math.max(0, group.of?.refraction ?? 0);

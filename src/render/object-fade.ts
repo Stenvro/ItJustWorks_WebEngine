@@ -168,6 +168,38 @@ export interface FadeState {
 }
 
 /**
+ * How far the camera may move from a point `distance` from a reference with its fade staying as
+ * it is (units): a fade that has settled (shown whole, or hidden) does nothing in stepFade while
+ * its value stays on its side of the threshold that would start it again, and the distance
+ * changes no faster than the camera moves. 0 for a fade under way (or one about to start).
+ * `byDistance` false: the value is 1 whatever the distance.
+ */
+export function settledFadeReach(
+  state: FadeState,
+  distance: number,
+  start: number,
+  end: number,
+  byDistance = true,
+  timing: FadeTiming = DEFAULT_FADE_TIMING,
+): number {
+  const constant = !byDistance || !Number.isFinite(start) || !Number.isFinite(end);
+  const span = Math.max(end - start, 1e-6);
+  // Kept off the threshold by a little: fadeValue's rounding there is not this one's.
+  const slack = 1e-3;
+  if (state.shown && state.alpha >= 1) {
+    // Staying while the value is at the out threshold or above.
+    if (constant) return 1 >= timing.outThreshold ? Infinity : 0;
+    return Math.max(0, start + (1 - timing.outThreshold) * span - distance - slack);
+  }
+  if (!state.shown && state.alpha <= 0) {
+    // Staying hidden while the value is at the in threshold or below.
+    if (constant) return 1 > timing.inThreshold ? 0 : Infinity;
+    return Math.max(0, distance - (start + (1 - timing.inThreshold) * span) - slack);
+  }
+  return 0;
+}
+
+/**
  * One update of a reference's fade, by the original's rule: a reference that is not shown
  * fades in once its fade value passes fFadeInThreshold, by `dt` / fFadeInTime a frame (at most
  * 0.1), and counts as shown once whole; a shown one fades out once its value falls below

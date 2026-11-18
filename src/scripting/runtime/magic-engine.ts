@@ -388,8 +388,10 @@ export class MagicEngine {
 
   effectsOn(target: number): [string, ActiveEffectState][] {
     const found: [string, ActiveEffectState][] = [];
-    for (const entry of this.#runtime.state.activeEffects) {
-      if (entry[1].target === target && !this.#ending.has(entry[0])) found.push(entry);
+    const on = this.#runtime.state.activeEffects.on(target);
+    if (!on) return found;
+    for (const entry of on) {
+      if (!this.#ending.has(entry[0])) found.push(entry);
     }
     return found;
   }
@@ -508,34 +510,84 @@ export class MagicEngine {
     return this.effectsOn(actor).some(([, entry]) => entry.item === item && !entry.inactive);
   }
 
+  /**
+   * Whether an Invisibility effect is on an actor (aiState's `invisible` alone: the veil asks it
+   * of every loaded actor each frame).
+   */
+  invisible(actor: number): boolean {
+    const on = this.#runtime.state.activeEffects.on(actor);
+    if (!on) return false;
+    for (const [key, entry] of on) {
+      if (entry.inactive || this.#ending.has(key)) continue;
+      if (this.#effects.get(entry.effect)?.archetype === EffectArchetype.invisibility) return true;
+    }
+    return false;
+  }
+
   /** What the AI reads of an actor's effects (the combat AI acts on them). */
   aiState(actor: number): MagicAiState {
     // The archetypes of its active effects, gathered in one walk over the effects (asked of
     // every loaded actor each frame: a walk per archetype was 2 % of a Whiterun frame).
-    const archetypes = new Set<number>();
+    // (Flags, not a set of them and a list of the effects: it is asked of every loaded actor
+    // several times a frame.)
+    let calmed = false;
+    let frenzied = false;
+    let fleeing = false;
+    let rallied = false;
+    let paralyzed = false;
+    let invisible = false;
+    let ethereal = false;
     let disguised = false;
-    for (const [, entry] of this.effectsOn(actor)) {
-      if (entry.inactive) continue;
-      const archetype = this.#effects.get(entry.effect)?.archetype;
-      if (archetype !== undefined) archetypes.add(archetype);
-      if (archetype === EffectArchetype.disguise && disguises(entry.disguise)) disguised = true;
+    const on = this.#runtime.state.activeEffects.on(actor);
+    if (on) {
+      for (const [key, entry] of on) {
+        if (entry.inactive || this.#ending.has(key)) continue;
+        switch (this.#effects.get(entry.effect)?.archetype) {
+          case EffectArchetype.calm:
+            calmed = true;
+            break;
+          case EffectArchetype.frenzy:
+            frenzied = true;
+            break;
+          case EffectArchetype.demoralize:
+          case EffectArchetype.turnUndead:
+            fleeing = true;
+            break;
+          case EffectArchetype.rally:
+            rallied = true;
+            break;
+          case EffectArchetype.paralysis:
+            paralyzed = true;
+            break;
+          case EffectArchetype.invisibility:
+            invisible = true;
+            break;
+          case EffectArchetype.etherealize:
+            ethereal = true;
+            break;
+          case EffectArchetype.disguise:
+            if (disguises(entry.disguise)) disguised = true;
+            break;
+          default:
+            break;
+        }
+      }
     }
     if (actor === PLAYER_REF && this.#playerDisguised()) disguised = true;
-    const has = (archetype: number): boolean => archetypes.has(archetype);
     // Its commander walks every active effect of the world: worked out only when asked (most
     // ask one of the others: the invisibility veil asks of every loaded actor each frame).
     const commander = (): number | undefined => this.commander(actor);
     return {
-      calmed: has(EffectArchetype.calm),
-      frenzied: has(EffectArchetype.frenzy),
-      fleeing: has(EffectArchetype.demoralize) || has(EffectArchetype.turnUndead),
-      rallied: has(EffectArchetype.rally),
+      calmed,
+      frenzied,
+      fleeing,
+      rallied,
       get commander() {
         return commander();
       },
-      paralyzed: has(EffectArchetype.paralysis),
-      invisible: has(EffectArchetype.invisibility),
-      ethereal: has(EffectArchetype.etherealize),
+      paralyzed,
+      invisible,
+      ethereal,
       disguised,
     };
   }
@@ -560,14 +612,21 @@ export class MagicEngine {
 
   /** Who summoned, reanimated or commands an actor (IsCommandedActor), if anyone. */
   commander(actor: number): number | undefined {
-    for (const [, entry] of this.#runtime.state.activeEffects) {
+    for (const entry of this.#runtime.state.activeEffects.values()) {
       if (entry.made !== actor || entry.inactive) continue;
       const archetype = this.#effects.get(entry.effect)?.archetype;
       if (archetype === EffectArchetype.summonCreature) return entry.caster ?? entry.target;
       if (archetype === EffectArchetype.reanimate) return entry.caster;
     }
-    for (const [, entry] of this.#archetypeOn(actor, EffectArchetype.commandSummoned)) {
-      if (entry.caster !== undefined) return entry.caster;
+    // Command Summoned on it (#archetypeOn, without its lists: asked of every actor a frame).
+    const on = this.#runtime.state.activeEffects.on(actor);
+    if (on) {
+      for (const [key, entry] of on) {
+        if (entry.inactive || this.#ending.has(key)) continue;
+        if (this.#effects.get(entry.effect)?.archetype !== EffectArchetype.commandSummoned)
+          continue;
+        if (entry.caster !== undefined) return entry.caster;
+      }
     }
     return undefined;
   }

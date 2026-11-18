@@ -551,32 +551,55 @@ function pivotInverse(a: BodyState, ra: V, b: BodyState, rb: V): [V, V, V] | und
 
 /** Brings the pivot's two points to one velocity (an impulse at the pivot, both ways). */
 function solvePivot({ a, b, ra, rb, k }: Pivot): void {
-  const at = cross(a.w, ra);
-  const bt = cross(b.w, rb);
-  const d = v3(
-    b.v.x + bt.x - a.v.x - at.x,
-    b.v.y + bt.y - a.v.y - at.y,
-    b.v.z + bt.z - a.v.z - at.z,
-  );
-  const p = v3(-dot(k[0], d), -dot(k[1], d), -dot(k[2], d));
+  // The arithmetic of cross, dot and symTimes written out, in their order (the solver's inner
+  // loop: the small vectors they made were most of what the physics step allocated).
+  const aw = a.w;
+  const bw = b.w;
+  const atx = aw.y * ra.z - aw.z * ra.y;
+  const aty = aw.z * ra.x - aw.x * ra.z;
+  const atz = aw.x * ra.y - aw.y * ra.x;
+  const btx = bw.y * rb.z - bw.z * rb.y;
+  const bty = bw.z * rb.x - bw.x * rb.z;
+  const btz = bw.x * rb.y - bw.y * rb.x;
+  const dx = b.v.x + btx - a.v.x - atx;
+  const dy = b.v.y + bty - a.v.y - aty;
+  const dz = b.v.z + btz - a.v.z - atz;
+  const k0 = k[0];
+  const k1 = k[1];
+  const k2 = k[2];
+  const px = -(k0.x * dx + k0.y * dy + k0.z * dz);
+  const py = -(k1.x * dx + k1.y * dy + k1.z * dz);
+  const pz = -(k2.x * dx + k2.y * dy + k2.z * dz);
   if (a.dynamic) {
-    const t = symTimes(a.invInertia, cross(ra, p));
-    a.v.x -= a.invMass * p.x;
-    a.v.y -= a.invMass * p.y;
-    a.v.z -= a.invMass * p.z;
-    a.w.x -= t.x;
-    a.w.y -= t.y;
-    a.w.z -= t.z;
+    const m = a.invInertia;
+    const cx = ra.y * pz - ra.z * py;
+    const cy = ra.z * px - ra.x * pz;
+    const cz = ra.x * py - ra.y * px;
+    const tx = m.xx * cx + m.xy * cy + m.xz * cz;
+    const ty = m.xy * cx + m.yy * cy + m.yz * cz;
+    const tz = m.xz * cx + m.yz * cy + m.zz * cz;
+    a.v.x -= a.invMass * px;
+    a.v.y -= a.invMass * py;
+    a.v.z -= a.invMass * pz;
+    aw.x -= tx;
+    aw.y -= ty;
+    aw.z -= tz;
     a.changed = true;
   }
   if (b.dynamic) {
-    const t = symTimes(b.invInertia, cross(rb, p));
-    b.v.x += b.invMass * p.x;
-    b.v.y += b.invMass * p.y;
-    b.v.z += b.invMass * p.z;
-    b.w.x += t.x;
-    b.w.y += t.y;
-    b.w.z += t.z;
+    const m = b.invInertia;
+    const cx = rb.y * pz - rb.z * py;
+    const cy = rb.z * px - rb.x * pz;
+    const cz = rb.x * py - rb.y * px;
+    const tx = m.xx * cx + m.xy * cy + m.xz * cz;
+    const ty = m.xy * cx + m.yy * cy + m.yz * cz;
+    const tz = m.xz * cx + m.yz * cy + m.zz * cz;
+    b.v.x += b.invMass * px;
+    b.v.y += b.invMass * py;
+    b.v.z += b.invMass * pz;
+    bw.x += tx;
+    bw.y += ty;
+    bw.z += tz;
     b.changed = true;
   }
 }
