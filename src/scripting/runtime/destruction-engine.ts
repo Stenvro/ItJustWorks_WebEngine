@@ -75,7 +75,7 @@ export class DestructionEngine {
   }
 
   /** Whether a reference's base is destructible (asked of every loaded one: kept). */
-  #destructible(reference: number): Promise<boolean> {
+  destructible(reference: number): Promise<boolean> {
     let pending = this.#references.get(reference);
     if (!pending) {
       pending = this.#runtime
@@ -202,7 +202,7 @@ export class DestructionEngine {
     const found: { reference: number; share: number }[] = [];
     if (!(radius > 0)) return found;
     for (const reference of runtime.world.loadedReferences?.() ?? []) {
-      if (reference === exclude || !(await this.#destructible(reference))) continue;
+      if (reference === exclude || !(await this.destructible(reference))) continue;
       const at = (await runtime.placement(reference))?.position;
       if (!at) continue;
       const distance = Math.hypot(at[0] - point[0], at[1] - point[1], at[2] - point[2]);

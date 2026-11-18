@@ -74,6 +74,8 @@ interface Destructible {
   frames: number;
   /** Its collision was put aside here (to be given back once its look is its own again). */
   touched: boolean;
+  /** Whether its base has destruction data (undefined: not asked yet). */
+  destructible: boolean | 'asking' | undefined;
 }
 
 interface DebrisPiece {
@@ -124,6 +126,7 @@ export class DestructionLooks {
       enabledSeen: undefined,
       frames: 0,
       touched: false,
+      destructible: undefined,
     });
   }
 
@@ -162,6 +165,20 @@ export class DestructionLooks {
     const runtime = this.#session.scriptsReady;
     const play = this.#play();
     for (const entry of this.#entries.values()) {
+      // A base without destruction data never takes a stage's look (DestructionEngine.look):
+      // nothing to ask of it again (most of a cell's statics, trees and clutter).
+      if (entry.destructible === false) continue;
+      if (entry.destructible === undefined && runtime) {
+        entry.destructible = 'asking';
+        runtime.destruction.destructible(entry.object.reference).then(
+          (destructible) => {
+            entry.destructible =
+              destructible || entry.look !== undefined || entry.hiding || entry.touched;
+          },
+          // Unknown: it is looked at every frame as before.
+          () => undefined,
+        );
+      }
       // A new play (the player came in): the stage's collision is placed in it again.
       if (entry.look && entry.look.play !== play) entry.stage = -1;
       const stage = runtime?.state.references.get(entry.object.reference)?.destructionStage ?? 0;

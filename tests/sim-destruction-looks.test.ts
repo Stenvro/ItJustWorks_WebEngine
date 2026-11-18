@@ -30,4 +30,45 @@ describe('destructible objects each frame', () => {
     expect(asked).toBe(0);
     expect(visibility.hidden).toBe(false);
   });
+
+  it('a reference whose base has no destruction data is not looked at again', async () => {
+    const references = new Map<number, { destructionStage?: number }>();
+    let read = 0;
+    const counted = {
+      get: (reference: number) => {
+        read++;
+        return references.get(reference);
+      },
+    };
+    const runtime = {
+      state: { references: counted },
+      destruction: {
+        destructible: (reference: number) => Promise.resolve(reference === 0x2),
+        look: () => Promise.resolve(undefined),
+      },
+    };
+    const looks = new DestructionLooks(
+      { scriptsReady: runtime } as unknown as GameSession,
+      {} as RenderPort,
+      () => undefined,
+      () => undefined,
+    );
+    const add = (reference: number): void => {
+      looks.add(
+        { reference, baseType: 'STAT' } as CellObject,
+        new Float32Array(16),
+        { hidden: false },
+        () => true,
+      );
+    };
+    add(0x1);
+    add(0x2);
+    Array.from(looks.scenes());
+    await Promise.resolve();
+    await Promise.resolve();
+    read = 0;
+    for (let frame = 0; frame < 10; frame++) Array.from(looks.scenes());
+    // Only the destructible one's stage is read each frame.
+    expect(read).toBe(10);
+  });
 });
