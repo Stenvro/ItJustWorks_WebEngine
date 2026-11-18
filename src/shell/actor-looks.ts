@@ -13,6 +13,8 @@ import {
   HEAD_TRACK_KINDS,
   HEAD_TRACK_SETTINGS,
   HeadTracker,
+  LOOK_MOVING_SPEED,
+  lookEnds,
   lookParty,
   pathLookAhead,
   pathLookPoint,
@@ -55,6 +57,14 @@ export interface ActorLooksOptions {
   readonly detects?: (observer: number, target: number) => boolean;
   /** Whether an actor sits, sleeps or leans in furniture (src/shell/actor-furniture.ts). */
   readonly inFurniture?: (reference: number) => boolean;
+  /**
+   * What an actor's last detection test of another found (src/shell/actor-senses.ts): a line of
+   * sight, and the other within its view cone. Undefined: not tested.
+   */
+  readonly sight?: (
+    observer: number,
+    target: number,
+  ) => { readonly lineOfSight: boolean; readonly inView: boolean } | undefined;
   /**
    * The point an actor's graph watches it fly past (BSPassByTargetTriggerModifier: a dragon's
    * combat target; src/shell/actor-flight.ts), if any.
@@ -188,16 +198,21 @@ export class ActorLooks {
     if (chosen) return chosen;
     // Its own choice: the player (once it has detected them) or another actor; with no one to
     // look at, walking its way, it looks along it.
+    // It ends at once when the one looked at is gone, or is the player it no longer detects
+    // (lookEnds); otherwise it stays until its next choice finds another.
     const choice = this.#choices.get(reference);
     const other = choice?.chosen;
-    if (other === PLAYER_REF) {
-      return this.#options.detects?.(reference, PLAYER_REF) !== false
-        ? { target: PLAYER_REF, kind: 'default' }
-        : undefined;
-    }
-    const seen = other === undefined ? undefined : this.#options.actor(other);
-    if (seen && !seen.dead && !seen.visibility.hidden) {
-      return { target: seen.reference, kind: 'default' };
+    if (choice && other !== undefined) {
+      const seen = other === PLAYER_REF ? undefined : this.#options.actor(other);
+      const ends = lookEnds({
+        present: other === PLAYER_REF || (seen !== undefined && !seen.visibility.hidden),
+        player: other === PLAYER_REF,
+        detected: other !== PLAYER_REF || this.#options.detects?.(reference, PLAYER_REF) !== false,
+        talkingToPlayer: session.scriptsReady?.dialogueSpeaker === reference,
+      });
+      if (ends) choice.chosen = undefined;
+      else if (other === PLAYER_REF) return { target: PLAYER_REF, kind: 'default' };
+      else if (seen && !seen.dead) return { target: seen.reference, kind: 'default' };
     }
     const path = this.#alongPath(staged);
     return path && { target: path, kind: 'default' };
@@ -288,15 +303,32 @@ export class ActorLooks {
     const inReach =
       !eye || Math.hypot(eye[0] - head[0], eye[1] - head[1], eye[2] - head[2]) <= reach.fromPlayer;
     // A new look is chosen only once the last has been held fAIHoldDefaultHeadTrackTimer
-    // (observed in the original); the one it has stays until then while it may still be looked at.
-    const choosing = choice.hold <= 0;
+    // (observed in the original); the one it has stays until then, and after it too when its
+    // choice finds no one (lookEnds says what ends it).
+    if (choice.hold > 0) return;
     let chosen: number | undefined;
     if (inReach) {
       const detects = this.#options.detects;
       const furniture = this.#options.inFurniture;
+      const sight = this.#options.sight;
+      const world = this.#options.session.scriptWorld;
+      const mount = world.mountOf(reference);
+      const rider = world.riderOf(reference);
+      const chooser = {
+        moving: this.#options.movers.speed(reference) >= LOOK_MOVING_SPEED,
+        talkingToPlayer: this.#options.session.scriptsReady?.dialogueSpeaker === reference,
+      };
       const candidates: LookCandidate[] = [];
       if (eye && detects?.(reference, PLAYER_REF) !== false) {
-        candidates.push({ reference: PLAYER_REF, head: eye, player: true });
+        const seen = sight?.(reference, PLAYER_REF);
+        candidates.push({
+          reference: PLAYER_REF,
+          head: eye,
+          player: true,
+          mountLink: mount === PLAYER_REF || rider === PLAYER_REF,
+          lineOfSight: seen?.lineOfSight,
+          inView: seen?.inView,
+        });
       }
       // Who goes with whom (its commander, the player's teammates: lookParty, inferred).
       const scripts = this.#options.session.scriptsReady;
@@ -309,35 +341,34 @@ export class ActorLooks {
       for (const other of all) {
         if (other === staged || other.dead || other.visibility.hidden) continue;
         if (detects?.(reference, other.reference) === false) continue;
+        const seen = sight?.(reference, other.reference);
         candidates.push({
           reference: other.reference,
           head: headPosition(other.placed),
           inFurniture: furniture?.(other.reference),
           party: lookParty(own, side(other.reference)),
+          mountLink: mount === other.reference || rider === other.reference,
+          lineOfSight: seen?.lineOfSight,
+          inView: seen?.inView,
         });
       }
-      const mayStay = chooseLookActor(
+      chosen = chooseLookActor(
         head,
         staged.heading,
-        candidates.filter((candidate) => candidate.reference === before),
+        candidates,
         reach.others,
         before,
         furniture?.(reference),
+        chooser,
       )?.reference;
-      chosen = choosing
-        ? chooseLookActor(
-            head,
-            staged.heading,
-            candidates,
-            reach.others,
-            before,
-            furniture?.(reference),
-          )?.reference
-        : mayStay;
+    } else {
+      // Beyond the player's reach its head tracking is off.
+      choice.chosen = undefined;
+      return;
     }
-    choice.chosen = chosen;
     if (chosen === undefined) return;
-    if (choosing) choice.hold = aiSettingsOf(this.#options.session).holdDefaultHeadTrackTimer;
+    choice.chosen = chosen;
+    choice.hold = aiSettingsOf(this.#options.session).holdDefaultHeadTrackTimer;
     if (chosen === before) return;
     if (chosen === PLAYER_REF) return;
     const runtime = this.#options.session.scriptsReady;

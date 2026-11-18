@@ -910,9 +910,12 @@ had ended falls out again). One at a time (TODO(M13): which may replace which).
   player, where it opens the conversation with its force greet and stays on the package until
   the arrest is over. An actor on its Alarm is alarmed (GetAlarmed, IsAlarmed): the force
   greet's lines ask for it. It gives up once the criminal is dead, in another cell or
-  worldspace, gone, or not confronted in 60 s. Inferred, TODO(M13): the procedure (its way,
-  its reach of 128 units, the 60 s and the 8 s, a fight from wherever it detects the criminal,
-  the force greet as the package's own step).
+  worldspace, gone, or lost: the engine's Alarm package runs a Pursue procedure, which gives up
+  once its target has been farther than fAIPursueDistanceLineOfSight (2500) and out of its view
+  cone for 30 s together, near or seen starting the count again (observed in the original).
+  Inferred, TODO(M13): that the Alarm runs its Pursue with that give-up on, the way (its reach
+  of 128 units), the 8 s between its calls, a fight from wherever it detects the criminal, the
+  force greet as the package's own step.
 - An engine package put in front while the actor's packages are being weighed keeps the one
   chosen from starting under it (`ActorPackages`): a guard placed at an inn's door and given
   its Alarm a moment later was walked out of the door by its own Sandbox, started beneath the

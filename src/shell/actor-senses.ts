@@ -246,6 +246,11 @@ export class ActorSenses implements ScriptSenses {
   readonly #due = new Map<number, number>();
   readonly #corpseDue = new Map<number, number>();
   readonly #tested = new Map<string, number>();
+  /** What each pair's last test found: a line of sight, the target within the view cone. */
+  readonly #lastSight = new Map<
+    string,
+    { readonly lineOfSight: boolean; readonly inView: boolean }
+  >();
   readonly #profiles = new Map<number, { profile: Profile; read: number }>();
   readonly #profiling = new Set<number>();
   readonly #lights = new Map<number, { level: number; ambient: number; at: number }>();
@@ -532,7 +537,12 @@ export class ActorSenses implements ScriptSenses {
     const result = this.#level(runtime, observer, target);
     const level = result?.inReach === true ? result.level : undefined;
     this.detections.observe(observer.reference, target.reference, level, target.feet, this.#clock);
-    this.#tested.set(`${String(observer.reference)}:${String(target.reference)}`, this.#clock);
+    const pair = `${String(observer.reference)}:${String(target.reference)}`;
+    this.#tested.set(pair, this.#clock);
+    this.#lastSight.set(pair, {
+      lineOfSight: result?.lineOfSight === true,
+      inView: result?.seen === true,
+    });
     this.tested?.(observer.reference, target.reference, {
       level: level ?? OUT_OF_REACH,
       lineOfSight: result?.lineOfSight === true,
@@ -554,7 +564,7 @@ export class ActorSenses implements ScriptSenses {
     runtime: ScriptRuntime,
     observer: Body,
     target: Body,
-  ): (DetectionLevel & { readonly lineOfSight: boolean }) | undefined {
+  ): (DetectionLevel & { readonly lineOfSight: boolean; readonly seen: boolean }) | undefined {
     const settings = this.#settings;
     const exterior = !this.#options.interior;
     const flying = this.#options.flying;
@@ -633,7 +643,7 @@ export class ActorSenses implements ScriptSenses {
       seen,
     });
     // A level of 0 is none (the engine keeps 0 for an event's place).
-    return { ...result, level: result.level === 0 ? -1 : result.level, lineOfSight };
+    return { ...result, level: result.level === 0 ? -1 : result.level, lineOfSight, seen };
   }
 
   /**
@@ -975,6 +985,17 @@ export class ActorSenses implements ScriptSenses {
   /** Whether the view shows an interior. */
   get interior(): boolean {
     return this.#options.interior;
+  }
+
+  /**
+   * What an observer's last test of a target found (undefined: never tested): a line of sight to
+   * it, and it within the view cone as well (the engine keeps both with the level).
+   */
+  sight(
+    observer: number,
+    target: number,
+  ): { readonly lineOfSight: boolean; readonly inView: boolean } | undefined {
+    return this.#lastSight.get(`${String(observer)}:${String(target)}`);
   }
 
   /** Whether an observer detects a target now (a test made anew unless one is fresh). */

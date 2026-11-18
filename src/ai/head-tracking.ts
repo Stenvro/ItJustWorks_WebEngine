@@ -168,7 +168,24 @@ export interface LookCandidate {
    * the player's teammates and commanded actors when the one choosing is one of them.
    */
   readonly party?: boolean | undefined;
+  /** It is the mount the one choosing rides, or the rider of the mount choosing. */
+  readonly mountLink?: boolean | undefined;
+  /** The one choosing has a line of sight to it (its last detection test; undefined: yes). */
+  readonly lineOfSight?: boolean | undefined;
+  /** ... within its view cone (its last detection test; undefined: yes). */
+  readonly inView?: boolean | undefined;
 }
+
+/** What the one choosing does, as the choice asks it. */
+export interface LookChooser {
+  /** It moves (5 units a second or more): it chooses only among those in its view cone. */
+  readonly moving?: boolean | undefined;
+  /** It talks with the player: anyone round it may be chosen, whatever its facing. */
+  readonly talkingToPlayer?: boolean | undefined;
+}
+
+/** From this speed (units a second) an actor counts as moving for its look's choice. */
+export const LOOK_MOVING_SPEED = 5;
 
 /** Who an actor goes with, as head tracking's choice asks it (lookParty). */
 export interface LookSide {
@@ -184,9 +201,10 @@ export interface LookSide {
  * commands, or, both following the same leader (the player for teammates and the player's
  * commanded actors, a commander for its own), each other. Such a one is chosen as the player
  * is: nearer than LOOK_CHOICE_NEAREST, and in furniture while the one choosing is too.
- * TODO(M13): inferred. The engine's choice has exceptions for a commanded actor and a teammate
- * whose fields were not identified; this reads them as the company an actor keeps (who walks at
- * its side), while the nearness rule keeps strangers passing close from being looked at.
+ * TODO(M13): inferred. Observed in the original: when either actor holds a link to another actor
+ * (a field of the actor not identified), the candidate is chosen as the player is, near, behind it,
+ * past furniture and detection, and the linked one itself never; this reads the link as the
+ * company an actor keeps (who walks at its side).
  */
 export function lookParty(chooser: LookSide, candidate: LookSide): boolean {
   if (chooser.commander === candidate.reference) return true;
@@ -201,12 +219,14 @@ const leaderOf = (side: LookSide): number | undefined =>
   side.commander ?? (side.teammate === true ? PLAYER : undefined);
 
 /**
- * Whether an actor may choose a candidate (observed in the original): within `maxDistance`, not
- * nearer than LOOK_CHOICE_NEAREST unless the player or the one it looks at (`current`), and within
- * 120° of its facing, the one it looks at wherever it stands. Two in furniture do not look at
- * each other, unless one is the player. One that goes with it (`party`: lookParty) is chosen as
- * the player is (inferred). TODO(M13): the mount's check, whose fields were not identified, is not
- * kept here.
+ * Whether an actor may choose a candidate (observed in the original): never the mount it rides
+ * nor, a mount, its rider; within `maxDistance`, not nearer than LOOK_CHOICE_NEAREST unless the
+ * player or the one it looks at (`current`), and within 120° of its facing, the one it looks at
+ * wherever it stands, and anyone wherever they stand while it talks with the player. Two in
+ * furniture do not look at each other, unless one is the player. Of those it detects: while it
+ * moves only one in its view cone, and the player it looks at already (or any time it talks with
+ * them) only with a line of sight to them. One that goes with it (`party`: lookParty, inferred)
+ * is chosen wherever it stands within reach (the engine's link between two actors: observed).
  */
 function mayLookAt(
   head: Vec3,
@@ -215,16 +235,23 @@ function mayLookAt(
   maxDistance: number,
   current: boolean,
   selfInFurniture = false,
+  chooser: LookChooser = {},
 ): boolean {
+  if (candidate.mountLink === true) return false;
   const dx = candidate.head[0] - head[0];
   const dy = candidate.head[1] - head[1];
   const dz = candidate.head[2] - head[2];
   const distance = Math.hypot(dx, dy, dz);
   if (distance > maxDistance) return false;
-  const asPlayer = candidate.player === true || candidate.party === true;
-  if (distance < LOOK_CHOICE_NEAREST && !asPlayer && !current) return false;
-  if (selfInFurniture && candidate.inFurniture === true && !asPlayer) return false;
-  if (current) return true;
+  // One that goes with it: as near, behind it, past furniture and detection.
+  if (candidate.party === true) return true;
+  const player = candidate.player === true;
+  if (distance < LOOK_CHOICE_NEAREST && !player && !current) return false;
+  if (selfInFurniture && candidate.inFurniture === true && !player) return false;
+  const anywhere = current || chooser.talkingToPlayer === true;
+  if (player && anywhere && candidate.lineOfSight === false) return false;
+  if (chooser.moving === true && candidate.inView === false) return false;
+  if (anywhere) return true;
   const horizontal = Math.hypot(dx, dy);
   if (horizontal <= 1e-3) return true;
   const cosine = (dx * Math.sin(heading) + dy * Math.cos(heading)) / horizontal;
@@ -245,6 +272,7 @@ export function chooseLookActor(
   maxDistance: number,
   current?: number,
   selfInFurniture = false,
+  chooser: LookChooser = {},
 ): { readonly reference: number } | undefined {
   let first: LookCandidate | undefined;
   for (const candidate of candidates) {
@@ -255,12 +283,30 @@ export function chooseLookActor(
       maxDistance,
       candidate.reference === current,
       selfInFurniture,
+      chooser,
     );
     if (!may) continue;
     if (candidate.player === true) return { reference: candidate.reference };
     first ??= candidate;
   }
   return first && { reference: first.reference };
+}
+
+/**
+ * What becomes of the look an actor chose for itself (its default head track target), checked
+ * every frame (observed in the original): it ends at once when the one looked at is gone (no
+ * longer in the world: disabled, unloaded, hidden), and when it is the player the actor no
+ * longer detects, unless the actor talks with or greets the player. Otherwise it stays, even
+ * where it may no longer be chosen, until the actor's next choice finds another.
+ */
+export function lookEnds(look: {
+  readonly present: boolean;
+  readonly player: boolean;
+  readonly detected: boolean;
+  readonly talkingToPlayer: boolean;
+}): boolean {
+  if (!look.present) return true;
+  return look.player && !look.detected && !look.talkingToPlayer;
 }
 
 /** What sets how far ahead a walker looks along its path ([HeadTracking], units and seconds). */

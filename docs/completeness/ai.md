@@ -16,7 +16,7 @@ code (comments left out), or the sweep's own table says why nothing more reads i
 each item is how many records (triangles, attacks) use it. The mechanics part is kept by hand
 against docs/ai.md and the conformance suites (tests/conformance/ai/).
 
-## Count (2026-11-03, round 4b)
+## Count (2026-11-18)
 
 | Part                    | Items | Done | Open |
 | ----------------------- | ----: | ---: | ---: |
@@ -25,8 +25,8 @@ against docs/ai.md and the conformance suites (tests/conformance/ai/).
 | Idle markers, furniture |    25 |   24 |    1 |
 | Navmeshes (data)        |    12 |   11 |    1 |
 | Game settings           |   190 |  190 |    0 |
-| Mechanics (by hand)     |    46 |   36 |   10 |
-| Total                   |   478 |  466 |   12 |
+| Mechanics (by hand)     |    47 |   37 |   10 |
+| Total                   |   479 |  467 |   12 |
 
 (2026-11-18: the avoidance item split into what is now observed and done, the velocity's choice
 still open; the static avoider's node added, done.)
@@ -273,11 +273,17 @@ the readers ask for by name.
       it calls after the criminal with PursueIdleTopic lines. An engine package put in front while
       the actor's packages are weighed keeps the one chosen from starting under it (what walked
       the guard out of the inn before). src/shell/actor-crime.ts, src/ai/engine-packages.ts,
-      tests/conformance/ai/crime.test.ts. Inferred: the procedure's way, its 60 s and 8 s, the
+      tests/conformance/ai/crime.test.ts. Its give-up: its Pursue procedure's, 30 s lost beyond fAIPursueDistanceLineOfSight and out of view (observed; src/ai/engine-packages.test.ts). Inferred: that the Alarm switches that give-up on, its way, its 8 s, the
       arresting actor set at the force greet.
 - [ ] Crime: the pursuit lines DialogueCrimeGuards keeps for the arresting actor
       (GetArrestingActor: "That'll teach you to break the law on my watch."); when the original
-      says them is not known.
+      says them is not known. The data: the four come first in the PursueIdleTopic topic, each on
+      GetArrestingActor == 1 alone, so a guard that is the arresting actor while it pursues says
+      only them; where the engine sets the arresting actor (ours: at the force greet) decides it,
+      and that was not found.
+- [ ] Flee: observed only that the engine's Flee package reads fFleeDistanceExterior /
+      Interior (5000 / 3000) as how far it gets from what it flees, and fFleeDoneDistance\* (a
+      package value may stand in) as done; its steps were not followed (ours: fleeFrom).
 - [ ] Crime: a guard of another faction taking an NPC's crime over.
 - [x] fCrimeFavorMult, iCrimeFavorBaseValue: the favor check, a favor's price (the base value plus
       the cost × the mult) within the favor points of the relationship rank (factions.ts doesFavor,
@@ -312,11 +318,15 @@ the readers ask for by name.
       (fMin/fMaxPathLookAtPointDist, fPathLookAtPointTime) only with no one to look at.
 - [ ] A package target's look: read (only Use Weapon, Use Magic and Shout ask the Procedure look;
       actor-practice.ts asks it so), no test has it.
-- [x] Head tracking's exceptions for a commanded actor and a teammate: one's commander, its
-      commanded and those following the same leader are chosen as the player is (lookParty;
-      inferred, TODO(M13): the fields were not identified).
-- [ ] Head tracking: the mount's check; what ends a look that may no longer be chosen (ours: at
-      the next look).
+- [x] Head tracking's link between two actors: observed that a candidate is chosen as the player
+      is (near, behind, past furniture and detection) when either holds a link to another actor,
+      the linked one itself never; lookParty (one's commander, its commanded, those following the
+      same leader) stands in for it (inferred, TODO(M13): the actor's field was not identified).
+- [x] Head tracking: never the mount it rides nor a mount its rider; moving, only those in its
+      view cone; the player it looks at only with a line of sight; anyone round it while it talks
+      with the player. What it chose stays until a later choice finds another, ending at once
+      when the one looked at is gone or is the player undetected (observed; lookEnds,
+      src/ai/head-tracking.test.ts).
 - [x] Furniture use: entry, exit, idle markers (actor-furniture.ts).
 - [x] Process levels and their budget (process-levels.ts).
 - [x] Process levels follow the actor's cell, no distance (observed): attached with 3D high,

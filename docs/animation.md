@@ -2205,9 +2205,20 @@ within fAIMaxHeadTrackDistanceFromPC (2000; an extra large race fAIMaxLargeCreat
 with no favourites: the score the engine asks of each candidate is 0 for all, so the player
 (asked first) has it if it may be looked at, else the first of the actors in its process list that
 may; speaking, moving or nearness count for nothing. Other than the player and the one it looks at,
-no one nearer than 100 units is chosen; the one it looks at may stand anywhere round it; two in
-furniture do not look at each other. It chooses anew only with no Action, Combat, Dialogue or
-Procedure look asked, once the last has been held fAIHoldDefaultHeadTrackTimer (5 s).
+no one nearer than 100 units is chosen; the one it looks at may stand anywhere round it, and
+anyone may while it talks with the player; two in furniture do not look at each other. It never
+chooses the mount it rides, nor a mount its rider. Moving (5 units a second or more) it chooses
+only among those in its view cone, and the player it looks at already (or whenever it talks with
+them) only with a line of sight to them: both as its last detection test found them (the engine
+keeps them with the level). It chooses anew only with no Action, Combat, Dialogue or
+Procedure look asked, once the last has been held fAIHoldDefaultHeadTrackTimer (5 s). What it
+chose stays, even where it may no longer be chosen, until a later choice finds another; it ends
+at once when the one looked at is gone from the world, or is the player it no longer detects
+(not while it talks with them). Beyond the player's reach its head tracking is off (all observed
+in the original). The engine also lets a candidate be chosen as the player is (near, behind, past
+furniture and detection) when either actor holds a link to another actor in a field of the actor
+not identified, the linked one itself never; lookParty (its commander, its commanded, the player's
+teammates) stands in for that link (inferred, TODO(M13)).
 With no one to look at, walking its way, it looks along it (only then): as far ahead as its speed takes
 it in fPathLookAtPointTime (2 s), between fMinPathLookAtPointDist (128) plus its radius and
 fMaxPathLookAtPointDist (512), at its head's height over that point; a way left shorter than that is
