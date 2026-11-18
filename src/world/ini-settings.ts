@@ -24,6 +24,8 @@ export const INI_DEFAULTS = {
     fSpecialIdlePickTime: 250,
     bFootIK: 1,
     bUseSpeedSampler: 1,
+    // A pitched controller turns its actor's root motion (src/animation/extracted-motion.ts).
+    bApplyPitchToExtractedMotion: 1,
     // A mount or dismount not ended by its paired animation is ended (src/shell/actor-mounts.ts).
     fMountDismountTimeout: 8,
     // An actor's graph is driven by how its controller moved it once that agrees with what it
@@ -120,6 +122,12 @@ export const INI_DEFAULTS = {
     // bReturnTo1stPersonFromVanity.
     f1st3rdSwitchDelay: 0.25,
     bReturnTo1stPersonFromVanity: 0,
+    // The first-person camera's dampening of the player's place
+    // (src/shell/first-person-dampening.ts).
+    f1stHorzDampeningSpringConstant: 0.0001,
+    f1stHorzDampeningVelocityDampening: 0.4,
+    f1stVertDampeningSpringConstant: 0.001,
+    f1stVertDampeningVelocityDampening: 0.6,
     // The auto vanity camera (src/shell/camera-states.ts): after fAutoVanityModeDelay seconds
     // without input it circles the player (fAutoVanityIncrement radians an update)
     // fDefaultAutoVanityZoom away; never with bDisableAutoVanityMode, at once with

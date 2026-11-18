@@ -24,15 +24,13 @@ import {
   AmbientIdleTurns,
   ambientIdleUpdate,
   ambientIdleWait,
-  COMPLEX_SCENE_ACTORS,
   countsInScene,
-  isComplexScene,
   playerAmbientIdleCamera,
   playerAmbientIdleView,
   readAmbientIdleSettings,
   sceneActors,
+  sceneIsComplex,
   SPECIAL_IDLE_PICK_TIME,
-  SPECIFIC_IDLE_SKIP_WINDOW,
   type AmbientIdleActor,
 } from '../../../src/ai/ambient-idles.ts';
 import { readIdleTree, type IdleTree } from '../../../src/ai/idle-records.ts';
@@ -181,8 +179,8 @@ const BANNERED_MARE = 0x1605e;
 interface IdleCall {
   readonly kind: 'pick' | 'specific';
   readonly actor: number;
-  /** Whether an idle played on the actor as it came. */
-  readonly playing: boolean;
+  /** A specific idle: whether its graph's bForceIdleStop had the idle that played stopped. */
+  readonly stopped: boolean;
   /** The simulation's seconds as it came. */
   readonly at: number;
 }
@@ -199,12 +197,12 @@ function watchIdleCalls(
   const specific = idles.specificIdle.bind(idles);
   const calls: IdleCall[] = [];
   idles.pickNewIdle = (actor) => {
-    calls.push({ kind: 'pick', actor, playing: idles.flags.playing(actor), at: now() });
+    calls.push({ kind: 'pick', actor, stopped: false, at: now() });
     pick(actor);
   };
-  idles.specificIdle = (actor) => {
-    calls.push({ kind: 'specific', actor, playing: idles.flags.playing(actor), at: now() });
-    specific(actor);
+  idles.specificIdle = (actor: number, stopped?: boolean, taken?: boolean) => {
+    calls.push({ kind: 'specific', actor, stopped: stopped === true, at: now() });
+    specific(actor, stopped, taken);
   };
   return {
     calls,
@@ -222,6 +220,8 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
   let played: readonly AmbientIdlePlayed[] = [];
   let tree: IdleTree;
   let graphs = new Map<number, string>();
+  /** The actor the first script’s-idle case sent its idle to (the next case goes on with it). */
+  let scriptIdler: number | undefined;
 
   beforeAll(async () => {
     sim = await openSim({ interior: BANNERED_MARE, hour: 20 });
@@ -282,7 +282,7 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
     for (const idle of standing) expect(idle.event.toLowerCase()).not.toMatch(/chair|counter/);
   });
 
-  it('a script’s idle over a playing one sets the skip; after its end the actor picks ambient idles again', async () => {
+  it('a script’s idle over a playing one: after its end the actor picks ambient idles again', async () => {
     const stage = sim.world.stage;
     const idles = stage.ambientIdles;
     const flags = idles.flags;
@@ -298,9 +298,9 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
     // What last set each one's idle on is told from here.
     const source = new Map<number, 'ambient' | 'specific'>();
     const specific = idles.specificIdle.bind(idles);
-    idles.specificIdle = (reference) => {
+    idles.specificIdle = (reference, stopped, taken) => {
       source.set(reference, 'specific');
-      specific(reference);
+      specific(reference, stopped, taken);
     };
     const push = idles.played.push.bind(idles.played);
     idles.played.push = (...items) => {
@@ -314,7 +314,7 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
           (staged) =>
             !staged.dead &&
             (graphs.get(staged.reference) ?? '').endsWith('0_master.hkx') &&
-            flags.playing(staged.reference) &&
+            !flags.wants(staged.reference) &&
             source.get(staged.reference) === 'ambient' &&
             stage.furniture.interaction(staged.reference) === undefined &&
             stage.furniture.markerOf(staged.reference) === undefined &&
@@ -348,19 +348,22 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
       expect(await sim.until(() => theirs().some((call) => call.kind === 'specific'), 5)).toBe(
         true,
       );
-      // Sent over the ambient idle that played: the skip flag is set.
+      // Sent over the ambient idle that played: with its graph's bForceIdleStop set, that idle was
+      // stopped first and the skip set (observed in the original). An ambient idle here mostly
+      // leaves the variable clear, and then nothing is skipped; the next case sends a script's
+      // idle with it set.
       const sent = theirs().find((call) => call.kind === 'specific');
-      expect(sent?.playing).toBe(true);
+      if (sent?.stopped === true) expect(flags.skipping(who)).toBe(true);
+      scriptIdler = who;
       // The script's idle is a dialogue pose that holds: idlebehavior.hkx's
       // AnimationDrivenDialogueIdlesStateHH shifts it from side to side by its own draws
       // (MT_IdleHDRightIdle, MT_IdleHDLeftIdle), and nothing in it raises PickNewIdle. It ends as
-      // the engine ends an idle, by the stop action (ActionIdleStop: the tree's IdleStop), after
-      // the skip's window: back in MT_Idle, whose clip raises PickNewIdle 2 s before each of its
-      // ends. (Before 2026-11-12 the case waited a minute for whatever ended the pose: Saadia's
+      // the engine ends an idle, by the stop action (ActionIdleStop: the tree's IdleStop): back
+      // in MT_Idle, whose clip raises PickNewIdle 2 s before each of its ends. (Before 2026-11-12 the case waited a minute for whatever ended the pose: Saadia's
       // sandbox walked her on 12 s later and MT_Idle asked at 24 s. Found then, with other
       // actors the first to stand so: Olfina walked on to a marker's idles, a child held the
       // pose the whole minute; no PickNewIdle came.)
-      await sim.step(2 * SPECIFIC_IDLE_SKIP_WINDOW);
+      await sim.step(1);
       const staged = sim.actor(who);
       expect(staged).toBeDefined();
       if (!staged) return;
@@ -379,12 +382,89 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
       console.info(
         `[ambient-idles] ${who.toString(16)}: PickNewIdle ${picks.join(', ')} s after the script's idle; ` +
           `wants ${String(flags.wants(who))}, skipping ${String(flags.skipping(who))}, ` +
-          `playing ${String(flags.playing(who))}`,
+          `stopped first ${String(sent?.stopped)}`,
       );
       expect(again).toBe(true);
       expect(flags.skipping(who)).toBe(false);
     } finally {
       watch.restore();
+    }
+  }, 300_000);
+
+  it('a script’s idle over a pose that set bForceIdleStop: the pose is stopped, the stop’s PickNewIdle skipped', async () => {
+    // Observed in the original: a specific idle sent while the graph's bForceIdleStop is set
+    // first stops the idle that plays (ActionIdleStop) and sets the skip, which the next
+    // PickNewIdle clears instead of asking; the one after asks. The dialogue poses set the
+    // variable (idlebehavior.hkx), so a script's IdleHDFailAll over the one the case above sent
+    // takes that path. Shown here: the stop is performed (the tree's IdleStop), our graphs raise
+    // a PickNewIdle that clears the skip, and the actor then picks ambient idles again (a skip
+    // never cleared would hold its idles back for good).
+    const who = scriptIdler;
+    expect(who).toBeDefined();
+    if (who === undefined) return;
+    const stage = sim.world.stage;
+    const idles = stage.ambientIdles;
+    const flags = idles.flags;
+    const staged = sim.actor(who);
+    expect(staged).toBeDefined();
+    if (!staged) return;
+    const forced = (): boolean => (staged.placed.behavior?.variable('bForceIdleStop') ?? 0) !== 0;
+    const idle = await sim.formId('IDLE', 'IdleHDFailAll');
+    const play = (): Promise<unknown> =>
+      sim.native(sim.runtime.actorHandle(who), 'Actor', 'PlayIdle', [sim.runtime.formHandle(idle)]);
+    const watch = watchIdleCalls(idles, () => sim.time);
+    const furniture = stage.furniture;
+    const actionEvent = furniture.actionEvent.bind(furniture);
+    const stops: (string | undefined)[] = [];
+    furniture.actionEvent = async (user, action, ...rest) => {
+      const event = await actionEvent(user, action, ...rest);
+      if (user.reference === who && action === 'ActionIdleStop') stops.push(event);
+      return event;
+    };
+    try {
+      const theirs = (): IdleCall[] => watch.calls.filter((call) => call.actor === who);
+      const specifics = (): IdleCall[] => theirs().filter((call) => call.kind === 'specific');
+      // The pose, its graph's bForceIdleStop set as it plays.
+      await play();
+      expect(await sim.until(() => specifics().length > 0 && forced(), 5)).toBe(true);
+      await sim.step(1);
+      expect(forced()).toBe(true);
+      // The script's idle over it.
+      const seen = new Set(idles.played);
+      const before = specifics().length;
+      stops.length = 0;
+      await play();
+      expect(await sim.until(() => specifics().length > before, 5)).toBe(true);
+      const sent = specifics()[before];
+      expect(sent?.stopped).toBe(true);
+      expect(stops).toEqual(['IdleStop']);
+      // The stop's PickNewIdle (if our graph raised it as the stop was taken) has cleared the
+      // skip; else it waits for the next.
+      const picksAfter = (): IdleCall[] =>
+        theirs().filter((call) => call.kind === 'pick' && call.at >= (sent?.at ?? 0));
+      if (picksAfter().length === 0) expect(flags.skipping(who)).toBe(true);
+      // The pose holds; the engine ends it by the stop action.
+      await sim.step(1);
+      expect(await furniture.actionEvent(stage.userOf(staged), 'ActionIdleStop')).toBe('IdleStop');
+      expect(await sim.until(() => !flags.skipping(who), 30)).toBe(true);
+      const cleared = picksAfter()[0];
+      expect(cleared).toBeDefined();
+      // The skipped PickNewIdle asked for nothing; a later one does, and the actor picks again.
+      const again = await sim.until(
+        () => idles.played.some((one) => one.actor === who && !seen.has(one)),
+        60,
+      );
+      console.info(
+        `[ambient-idles] ${who.toString(16)}: bForceIdleStop path, PickNewIdle ` +
+          `${picksAfter()
+            .map((call) => (call.at - (sent?.at ?? 0)).toFixed(2))
+            .join(', ')} s after the script's idle`,
+      );
+      expect(again).toBe(true);
+      expect(picksAfter().length).toBeGreaterThanOrEqual(2);
+    } finally {
+      watch.restore();
+      Reflect.deleteProperty(furniture, 'actionEvent');
     }
   }, 300_000);
 });
@@ -398,55 +478,39 @@ describe('the idle update (original; the specifics inferred: src/ai/ambient-idle
     eating: false,
   };
 
-  it('a specific idle played over a playing one skips the PickNewIdle its stop raises', () => {
+  it('a specific idle sent while bForceIdleStop is set skips the PickNewIdle its stop raises', () => {
     const flags = new AmbientIdleFlags();
     // An ambient idle plays (picked at 0 s).
     flags.pickNewIdle(1);
     flags.played(1, 0, 0.1, false);
-    // A package's idle (or a script's PlayIdle) replaces it: the stopped one's PickNewIdle is
-    // no request, the one its own end raises is.
-    flags.specificIdle(1);
+    // A package's idle (or a script's PlayIdle) sent while the graph's bForceIdleStop is set:
+    // the idle that played is stopped, and its stop's PickNewIdle is no request; the skip holds
+    // until that PickNewIdle, however late it comes; the next one is a request.
+    flags.specificIdle(1, true, true);
+    expect(flags.skipping(1)).toBe(true);
     flags.pickNewIdle(1);
     expect(flags.wants(1)).toBe(false);
+    expect(flags.skipping(1)).toBe(false);
     flags.pickNewIdle(1);
     expect(flags.wants(1)).toBe(true);
-    // Played over none, nothing is skipped.
-    const idle = new AmbientIdleFlags();
-    idle.specificIdle(2);
-    idle.pickNewIdle(2);
-    expect(idle.wants(2)).toBe(true);
-    // An idle cut off as its actor moves off raises no PickNewIdle: a specific idle after that
-    // plays over none and skips nothing (inferred).
-    const walked = new AmbientIdleFlags();
-    walked.pickNewIdle(3);
-    walked.played(3, 0, 0.1, false);
-    expect(walked.playing(3)).toBe(true);
-    walked.moved(3);
-    expect(walked.playing(3)).toBe(false);
-    walked.specificIdle(3);
-    walked.pickNewIdle(3);
-    expect(walked.wants(3)).toBe(true);
   });
 
-  it('the skip holds SPECIFIC_IDLE_SKIP_WINDOW: a later PickNewIdle is the specific idle’s end (inferred)', () => {
-    expect(SPECIFIC_IDLE_SKIP_WINDOW).toBe(0.5);
-    // The stopped idle's PickNewIdle comes as the graph takes the specific idle: skipped.
-    const cut = new AmbientIdleFlags();
-    cut.pickNewIdle(1, 0);
-    cut.played(1, 0, 0.1, false);
-    cut.specificIdle(1, 10);
-    cut.pickNewIdle(1, 10.1);
-    expect(cut.wants(1)).toBe(false);
-    expect(cut.skipping(1)).toBe(false);
-    // None came: the specific idle's own end (3 s on) is a request, not swallowed by the skip.
-    const quiet = new AmbientIdleFlags();
-    quiet.pickNewIdle(1, 0);
-    quiet.played(1, 0, 0.1, false);
-    quiet.specificIdle(1, 10);
-    expect(quiet.skipping(1)).toBe(true);
-    quiet.pickNewIdle(1, 13);
-    expect(quiet.wants(1)).toBe(true);
-    expect(quiet.skipping(1)).toBe(false);
+  it('one sent while bForceIdleStop is clear skips nothing: taken, it plays as an ambient idle', () => {
+    const taken = new AmbientIdleFlags();
+    taken.want(2);
+    taken.specificIdle(2, false, true, 10, 3, true);
+    expect(taken.skipping(2)).toBe(false);
+    expect(taken.wants(2)).toBe(false);
+    // Its idle wait timer is set as an ambient idle's (a complex scene's waits for it).
+    taken.want(2);
+    expect(taken.ready(2, 12)).toBe(false);
+    expect(taken.ready(2, 13)).toBe(true);
+    // Not taken, the actor wants a new idle.
+    const refused = new AmbientIdleFlags();
+    refused.specificIdle(3, false, false);
+    expect(refused.wants(3)).toBe(true);
+    refused.pickNewIdle(3);
+    expect(refused.wants(3)).toBe(true);
   });
 
   it('counts toward a complex scene only the living, shown actors of the high process', () => {
@@ -473,9 +537,10 @@ describe('the idle update (original; the specifics inferred: src/ai/ambient-idle
     const settings = readAmbientIdleSettings((name) =>
       name === 'fAIIdleWaitTime' ? 0.1 : undefined,
     );
-    // iAINumberActorsComplexScene (20) actors or more make a complex scene.
-    expect(isComplexScene(COMPLEX_SCENE_ACTORS, COMPLEX_SCENE_ACTORS)).toBe(true);
-    expect(isComplexScene(COMPLEX_SCENE_ACTORS - 1, COMPLEX_SCENE_ACTORS)).toBe(false);
+    // A complex scene is one SetSceneIsComplex counted in (observed in the original), not a
+    // count of actors (before: iAINumberActorsComplexScene of them in the high process).
+    expect(sceneIsComplex(1)).toBe(true);
+    expect(sceneIsComplex(0)).toBe(false);
     expect(ambientIdleWait(settings, true)).toBe(3);
     expect(ambientIdleWait(settings, false)).toBe(0.1);
     const complex = new AmbientIdleFlags();
@@ -571,55 +636,8 @@ describe('the idle update (original; the specifics inferred: src/ai/ambient-idle
   });
 });
 
-describe('the stage’s idle update: moving off (inferred: src/shell/actor-ambient-idles.ts)', () => {
+describe('the stage’s idle update (src/shell/actor-ambient-idles.ts)', () => {
   const NPC = 0x1a66e;
-
-  it('an actor its package walks off, and the player their own moves, cut the idle that plays', () => {
-    let walking = false;
-    let keys = false;
-    const npc = {
-      reference: NPC,
-      dead: false,
-      visibility: { hidden: false },
-    } as unknown as StagedActor;
-    const idles = new ActorAmbientIdles({
-      session: {
-        ini: { number: () => SPECIAL_IDLE_PICK_TIME },
-        settings: () => new Promise<never>(() => undefined),
-      } as unknown as GameSession,
-      actors: () => [npc],
-      userOf: () => ({ reference: NPC }) as unknown as FurnitureUser,
-      furnitureOf: () => undefined,
-      interaction: () => undefined,
-      packageOf: () => undefined,
-      playAction: () => Promise.resolve(undefined),
-      moving: (reference) => reference === NPC && walking,
-      player: () => ({
-        user: { reference: PLAYER_REF } as unknown as FurnitureUser,
-        camera: CameraState.thirdPerson,
-        pov: 'third',
-        moving: keys,
-      }),
-    });
-    // A script's idle plays on each (over none: no skip).
-    idles.specificIdle(NPC);
-    idles.specificIdle(PLAYER_REF);
-    idles.frame(undefined, 0.1);
-    expect(idles.flags.playing(NPC)).toBe(true);
-    expect(idles.flags.playing(PLAYER_REF)).toBe(true);
-    // Its package walks the actor off: its idle is cut with no PickNewIdle.
-    walking = true;
-    idles.frame(undefined, 0.1);
-    expect(idles.flags.playing(NPC)).toBe(false);
-    expect(idles.flags.playing(PLAYER_REF)).toBe(true);
-    // The player moves: theirs too.
-    keys = true;
-    idles.frame(undefined, 0.1);
-    expect(idles.flags.playing(PLAYER_REF)).toBe(false);
-    // A specific idle after the cut plays over none and sets no skip.
-    idles.specificIdle(NPC);
-    expect(idles.flags.skipping(NPC)).toBe(false);
-  });
 
   const CHAIR = 0x2b000;
   /** An actor standing at the origin (its race read as medium, no package). */
@@ -704,34 +722,30 @@ describe('the stage’s idle update: moving off (inferred: src/shell/actor-ambie
     }
   });
 
-  it('getting up cuts the chair idle that played (no stale "playing" once out of the chair)', async () => {
-    let use: ActorInteraction | undefined = using(3);
-    const { idles, tries } = stage({
-      furnitureOf: () => (use ? CHAIR : undefined),
-      interaction: () => use,
-      playAction: (user) => {
-        tries.push(user.reference);
-        return Promise.resolve('IdleChairShoulderFlex');
-      },
-    });
-    // Seated: the settling's wish brings a chair idle (its race read on the first frame).
-    for (let frame = 0; frame < 3 && tries.length === 0; frame++) {
+  it('a scene SetSceneIsComplex counted in makes the idles wait fAIIdleWaitTimeComplexScene', () => {
+    for (const complexScenes of [1, 0]) {
+      const idles = new ActorAmbientIdles({
+        session: {
+          ini: { number: () => SPECIAL_IDLE_PICK_TIME },
+          settings: () => new Promise<never>(() => undefined),
+          db: Promise.resolve({ get: () => Promise.resolve(undefined) }),
+          scriptsReady: { debug: { complexScenes } },
+        } as unknown as GameSession,
+        actors: () => [standing],
+        userOf: () => ({ reference: NPC }) as unknown as FurnitureUser,
+        furnitureOf: () => undefined,
+        interaction: () => undefined,
+        packageOf: () => undefined,
+        playAction: () => Promise.resolve(undefined),
+        clock: () => 0,
+      });
       idles.frame([0, 0, 0], 0.1);
-      await settle();
+      // A script's idle taken (bForceIdleStop clear) sets the idle wait timer as it plays.
+      idles.specificIdle(NPC, false, true);
+      idles.flags.want(NPC);
+      expect(idles.flags.ready(NPC, 1), `count ${String(complexScenes)}`).toBe(complexScenes === 0);
+      expect(idles.flags.ready(NPC, 3.2)).toBe(true);
     }
-    expect(tries).toEqual([NPC]);
-    expect(idles.flags.playing(NPC)).toBe(true);
-    expect(idles.flags.wants(NPC)).toBe(false);
-    // It gets up and stands still (no package walks it): the chair idle is cut.
-    use = using(4);
-    idles.frame([0, 0, 0], 0.1);
-    expect(idles.flags.playing(NPC)).toBe(false);
-    use = undefined;
-    idles.frame([0, 0, 0], 0.1);
-    expect(idles.flags.playing(NPC)).toBe(false);
-    // A script's idle after that plays over none: no skip swallows its end's PickNewIdle.
-    idles.specificIdle(NPC);
-    expect(idles.flags.skipping(NPC)).toBe(false);
   });
 
   it('getting up drops the wish only the settling raised; a PickNewIdle’s wish stays', () => {
@@ -849,21 +863,15 @@ describe.skipIf(!hasGamedata())(
         expect(picked).toBe(true);
         // The chair as the action's target: a seated idle, not a standing one.
         expect(theirs()[0]?.furniture).toBe(chair);
-        expect(sim.world.stage.ambientIdles.flags.playing(PLAYER_REF)).toBe(true);
+        expect(sim.world.stage.ambientIdles.flags.wants(PLAYER_REF)).toBe(false);
       },
       300_000,
     );
 
-    it('getting up ends the idle that played (its graph back at its standing state)', async () => {
-      const flags = sim.world.stage.ambientIdles.flags;
+    it('getting up: the player leaves the chair', async () => {
       sim.press('Forward', true);
       expect(
-        await sim.until(
-          () =>
-            sim.world.stage.furniture.interaction(PLAYER_REF) === undefined &&
-            !flags.playing(PLAYER_REF),
-          10,
-        ),
+        await sim.until(() => sim.world.stage.furniture.interaction(PLAYER_REF) === undefined, 10),
       ).toBe(true);
       sim.press('Forward', false);
     }, 300_000);

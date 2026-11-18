@@ -1022,9 +1022,18 @@ export class ScriptRuntime implements VmHost {
    * The console's world-wide switches (src/shell/console-commands.ts; observed in the
    * original): immortal mode (tim: the player's health never drops to zero, Kill passes them by),
    * all AI processing (tai without an actor), all combat AI (tcai), detection (tdetect) and the
-   * local map's fog of war (tfow).
+   * local map's fog of war (tfow); and the complex scenes counted in (SetSceneIsComplex: 1 in,
+   * 0 out; observed in the original: the ambient idles' wait is fAIIdleWaitTimeComplexScene while
+   * the count is not 0; no vanilla script sets it).
    */
-  readonly debug = { immortal: false, ai: true, combatAi: true, detection: true, fogOfWar: true };
+  readonly debug = {
+    immortal: false,
+    ai: true,
+    combatAi: true,
+    detection: true,
+    fogOfWar: true,
+    complexScenes: 0,
+  };
   perkPoints = 0;
   lastHorse: number | undefined;
   inMenuMode = false;

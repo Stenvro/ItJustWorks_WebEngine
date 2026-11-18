@@ -99,11 +99,25 @@ export class MirroredSkeleton {
 
   /** Mirrors a bone-local pose (TRANSFORM_FLOATS per bone) in place. */
   mirrorPose(pose: Float32Array): void {
+    this.#mirror(pose, false);
+  }
+
+  /**
+   * Mirrors an additive pose (differences to the pose below) in place. Observed in the original:
+   * as a full pose, but each rotation is turned by its parent's invariant on both sides (the
+   * parent's invariant, times the rotation, times the parent's invariant inverted), not by its
+   * own on the right; translations as a full pose's; scales kept; then partners swap.
+   */
+  mirrorAdditive(delta: Float32Array): void {
+    this.#mirror(delta, true);
+  }
+
+  #mirror(pose: Float32Array, additive: boolean): void {
     const count = this.#parents.length;
     for (let bone = 0; bone < count; bone++) {
       const o = bone * TRANSFORM_FLOATS;
       const parent = this.#invariant(this.#parents[bone] ?? -1);
-      const own = this.#invariant(bone);
+      const own = additive ? parent : this.#invariant(bone);
       const q: Quat = [pose[o + 3] ?? 0, pose[o + 4] ?? 0, pose[o + 5] ?? 0, pose[o + 6] ?? 1];
       const r = normalized(quatMultiply(quatMultiply(parent, q), quatConjugate(own)));
       const t = quatRotate(parent, [pose[o] ?? 0, pose[o + 1] ?? 0, pose[o + 2] ?? 0]);
@@ -122,39 +136,6 @@ export class MirroredSkeleton {
       swap.set(pose.subarray(a, a + TRANSFORM_FLOATS));
       pose.copyWithin(a, b, b + TRANSFORM_FLOATS);
       pose.set(swap, b);
-    }
-  }
-
-  /**
-   * Mirrors an additive pose (differences to the pose below: translations added, rotations
-   * turning it, scales multiplying): laid on the reference pose, mirrored, then taken again as
-   * the difference to the mirrored reference pose.
-   */
-  mirrorAdditive(delta: Float32Array, reference: Float32Array): void {
-    const count = this.#parents.length;
-    const full = reference.slice(0, count * TRANSFORM_FLOATS);
-    for (let bone = 0; bone < count; bone++) {
-      const o = bone * TRANSFORM_FLOATS;
-      const q = quatMultiply(
-        [full[o + 3] ?? 0, full[o + 4] ?? 0, full[o + 5] ?? 0, full[o + 6] ?? 1],
-        [delta[o + 3] ?? 0, delta[o + 4] ?? 0, delta[o + 5] ?? 0, delta[o + 6] ?? 1],
-      );
-      for (let k = 0; k < 3; k++) full[o + k] = (full[o + k] ?? 0) + (delta[o + k] ?? 0);
-      for (let k = 0; k < 4; k++) full[o + 3 + k] = q[k] ?? 0;
-      for (let k = 7; k < 10; k++) full[o + k] = (full[o + k] ?? 1) * (delta[o + k] ?? 1);
-    }
-    const base = reference.slice(0, count * TRANSFORM_FLOATS);
-    this.mirrorPose(full);
-    this.mirrorPose(base);
-    for (let bone = 0; bone < count; bone++) {
-      const o = bone * TRANSFORM_FLOATS;
-      const q = quatMultiply(
-        quatConjugate([base[o + 3] ?? 0, base[o + 4] ?? 0, base[o + 5] ?? 0, base[o + 6] ?? 1]),
-        [full[o + 3] ?? 0, full[o + 4] ?? 0, full[o + 5] ?? 0, full[o + 6] ?? 1],
-      );
-      for (let k = 0; k < 3; k++) delta[o + k] = (full[o + k] ?? 0) - (base[o + k] ?? 0);
-      for (let k = 0; k < 4; k++) delta[o + 3 + k] = q[k] ?? 0;
-      for (let k = 7; k < 10; k++) delta[o + k] = (full[o + k] ?? 1) / ((base[o + k] ?? 1) || 1);
     }
   }
 

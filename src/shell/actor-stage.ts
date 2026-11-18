@@ -450,9 +450,10 @@ export class ActorStage {
       paired: (actor, target, event) => {
         this.combat.pairIdle(actor, target, event);
       },
-      // A specific idle over one that plays: its stop's PickNewIdle is no request.
-      specificIdle: (actor) => {
-        this.ambientIdles.specificIdle(actor);
+      // A specific idle: one its graph's bForceIdleStop stopped first skips that stop's
+      // PickNewIdle.
+      specificIdle: (actor, stopped, taken) => {
+        this.ambientIdles.specificIdle(actor, stopped, taken);
       },
       ground: (at) => {
         const hit = this.#physics?.raycast(
@@ -1045,7 +1046,6 @@ export class ActorStage {
         return event;
       },
       lifeOf: (reference) => this.lifeState(reference),
-      highProcess: (reference) => this.movers.inHighProcess(reference),
       player: () => {
         const view = options.player?.();
         const user = options.seat?.()?.user;
@@ -1056,12 +1056,7 @@ export class ActorStage {
           user,
           camera: player.cameraState({ free: view.play.freeCamera, furniture: seated }),
           pov: player.pov,
-          moving: Math.hypot(...player.character.velocity) > 0,
         };
-      },
-      moving: (reference) => {
-        const motion = this.movers.motion(reference);
-        return motion !== undefined && (motion.moving || motion.pathing);
       },
       ...(options.processClock && { clock: options.processClock }),
     });

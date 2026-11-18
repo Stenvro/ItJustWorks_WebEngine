@@ -72,6 +72,7 @@ import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import { TRAP_REACH } from '../scripting/runtime/trap-hits.ts';
 import { framePaced } from '../render/frame-work.ts';
+import { pitchedMotion } from '../animation/extracted-motion.ts';
 import type { Vec3 } from '../render/math.ts';
 import {
   CHECK_FALL_DISTANCE,
@@ -3165,8 +3166,15 @@ export class ActorMovers {
     if (!mover) return;
     const motion = behavior.rootMotion();
     const drive = this.#readDrive(staged.reference, behavior);
-    const x = motion.translation[0] * scale;
-    const y = motion.translation[1] * scale;
+    // Its controller's pitch (its lean with the ground) turns the motion (observed in the
+    // original: [Animation] bApplyPitchToExtractedMotion): up a slope only the cosine of a clip's
+    // forward motion is ground speed.
+    const pitched =
+      this.#options.session.ini.number('Animation', 'bApplyPitchToExtractedMotion') !== 0
+        ? pitchedMotion(motion.translation, mover.tilt.now.pitch)
+        : motion.translation;
+    const x = pitched[0] * scale;
+    const y = pitched[1] * scale;
     // The actor's frame (x right, y forward) to the world's: right (cos, −sin), forward
     // (sin, cos) of its compass heading.
     const sin = Math.sin(staged.heading);

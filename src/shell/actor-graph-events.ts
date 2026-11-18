@@ -64,16 +64,6 @@ interface Dying {
   /** Its Death line waits for its graph's DeathEmote (until then, or DEATH_EMOTE_WAIT). */
   cry: (() => void) | undefined;
   /**
-   * The death idle's event its graph was sent, until the graph answers whether it took it
-   * (undefined: answered, or a killmove's).
-   */
-  idle: string | undefined;
-  /**
-   * The graph's active states as its death idle was sent: a graph that has not answered by
-   * DEATH_TAKEN (it has not updated since) and whose states did not change did not take it.
-   */
-  before: string | undefined;
-  /**
    * It died in a paired clip (a killmove's victim): its body goes limp from the clip's last
    * pose as the clip ends (its graph would otherwise stand it up in its own states again).
    */
@@ -87,15 +77,6 @@ interface Dying {
  * or keeps its ragdoll driven.
  */
 const DEATH_WAIT = 8;
-/**
- * A death idle its graph does not take (no active state answers it: a cow's DeathAnimation
- * while it grazes). The engine's graphs report an event no active node takes as not handled;
- * ours reads that answer the update after the idle was sent (BehaviorRuntime.answered) and lets
- * the body go at once (inferred, TODO(M13): what the engine does on that answer, and how soon,
- * is not read). A graph that has not answered this long after (seconds) is judged by its
- * states: unchanged, it did not take it.
- */
-const DEATH_TAKEN = 0.3;
 /** A death cry waiting for its graph's DeathEmote is said after this at the latest (seconds). */
 const DEATH_EMOTE_WAIT = 2;
 /** fDeathSoundMaxDistance's default: how near the player a death cry is said (units). */
@@ -591,7 +572,6 @@ export class ActorGraphEvents {
     const paired =
       stage.combat.paired(reference) || staged.placed.behavior?.synchronizedClip() !== undefined;
     let event: string | undefined;
-    const before = graph && !paired ? statesOf(graph) : undefined;
     if (graph && !knocked && !paired) {
       const user = stage.userOf(staged);
       // The idles' conditions on their target ask the killer (what it holds: a bow, a staff,
@@ -605,9 +585,16 @@ export class ActorGraphEvents {
       }
     }
     if (stage.get(reference) !== staged) return;
+    // Observed in the original: an event sent to an actor's graphs is handled at once, and the
+    // send answers whether a node of a graph took it (an active one, the event among its names).
+    // A death idle no active state takes (a cow's DeathAnimation while it grazes) lets the body
+    // go at once (inferred, TODO(M13): what the engine does on that answer is not read).
     const animated =
       graph !== undefined &&
-      (paired || (event !== undefined && !RAGDOLL_EVENTS.has(event.toLowerCase())));
+      (paired ||
+        (event !== undefined &&
+          !RAGDOLL_EVENTS.has(event.toLowerCase()) &&
+          graph.wouldHandle(event)));
     if (!animated) {
       void stage.bodies.kill(staged);
       cry?.();
@@ -619,8 +606,6 @@ export class ActorGraphEvents {
       phase: 'animating',
       since: 0,
       cry: waitsForEmote ? cry : undefined,
-      idle: before === undefined ? undefined : event,
-      before,
       paired,
     });
     if (!waitsForEmote) cry?.();
@@ -720,27 +705,9 @@ export class ActorGraphEvents {
         if (!holds || dying.since >= DEATH_WAIT) this.#limp(dying);
         continue;
       }
-      // Whether its graph took its death idle: as the graph answers (the update after the idle
-      // was sent), else by its states once DEATH_TAKEN has passed.
-      if (dying.idle !== undefined) {
-        const answer = graph?.answered(dying.idle);
-        if (answer === false || !graph) {
-          this.#limp(dying);
-          continue;
-        }
-        if (answer === true) {
-          dying.idle = undefined;
-          dying.before = undefined;
-        }
-      }
-      if (dying.before !== undefined && dying.since >= DEATH_TAKEN) {
-        const before = dying.before;
-        dying.before = undefined;
-        dying.idle = undefined;
-        if (!graph || statesOf(graph) === before) {
-          this.#limp(dying);
-          continue;
-        }
+      if (!graph) {
+        this.#limp(dying);
+        continue;
       }
       if (dying.since >= DEATH_WAIT) this.#limp(dying);
     }
@@ -833,14 +800,6 @@ export class ActorGraphEvents {
     const target = this.#options.stage.combat.targetOf(commander);
     if (target !== undefined) this.#options.stage.combat.startCombat(reference, target);
   }
-}
-
-/** A graph's active states, as one text (to tell whether an event moved it). */
-function statesOf(graph: { states(): { machine: string; state: string }[] }): string {
-  return graph
-    .states()
-    .map((entry) => `${entry.machine}:${entry.state}`)
-    .join('|');
 }
 
 const describe = (error: unknown): string =>

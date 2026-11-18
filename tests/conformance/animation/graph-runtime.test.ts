@@ -87,12 +87,12 @@ describe('the death idle’s check (original)', () => {
   const COW = 0x100;
 
   /** The engine's death handling with one dying actor, whose graph answers `answer`. */
-  function dying(answer: boolean | undefined): { frame(seconds: number): void; limp: number[] } {
+  function dying(answer: boolean): { frame(seconds: number): void; limp: number[] } {
     const limp: number[] = [];
     const graph = {
       states: () => [{ machine: 'Behavior', state: 'Grazing' }],
-      answered: (name: string): boolean | undefined =>
-        name === 'DeathAnimation' ? answer : undefined,
+      // Asked as the idle is sent: the original's send answers at once.
+      wouldHandle: (name: string): boolean => name === 'DeathAnimation' && answer,
       declares: () => false,
       synchronizedClip: () => undefined,
       poweredRagdollForce: () => 0,
@@ -137,9 +137,8 @@ describe('the death idle’s check (original)', () => {
 
   it('an event no active node takes reports not handled: the body is let go at once', async () => {
     const cow = dying(false);
-    cow.frame(1 / 60);
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // At the send itself, before any frame: the original answers as it handles the event.
     expect(cow.limp).toEqual([COW]);
   });
   it('one its graph took plays on, its states as yet unchanged', async () => {

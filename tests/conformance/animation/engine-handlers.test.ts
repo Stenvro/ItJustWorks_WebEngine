@@ -13,6 +13,12 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { hasGamedata, openSim, type Sim } from '../../helpers/sim.ts';
+import { CAMERA_NODE } from '../../../src/shell/first-person-body.ts';
+import {
+  DAMPENING_DEFAULTS,
+  FirstPersonDampening,
+  readDampeningSettings,
+} from '../../../src/shell/first-person-dampening.ts';
 
 /** Every handler class of the response files, with what the engine does (observed in the original). */
 const ANSWERED: readonly (readonly [string, string])[] = [
@@ -38,7 +44,7 @@ const ANSWERED: readonly (readonly [string, string])[] = [
   ['BowZoomStartHandler', 'the player’s bow zoom begins (Mod Bow Zoom)'],
   ['BowZoomStopHandler', 'the bow zoom ends'],
   ['BowReleaseHandler', 'the bow released'],
-  ['CameraOverrideStartHandler', 'a flag of the camera’s third-person state set'],
+  ['CameraOverrideStartHandler', 'the first-person state’s flag set: its dampening fades'],
   ['CameraOverrideStopHandler', 'that flag cleared'],
   ['CameraShakeHandler', 'shakes the camera by the payload’s strength'],
   ['ChairEnterHandler', 'the sit state becomes sitting'],
@@ -159,6 +165,91 @@ describe.skipIf(!hasGamedata())('the handler classes of the response files (data
       expect(sim.world.stage.graphEvents.dispatch.answered(handler)).toBe(false);
     });
   }
+
+  it('first person on a walk: the arms’ Camera1st node stays at the dampened view', async () => {
+    // The dampening (CameraOverride's flag fades it) lags the camera behind the walking player's
+    // place; the camera rides the first-person skeleton's Camera1st node, so the arms take the
+    // same offset (inferred: src/shell/player.ts, firstPersonOffset). Placed on the feet alone,
+    // they ran several units ahead of the view at a walk.
+    const player = sim.world.player;
+    player.setPov('first');
+    sim.world.press('Forward', true);
+    try {
+      await sim.step(1.5);
+      const arms = sim.world.playerView?.avatar?.firstPersonBody;
+      expect(arms).toBeDefined();
+      const node = arms?.skeleton.pose.world(CAMERA_NODE);
+      expect(node).toBeDefined();
+      if (!arms || !node) return;
+      const w = arms.world;
+      const [x, y, z] = [node[12] ?? 0, node[13] ?? 0, node[14] ?? 0];
+      const at = [0, 1, 2].map(
+        (i) => (w[i] ?? 0) * x + (w[4 + i] ?? 0) * y + (w[8 + i] ?? 0) * z + (w[12 + i] ?? 0),
+      );
+      // The view lags the walk by some units; the arms' camera node is where the view is.
+      expect(Math.hypot(...player.firstPersonOffset)).toBeGreaterThan(2);
+      expect(Math.hypot(...at.map((v, i) => v - (player.position[i] ?? 0)))).toBeLessThan(0.5);
+    } finally {
+      sim.world.press('Forward', false);
+      player.setPov('third');
+    }
+  });
+});
+
+describe('CameraOverride: the first-person dampening it fades (original)', () => {
+  const free = { override: false, paired: false, ownControls: true };
+  const dt = 1 / 60;
+  /** A player standing at the origin, then stepping 20 units up a stair. */
+  function step(state = free, frames = 1): { lag: number; weight: number } {
+    const view = new FirstPersonDampening();
+    view.update([0, 0, 0], dt, state);
+    let offset: number[] = [];
+    for (let i = 0; i < frames; i++) offset = view.update([0, 0, 20], dt, state);
+    return { lag: offset[2] ?? 0, weight: view.weight };
+  }
+
+  it('reads its settings from [Camera], the built-in defaults else', () => {
+    expect(readDampeningSettings(() => undefined)).toEqual(DAMPENING_DEFAULTS);
+    expect(DAMPENING_DEFAULTS).toEqual({
+      horzSpring: 0.0001,
+      horzVelocity: 0.4,
+      vertSpring: 0.001,
+      vertVelocity: 0.6,
+    });
+  });
+  it('a step up a stair is eased: the view lags 0.001^dt of it, then catches up', () => {
+    // The first frame is a lag of -20 decayed by 0.001^(1/60).
+    expect(step().lag).toBeCloseTo(-20 * Math.pow(0.001, dt), 5);
+    expect(Math.abs(step(free, 60).lag)).toBeLessThan(0.5);
+  });
+  it('the first frame and a jump of more than 300 units are not eased', () => {
+    const view = new FirstPersonDampening();
+    expect(view.update([10, 0, 0], dt, free)).toEqual([0, 0, 0]);
+    expect(view.update([400, 0, 0], dt, free)).toEqual([0, 0, 0]);
+  });
+  it('with the override flag set the weight falls by 1.5 a second, the ease with it', () => {
+    const held = { ...free, override: true };
+    expect(step(held).weight).toBeCloseTo(1 - 3 * dt, 6);
+    const view = new FirstPersonDampening();
+    for (let i = 0; i < 60; i++) view.update([0, 0, 0], dt, held);
+    expect(view.weight).toBe(0);
+    expect(view.update([0, 0, 20], dt, held).map(Math.abs)).toEqual([0, 0, 0]);
+  });
+  it('a killmove and a scripted walk fade it too; cleared, it comes back', () => {
+    expect(step({ ...free, paired: true }).weight).toBeLessThan(1);
+    expect(step({ ...free, ownControls: false }).weight).toBeLessThan(1);
+    const view = new FirstPersonDampening();
+    for (let i = 0; i < 30; i++) view.update([0, 0, 0], dt, { ...free, override: true });
+    for (let i = 0; i < 30; i++) view.update([0, 0, 0], dt, free);
+    expect(view.weight).toBeCloseTo(1, 6);
+  });
+  it('a reset sets the weight back to 1 and forgets the place', () => {
+    const view = new FirstPersonDampening();
+    for (let i = 0; i < 30; i++) view.update([0, 0, 0], dt, { ...free, override: true });
+    view.reset();
+    expect(view.weight).toBe(1);
+    expect(view.update([0, 0, 20], dt, free)).toEqual([0, 0, 0]);
+  });
 });
 
 describe('graph events (todo)', () => {

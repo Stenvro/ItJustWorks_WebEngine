@@ -410,6 +410,10 @@ export class ConsoleCommands {
         runtime.debug.ai = !runtime.debug.ai;
         return [`All AI Processing is  ${onOff(runtime.debug.ai)}`];
       }
+      // SetSceneIsComplex n: a complex scene counted in (n not 0) or out (observed in the original).
+      case 'setsceneiscomplex':
+        runtime.debug.complexScenes += num(0) !== 0 ? 1 : -1;
+        return [`SceneComplex count >> ${String(runtime.debug.complexScenes)}`];
       case 'togglecombatai':
         runtime.debug.combatAi = !runtime.debug.combatAi;
         return [`All Combat AI processing is ${onOff(runtime.debug.combatAi)}`];

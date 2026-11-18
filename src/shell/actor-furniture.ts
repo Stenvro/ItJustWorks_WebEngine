@@ -133,8 +133,12 @@ export interface ActorFurnitureOptions {
    * side (src/shell/actor-combat.ts pairIdle).
    */
   readonly paired?: (actor: number, target: number, event: string) => void;
-  /** A specific idle (playIdle: a package's, a script's, a line's) was sent to an actor's graph. */
-  readonly specificIdle?: (actor: number) => void;
+  /**
+   * A specific idle (playIdle: a package's, a script's, a line's) was sent to an actor's graph:
+   * `stopped`, its graph's bForceIdleStop had the idle that played stopped first; `taken`, the
+   * graph took it.
+   */
+  readonly specificIdle?: (actor: number, stopped: boolean, taken: boolean) => void;
   /**
    * The height of the ground under a point (the world's physics, actors left out), if any
    * within reach: where one placed in its furniture as its cell loaded leaves to.
@@ -541,9 +545,18 @@ export class ActorFurniture {
         await this.#backIn(user, event, ticket);
       }
       if (this.#latestIdle.get(actor) !== ticket) return false;
+      // Observed in the original: while its graph's bForceIdleStop is set, the idle that plays is
+      // stopped first (ActionIdleStop), and the PickNewIdle that stop raises is no request.
+      const stopped = (user.placed.behavior?.variable('bForceIdleStop') ?? 0) !== 0;
+      if (stopped) {
+        // The turn is kept through the stop's lookup: a later idle called meanwhile supersedes
+        // this one (sent after it, this one would override it).
+        await this.actionEvent(user, 'ActionIdleStop', undefined, true);
+        if (this.#latestIdle.get(actor) !== ticket) return false;
+      }
       this.#latestIdle.delete(actor);
       const sent = user.send(event);
-      if (sent) this.#options.specificIdle?.(actor);
+      this.#options.specificIdle?.(actor, stopped, sent);
       for (const dependent of options.dependents ?? []) dependent.send(event);
       const use = this.#uses.get(actor);
       if (sent && use && inside(use)) void this.#keepIn(user, use);

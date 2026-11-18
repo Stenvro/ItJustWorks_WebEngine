@@ -11,9 +11,7 @@ import {
   AmbientIdleTurns,
   ambientIdleUpdate,
   ambientIdleWait,
-  COMPLEX_SCENE_ACTORS,
-  countsInScene,
-  isComplexScene,
+  sceneIsComplex,
   playerAmbientIdleView,
   readAmbientIdleSettings,
   type AmbientIdleActor,
@@ -45,14 +43,10 @@ export interface ActorAmbientIdlesOptions {
   ) => Promise<string | undefined>;
   /** An actor's life state (ACTOR_LIFE_STATE; undefined: alive). */
   readonly lifeOf?: (reference: number) => number | undefined;
-  /** Whether an actor is in the high process (undefined: taken as yes). */
-  readonly highProcess?: (reference: number) => boolean;
   /** The player as the idles see it (undefined: no player body on the stage). */
   readonly player?: () => AmbientIdlePlayer | undefined;
   /** The clock the frame's budget is measured with (ms; default performance.now). */
   readonly clock?: () => number;
-  /** Whether an actor moves off now (its package walks it, it paths; undefined: never). */
-  readonly moving?: (reference: number) => boolean;
   /** Whether an actor is at its meal (an Eat package's eating step; undefined: never). */
   readonly eating?: (reference: number) => boolean;
 }
@@ -65,8 +59,6 @@ export interface AmbientIdlePlayer {
   readonly camera: number;
   /** First or third person (src/shell/player.ts). */
   readonly pov: 'first' | 'third';
-  /** The player's keys move them now. */
-  readonly moving?: boolean;
   /** Its life state (undefined: alive). */
   readonly life?: number;
 }
@@ -106,8 +98,6 @@ export class ActorAmbientIdles {
   /** Seconds of frames seen (the idle wait timers' clock). */
   #clock = 0;
   readonly #turns = new AmbientIdleTurns();
-  /** iAINumberActorsComplexScene. */
-  #complexSceneActors = COMPLEX_SCENE_ACTORS;
   /** The frame's budget for the tries (ms): [Animation] fSpecialIdlePickTime, microseconds. */
   readonly #budget: number;
 
@@ -117,8 +107,6 @@ export class ActorAmbientIdles {
     options.session.settings().then(
       (settings) => {
         this.#settings = readAmbientIdleSettings((name) => settings.number(name));
-        this.#complexSceneActors =
-          settings.number('iAINumberActorsComplexScene') ?? COMPLEX_SCENE_ACTORS;
       },
       () => undefined,
     );
@@ -127,17 +115,21 @@ export class ActorAmbientIdles {
   /** The engine's PickNewIdleHandler. */
   pickNewIdle(reference: number): void {
     this.#seatedWish.delete(reference);
-    this.flags.pickNewIdle(reference, this.#clock);
+    this.flags.pickNewIdle(reference);
   }
 
   /**
    * A specific idle was sent to an actor's graph (a package's, a script's PlayIdle, a line's):
-   * over an idle that plays, the PickNewIdle the stopped one raises is no request (within
-   * SPECIFIC_IDLE_SKIP_WINDOW of it: src/ai/ambient-idles.ts).
+   * `stopped`, its graph's bForceIdleStop stopped the idle that played first (the PickNewIdle that
+   * raises is no request); else `taken` whether its graph took it (src/ai/ambient-idles.ts).
    */
-  specificIdle(reference: number): void {
-    this.flags.specificIdle(reference, this.#clock);
+  specificIdle(reference: number, stopped = false, taken = true): void {
+    const wait = ambientIdleWait(this.#settings, this.#complex);
+    this.flags.specificIdle(reference, stopped, taken, this.#clock, wait, this.#complex);
   }
+
+  /** Whether a complex scene ran as of the last frame. */
+  #complex = false;
 
   /**
    * The actors' AI updates (`seconds` since the last frame): those that want a new idle try
@@ -148,23 +140,16 @@ export class ActorAmbientIdles {
     this.#clock += seconds;
     const now = this.#clock;
     const staged = new Map<number, StagedActor>();
-    let high = 0;
-    const highProcess = (reference: number): boolean =>
-      this.#options.highProcess?.(reference) !== false;
     for (const actor of this.#options.actors()) {
       staged.set(actor.reference, actor);
-      if (countsInScene(actor, highProcess)) high++;
-      // Moving off cuts the idle that played (no PickNewIdle of its end comes).
-      if (this.flags.playing(actor.reference) && this.#options.moving?.(actor.reference) === true) {
-        this.flags.moved(actor.reference);
-      }
       if (!actor.dead) this.#settle(actor.reference);
     }
     const player = this.#options.player?.();
-    if (player?.moving === true) this.flags.moved(PLAYER_REF);
     if (player) this.#settle(PLAYER_REF);
     if (!focus) return;
-    const complex = isComplexScene(high, this.#complexSceneActors);
+    // Observed in the original: a complex scene is one counted in by SetSceneIsComplex.
+    const complex = sceneIsComplex(this.#options.session.scriptsReady?.debug.complexScenes ?? 0);
+    this.#complex = complex;
     const order = [...staged.keys()];
     if (player) order.push(PLAYER_REF);
     const clock = this.#options.clock ?? (() => performance.now());
@@ -250,9 +235,7 @@ export class ActorAmbientIdles {
    * original's seated request; the player who sat down in first person picks the chair idles
    * once seen in third).
    *
-   * Getting up (the use leaves that state) cuts the idle that played, as moving off does: its
-   * graph leaves the seated states with no PickNewIdle of the idle's end, so a stale "playing"
-   * does not outlast the chair. A wish only the settling raised and nothing answered yet (the
+   * Getting up (the use leaves that state): a wish only the settling raised and nothing answered yet (the
    * player seated in first person all along) is dropped with it: standing, a PickNewIdle asks
    * for the next idle (inferred, TODO(M13)).
    */
@@ -273,9 +256,8 @@ export class ActorAmbientIdles {
     this.flags.want(reference);
   }
 
-  /** It leaves the seated state: the idle that played is cut; the settling's own wish dropped. */
+  /** It leaves the seated state: the settling's own wish dropped. */
   #getUp(reference: number): void {
-    this.flags.moved(reference);
     if (this.#seatedWish.delete(reference)) this.flags.drop(reference);
   }
 

@@ -1448,6 +1448,8 @@ export class WorldViewer {
     // The ridden horse its camera follows (HorseCameraState: src/shell/camera-states.ts).
     player.horseRide = () => this.#stage?.mounts.horseView(PLAYER_REF);
     player.pressTaken = (name) => this.#stage?.mounts.takesPress(name) === true;
+    // A killmove fades the first-person dampening (src/shell/first-person-dampening.ts).
+    player.paired = () => this.#stage?.combat.paired(PLAYER_REF) === true;
     // The vanity camera waits while a menu is open or the player fights.
     player.vanityAllowed = () => {
       const session = this.#session;

@@ -644,11 +644,13 @@ export class PlayerAvatar {
       1,
     ]);
     this.#motion.version++;
-    // The first-person arms: on the feet, turned with the view.
+    // The first-person arms: on the feet, turned with the view, eased with it (the camera's
+    // dampening offset: they stay where the view has them).
     const player = this.#player;
     if (player.pov === 'first') {
+      const [ox, oy, oz] = player.firstPersonOffset;
       this.#firstPerson?.place(
-        [feet[0] ?? 0, feet[1] ?? 0, feet[2] ?? 0],
+        [(feet[0] ?? 0) + ox, (feet[1] ?? 0) + oy, (feet[2] ?? 0) + oz],
         this.#bodyYaw,
         player.height,
         this.#armsPitch,

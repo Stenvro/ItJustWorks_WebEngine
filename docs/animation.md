@@ -354,14 +354,20 @@ our words:
 
 - Each actor's process keeps a "wants a new idle" flag. Its graph's PickNewIdle (raised as an
   idle ends, and from its standing and sitting states) sets it, unless a "skip one" flag is set,
-  which that event clears instead (set as a specific idle, a package's or a script's, replaces
-  one that plays: the PickNewIdle its stop raises is no request).
+  which that event clears instead.
+- A specific idle (a package's, a script's PlayIdle, a line's) sent while the actor's graph has
+  bForceIdleStop set first stops the idle that plays (ActionIdleStop) and sets the skip flag,
+  which holds until the next PickNewIdle (the stopped idle's: no request). Sent while the
+  variable is clear it plays as an ambient one does: taken, the flag clears and the idle wait
+  timer is set; not taken, the actor wants a new idle.
 - While the flag is set, each AI update tries ActionIdle: the first idle of the tree whose
   conditions hold, on the actor, with its process's target (the furniture it is in: the bar
   counter's keywords, the table's). One that plays clears the flag and sets the idle wait timer
   (fAIIdleWaitTime; fAIIdleWaitTimeComplexScene while a complex scene runs, when the next try
-  waits for it); none leaves the flag set, and the next update tries again. Other systems set
-  the flag themselves before an action that should resolve to an idle (a trespass warning).
+  waits for it); none leaves the flag set, and the next update tries again. A complex scene is
+  one counted in by the script function SetSceneIsComplex (1 in, 0 out), which no vanilla script
+  calls (the console's `SetSceneIsComplex 1` does). Other systems set the flag themselves before
+  an action that should resolve to an idle (a trespass warning).
 - It is not tried for an actor farther from the player than its 3D's bound radius / 64 ×
   fAIIdleAnimationDistance (2000; × fAIIdleAnimationLargeCreatureDistanceMult, 3, for a race
   larger than medium), nor one on its way to furniture, entering, leaving or asleep in it, one
@@ -370,30 +376,20 @@ our words:
 
 **Ours** (src/ai/ambient-idles.ts, the flags and gates; src/shell/actor-ambient-idles.ts, the
 stage's): the same, the idle tree's search being the furniture's `actionEvent` (as the death
-actions'), the bound radius the sphere round the skeleton's posed nodes. Inferred (TODO(M13)):
-every idle the furniture's `playIdle` sends (a package's, a script's PlayIdle, a line's) is a
-specific idle, setting the skip flag when an idle plays; a complex scene is as many actors in
-the high process as iAINumberActorsComplexScene (20) or more (`sceneActors`: the living of the
-movers' high process, the disabled and those placed or reloaded dead left out; detection's count
-and the physics' complex mode's too); the frame's
-budget is [Animation] fSpecialIdlePickTime (built-in default 250) read as microseconds, the
-tries taking turns round the actors from where the last frame stopped (at least one a frame);
-the restrained (life state 6) keep their wish but try none; the dying, dead and unconscious
-drop it (their graphs ask again as they stand up); the player's body picks them too (its
-PickNewIdle; the first-person arms' none) in third person, furniture's camera and the auto
-vanity camera, never in first person, seated either (where the camera's state is furniture's;
-ActionIdle gives the player IdlePlayer standing, the chair idles seated: the people's tree
-leaves the player out of the others by GetIsID); an idle that plays counts as cut off once its
-actor moves off (its package walks it or paths, the player's keys move them: no PickNewIdle of
-its end comes), so a specific idle after that skips nothing; the skip a specific idle sets
-holds for 0.5 s only (`SPECIFIC_IDLE_SKIP_WINDOW`): a later PickNewIdle is taken as the specific
-idle's own end, a request (the original's flag holds until the next PickNewIdle; ours is bounded
-so that a cut our graph raises no PickNewIdle for does not swallow the end's and leave the actor
-without ambient idles: in the headless simulation a script's IdleHDRight over a Bannered Mare
-guest's ambient idle brought no PickNewIdle until its own end, 24 s on). The meal's gate: an Eat
-package's eating step runs from its food's use (the eating idle) until its meal is done or the
-procedure is cut short (`PackageBody.meal`; inferred, TODO(M13): the step's bounds taken as the
-food's use and the procedure's 6 s after it), and the actor picks none while it lasts. The
+actions'), the bound radius the sphere round the skeleton's posed nodes, the specific idles those
+the furniture's `playIdle` sends. Before 2026-11-18 ours set the skip whenever an idle it counted
+as playing was replaced, bounded to half a second, and took 20 actors in the high process for a
+complex scene. Inferred (TODO(M13)): the frame's budget is [Animation] fSpecialIdlePickTime
+(built-in default 250) read as microseconds, the tries taking turns round the actors from where
+the last frame stopped (at least one a frame); the restrained (life state 6) keep their wish but
+try none; the dying, dead and unconscious drop it (their graphs ask again as they stand up); the
+player's body picks them too (its PickNewIdle; the first-person arms' none) in third person,
+furniture's camera and the auto vanity camera, never in first person, seated either (where the
+camera's state is furniture's; ActionIdle gives the player IdlePlayer standing, the chair idles
+seated: the people's tree leaves the player out of the others by GetIsID). The meal's gate: an
+Eat package's eating step runs from its food's use (the eating idle) until its meal is done or
+the procedure is cut short (`PackageBody.meal`; inferred, TODO(M13): the step's bounds taken as
+the food's use and the procedure's 6 s after it), and the actor picks none while it lasts. The
 seated request (inferred, TODO(M13)): the chair's seated base state raises no PickNewIdle of its
 own (mt_behavior.hkx: ChairIdleBehavior starts ChairIdle3rdPerson or, by i1stPerson,
 ChairIdle1stPerson; ChairIdle3rdPerson's base, ChairBaseVar1, loops Chair_IdleBaseVar1 and only
@@ -402,17 +398,15 @@ actor sat down was cut off without its end's, so an actor or the player who sett
 (its use reaching state 3, in it, at a marker whose animation type has the sit (1) or lean (4)
 bit and not the sleep (2) bit; any furniture whose marker is so typed counts, a crafting station's
 included) wants a new idle then. The player who sat down in first person keeps that wish until
-seen in third person, then picks the chair idles. Getting up (the use leaving that state) cuts
-the idle that played, as moving off does (the graph leaves the seated states with no PickNewIdle
-of the idle's end), so a sandboxing actor who sat, took a chair idle and stood up keeps no stale
-"playing" (a script's idle after that skips nothing); a wish only the settling raised that
-nothing answered (no idle played, no PickNewIdle came: the player seated in first person all
-along) is dropped then, so standing the player waits for a PickNewIdle as before (both inferred,
-TODO(M13); `tests/conformance/animation/ambient-idles.test.ts`: the player seated at the
-Bannered Mare, the stage's idle update). Seen in
-the headless simulation (the Bannered Mare at 20:00, 60 s): Hulda wiped the counter (IdleBarCounterWipe),
-Lucia put a hand on her hip (IdleHDRight), Saadia and Sinmir took MotionDrivenIdle (armed:
-IdleIfEquipped).
+seen in third person, then picks the chair idles. Getting up (the use leaving that state): a wish
+only the settling raised that nothing answered (no idle played, no PickNewIdle came: the player
+seated in first person all along) is dropped then, so standing the player waits for a PickNewIdle
+as before (inferred, TODO(M13); `tests/conformance/animation/ambient-idles.test.ts`: the player
+seated at the Bannered Mare, the stage's idle update). Seen in the headless simulation (the
+Bannered Mare at 20:00, 60 s): Hulda wiped the counter (IdleBarCounterWipe), Lucia put a hand on
+her hip (IdleHDRight), Saadia and Sinmir took MotionDrivenIdle (armed: IdleIfEquipped); a script's
+IdleHDRight over a guest's ambient idle (bForceIdleStop clear) skipped nothing, and the guest
+picked ambient idles again after it.
 
 ## Actors
 
@@ -963,7 +957,7 @@ a cart rider's exit, a held weapon's own graph, the casting art, the animation o
 events); then each event goes, in the order raised, to its handler class's implementations, or,
 without one, to the actor's own answers (the combat state's WeapEquip_Out, blockStop, bowEnd).
 The handler classes are registered in that one module; a class asked for that nothing
-implements is listed (`dispatch.unanswered()`); classes a system answers from its listener by the events' names (the flight states, the get-ups, a cart's exit, the player's jump) are declared so (`heardBy`). Of the 93 classes the files name, 91 are answered and 2 do not exist in the original (tests/conformance/animation/engine-handlers.test.ts). Observed in the original, the last ones answered: BeginCastLeft / BeginCastRight (LeftHandSpellCastHandler, RightHandSpellCastHandler) begin a hand's waiting cast, its charge: ours begins at the action, its charge counted again from the graph's BeginCast, once (`CastingEngine.graphBegan`); JumpBegin (JumpAnimEventHandler) jumps the character controller fJumpHeightMin high, every actor's (`ActorMovers.jump`: the horse's graph raises jumpBegin as its jump starts; an NPC's human graph raises only JumpUp, which the response files give no handler: its controller jumps by it as the player's does, from the dispatch's listener, TODO(M13): inferred, what in the original answers it is not known; the player's push-off: its JumpUp only if a graph raises no JumpBegin; TODO(M13): the actor's jump height mult); BowZoomStart / BowZoomStop (the player's list) start and stop the bow's zoom (Mod Bow Zoom: once the graph has raised either, the zoom follows them, the block input alone before; TODO(M13): the controls flag the start clears); CameraOverrideStart / Stop set and clear a flag of the third-person camera, MTState one of the actor's middle-high process (both kept, TODO(M13): what reads them is unread); FlightLandEnd frees the landing (the next flier may land), FlightActionEnd ends a grab its release did not, FlightCrashLandStart brings the flier down where its target was (`src/shell/actor-flight.ts`). Events that
+implements is listed (`dispatch.unanswered()`); classes a system answers from its listener by the events' names (the flight states, the get-ups, a cart's exit, the player's jump) are declared so (`heardBy`). Of the 93 classes the files name, 91 are answered and 2 do not exist in the original (tests/conformance/animation/engine-handlers.test.ts). Observed in the original, the last ones answered: BeginCastLeft / BeginCastRight (LeftHandSpellCastHandler, RightHandSpellCastHandler) begin a hand's waiting cast, its charge: ours begins at the action, its charge counted again from the graph's BeginCast, once (`CastingEngine.graphBegan`); JumpBegin (JumpAnimEventHandler) jumps the character controller fJumpHeightMin high, every actor's (`ActorMovers.jump`: the horse's graph raises jumpBegin as its jump starts; an NPC's human graph raises only JumpUp, which the response files give no handler: its controller jumps by it as the player's does, from the dispatch's listener, TODO(M13): inferred, what in the original answers it is not known; the player's push-off: its JumpUp only if a graph raises no JumpBegin; TODO(M13): the actor's jump height mult); BowZoomStart / BowZoomStop (the player's list) start and stop the bow's zoom (Mod Bow Zoom: once the graph has raised either, the zoom follows them, the block input alone before; TODO(M13): the controls flag the start clears); CameraOverrideStart / Stop set and clear a flag of the first-person camera state, read by its dampening of the player's place alone (it fades out while the flag is set: [First person](#first-person)); MTState sets one of the actor's middle-high process, read by the feeding procedures (vampire and cannibal feeding wait for it, the feeder back in its movement state, 2.5 s at most, before the feed; TODO(M11): our AI runs no feeding procedure, the flag is kept); FlightLandEnd frees the landing (the next flier may land), FlightActionEnd ends a grab its release did not, FlightCrashLandStart brings the flier down where its target was (`src/shell/actor-flight.ts`). Events that
 come before the response files are read wait for them.
 
 **The handlers** (observed in the original, in our words; ours after each):
@@ -1006,10 +1000,12 @@ victim is paired, in furniture, bleeding out, swimming, or half the time, else D
 idles' conditions on their target see the killer (inferred, TODO(M13)). A Ragdoll idle, or none,
 lets the ragdoll go at once; an animated death keeps the body on its graph (still animating
 while dead) until the graph adds the ragdoll; one whose graph did not take the idle goes limp at
-once (the graph reports an event no active node takes as not handled; ours reads the graph's
-answer the update after the idle was sent, `BehaviorRuntime.answered`, and a graph that has not
-answered 0.3 s on by its states, unchanged: not taken. Letting it go at once is inferred,
-TODO(M13): what the engine does on that answer, and how soon, is not read), and so does one whose
+once (observed in the original: an event sent to an actor is sent to every graph it has and
+handled at once, the send answering whether a node of any took it; a graph not active, or without
+the event among its names, takes none. Ours asks the graph as the idle is sent,
+`BehaviorRuntime.wouldHandle`; before 2026-11-18 it read the answer the update after, and judged a
+graph silent 0.3 s on by its states. Letting it go at once is inferred, TODO(M13): what the
+engine does on that answer is not read), and so does one whose
 graph never adds it, or keeps it keyframed
 or powered, 8 s after it began (TODO(M13): what the engine does with such a graph; before, a
 graph that kept its ragdoll keyframed held the corpse on its feet for good). A killmove's
@@ -1568,6 +1564,22 @@ IdleWalkingCameraStart, then plays MT_WalkingCamera alone until IdleWalkingCamer
 
 ### First person
 
+**The view's dampening** (observed in the original: the first-person camera state's update;
+`src/shell/first-person-dampening.ts`). The view follows the player's place through a damped
+spring: each frame the lag (the smoothed place less the player's) decays by
+f1stHorzDampeningSpringConstant (0.0001) horizontally and f1stVertDampeningSpringConstant (0.001)
+vertically, each to the power of the frame's seconds, plus the f1st*DampeningVelocityDampening (0.4,
+0.6) × seconds of the smoothed velocity, times a weight; a lag over 300 units (a teleport, the first
+frame) is dropped. The weight (starting at 1) falls by 1.5 a second while the graph's CameraOverride
+flag is set (CameraOverrideStart / Stop, the flag's one reader), the player is in a paired
+interaction, the smoothed speed is over 500, or the scripts drive the player (SetPlayerAIDriven),
+and rises by 1.5 a second otherwise; a load resets it. TODO(M13): one more condition of the
+original's (a reference the player holds) is not read. The first-person arms take the same offset
+as the camera (it rides their skeleton's Camera1st node), so they stay where the view has them on a
+walk or a stair instead of running ahead of it (`Player.firstPersonOffset`; inferred, TODO(M13):
+whether the original moves the first-person skeleton by the offset is not confirmed; placed on
+the feet alone they ran some 19 units ahead at a walk).
+
 How the engine dresses the first-person body (observed in the original; implemented in
 `src/world/actors.ts`: `addonModel`, `inFirstPerson`, `underSkin`):
 
@@ -1929,34 +1941,44 @@ How a clip generator's time moves and which of its triggers and annotations a st
 play 4924 clips once, 4613 looping, 435 by a variable (user controlled), one ping-pong (the tail
 aux bones' walk) and 91 at a negative speed.
 
-- A trigger's time is in the clip's cropped time, or from its end (`relativeToEndOfClip`); an
-  annotation's is its time in the animation less the clip's start crop.
-- A step passes the times from where the clip was (not included) to where it is (included), in
-  the direction it plays; each trigger or annotation raises once for every time the step passed
-  it (in the graph's order: the triggers, then the annotations). A clip's first step after it
-  became active takes in its start time.
-- Looping: a step over the cycle's end passes the rest of that cycle and the next one's start
-  (its time 0 included); a step longer than a cycle passes each cycle it covers. Played backward
-  it wraps from its start to its end the same way.
-- Ping-pong: at an end it turns; the step passes the way to the end and the way back (a trigger
-  just before the end raises twice in one step). A negative speed plays it the other way first.
-  Its root motion over a step is the net way from where it was to where it is (it retraces its
-  way at a turn, so the stretch up to the end and back cancels; never read as a loop over the
-  seam, which was a cycle's jump at a turn that ended short of where the step began).
-- User controlled: the step is from where the clip was to where its variable puts it, either
-  way.
-- In a syncing blender: forward from where the clip was to its phase (over the seam into the
-  next cycle). A phase stepping back a little as the blend's sync points shift passes nothing:
-  what lies behind it was passed already and is passed again as the phase moves on (a walk and
-  run blend's FootLeft and FootRight raise once a stride).
-- Inferred (TODO(M13): Havok's own rules, not documented): a clip at a negative speed starts at
-  its end (its start time counted from there), as the unequips that play the equip backward
-  (0_master's Stf_Unequip, the crossbow's), the riekling's strafes and the Dwemer domes', gates'
-  and Snow Elf doors' closing sequences need; its triggers keep their clip times (the staff
-  unequip's end trigger raises as it starts, its 0.2 s triggers 0.2 s before it ends). An
-  acyclic trigger (8 in vanilla: AOWoodPickUp's, AOBarTableIdle's) raises in a looping or
-  ping-pong clip's first cycle only. Before, a clip at a negative speed stood still at its
-  start and raised nothing but what lay there.
+A trigger's time is in the clip's cropped time, or from its end (`relativeToEndOfClip`); an
+annotation's is its time in the animation less the clip's start crop.
+
+Observed in the original (Havok's clip generator as the original runs it), in our words:
+
+- A step passes the times between where the clip was and where it is, the lower of the two included
+  and the higher not, whichever way it plays (forward from 0.2 to 0.4 passes 0.2, not 0.4; backward
+  from 0.4 to 0.2 the same). So a clip's start time is passed by its first step that moves it (a
+  trigger at its local time 0 fires then: the tower wall's Begin, which MQ101DragonAttack's stage 103
+  waits for); a step of no time passes nothing.
+- A step over a cycle's end (a loop, a ping-pong turn) passes the way to that end with both ends,
+  each whole cycle it covers the same, and the way on from the new cycle's start as above; a
+  single-play clip reaching either end passes it with both ends, and once there passes nothing more.
+  The stretches go in turn, each raising its triggers in the graph's order, the annotations (made
+  triggers as the clip activates, those within its crop) after them.
+- A trigger's time is in the clip's played time (its enforced duration's where it has one), from its
+  end if relative to it, kept within the clip.
+- A clip activates at its start time (scaled by an enforced duration), at most its duration; played
+  at a negative speed a start of 0 is its end, at any other speed a start at its end is its start. So
+  the unequips that play the equip backward (0_master's Stf_Unequip, the crossbow's), the riekling's
+  strafes and the Dwemer domes', gates' and Snow Elf doors' closing sequences start at their ends.
+  A start time between keeps its place in the clip either way. Stf_Unequip's end-relative trigger
+  (BeginWeaponSheathe, at the very end) is never passed: the first backward step leaves the end out.
+- An acyclic trigger (8 in vanilla: AOWoodPickUp's, AOBarTableIdle's) is not raised by the cycles: it
+  raises once the time played since the clip became active (its speed applied, a negative one
+  counting back, a ping-pong's way back too) passes its time, after the cyclic ones; never in a
+  user-controlled clip. Its time is taken as a cyclic trigger's (from the end if relative to it, in
+  the enforced duration's time, kept within the clip: `triggerClipTime`); inferred, TODO(M13): the
+  conversion was observed for the clip's triggers, not seen applied to the acyclic ones apart (no
+  vanilla acyclic trigger is relative to the end or on a clip with an enforced duration).
+- A speed nearer 0 than 0.001 plays at 0.001, forward if above 0, else backward.
+- User controlled: the step is from where the clip was to where its variable puts it, either way.
+- In a syncing blender: forward from where the clip was to its phase (over the seam into the next
+  cycle). A phase stepping back a little as the blend's sync points shift passes nothing: what lies
+  behind it was passed already and is passed again as the phase moves on (a walk and run blend's
+  FootLeft and FootRight raise once a stride).
+- Its root motion over a ping-pong step is the net way from where it was to where it is (it retraces
+  its way at a turn).
 
 ### Transitions
 
@@ -2075,8 +2097,10 @@ original builds it from the character's hkbMirroredSkeletonInfo), in our words:
 - With every bone its own partner (horses, wolves) the bones' places are reflected too: a left
   leg's place goes to the right side, the right leg's to the left, each keeping its own
   orientation; that is what the engine's mirroring does with these characters.
-- An additive mirrored clip (ours: the engine's path for additive poses was not read) is laid
-  on the reference pose, mirrored, and taken again as the difference to the mirrored reference.
+- An additive mirrored clip: each bone's rotation is turned by its parent's invariant on both sides
+  (the parent's invariant, times the rotation, times the parent's invariant inverted) instead of
+  its own on the right; translations as a full pose's, scales kept, then partners swap. No vanilla
+  graph plays one; a mod's would.
 
 ## Procedural modifiers
 
@@ -2255,5 +2279,9 @@ it smooth:
   the update: from the clock, a frame stood still at each update and the next blend ran fast.
 - A race's lean takes each end's height from above that end, each averaged with the height it had
   ([physics.md](physics.md#actors-on-the-ground)).
+- Observed in the original ([Animation] bApplyPitchToExtractedMotion, 1): an animation-driven
+  actor's root motion is turned about its right axis by its character controller's pitch (from float
+  epsilon up; the turn untouched), so a leaning quadruped's clip climbs or falls with it and only the
+  cosine of its forward motion is ground speed (`src/animation/extracted-motion.ts`, the movers).
 - A graph with no pose to give holds the pose it had (a clip still being read, a clip in no archive),
   never the reference pose.
