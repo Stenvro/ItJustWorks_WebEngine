@@ -2098,6 +2098,17 @@ What changed (each keeps what the frame did; the tests next to each say so):
   its small vectors, a joint's turn read once for its limits and cone, and the corpses' poses
   written into kept matrices (the attack's frames allocated 7.3 MB each, 6.4 now).
 
+One browser run after (`tools/qa-perf.ts --from-stage 150`, 1280×720, with sims of other work
+running on the machine throughout: not a before and after) gave 28 fps as Alduin came and
+16–27 fps in the attack, p50 39–61 ms. In six of its seven windows the exterior was not a complex
+scene (fewer than iAINumberActorsComplexScene living in the high process; the last window's was
+one, at one step a frame), so the physics took up to three steps of 1/60 s a frame (2.1–3.0 a
+frame, 10–21 ms p50), and a frame of three steps is as long as the next: of a 55 ms frame Rapier's
+own code was
+19 ms, the physics' own 5.7, the renderer's 11.6 (`SceneRenderer.animate` 7.6, of it the fades'
+walk over every fading reference 1.4 and the bone palettes 0.8), the actors 8. A frame below
+1/60 s takes one step and stays below it; above, the steps make it longer.
+
 What is left (TODO(M13)): Rapier's step (2–4.6 ms of the simulation's frame), the actors' graphs
 (3–5 ms with every actor animated every frame, as the simulation has no camera) and the
 controllers' sweeps are the largest parts, and none of them changed. Of what remains in the
