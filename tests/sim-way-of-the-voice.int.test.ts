@@ -543,7 +543,7 @@ describe.skipIf(!hasGamedata())('MQ105 The Horn of Jurgen Windcaller', () => {
     const sim = await loadSim(afterHall);
     try {
       const tomb = await sim.position(TOMB);
-      expect(tomb && (await fightTo(sim, tomb, 120, 300))).toBe(true);
+      expect(tomb && (await fightTo(sim, tomb, 120, 200))).toBe(true);
       const hall = await sim.position(SET_STAGE_180);
       if (hall) sim.look([hall[0], hall[1], hall[2]]);
       await sim.step(1);
