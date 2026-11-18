@@ -200,6 +200,12 @@ export class SoundSystem {
   /** The default objects (the sounds the engine plays where records name none). */
   readonly defaults: DefaultObjects;
   #listener: Vec3 = [0, 0, 0];
+
+  /** Where the sounds are heard: the camera, as last placed. */
+  get listenerPosition(): Readonly<Vec3> {
+    return this.#listener;
+  }
+
   #bufferBytes = 0;
   #random = 0x9e3779b9;
 

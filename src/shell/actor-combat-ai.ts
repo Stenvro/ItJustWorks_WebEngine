@@ -62,6 +62,8 @@ import { BehaviourTree, type Status, type TreeInstance } from '../ai/behaviour-t
 import { AttackPick, combatRegistry } from '../ai/combat-tree.ts';
 import {
   CombatDialogue,
+  dialogueLineRange,
+  hitCallsLine,
   isCombatLine,
   type CombatLine,
   readCombatDialogueSettings,
@@ -1203,9 +1205,6 @@ export class ActorCombatAi {
     invisible: (target) =>
       this.#options.session.scriptsReady?.magic.aiState(target).invisible ?? false,
     sees: (member, at) => this.#options.senses?.()?.sees(member, at) ?? false,
-    callStrategy: (leader, target) => {
-      this.#bark(leader, 'GroupStrategy', target);
-    },
   };
 
   #fightingPlayer(): boolean {
@@ -5023,13 +5022,21 @@ export class ActorCombatAi {
     return best?.at;
   }
 
-  /** A member of a combat group died: one of the others says AllyKilled. */
+  /**
+   * A member of a combat group died: the living member nearest where it fell, not the player,
+   * says AllyKilled (observed in the original), its group's AllyKilled timer allowing.
+   */
   #fallen(member: number, runtime: ScriptRuntime): void {
+    const at = this.#options.host.fighter(member)?.feet;
+    let nearest: { reference: number; distance: number } | undefined;
     for (const other of this.#groups.allies(member)) {
-      if (runtime.state.actors.get(other)?.dead === true) continue;
-      this.#bark(other, 'AllyKilled', member);
-      return;
+      if (other === PLAYER_REF || runtime.state.actors.get(other)?.dead === true) continue;
+      const feet = this.#options.host.fighter(other)?.feet;
+      const distance =
+        at && feet ? Math.hypot(at[0] - feet[0], at[1] - feet[1], at[2] - feet[2]) : Infinity;
+      if (!nearest || distance < nearest.distance) nearest = { reference: other, distance };
     }
+    if (nearest) this.#bark(nearest.reference, 'AllyKilled', member);
   }
 
   // --- Reading ---------------------------------------------------------------------------------------
@@ -5169,8 +5176,19 @@ export class ActorCombatAi {
       this.#dialogue.settings = readCombatDialogueSettings(
         (name) => settings.number(name),
         this.#options.session.ini.bool('Combat', 'bDisableCombatDialogue'),
+        this.#dialogue.settings.range,
       );
     });
+    // The range the lines' distance mults scale: the 3D dialogue output model's (DOBJ DOP2).
+    const session = this.#options.session;
+    void Promise.all([session.db, session.defaultObjects()])
+      .then(([db, defaults]) => dialogueLineRange(db, defaults))
+      .then((range) => {
+        this.#dialogue.settings = { ...this.#dialogue.settings, range };
+      })
+      .catch((error: unknown) => {
+        this.#warn(`the combat lines' range: ${describe(error)}`);
+      });
   }
 
   #between(min: number, max: number): number {
@@ -5178,34 +5196,49 @@ export class ActorCombatAi {
   }
 
   /**
-   * A line of a topic subtype (src/shell/actor-talk.ts bark); a combat line only through its
-   * gates (src/ai/combat-dialogue.ts: its cooldown, the player within its distance, its chance).
+   * A combat line through its gates (src/ai/combat-dialogue.ts: its timer, the listener within
+   * its distance), said as `subtype`; its timer starts once a line was said. `blow`: a Hit
+   * line's blow as a share of the struck one's health (hitCallsLine), none: no such rule.
    */
-  /** A combat line through its gate (its cooldown and distance), said as `subtype`. */
-  line(actor: number, gate: CombatLine, subtype: string): void {
-    const own = this.#options.host.fighter(actor)?.feet;
-    const player = this.#options.host.fighter(PLAYER_REF)?.feet;
-    const listener = own && player ? flat(own, player) : 0;
-    if (!this.#dialogue.may(actor, gate, this.#clock, { listener, random: this.#random })) return;
-    this.#options
-      .talk?.()
-      ?.bark(actor, subtype, PLAYER_REF)
+  line(actor: number, gate: CombatLine, subtype: string, target?: number, blow?: number): void {
+    if (gate === 'Hit' && blow !== undefined) {
+      if (!hitCallsLine(blow, this.#dialogue.settings, this.#random)) return;
+    }
+    const talk = this.#options.talk?.();
+    if (!talk) return;
+    const group = this.groupId(actor);
+    const ask = { listener: this.#listenerDistance(actor), group };
+    if (!this.#dialogue.may(actor, gate, this.#clock, ask)) return;
+    talk
+      .bark(actor, subtype, target ?? PLAYER_REF)
+      .then((spoken) => {
+        if (spoken) this.#dialogue.said(actor, gate, this.#clock, this.#random, group);
+      })
       .catch((error: unknown) => {
         this.#warn(`a ${subtype} line: ${describe(error)}`);
       });
   }
 
+  /**
+   * How far an actor stands from where the sounds are heard (the sound listener at the camera;
+   * without a sound system, the player), in 3D: combat lines' distance gates measure it.
+   */
+  #listenerDistance(actor: number): number {
+    const own = this.#options.host.fighter(actor)?.feet;
+    const listener =
+      this.#options.session.soundSystem?.listenerPosition ??
+      this.#options.host.fighter(PLAYER_REF)?.feet;
+    if (!own || !listener) return 0;
+    return Math.hypot(own[0] - listener[0], own[1] - listener[1], own[2] - listener[2]);
+  }
+
   #bark(actor: number, subtype: string, target?: number): void {
+    if (isCombatLine(subtype)) {
+      this.line(actor, subtype, subtype, target);
+      return;
+    }
     const talk = this.#options.talk?.();
     if (!talk) return;
-    if (isCombatLine(subtype)) {
-      const own = this.#options.host.fighter(actor)?.feet;
-      const player = this.#options.host.fighter(PLAYER_REF)?.feet;
-      const listener = own && player ? flat(own, player) : 0;
-      if (!this.#dialogue.may(actor, subtype, this.#clock, { listener, random: this.#random })) {
-        return;
-      }
-    }
     talk.bark(actor, subtype, target ?? PLAYER_REF).catch((error: unknown) => {
       this.#warn(`a ${subtype} line: ${describe(error)}`);
     });

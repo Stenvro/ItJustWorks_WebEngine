@@ -1098,7 +1098,7 @@ export class ActorCombat implements CombatBridge {
     if (fighter.target === source) fighter.target = undefined;
     if (fighter.player) this.#options.playerBleedout?.(true);
     void this.#act(fighter, 'ActionBleedoutStart');
-    this.#bark(fighter.reference, 'BleedOut', source);
+    if (!fighter.player) this.#brain.line(fighter.reference, 'Bleedout', 'BleedOut', source);
     // The hub tells it (TESEnterBleedoutEvent: OnEnterBleedout), as the engine does when an
     // actor's life state turns to bleeding out (observed in the original; the player's too).
     this.#options.session.scriptsReady?.events.emit('enterBleedout', { actor });
@@ -1280,7 +1280,8 @@ export class ActorCombat implements CombatBridge {
     // Attacking ends its invisibility (the magic system); its combat line (an NPC's).
     runtime.magic.acted(reference);
     if (!fighter.player) {
-      this.#bark(reference, kind.bash ? 'Bash' : kind.power ? 'PowerAttack' : 'Attack', target);
+      const line = kind.bash ? 'Bash' : kind.power ? 'PowerAttack' : 'Attack';
+      this.#brain.line(reference, line, line, target);
     }
     // A paired killmove: the one it is done to plays its part.
     if (lower.startsWith(PAIRED_PREFIX) && target !== undefined) this.#pair(fighter, target, event);
@@ -3015,7 +3016,7 @@ export class ActorCombat implements CombatBridge {
     // armour, and the stagger).
     if (blocks) {
       void this.#act(target, 'ActionBlockHit');
-      this.#bark(targetRef, 'Block', attackerRef);
+      if (!target.player) this.#brain.line(targetRef, 'Block', 'Block', attackerRef);
       const recoil = hit.shot ? 'none' : recoilOf(hit, 'block');
       if (recoil !== 'none') {
         attacker.state.recoiling = true;
@@ -3195,6 +3196,8 @@ export class ActorCombat implements CombatBridge {
     const dealt = target.state.killMove
       ? result.total * this.#settings.killMoveDamageMult
       : result.total;
+    // The blow's share of its health as it lands (its Hit line's rule: hitCallsLine).
+    const before = (await runtime.actors.value(targetRef, ActorValue.health)).current;
     await runtime.actors.damage(targetRef, ActorValue.health, dealt, attackerRef);
     const died = await runtime.actors.isDead(targetRef);
     // A critical hit's spell (CRDT), unless it is only a killing blow's.
@@ -3211,7 +3214,7 @@ export class ActorCombat implements CombatBridge {
       if (target.state.paired === undefined) this.#deathPush(target, dealt, hit);
       if (weapon !== undefined && !hit.bash) await this.#siphonSoul(attackerRef, targetRef, weapon);
     } else if (!target.player) {
-      this.#bark(targetRef, 'Hit', attackerRef);
+      this.#brain.line(targetRef, 'Hit', 'Hit', attackerRef, before > 0 ? dealt / before : 1);
       // A ragdoll its graph drives yields to the blow where it landed ([RagdollAnim]
       // bRagdollFeedback).
       this.#options.bodies.feedback(targetRef, hit.direction, hit.point);
@@ -3312,16 +3315,6 @@ export class ActorCombat implements CombatBridge {
     ]);
     const item = spell === undefined ? undefined : await runtime.magic.item(spell);
     if (item) await runtime.magic.apply(item, owner, { caster: owner });
-  }
-
-  /** A combat line (src/shell/actor-talk.ts bark): an actor's, by its topic subtype. */
-  #bark(actor: number, subtype: string, target?: number, interrupt = false): void {
-    if (actor === PLAYER_REF) return;
-    const talk = this.#options.talk?.();
-    if (!talk) return;
-    talk.bark(actor, subtype, target ?? PLAYER_REF, { interrupt }).catch((error: unknown) => {
-      this.#warn(`a combat line: ${describe(error)}`);
-    });
   }
 
   /**
@@ -5268,7 +5261,11 @@ export class ActorCombat implements CombatBridge {
    * TODO(M13): inferred (a weapon the death drops is the one held); to be observed in the
    * original, with the moment it lets go of them (ours: as its death begins).
    */
-  /** Its Death line, at once as it dies (the DIAL subtype, by its distance gate). */
+  /**
+   * Its Death line, at once as it dies (the DIAL subtype, by its distance gate). TODO(M13): the
+   * original's combat-line paths followed so far do not ask for Death or Block lines (they may
+   * come another way); ours says them as they happen.
+   */
   deathLine(reference: number): void {
     if (reference !== PLAYER_REF) this.#brain.line(reference, 'Death', 'Death');
   }
@@ -5399,7 +5396,7 @@ export class ActorCombat implements CombatBridge {
     if (caster === PLAYER_REF && victim !== PLAYER_REF) this.#struck(victim);
     if (victim === PLAYER_REF) this.#hurtPlayer(painful, caster);
     else if (painful && this.#fighters.get(victim)?.state.life === LifeState.alive) {
-      this.#bark(victim, 'Hit', caster);
+      this.#brain.line(victim, 'Hit', 'Hit', caster);
     }
     // A hostile spell that hurts the player rumbles the controller (fRumblePain*:
     // controller-rumble.ts; a Painless one does not).

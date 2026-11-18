@@ -3436,10 +3436,27 @@ engine's ([Combat movement](#combat-movement)).
   its target, and any enemy it detects in combat, becomes the group's; the group keeps what
   its members know of its targets ([Combat detection](#combat-detection)): a target the group
   has not lost counts as detected for each member, at the place the group knows; it counts for
-  the style's group offensive mult and GetCombatGroupMemberCount; one dying, another says
-  AllyKilled. As two or more of a group come to attack one target, the group's longest member
-  that does not flee calls its strategy (GroupStrategy, once each time; inferred, TODO(M13):
-  nothing in the original was found to say it, and vanilla's GroupStrategy topics hold no line).
+  the style's group offensive mult and GetCombatGroupMemberCount; one dying in a group of two
+  or more, its living member nearest where it fell (not the player) says AllyKilled (observed in
+  the original).
+- **Combat dialogue** (`src/ai/combat-dialogue.ts`; observed in the original): every combat line
+  goes through one gate. [Combat] bDisableCombatDialogue silences them. A subtype's timer must
+  have run out: more than its span, drawn in fCombatDialogue{stem}{Min, Max}ElapsedTime as its
+  last line was said, has passed; Attack, PowerAttack, Bash and Block share the Attack timer,
+  Taunt, Bleedout and Flee each have their own (each actor's, in its combat state), AllyKilled
+  and AvoidThreat are its combat group's (one member's line holds the others back); Hit, Death
+  and GroupStrategy have none. The sound listener (where the camera hears) must be within the
+  subtype's fCombatDialogue*DistanceMult × the attenuation max distance of the 3D dialogue
+  output model (DOBJ DOP2: SOMDialogue3DDefault, 3000; none, no limit), measured in 3D from the
+  speaker. Then an info of the subtype is looked for; only when one is said does its timer
+  start. A blow calls the struck one's Hit line when it takes more than
+  fCombatSpeakHitThreshold of its health, a smaller one by fCombatSpeakHitChance;
+  fCombatSpeakAttackChance, fCombatSpeakPowerAttackChance and fCombatSpeakTauntChance are
+  registered and never read (attack lines come by their timer, taunts by the controller's taunt
+  timer). No path of the engine's that says a combat line asks for GroupStrategy, so no one says
+  it (vanilla's GroupStrategy topics hold no line either). Who says what: an attack's line as
+  the attack starts (PowerAttack for a power attack, Bash for a bash), Bleedout as one starts
+  bleeding out, Flee, Taunt by the taunt timer, Hit as above, AllyKilled as above.
 - **What it fights with** (`chooseEquipment`, weighed continuously, every update, once what it
   took up has been kept its kind's fCombatInventoryMinEquipTime: a weapon 5 s, magic and a shout
   3 s, a staff 5 s, its fists 0 s (`nextEquipWeighing`); what it carries and its spells are read

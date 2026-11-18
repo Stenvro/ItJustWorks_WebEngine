@@ -158,6 +158,13 @@ holds off: combat-ai.ts yields, yieldOver), torches in a fight (combat-tactics.t
 torchInFight; fCombatInventoryTorchEquipRange and MinEquipTimeTorch, fTorchLightLevel*), the
 Flee package's safety (procedure-runs.ts fleeSafe: fFleeIsSafeTimer beyond fFleeDoneDistance*).
 
+Round 6 (2026-11-18) read combat dialogue's gate from the original (docs/ai.md, "Combat
+dialogue"): its range is the 3D dialogue output model's max distance from the sound listener; the
+attack lines share one timer, AllyKilled and AvoidThreat are timed per group, a timer starts only
+on a line said; a Hit line for a blow above fCombatSpeakHitThreshold, else by its chance; the
+attack and taunt chances are never read; no one says GroupStrategy (the inferred rule above is
+gone); AllyKilled is said by the dead's nearest group member.
+
 ## Combat style (CSTY)
 
 - [x] CSGD: offensive, defensive and group offensive mults, the six equipment score mults,
