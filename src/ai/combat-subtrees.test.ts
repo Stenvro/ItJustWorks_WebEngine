@@ -18,7 +18,10 @@ import {
   pickWeapon,
   searchPoints,
   searchRadius,
+  wardTargetNear,
+  wardThreatened,
   type CasterState,
+  type WardAttacker,
 } from './combat-subtrees.ts';
 import type { NavmeshSet } from './pathfinding.ts';
 
@@ -131,6 +134,62 @@ describe('the combat subtrees', () => {
     expect(chooseCaster({ ...idle, canSummon: true })).toBe('summon');
     expect(chooseCaster({ ...idle, canSummon: true, sinceSummon: 10 })).toBe('reanimate');
     expect(chooseCaster({ ...idle, sinceReanimate: 10 })).toBe('buff');
+  });
+
+  it('a ward is taken up above fCombatMagicWardMagickaEquipLimit with its target near (original)', () => {
+    const base: CasterState = {
+      health: 1,
+      magicka: 1,
+      restoreHealthBelow: 0.5,
+      wardThreat: true,
+      sinceWard: Infinity,
+      canHeal: false,
+      sinceHealthRestore: Infinity,
+      restoreHealthRestrictTime: 15,
+      canSummon: false,
+      sinceSummon: Infinity,
+      corpseDistance: undefined,
+      canReanimate: false,
+      sinceReanimate: Infinity,
+      canBuff: false,
+    };
+    expect(chooseCaster(base)).toBe('ward');
+    // The cast limit (0.25) lets one go on; taking one up needs more than the equip limit (0.5).
+    expect(chooseCaster({ ...base, magicka: 0.5 })).toBeUndefined();
+    expect(chooseCaster({ ...base, magicka: 0.51 })).toBe('ward');
+    expect(chooseCaster({ ...base, wardTargetNear: false })).toBeUndefined();
+    // Within the target's reach, both radii and fCombatMagicWardAttackRangeDistance (384).
+    expect(wardTargetNear(580, 150, 60, S)).toBe(true);
+    expect(wardTargetNear(600, 100, 60, S)).toBe(false);
+  });
+
+  it('what threatens a ward: swings, drawn bows, aimed spells, before it (original)', () => {
+    const at = (over: Partial<WardAttacker>): WardAttacker => ({
+      distance: 200,
+      offWarderFacing: 0,
+      offItsAim: 0,
+      targetsWarder: true,
+      ...over,
+    });
+    // A swing within the warder's radius plus the reach × fCombatMagicWardAttackReachMult (1.5).
+    expect(wardThreatened(30, [at({ meleeReach: 120 })], false)).toBe(true);
+    expect(wardThreatened(30, [at({ distance: 220, meleeReach: 120 })], false)).toBe(false);
+    // Behind it, or fighting another, it does not count.
+    expect(wardThreatened(30, [at({ meleeReach: 120, offWarderFacing: 2 })], false)).toBe(false);
+    expect(wardThreatened(30, [at({ meleeReach: 120, targetsWarder: false })], false)).toBe(false);
+    // A drawn bow within fCombatRangedProjectileFiringArc (30°) of it, at any range to 4096.
+    expect(
+      wardThreatened(30, [at({ distance: 3000, aimingBow: true, offItsAim: 0.5 })], false),
+    ).toBe(true);
+    expect(
+      wardThreatened(30, [at({ distance: 3000, aimingBow: true, offItsAim: 0.6 })], false),
+    ).toBe(false);
+    expect(wardThreatened(30, [at({ distance: 5000, aimingBow: true })], false)).toBe(false);
+    // An aimed spell whose range reaches it.
+    expect(wardThreatened(30, [at({ distance: 1500, spellRange: 2000 })], false)).toBe(true);
+    expect(wardThreatened(30, [at({ distance: 2500, spellRange: 2000 })], false)).toBe(false);
+    expect(wardThreatened(30, [], true)).toBe(true);
+    expect(wardThreatened(30, [], false)).toBe(false);
   });
 
   it('the held healing spell stops fCombatRestoreStopCastThreshold past its share', () => {

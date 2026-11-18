@@ -463,7 +463,7 @@ describe('what a staff uses', () => {
   });
 });
 
-describe('an NPC’s ward past fCombatMagicWardMinCastTime (inferred: the ward caster’s limit)', () => {
+describe('an NPC’s ward past fCombatMagicWardMinCastTime (observed in the original: the ward caster’s check)', () => {
   it('lets it go once its magicka share is below fCombatMagicWardMagickaCastLimit (0.25)', () => {
     // Before the minimum it holds whatever its magicka; past it, while something comes at it and
     // it has the share it needs to begin one (chooseCaster's cast limit).
@@ -472,5 +472,14 @@ describe('an NPC’s ward past fCombatMagicWardMinCastTime (inferred: the ward c
     expect(wardHeld(2, 1.5, true, 0.25)).toBe(true);
     expect(wardHeld(2, 1.5, true, 0.2)).toBe(false);
     expect(wardHeld(2, 1.5, true, 0.2, 0.1)).toBe(true);
+  });
+
+  it('is held fCombatMagicWardCooldownTime (1 s) after the last attack threatened it', () => {
+    expect(wardHeld(3, 1.5, false, 1, 0.25, 0.5)).toBe(true);
+    expect(wardHeld(3, 1.5, false, 1, 0.25, 1)).toBe(true);
+    expect(wardHeld(3, 1.5, false, 1, 0.25, 1.25)).toBe(false);
+    // Too little magicka ends it at once, the cool-down or not.
+    expect(wardHeld(3, 1.5, false, 0.2, 0.25, 0.5)).toBe(false);
+    expect(wardHeld(3, 1.5, false, 1, 0.25, 1.5, 2)).toBe(true);
   });
 });

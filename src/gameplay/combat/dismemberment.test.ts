@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { BodyPartFlag } from '../../world/body-part-data.ts';
+import { EntryPoint } from '../perk-entry-points.ts';
 import {
   decapitationLaunch,
   faceKeepsPartition,
+  explosionLimbDamage,
+  explosionLimbs,
+  keepLimbReached,
+  type LimbReached,
+  UNARMED_WEAPON,
   cripplesLimb,
   HEAD_LIMB,
   limbDamage,
@@ -163,5 +169,59 @@ describe('dismemberment', () => {
     expect(cripplesLimb({ flags: BodyPartFlag.explodable }, 50, 40)).toBe(false);
     expect(cripplesLimb({ flags: BodyPartFlag.explodable }, 0, 40)).toBe(false);
     expect(cripplesLimb({ flags: BodyPartFlag.severable }, 30, 40)).toBe(false);
+  });
+});
+
+describe('an explosion’s limb damage', () => {
+  it('keeps at most two parts: past two, only a nearer body, in place of the nearer kept', () => {
+    const kept: LimbReached[] = [];
+    keepLimbReached(kept, { part: 3, distance: 50 });
+    keepLimbReached(kept, { part: 3, distance: 40 });
+    expect(kept).toEqual([{ part: 3, distance: 40 }]);
+    keepLimbReached(kept, { part: 5, distance: 60 });
+    expect(kept).toEqual([
+      { part: 3, distance: 40 },
+      { part: 5, distance: 60 },
+    ]);
+    // No nearer than the nearer kept: passed over.
+    keepLimbReached(kept, { part: 6, distance: 45 });
+    expect(kept.map((entry) => entry.part)).toEqual([3, 5]);
+    // Nearer: it takes the nearer one's place.
+    keepLimbReached(kept, { part: 6, distance: 10 });
+    expect(kept).toEqual([
+      { part: 6, distance: 10 },
+      { part: 5, distance: 60 },
+    ]);
+  });
+
+  it('is the damage over the base Health’s share of the part, in percent', () => {
+    expect(explosionLimbDamage(20, 100, { healthPercent: 50 })).toBeCloseTo(40);
+    expect(explosionLimbDamage(10, 200, { healthPercent: 100 })).toBeCloseTo(5);
+  });
+
+  it('runs through the target’s Adjust Limb Damage, the attacker and the unarmed weapon its tabs', async () => {
+    const asked: unknown[] = [];
+    const perks = {
+      apply: (
+        entryPoint: number,
+        owner: number,
+        value: number,
+        targets?: readonly (number | undefined)[],
+      ) => {
+        asked.push([entryPoint, owner, value, targets]);
+        return Promise.resolve(value * 0.5);
+      },
+    };
+    const parts = [
+      { healthPercent: 50, actorValue: 25 },
+      { healthPercent: 50, actorValue: -1 },
+    ];
+    const taken = await explosionLimbs(perks, 7, 9, 20, 100, parts, [
+      { part: 0, distance: 10 },
+      { part: 1, distance: 20 },
+    ]);
+    // The part without an actor value takes nothing and asks nothing.
+    expect(taken).toEqual([{ actorValue: 25, damage: 20 }]);
+    expect(asked).toEqual([[EntryPoint.adjustLimbDamage, 7, 40, [9, UNARMED_WEAPON]]]);
   });
 });

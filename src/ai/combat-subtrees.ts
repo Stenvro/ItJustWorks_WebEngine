@@ -87,6 +87,17 @@ export interface CombatSubtreeSettings {
   readonly wardMinCastTime: number;
   readonly wardCooldownTime: number;
   readonly wardMagickaCastLimit: number;
+  /** fCombatMagicWardMagickaEquipLimit: a ward is taken up only above this magicka share. */
+  readonly wardMagickaEquipLimit: number;
+  /** fCombatMagicWardAttackRangeDistance: how far past its target's reach a ward is taken up. */
+  readonly wardAttackRangeDistance: number;
+  /** fCombatMagicWardAttackReachMult: a melee attack threatens within its reach × this. */
+  readonly wardAttackReachMult: number;
+  /** fCombatMaximumProjectileRange: the farthest an attacker counts against a ward (units). */
+  readonly maximumProjectileRange: number;
+  /** fCombatRangedProjectileFiringArc, fCombatMagicProjectileFiringArc (degrees). */
+  readonly rangedProjectileFiringArc: number;
+  readonly magicProjectileFiringArc: number;
   readonly summonRestrictTime: number;
   readonly reanimateDistance: number;
   readonly reanimateRestrictTime: number;
@@ -171,6 +182,12 @@ const SETTINGS: readonly (readonly [keyof CombatSubtreeSettings, string, number]
   ['wardMinCastTime', 'fCombatMagicWardMinCastTime', 1.5],
   ['wardCooldownTime', 'fCombatMagicWardCooldownTime', 1],
   ['wardMagickaCastLimit', 'fCombatMagicWardMagickaCastLimit', 0.25],
+  ['wardMagickaEquipLimit', 'fCombatMagicWardMagickaEquipLimit', 0.5],
+  ['wardAttackRangeDistance', 'fCombatMagicWardAttackRangeDistance', 384],
+  ['wardAttackReachMult', 'fCombatMagicWardAttackReachMult', 1.5],
+  ['maximumProjectileRange', 'fCombatMaximumProjectileRange', 4096],
+  ['rangedProjectileFiringArc', 'fCombatRangedProjectileFiringArc', 30],
+  ['magicProjectileFiringArc', 'fCombatMagicProjectileFiringArc', 30],
   ['summonRestrictTime', 'fCombatMagicSummonRestrictTime', 30],
   ['reanimateDistance', 'fCombatMagicReanimateDistance', 1024],
   ['reanimateRestrictTime', 'fCombatMagicReanimateRestrictTime', 30],
@@ -857,8 +874,13 @@ export interface CasterState {
   readonly restoreHealthBelow: number;
   /** It bleeds out (its life state bleedout): health is wanted whatever its share. */
   readonly bleedingOut?: boolean;
-  /** A spell or breath comes at it and it has a ward. */
+  /** An attack threatens it (wardThreatened) and it has a ward. */
   readonly wardThreat: boolean;
+  /**
+   * Its target stands within the target's reach, both bodies' radii and
+   * fCombatMagicWardAttackRangeDistance (wardTargetNear; undefined: not weighed).
+   */
+  readonly wardTargetNear?: boolean;
   readonly sinceWard: number;
   readonly canHeal: boolean;
   readonly sinceHealthRestore: number;
@@ -880,8 +902,9 @@ export type CasterPurpose = 'ward' | 'restore' | 'summon' | 'reanimate' | 'buff'
  * Which of its casters acts now. The original has no order between them: each spell has its one
  * caster by its effect, and the combat inventory takes its items by their score (observed in the
  * original: combatSpellScore), the first whose caster's own check holds. Those checks: a ward
- * against what comes at it (with fCombatMagicWardMagickaCastLimit of its magicka, not within its
- * cooldown); restoring below its restore share; a summons (not within
+ * against an attack that threatens it (wardThreatened), taken up only above
+ * fCombatMagicWardMagickaEquipLimit of its magicka and with its target near (wardTargetNear;
+ * observed in the original), not within its cooldown; restoring below its restore share; a summons (not within
  * fCombatMagicSummonRestrictTime); a corpse raised within fCombatMagicReanimateDistance (not
  * within its restrict time); a buff. Scores equal or not given keep that order. Potions come
  * before the hands' spells (the Action Equipment Selector's Potion before Magic): chooseSupport.
@@ -893,7 +916,8 @@ export function chooseCaster(
   const ready: CasterPurpose[] = [];
   if (
     state.wardThreat &&
-    state.magicka >= settings.wardMagickaCastLimit &&
+    state.magicka > settings.wardMagickaEquipLimit &&
+    state.wardTargetNear !== false &&
     state.sinceWard >= settings.wardCooldownTime
   ) {
     ready.push('ward');
@@ -1012,13 +1036,69 @@ export function holdsRestore(
   return restoreWanted(health, restoreBelow, { restoring: true, bleedingOut }, settings);
 }
 
-/** A ward is held at least fCombatMagicWardMinCastTime, and while something comes at it. */
-export function holdsWard(
-  heldFor: number,
-  threat: boolean,
+/** One who fights a warder, as its ward weighs it (wardThreatened). */
+export interface WardAttacker {
+  /** Its distance from the warder (units). */
+  readonly distance: number;
+  /** The angle between the warder's heading and the way to it (radians, 0..π). */
+  readonly offWarderFacing: number;
+  /** The angle between its own heading and the way to the warder (radians, 0..π). */
+  readonly offItsAim: number;
+  /** Its combat target is the warder, or it is the player. */
+  readonly targetsWarder: boolean;
+  /** It swings a melee attack now, with this reach (units). */
+  readonly meleeReach?: number | undefined;
+  /** It draws a bow or crossbow. */
+  readonly aimingBow?: boolean;
+  /** It charges or casts an aimed spell reaching this far (units). */
+  readonly spellRange?: number | undefined;
+}
+
+/**
+ * Whether an attack threatens a warder (observed in the original): a projectile coming at it, or
+ * one who fights it (its target the warder, or the player) within fCombatMaximumProjectileRange
+ * and before it (within a right angle of its heading) that swings at it within the warder's
+ * radius plus its reach × fCombatMagicWardAttackReachMult, draws a bow aimed within
+ * fCombatRangedProjectileFiringArc of it, or charges or casts an aimed spell aimed within
+ * fCombatMagicProjectileFiringArc of it whose range reaches it. A charge counts as a cast.
+ * TODO(M13): that the right angle is measured to either side of the heading is inferred.
+ */
+export function wardThreatened(
+  warderRadius: number,
+  attackers: Iterable<WardAttacker>,
+  projectileComing: boolean,
   settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
 ): boolean {
-  return heldFor < settings.wardMinCastTime || threat;
+  if (projectileComing) return true;
+  const degrees = Math.PI / 180;
+  for (const a of attackers) {
+    if (!a.targetsWarder || a.distance > settings.maximumProjectileRange) continue;
+    if (a.offWarderFacing > Math.PI / 2) continue;
+    if (a.meleeReach !== undefined) {
+      if (a.distance < warderRadius + a.meleeReach * settings.wardAttackReachMult) return true;
+    } else if (a.aimingBow === true) {
+      if (a.offItsAim <= settings.rangedProjectileFiringArc * degrees) return true;
+    } else if (a.spellRange !== undefined) {
+      if (a.offItsAim <= settings.magicProjectileFiringArc * degrees && a.distance < a.spellRange)
+        return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Whether a warder's target is near enough for its ward to be taken up (observed in the
+ * original): within the target's reach, both bodies' radii and
+ * fCombatMagicWardAttackRangeDistance. TODO(M13): the rest of the original's equip check (a
+ * choice by the ward's duration against fCombatMagicDefault{Short,Long}Duration) is not read.
+ */
+export function wardTargetNear(
+  distance: number,
+  targetReach: number,
+  radii: number,
+  settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+): boolean {
+  return distance < targetReach + radii + settings.wardAttackRangeDistance;
 }
 
 /**

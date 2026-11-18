@@ -20,20 +20,20 @@ why the original reads nothing more there. The counts are the records (entries, 
 the item. Items no record uses are open but counted apart: only mods need them. The mechanics
 part is kept by hand against docs/gameplay.md and the conformance suites.
 
-## Count (2026-11-02, round 4)
+## Count (2026-11-18, round 5)
 
 | Part                               | Items | Done | Open | Open, unused |
 | ---------------------------------- | ----: | ---: | ---: | -----------: |
-| Perks (entry points, functions)    |   116 |  107 |    9 |            9 |
-| Magic effects (archetypes, flags)  |   104 |  103 |    1 |            1 |
+| Perks (entry points, functions)    |   116 |  115 |    1 |            1 |
+| Magic effects (archetypes, flags)  |   104 |  104 |    0 |            0 |
 | Spells, enchantments, potions      |    43 |   42 |    1 |            1 |
 | Shouts, skills (SHOU, WOOP, AVIF)  |    16 |   16 |    0 |            0 |
-| Crafting (FURN, COBJ)              |    26 |   25 |    1 |            1 |
+| Crafting (FURN, COBJ)              |    26 |   26 |    0 |            0 |
 | Factions (FACT)                    |    40 |   40 |    0 |            0 |
-| Equipment (EQUP, ARMO, WEAP, AMMO) |    43 |   38 |    5 |            5 |
+| Equipment (EQUP, ARMO, WEAP, AMMO) |    46 |   41 |    5 |            5 |
 | Game settings                      |   172 |  172 |    0 |            0 |
 | Mechanics (by hand)                |    20 |   20 |    0 |            0 |
-| Total                              |   580 |  563 |   17 |           17 |
+| Total                              |   583 |  576 |    7 |            7 |
 
 Round 1 wrote the sweep and this list, and built down Weapons Unequipped (the package takes the
 weapons from the actor's hands and does not give them back as the flag goes; observed in the
@@ -136,10 +136,27 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
   TODO(M12): the count is not saved yet.
 - fMagicAreaScaleMin, fMagicAreaScaleMax: registered and never read (inert).
 
+Round 5 (2026-11-18) built the entry points the original asks that no vanilla perk uses:
+Calculate Mine Explode Chance (observed in the original: asked of the player alone as they come
+within a mine's proximity, from 100, a failed roll passing that mine for good; other actors set
+it off without one: projectile-flight.ts mineBursts, magic-projectiles.ts), Adjust Limb Damage
+(observed in the original: the target's perks on an explosion's limb damage to the at most two
+body parts it kept of the actor, the attacker and the unarmed weapon their tabs, taken from each
+part's actor value: casting-engine.ts explode, dismemberment.ts explosionLimbs; no vanilla part
+has an actor value) and Mod Addiction Chance (observed in the original: the drinker's perks on a
+potion's addiction chance, none asked at a chance of 0, a potion carrying the engine's Usage
+Monitor Effect taking its chance from its monitors past fAddictionUsageMonitorThreshold:
+addiction.ts, magic-engine.ts consumed). The five entry points the original asks nowhere (Mod
+Addiction Duration, Mod Positive Chem Duration, Mod Player Reputation, Mod Lockpick Level
+Allowed, Set Progression Picking; observed: none of the calls of its entry point handler names
+them) are explained so. The workbench type None is named where the menus are chosen (no
+menu), and Enchant Visuals was already read (enchantment-glow.ts).
+
 ## Next biggest open items
 
-1. Unused by the load order (mods only, 17): 8 perk entry points, trait,
-   enchant visuals, medicine, the workbench type None, two EQUP flags, three weapon flags 2.
+1. Unused by the load order (mods only, 7): trait, medicine, two EQUP flags (Parents Optional,
+   Item Slot), three weapon flags 2 (NPCs Use Ammo, Minor Crime, Fixed Range): an earlier game's
+   fields; whether the original reads them at all is not yet looked up (TODO(M13)).
 
 ## Mechanics (by hand)
 
@@ -176,20 +193,24 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 
 ## Lists (from the sweep)
 
-### Perk entry points (84 of 92)
+### Perk entry points (92 of 92)
 
 - [x] calculateWeaponDamage (12), calculateMyCriticalHitChance (14), calculateMyCriticalHitDamage (8), modRecoveredHealth (0), modEnemyCriticalHitChance (0), modRecoverArrowChance (2), modBashingDamage (2), modPowerAttackStamina (4), modPowerAttackDamage (2), modIncomingStagger (2), modTargetStagger (1), modIncomingDamage (23), modTargetDamageResistance (7), modPercentBlocked (8), modShieldDeflectArrowChance (1), setSweepAttack (1), applyCombatHitSpell (58), applyBashingSpell (5), setBooleanGraphVariable (3), applyWeaponSwingSpell (1), modSoulPctCapturedToWeapon (1): src/shell/actor-combat.ts
+- [x] calculateMineExplodeChance (0), modMaxPlaceableMines (0): src/shell/magic-projectiles.ts (observed in the original: the player's chance as they come within a mine's proximity; the player's iMaxPlayerRunes)
+- [x] adjustLimbDamage (0): src/gameplay/combat/dismemberment.ts (observed in the original: the target's perks on an explosion's limb damage to the body parts it kept, asked by src/scripting/runtime/casting-engine.ts explode)
 - [x] adjustBookSkillPoints (1): src/shell/book-reading.ts
+- [x] getShouldAttack (0): src/shell/actor-combat-ai.ts (asked by the original; where, inferred: the other actor off its targets)
 - [x] modBuyPrices (15), activate (19), modSellPrices (15), filterActivation (13), setActivateLabel (3), allowMountActor (1): src/scripting/runtime/perk-engine.ts
 - [x] addLeveledListOnDeath (0): src/scripting/runtime/actor-engine.ts
 - [x] getMaxCarryWeight (0): src/scripting/runtime/equipment-engine.ts
+- [x] modAddictionChance (0), modSpellMagnitude (61), modSpellDuration (17), modSecondaryValueWeight (0), modIncomingSpellMagnitude (8), modIncomingSpellDuration (0), applyReanimateSpell (2), modCommandedActorLimit (4), modPlayerMagicSlowdown (1), modPoisonDoseCount (1): src/scripting/runtime/magic-engine.ts
+- [x] modAddictionDuration (0), modPositiveChemDuration (0), modPlayerReputation (0), modLockpickLevelAllowed (0), setProgressionPicking (0): an earlier game's entry point the original asks nowhere (observed in the original: none of the calls of its entry point handler names it); a mod's entry on it changes nothing there either
 - [x] ignoreRunningDuringDetection (0), modDetectionLight (1), modDetectionMovement (1), modDetectionSneakSkill (10), applySneakingSpell (2): src/shell/actor-senses.ts
 - [x] ignoreBrokenLock (0): src/scripting/runtime/natives/reference.ts
 - [x] modSneakAttackMult (4): src/scripting/runtime/stat-events.ts
 - [x] modBowZoom (1), modFallingDamage (2): src/shell/time-flow.ts
 - [x] modSkillUse (8): src/scripting/runtime/progression-engine.ts
 - [x] modTelekinesisDistance (0), modTelekinesisDamageMult (0), modTelekinesisDamage (0): src/shell/player-casting.ts
-- [x] modSpellMagnitude (61), modSpellDuration (17), modIncomingSpellMagnitude (8), modIncomingSpellDuration (0), applyReanimateSpell (2), modCommandedActorLimit (4), modPlayerMagicSlowdown (1), modPoisonDoseCount (1): src/scripting/runtime/magic-engine.ts
 - [x] modArmorWeight (10), modAttackDamage (81), modSoulGemRecharge (1), modAlchemyEffectiveness (11), modInitialIngredientEffectsLearned (3), purifyAlchemyIngredients (1), modTemperingHealth (21), modEnchantmentPower (13), modSoulGemEnchanting (0), modNumberAppliedEnchantmentsAllowed (1), modArmorRating (31), modPotionsCreated (1): src/scripting/runtime/perk-hooks.ts
 - [x] modSpellCost (43), modWardMagickaAbsorptionPct (3), canDualCastSpell (5), modShoutOk (3): src/scripting/runtime/casting-engine.ts
 - [x] modPlayerIntimidation (1), modFavorPoints (0), modBribeAmount (0), modPickpocketChance (13), shouldApplyPlacedItem (2), modLockpickingCrimeChance (1): src/scripting/runtime/crime-engine.ts
@@ -198,17 +219,6 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 - [x] canPickpocketEquippedItem (2): src/shell/container-menu.ts
 - [x] modIngredientsHarvested (1): src/scripting/runtime/harvest-engine.ts
 - [x] modSpellRangeTargetLoc (11): src/shell/hud-controller.ts
-- [ ] calculateMineExplodeChance (0): unused by the load order (mods only)
-- [ ] adjustLimbDamage (0): unused by the load order (mods only)
-- [x] getShouldAttack (0): src/shell/actor-combat-ai.ts (asked by the original; where, inferred: the other actor off its targets)
-- [ ] modAddictionChance (0): unused by the load order (mods only)
-- [ ] modAddictionDuration (0): unused by the load order (mods only)
-- [ ] modPositiveChemDuration (0): unused by the load order (mods only)
-- [x] modMaxPlaceableMines (0): src/shell/magic-projectiles.ts (the player's iMaxPlayerRunes, observed in the original)
-- [x] modSecondaryValueWeight (0): src/scripting/runtime/magic-engine.ts (the caster's, as the effect is adjusted for perks: observed in the original)
-- [ ] modPlayerReputation (0): unused by the load order (mods only)
-- [ ] modLockpickLevelAllowed (0): unused by the load order (mods only)
-- [ ] setProgressionPicking (0): unused by the load order (mods only)
 
 ### Perk entry functions (16 of 16)
 
@@ -228,48 +238,47 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 
 ### Magic effect archetypes (47 of 47)
 
-- [x] valueModifier (446), absorb (58), dualValueModifier (134), calm (22), demoralize (27), frenzy (13), disarm (6), commandSummoned (1), invisibility (13), darkness (0), nightEye (0), boundWeapon (9), summonCreature (81), detectLife (19), telekinesis (1), paralysis (29), reanimate (14), turnUndead (13), valueAndParts (0), accumulateMagnitude (3), peakValueModifier (332), rally (8), enhanceWeapon (4), banish (4), grabActor (1): src/gameplay/magic/effect-rules.ts
-- [x] script (351): src/scripting/runtime/magic-engine.ts: a Script effect does nothing but run its scripts (OnEffectStart, OnEffectFinish) and its actor value, as every effect does
-- [x] dispel (0), cureDisease (3), lock (0), open (0), soulTrap (4), werewolfFeed (1), cureParalysis (0), cureAddiction (0), curePoison (1), stagger (52), cloak (46), werewolf (2), slowTime (5), spawnHazard (13), etherealize (4), spawnScriptedRef (1), vampireLord (1): src/scripting/runtime/magic-engine.ts
-- [x] light (8): src/gameplay/magic/projectile-flight.ts
+- [x] valueModifier (446), script (351), absorb (58), dualValueModifier (134), disarm (6), commandSummoned (1), invisibility (13), light (8), boundWeapon (9), summonCreature (81), paralysis (29), reanimate (14), turnUndead (13), accumulateMagnitude (3), stagger (52), peakValueModifier (332), cloak (46), banish (4): src/gameplay/combat/spell-score.ts
+- [x] dispel (0), cureDisease (3), lock (0), open (0), soulTrap (4), werewolfFeed (1), cureParalysis (0), cureAddiction (0), curePoison (1), werewolf (2), slowTime (5), spawnHazard (13), etherealize (4), spawnScriptedRef (1), disguise (0), vampireLord (1): src/scripting/runtime/magic-engine.ts; disguise: also src/gameplay/magic/disguise.ts, its own state (Initiate, Waiting while its actor is detected, Normal: not attacked on sight but by the frenzied, Fail: inactive for good once its conditions fail); its start keeps its actor as the player's disguise while it lasts (in the original); TODO(M13): the states' rule and what the player's disguise does are inferred from CommonLibSSE DisguiseEffect
+- [x] calm (22), demoralize (27), frenzy (13), darkness (0), nightEye (0), detectLife (19), telekinesis (1), valueAndParts (0), rally (8), enhanceWeapon (4), grabActor (1): src/gameplay/magic/effect-rules.ts
 - [x] guide (1): src/shell/actor-stage.ts
 - [x] concussion (0): src/scripting/runtime/magic-engine.ts: observed in the original, its effect adds nothing to what every effect does (its scripts, visuals and sounds); fConcussionTimer is registered and never read
-- [x] disguise (0): src/scripting/runtime/magic-engine.ts, src/gameplay/magic/disguise.ts: its own state (Initiate, Waiting while its actor is detected, Normal: not attacked on sight but by the frenzied, Fail: inactive for good once its conditions fail, tests/conformance/magic/active-effects.test.ts); its start keeps its actor as the player's disguise while it lasts (playerDisguise; in the original); TODO(M13): the states' rule and what the player's disguise does are inferred from CommonLibSSE DisguiseEffect
 
 ### Magic effect flags (18 of 18)
 
-- [x] hostile (549), recover (778), detrimental (579), noDuration (366), noMagnitude (291), powerAffectsMagnitude (964), powerAffectsDuration (424): src/gameplay/magic/effect-rules.ts
+- [x] hostile (549), noDuration (366), noMagnitude (291): src/gameplay/combat/spell-score.ts
+- [x] recover (778), detrimental (579), powerAffectsMagnitude (964), powerAffectsDuration (424): src/gameplay/magic/effect-rules.ts
 - [x] snapToNavmesh (92), dispelWithKeywords (162), fxPersist (927), noRecast (352), painless (228), noHitEffect (119), noDeathDispel (415): src/scripting/runtime/magic-engine.ts
 - [x] noHitEvent (162), noArea (1062): src/scripting/runtime/casting-engine.ts
 - [x] goryVisuals (19): not used by the game (Creation Kit "Magic Effect")
 - [x] hideInUi (340): src/shell/inventory-menu.ts
 
-### Magic effect fields (38 of 39)
+### Magic effect fields (39 of 39)
 
 - [x] description (949): src/gameplay/chargen-catalog.ts
 - [x] baseCost (958), skill (829), perk (47): src/gameplay/crafting.ts
-- [x] associatedItem (221), hitShader (765), secondValueWeight (117), secondActorValue (134), hitEffectArt (359), hitVisuals (0), equipAbility (58), imageSpaceModifier (260), counterEffects (0), scripted (576): src/scripting/runtime/magic-engine.ts
-- [x] resistValue (351), taperWeight (548), taperCurve (214), taperDuration (193), skillUsageMult (555): src/gameplay/magic/effect-rules.ts
-- [x] light (535): src/gameplay/inventory.ts
-- [x] enchantShader (191), enchantArt (21): src/gameplay/magic/enchantment-glow.ts
+- [x] associatedItem (221), hitShader (765), hitEffectArt (359), hitVisuals (0), equipAbility (58), imageSpaceModifier (260), counterEffects (0), scripted (576): src/scripting/runtime/magic-engine.ts
+- [x] resistValue (351), taperCurve (214), skillUsageMult (555): src/gameplay/magic/effect-rules.ts
+- [x] light (535), taperWeight (548), taperDuration (193), secondValueWeight (117), secondActorValue (134), aiScore (8), aiDelay (12): src/gameplay/combat/spell-score.ts
+- [x] enchantShader (191), enchantArt (21), enchantVisuals (0): src/gameplay/magic/enchantment-glow.ts
 - [x] minimumSkill (337): src/shell/magic-menu.ts
 - [x] actorValue (1072): src/gameplay/actor-leveling.ts
 - [x] projectile (527): src/gameplay/combat/knockback.ts
-- [x] explosion (161), aiScore (8), aiDelay (12): src/scripting/runtime/casting-engine.ts
+- [x] explosion (161): src/scripting/runtime/casting-engine.ts
 - [x] castingType (1154): src/scripting/runtime/condition-values.ts
 - [x] delivery (751): src/gameplay/magic/casting.ts
 - [x] castingArt (731), dualCastArt (11), dualCastScale (1729), castingSoundLevel (424), sounds (1075): src/shell/actor-casting.ts
 - [x] impactData (556): src/shell/actor-combat.ts
 - [x] keywords (773): src/gameplay/barter.ts
 - [x] conditions (563): src/scripting/runtime/actor-engine.ts
-- [ ] enchantVisuals (0): unused by the load order (mods only)
 
 ### Spells, scrolls, enchantments, potions, ingredients (31 of 31)
 
-- [x] SPEL castType (1451), SPEL delivery (1451), SPEL effects (1451), SCRL castType (104), SCRL delivery (104), SCRL effects (104), ENCH castType (757), ENCH delivery (757), ENCH effects (757), ALCH castType (0), ALCH delivery (0), ALCH effects (472), INGR castType (0), INGR delivery (0), INGR effects (180): src/gameplay/magic/casting.ts
-- [x] SPEL cost (794), SCRL cost (103), ENCH cost (614), ENCH enchantment.amount (613), ALCH cost (0), INGR cost (0): src/gameplay/crafting.ts
+- [x] SPEL castType (1451), SPEL delivery (1451), SCRL castType (104), SCRL delivery (104), ENCH castType (757), ENCH delivery (757), ALCH castType (0), ALCH delivery (0), INGR castType (0), INGR delivery (0): src/gameplay/magic/casting.ts
+- [x] SPEL cost (794), SPEL effects (1451), SCRL cost (103), SCRL effects (104), ENCH cost (614), ENCH effects (757), ALCH cost (0), ALCH effects (472), INGR cost (0), INGR effects (180): src/gameplay/combat/spell-score.ts
 - [x] SPEL chargeTime (552), SCRL chargeTime (38): src/scripting/runtime/casting-engine.ts
 - [x] SPEL castingPerk (196), SCRL castingPerk (0): src/scripting/runtime/perk-engine.ts
+- [x] ENCH enchantment.amount (613): src/gameplay/crafting.ts
 - [x] ENCH enchantment.baseEnchantment (360), ENCH enchantment.wornRestrictions (80), ALCH potion.value (466), INGR potion.value (0): src/scripting/runtime/crafting-engine.ts
 - [x] ALCH potion.addiction (0), ALCH potion.useSound (470): src/scripting/runtime/magic-engine.ts
 
@@ -306,10 +315,9 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 - [x] perk tree node column (219), perk tree node row (219), perk tree node offsetX (219), perk tree node offsetY (219): src/gameplay/skills-ring.ts
 - [x] perk tree node children (219): src/scripting/runtime/progression-engine.ts
 
-### Workbenches (FURN WBDT) (7 of 8)
+### Workbenches (FURN WBDT) (8 of 8)
 
-- [x] createObject (39), smithingWeapon (1), enchanting (4), enchantingExperiment (0), alchemy (2), alchemyExperiment (0), smithingArmor (1): src/gameplay/crafting.ts
-- [ ] none (0): unused by the load order (mods only)
+- [x] none (0), createObject (39), smithingWeapon (1), enchanting (4), enchantingExperiment (0), alchemy (2), alchemyExperiment (0), smithingArmor (1): src/gameplay/crafting.ts
 
 ### Recipes by bench keyword (COBJ BNAM) (15 of 15)
 
@@ -339,7 +347,7 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 - [x] vendor.onlyStolen (9): src/shell/barter-menu.ts
 - [x] vendor.notInList (69): src/gameplay/barter.ts
 - [x] vendor.list (285): src/gameplay/combat/combat-records.ts
-- [x] vendor.chest (183): src/shell/actor-senses.ts
+- [x] vendor.chest (183): src/shell/actor-combat.ts
 - [x] rank titles (MNAM, FNAM) (14): src/world/actor-records.ts
 
 ### Equip slots (EQUP) (1 of 3)
@@ -348,17 +356,19 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 - [ ] parentsOptional (0): unused by the load order (mods only)
 - [ ] itemSlot (0): unused by the load order (mods only)
 
-### Armor and weapon data (26 of 26)
+### Armor and weapon data (29 of 29)
 
 - [x] WEAP damage (3217): src/gameplay/breath.ts
 - [x] WEAP weaponType (3309), ARMO slots (3755): src/gameplay/equipment.ts
 - [x] WEAP speed (3328): src/gameplay/magic/projectile-flight.ts
-- [x] WEAP reach (3328): src/gameplay/combat/hit-test.ts
+- [x] WEAP reach (3328): src/gameplay/combat/attacks.ts
 - [x] WEAP skill (3328): src/gameplay/crafting.ts
-- [x] WEAP critDamage (3031), WEAP stagger (2456), WEAP critMult (3233), WEAP firstPersonModel (3300), WEAP equipSound (3307), WEAP unequipSound (3307), WEAP equipType (ETYP) (3323), ARMO rating (2639), ARMO equipType (ETYP) (316), AMMO equipType (ETYP) (0): src/scripting/runtime/equipment-engine.ts
+- [x] WEAP critDamage (3031), WEAP critEffect (0), WEAP critEffectOnDeath (3328), WEAP resist (3328), WEAP critMult (3233), WEAP firstPersonModel (3300), WEAP equipSound (3307), WEAP unequipSound (3307), WEAP equipType (ETYP) (3323), ARMO equipType (ETYP) (316), AMMO equipType (ETYP) (0): src/scripting/runtime/equipment-engine.ts
+- [x] WEAP stagger (2456): src/gameplay/combat/spell-score.ts
 - [x] WEAP value (3275), ARMO value (3433), AMMO value (46): src/gameplay/chargen.ts
 - [x] WEAP weight (3267), ARMO weight (3423), AMMO weight (65): src/gameplay/actor-leveling.ts
 - [x] WEAP enchantment (EITM) (3018), ARMO enchantment (EITM) (2847), AMMO enchantment (EITM) (0): src/scripting/runtime/crafting-engine.ts
+- [x] ARMO rating (2639): src/gameplay/combat/stagger.ts
 - [x] ARMO armorType (2554): src/gameplay/inventory.ts
 
 ### Weapon flags (DNAM) (4 of 4)
@@ -379,7 +389,7 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 
 - [x] ignoresNormalResistance (1): an earlier game's resistance to normal weapons: Skyrim has no such actor value (CommonLibSSE ActorValue: damage, poison, fire, shock, frost, magic, disease)
 - [x] nonPlayable (23): src/shell/actor-combat.ts
-- [x] nonBolt (52): src/scripting/runtime/equipment-engine.ts
+- [x] nonBolt (52): src/gameplay/combat/aim.ts
 
 ### Settings: barter and speech (11 of 11)
 
@@ -404,12 +414,12 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 - [x] fMagicTelekinesisBaseDistance (1), fMagicTelekinesiDistanceMult (1), fMagicTelekinesisDistanceMin (1): src/gameplay/magic/telekinesis.ts
 - [x] fSummonedCreatureMaxFollowDist (1), fSummonedCreatureMinFollowDist (1): src/ai/ai-settings.ts
 - [x] fDetectionSneakLightMod (1): src/ai/detection.ts
+- [x] fInvisibilityMaxRefraction (1): src/gameplay/magic/invisibility.ts
 - [x] fMagicDualCastingEffectivenessBase (1): src/scripting/runtime/magic-engine.ts
 - [x] fMagicLightSideOffset (1), fMagicLightHeightOffset (1), fMagicLightForwardOffset (1): inert: registered by the original and never read (observed in the original): src/shell/actor-effects.ts LIGHT_OFFSET
 - [x] fMagicAreaScaleMin (1), fMagicAreaScaleMax (1): inert: registered by the original and never read (observed in the original): an earlier game's area scaling (docs/gameplay.md)
 - [x] fShoutTime2 (1), fShoutTime1 (1): src/scripting/runtime/casting-engine.ts
 - [x] fMagicGrabActorMinDistance (1), fMagicGrabActorThrowForce (1): src/shell/actor-combat.ts
-- [x] fInvisibilityMaxRefraction (1): src/gameplay/magic/invisibility.ts
 
 ### Settings: stats (7 of 7)
 

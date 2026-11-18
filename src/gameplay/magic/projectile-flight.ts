@@ -128,6 +128,58 @@ export function lobberAgeMax(
   return mine ? settings.mineAgeMax : settings.grenadeAgeMax;
 }
 
+/** Whether a projectile is a mine: an alternative trigger and an explosion proximity above zero. */
+export function isMine(data: Pick<FlightData, 'flags' | 'proximity'>): boolean {
+  return (data.flags & ProjectileFlag.altTrigger) !== 0 && data.proximity > 0;
+}
+
+/**
+ * Whether an actor sets a mine off by where it stands (observed in the original): its position
+ * (its feet) nearer the mine than the mine's proximity (in an exterior times
+ * fMineExteriorRadiusMult, 1, which no plugin sets).
+ */
+export function withinMineRadius(mine: Vec3, feet: Vec3, proximity: number): boolean {
+  return length([feet[0] - mine[0], feet[1] - mine[1], feet[2] - mine[2]]) < proximity;
+}
+
+/** An actor within a mine's reach, as the mine weighs it (mayTriggerMine). */
+export interface MineCandidate {
+  /** It is the one who placed the mine. */
+  readonly shooter: boolean;
+  readonly dead: boolean;
+  /** A member of the faction that owns a mine placed by no actor (its launcher's owner). */
+  readonly inOwnerFaction: boolean;
+  /** How the mine's placer regards it (an actor's mine; undefined: placed by no actor). */
+  readonly shooterRegard: 'hostile' | 'neutral' | 'ally' | 'friend' | undefined;
+  /** Its commander (a summon's summoner, a commanded actor's) is the mine's placer. */
+  readonly commandedByShooter: boolean;
+}
+
+/**
+ * Whether an actor within a mine's reach may set it off (observed in the original): not its
+ * placer (unless iProjectileMineShooterCanTrigger is above 0; Skyrim.esm 0), not dead, not a
+ * member of the faction owning a mine no actor placed, not one its placer regards as an ally or
+ * friend, and not one its placer commands. The player is weighed so as well, before their
+ * Calculate Mine Explode Chance.
+ */
+export function mayTriggerMine(candidate: MineCandidate, shooterCanTrigger = 0): boolean {
+  if (candidate.shooter && shooterCanTrigger <= 0) return false;
+  if (candidate.dead || candidate.inOwnerFaction) return false;
+  if (candidate.shooterRegard === 'ally' || candidate.shooterRegard === 'friend') return false;
+  return !candidate.commandedByShooter;
+}
+
+/**
+ * Whether the player near a mine sets it off (observed in the original): the engine asks the
+ * player's Calculate Mine Explode Chance (from 100, the mine's projectile its item tab; no
+ * vanilla perk has one) and rolls 0..99 against it; a roll at or above the chance passes the mine
+ * for good (it never asks the player again; others near it still set it off). Other actors set a
+ * mine off without a roll. The roll is 0..1.
+ */
+export function mineBursts(chancePercent: number, roll: number): boolean {
+  return Math.floor(roll * 100) < chancePercent;
+}
+
 /** Whether a lobber of an age has outlived the most it lives (lobberAgeMax; zero: never). */
 export function lobberOutlived(
   data: Pick<FlightData, 'flags' | 'lifetime' | 'proximity'>,
@@ -214,6 +266,14 @@ export interface LobberSettings {
   readonly grenadeAgeMax: number;
   /** fMineAgeMax: the same for a mine (0: no limit). */
   readonly mineAgeMax: number;
+  /** fMinesDelayMin: the seconds from a mine's being set off to its burst. */
+  readonly minesDelayMin: number;
+  /** fMinesBlinkMax: within these seconds of its burst a mine's light blinks faster. */
+  readonly minesBlinkMax: number;
+  /** fMinesBlinkSlow: the seconds between a mine's blinks further from its burst. */
+  readonly minesBlinkSlow: number;
+  /** fMinesBlinkFast: the seconds between them at its burst. */
+  readonly minesBlinkFast: number;
 }
 
 /** The lobbers' ages alone (lobberAgeMax). */
@@ -227,7 +287,34 @@ export const LOBBER_DEFAULTS: LobberSettings = {
   friction: 5,
   grenadeAgeMax: 90,
   mineAgeMax: 0,
+  minesDelayMin: 0.1,
+  minesBlinkMax: 2,
+  minesBlinkSlow: 0.25,
+  minesBlinkFast: 0.1,
 };
+
+/** A mine's blink settings alone (mineBlinkInterval). */
+export type MineBlink = Pick<LobberSettings, 'minesBlinkMax' | 'minesBlinkSlow' | 'minesBlinkFast'>;
+
+/** The node of a mine's model that blinks as it counts down to its burst. */
+export const MINE_LIGHT_NODE = '##lighton';
+
+/**
+ * The seconds to a set-off mine's next blink (observed in the original): with more than
+ * fMinesBlinkMax left to its burst, fMinesBlinkSlow; within it, from fMinesBlinkSlow down to
+ * fMinesBlinkFast in step with the time left. At each blink its ##LightOn node is shown or hidden
+ * again and its projectile's countdown sound plays.
+ */
+export function mineBlinkInterval(
+  remaining: number,
+  settings: MineBlink = LOBBER_DEFAULTS,
+): number {
+  if (remaining > settings.minesBlinkMax) return settings.minesBlinkSlow;
+  return (
+    (remaining / settings.minesBlinkMax) * (settings.minesBlinkSlow - settings.minesBlinkFast) +
+    settings.minesBlinkFast
+  );
+}
 
 /** Below this speed (units a second) off a surface a lobber stops bouncing and lies still. */
 const LOBBER_REST_SPEED = 20;
@@ -439,12 +526,16 @@ export function comesAt(position: Vec3, velocity: Vec3, at: Vec3, reach: number)
 /** fCombatMagicWardMagickaCastLimit's built-in default (the engine's; no plugin sets it). */
 export const WARD_MAGICKA_CAST_LIMIT = 0.25;
 
+/** fCombatMagicWardCooldownTime's built-in default (seconds). */
+export const WARD_COOLDOWN_TIME = 1;
+
 /**
  * Whether an NPC holds its ward on: always until the combat AI's fCombatMagicWardMinCastTime
- * (1.5 s), then while something flies at it and its magicka share is at least the ward caster's
- * fCombatMagicWardMagickaCastLimit (0.25: what it needs to begin one, chooseCaster). TODO(M13):
- * inferred: the combat AI's own rule past the minimum (its ward caster's checks) is not read; a
- * spell or arrow coming is what a ward is for, and the cast limit the caster's own measure.
+ * (1.5 s); then (observed in the original: the ward caster's check) it ends at once below
+ * fCombatMagicWardMagickaCastLimit (0.25) of its magicka, and is otherwise held while an attack
+ * threatens it (src/ai/combat-subtrees.ts wardThreatened) and for fCombatMagicWardCooldownTime
+ * (1 s) after the last did (`calmFor`: seconds since nothing threatened it; the default, a calm
+ * without end).
  */
 export function wardHeld(
   held: number,
@@ -452,8 +543,12 @@ export function wardHeld(
   threatened: boolean,
   magicka = 1,
   castLimit = WARD_MAGICKA_CAST_LIMIT,
+  calmFor = Infinity,
+  cooldown = WARD_COOLDOWN_TIME,
 ): boolean {
-  return held < minimum || (threatened && magicka >= castLimit);
+  if (held < minimum) return true;
+  if (magicka < castLimit) return false;
+  return threatened || calmFor <= cooldown;
 }
 
 /** An actor as projectiles meet it: an upright capsule from its feet. */

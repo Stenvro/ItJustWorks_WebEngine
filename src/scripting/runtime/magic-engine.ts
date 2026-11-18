@@ -51,6 +51,13 @@ import {
   valueSign,
   type EffectSettings,
 } from '../../gameplay/magic/effect-rules.ts';
+import {
+  ADDICTION_USAGE_MONITOR_THRESHOLD,
+  addictionChance,
+  addictionTaken,
+  USAGE_MONITOR_EFFECT,
+  usageMonitorEffect,
+} from '../../gameplay/magic/addiction.ts';
 import { effectItemCost } from '../../gameplay/magic/casting.ts';
 import { actsAgain, disguises, disguiseStep } from '../../gameplay/magic/disguise.ts';
 import {
@@ -319,12 +326,20 @@ export class MagicEngine {
 
   // --- Records --------------------------------------------------------------------------------
 
-  /** A magic effect (MGEF), read once. */
+  /**
+   * A magic effect (MGEF), read once; the engine's own Usage Monitor Effect where no plugin
+   * defines its form (addiction.ts).
+   */
   effect(formId: number): Promise<MagicEffectRecord | undefined> {
     let pending = this.#pendingEffects.get(formId);
     if (!pending) {
       pending = this.#runtime.forms.record(formId).then((record) => {
-        const effect = record?.type === 'MGEF' ? parseMagicEffect(record) : undefined;
+        const effect =
+          record?.type === 'MGEF'
+            ? parseMagicEffect(record)
+            : !record && formId === USAGE_MONITOR_EFFECT
+              ? usageMonitorEffect()
+              : undefined;
         this.#effects.set(formId, effect);
         return effect;
       });
@@ -2115,9 +2130,50 @@ export class MagicEngine {
       return;
     }
     await this.apply(item, actor, { caster: actor });
+    await this.#addiction(actor, item);
+  }
+
+  /**
+   * A potion's addiction, asked once its effects took hold (observed in the original; addiction.ts):
+   * none without an addiction or at a chance of 0; a potion carrying the Usage Monitor Effect
+   * takes its chance from that potion's monitors running on the drinker past
+   * fAddictionUsageMonitorThreshold; the chance goes through the drinker's perks (Mod Addiction
+   * Chance) and is rolled 0-99. Taken, the potion's monitors on the drinker end and the addiction
+   * is the drinker's. No vanilla potion has an addiction, nor any vanilla perk the entry point.
+   * The original then also asks for an image-space modifier on the player newly addicted, by a
+   * fixed form that in Skyrim.esm is a placed reference, not a modifier: nothing shows.
+   */
+  async #addiction(actor: number, item: MagicItemRecord): Promise<void> {
+    const runtime = this.#runtime;
     const addiction = item.potion?.addiction;
-    if (addiction !== undefined && Math.random() < (item.potion?.addictionChance ?? 0))
-      await runtime.actors.addSpell(actor, addiction);
+    if (addiction === undefined) return;
+    let monitor = -1;
+    for (let index = 0; index < item.effects.length; index++) {
+      const effect = item.effects[index]?.effect;
+      if (effect !== USAGE_MONITOR_EFFECT) continue;
+      // A plugin's own form 0x14B leaves the engine without its monitor.
+      if (!(await runtime.forms.record(effect))) monitor = index;
+      break;
+    }
+    const monitors = (): [string, ActiveEffectState][] =>
+      [...runtime.state.activeEffects].filter(
+        ([, entry]) =>
+          entry.target === actor && entry.item === item.formId && entry.index === monitor,
+      );
+    const threshold = await this.#setting(
+      'fAddictionUsageMonitorThreshold',
+      ADDICTION_USAGE_MONITOR_THRESHOLD,
+    );
+    const before = addictionChance(
+      item.potion?.addictionChance ?? 0,
+      monitor < 0 ? undefined : monitors().reduce((sum, [, entry]) => sum + entry.magnitude, 0),
+      threshold,
+    );
+    if (before === undefined) return;
+    const chance = await runtime.perks.apply(EntryPoint.modAddictionChance, actor, before);
+    if (!addictionTaken(chance, Math.floor(Math.random() * 100))) return;
+    if (monitor >= 0) for (const [key] of monitors()) await this.end(key);
+    await runtime.actors.addSpell(actor, addiction);
   }
 
   /**

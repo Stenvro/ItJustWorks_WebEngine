@@ -28,11 +28,17 @@ import {
   carriedByBody,
   coneDone,
   flightKind,
+  isMine,
   launchCone,
   lightsGivingWay,
   launchFlight,
   LOBBER_DEFAULTS,
   MAX_PLAYER_RUNES,
+  mayTriggerMine,
+  mineBlinkInterval,
+  mineBursts,
+  MINE_LIGHT_NODE,
+  withinMineRadius,
   normalize,
   pathHitsActor,
   pointAt,
@@ -64,7 +70,13 @@ import type { PhysicsWorld, RayHit } from '../physics/physics-world.ts';
 import { conePush, loadImpulseSettings, projectileKnock } from '../gameplay/impulses.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { RenderPort } from '../render/render-port.ts';
-import type { GpuScene, InstanceMotion, ModelInstance } from '../render/scene-renderer.ts';
+import type {
+  GpuScene,
+  InstanceMotion,
+  InstanceVisibility,
+  ModelInstance,
+} from '../render/scene-renderer.ts';
+import type { ModelPart } from '../render/model-data.ts';
 import type { Delivered } from '../scripting/runtime/casting-engine.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { SoundInstance } from '../audio/sound-instance.ts';
@@ -109,6 +121,8 @@ export interface MagicProjectilesOptions {
   readonly shotWay?: (from: Vec3, to: Vec3) => void;
   /** The living actors of the loaded area (the player too). */
   readonly targets: () => Iterable<ProjectileTarget>;
+  /** The loaded area is an interior (a mine's reach is not scaled by fMineExteriorRadiusMult). */
+  readonly interior?: () => boolean;
   /** A sound at a place is a noise the actors may hear (src/shell/actor-senses.ts). */
   readonly noise?: (at: Vec3, owner: number | undefined, soundLevel: number) => void;
   /**
@@ -159,8 +173,29 @@ interface Flying {
   done: boolean;
   /** A rune: when it came to rest (the projectiles' clock), the oldest giving way first. */
   restedAt?: number;
+  /**
+   * A mine: the seconds left from its being set off to its burst (fMinesDelayMin), whether the
+   * player passed it for good (their Calculate Mine Explode Chance failed), and whether their
+   * perks are being asked now.
+   */
+  mineCountdown?: number;
+  /** A set-off mine: the seconds to its next blink, and its ##LightOn node's parts shown or not. */
+  mineBlink?: number;
+  mineLight?: InstanceVisibility;
+  /** A mine: who near it may set it off, as last weighed (#mayTrigger), and when. */
+  mineVetted?: Map<number, MineVet>;
+  minePassed?: boolean;
+  mineAsking?: boolean;
   /** A loaded save's state of its model's graph, put back as its model loads. */
   savedGraph?: SavedGraph | undefined;
+}
+
+/** Whether an actor may set a mine off, as last weighed (MagicProjectiles #mayTrigger). */
+interface MineVet {
+  may: boolean;
+  /** The projectiles' clock at the answer. */
+  at: number;
+  asking: boolean;
 }
 
 /** How far a ray steps past a caster's own bodies it starts inside (units, tries). */
@@ -717,7 +752,19 @@ export class MagicProjectiles {
           ...(graph && { graph }),
         };
         flying.instance = instance;
-        flying.scene = renderer.scene.createScene([instance]);
+        // A mine's ##LightOn node is drawn apart, shown or hidden as it blinks (#blink).
+        const light = (part: ModelPart): boolean =>
+          part.ancestors?.includes(MINE_LIGHT_NODE) === true ||
+          part.name.toLowerCase() === MINE_LIGHT_NODE;
+        const lit = isMine(projectile) && model.parts.some((gpu) => light(gpu.part));
+        if (lit) {
+          const visibility: InstanceVisibility = { hidden: false };
+          flying.mineLight = visibility;
+          flying.scene = renderer.scene.createScene([
+            { ...instance, partShown: (part) => !light(part) },
+            { ...instance, partShown: light, visibility },
+          ]);
+        } else flying.scene = renderer.scene.createScene([instance]);
       })
       .catch((error: unknown) => {
         terminal.log('magic', `${projectile.editorId}: ${describe(error)}`, 'warn');
@@ -1077,15 +1124,12 @@ export class MagicProjectiles {
         this.#physics?.matrix.indexOf(flying.projectile.collisionLayer) ?? Layer.spell,
       );
       const hit = this.#sweep(flying.delivered.caster, from, to, flying.projectile.collisionRadius);
-      // Its alternative trigger: within its proximity of an actor it bursts.
+      // Its alternative trigger: within its proximity of an actor it bursts (a mine as that
+      // actor's Calculate Mine Explode Chance says: #mineNear).
       const near =
         !hit &&
         (flying.projectile.flags & ProjectileFlag.altTrigger) !== 0 &&
-        [...this.#options.targets()].some(
-          (target) =>
-            target.reference !== flying.delivered.caster &&
-            withinProximity(flying.projectile, to, target.shape),
-        );
+        this.#near(flying, to, seconds);
       // A lobber with an alternative trigger that meets a surface bounces or rests there,
       // waiting for an actor within its proximity or its timer (a rune on the floor).
       if (
@@ -1158,6 +1202,10 @@ export class MagicProjectiles {
       friction: read.number('fGrenadeFriction') ?? LOBBER_DEFAULTS.friction,
       grenadeAgeMax: read.number('fGrenadeAgeMax') ?? LOBBER_DEFAULTS.grenadeAgeMax,
       mineAgeMax: read.number('fMineAgeMax') ?? LOBBER_DEFAULTS.mineAgeMax,
+      minesDelayMin: read.number('fMinesDelayMin') ?? LOBBER_DEFAULTS.minesDelayMin,
+      minesBlinkMax: read.number('fMinesBlinkMax') ?? LOBBER_DEFAULTS.minesBlinkMax,
+      minesBlinkSlow: read.number('fMinesBlinkSlow') ?? LOBBER_DEFAULTS.minesBlinkSlow,
+      minesBlinkFast: read.number('fMinesBlinkFast') ?? LOBBER_DEFAULTS.minesBlinkFast,
     };
   }
 
@@ -1525,6 +1573,130 @@ export class MagicProjectiles {
       flying.instance.world.set(placementOf(flying.flight));
       flying.motion.version++;
     }
+  }
+
+  /**
+   * Whether a projectile with an alternative trigger bursts by who is near it: one that is no mine
+   * as an actor other than its caster comes within its proximity; a mine (observed in the
+   * original) fMinesDelayMin after it was set off: by an actor other than its caster standing
+   * within its proximity (projectile-flight.ts withinMineRadius), or by the player as their
+   * Calculate Mine Explode Chance comes up (mineBursts), whom a failed roll lets pass it for good;
+   * either only as the mine's check lets them (#mayTrigger).
+   */
+  #near(flying: Flying, at: Vec3, seconds: number): boolean {
+    if (!isMine(flying.projectile)) {
+      for (const target of this.#options.targets())
+        if (
+          target.reference !== flying.delivered.caster &&
+          withinProximity(flying.projectile, at, target.shape)
+        )
+          return true;
+      return false;
+    }
+    if (flying.mineCountdown !== undefined) {
+      flying.mineCountdown -= seconds;
+      if (flying.mineCountdown <= 0) return true;
+      this.#blink(flying, seconds);
+      return false;
+    }
+    const settings = this.#lobberSettings();
+    const exteriorMult = this.#settings?.number('fMineExteriorRadiusMult') ?? 1;
+    const reach =
+      flying.projectile.proximity * (this.#options.interior?.() === true ? 1 : exteriorMult);
+    const setOff = (): void => {
+      flying.mineCountdown ??= settings.minesDelayMin;
+    };
+    let player = false;
+    for (const target of this.#options.targets()) {
+      if (!withinMineRadius(at, target.shape.feet, reach)) continue;
+      if (!this.#mayTrigger(flying, target.reference)) continue;
+      if (target.reference !== PLAYER_REF) {
+        setOff();
+        return false;
+      }
+      player = true;
+    }
+    const runtime = this.#options.session.scriptsReady;
+    if (!player || flying.minePassed === true || flying.mineAsking === true) return false;
+    if (!runtime) {
+      setOff();
+      return false;
+    }
+    flying.mineAsking = true;
+    void runtime.perks
+      .apply(EntryPoint.calculateMineExplodeChance, PLAYER_REF, 100, [flying.projectile.formId])
+      .then((chance) => {
+        flying.mineAsking = false;
+        if (mineBursts(chance, Math.random())) setOff();
+        else flying.minePassed = true;
+      });
+    return false;
+  }
+
+  /**
+   * Whether an actor within a mine's reach may set it off (projectile-flight.ts mayTriggerMine,
+   * observed in the original), as last weighed: each actor is weighed again a second after its
+   * last answer; until the first comes, it does not. Without the scripts' runtime only its placer
+   * is kept off. TODO(M13): two of the actor's own states the original also checks are not read,
+   * and a mine no actor placed is owned as its launcher is (ours: projectiles have no ownership
+   * of their own).
+   */
+  #mayTrigger(flying: Flying, reference: number): boolean {
+    const shooter = flying.delivered.caster;
+    const canTrigger = this.#settings?.number('iProjectileMineShooterCanTrigger') ?? 0;
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime)
+      return mayTriggerMine(
+        {
+          shooter: reference === shooter,
+          dead: false,
+          inOwnerFaction: false,
+          shooterRegard: undefined,
+          commandedByShooter: false,
+        },
+        canTrigger,
+      );
+    const vetted = (flying.mineVetted ??= new Map<number, MineVet>());
+    const known = vetted.get(reference);
+    if (!known?.asking && (known === undefined || this.#clock - known.at >= 1)) {
+      vetted.set(reference, { may: known?.may ?? false, at: known?.at ?? -Infinity, asking: true });
+      void (async () => {
+        const placedByActor = await runtime.actors.isActor(shooter);
+        const owner = placedByActor ? undefined : (await runtime.owner(shooter)).faction;
+        return mayTriggerMine(
+          {
+            shooter: reference === shooter,
+            dead: await runtime.actors.isDead(reference),
+            inOwnerFaction:
+              owner !== undefined && (await runtime.actors.factionRank(reference, owner)) >= 0,
+            shooterRegard: placedByActor
+              ? await runtime.crime.reaction(shooter, reference)
+              : undefined,
+            commandedByShooter: placedByActor && runtime.magic.commander(reference) === shooter,
+          },
+          canTrigger,
+        );
+      })()
+        .catch(() => false)
+        .then((may) => vetted.set(reference, { may, at: this.#clock, asking: false }));
+    }
+    return known?.may ?? false;
+  }
+
+  /**
+   * A set-off mine counting down to its burst blinks (observed in the original): each time its
+   * blink's seconds run out, its model's ##LightOn node is shown or hidden again, its
+   * projectile's countdown sound plays, and the next blink comes after mineBlinkInterval of the
+   * time left. No vanilla mine model has the node, nor any vanilla mine projectile a countdown
+   * sound. TODO(M13): that the first blink comes at once as the mine is set off is inferred.
+   */
+  #blink(flying: Flying, seconds: number): void {
+    flying.mineBlink = (flying.mineBlink ?? 0) - seconds;
+    if (flying.mineBlink > 0) return;
+    if (flying.mineLight) flying.mineLight.hidden = !flying.mineLight.hidden;
+    const sound = flying.projectile.countdownSound;
+    if (sound !== undefined) void this.#options.session.playSound(sound, flying.flight.position);
+    flying.mineBlink = mineBlinkInterval(flying.mineCountdown ?? 0, this.#lobberSettings());
   }
 
   /**

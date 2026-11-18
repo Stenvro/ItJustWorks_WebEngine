@@ -118,7 +118,6 @@ export const INERT: ReadonlyMap<string, string> = new Map([
   ['fCombatTeammateFollowRadiusMult', 'never read (docs/ai.md)'],
   ['fProjectileInventoryGrenadeFreakoutTime', "an earlier game's grenades; no grenades here"],
   ['fProjectileInventoryGrenadeTimer', "an earlier game's grenades; no grenades here"],
-  ['iProjectileMineShooterCanTrigger', "an earlier game's mines; no mines here"],
   // Registered by the original and never read (observed in the original).
   ...(
     [

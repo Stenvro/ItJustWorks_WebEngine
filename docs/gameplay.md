@@ -493,7 +493,7 @@ the player in a runtime on the game data, `--audit` reads every record).
   Painless) is their pain (src/gameplay/player-pain.ts), at most once every fPainDelay (1.5 s).
   Its hit blur is the image-space modifier GetHit (Skyrim.esm IMAD 0x00000162, among the forms
   below 0x800 the engine refers to by id: a radial blur from 0.4 to none over 0.25 s;
-  `node tools/imad-info.ts GetHit`) at full strength. Its cry is the player's Hit line (the Hit
+  `node tools/imad-info.ts GetHit`) at fGetHitPainMult (1.5) (observed in the original). Its cry is the player's Hit line (the Hit
   topic subtype, as an NPC hit has; the combat's talk.bark): the generic Hit topic (DIAL
   0x13EBB) begins with six grunts ("Agh!", "Oof!", "Nargh!", "Argh!", "Weergh!", "Yeagh!", each
   at GetRandomPercent <= 30), the only infos of it not barred from the player (the rest name
@@ -504,8 +504,9 @@ the player in a runtime on the game data, `--audit` reads every record).
   TODO(M13): inferred).
   Its rumble is the gamepad's, fRumblePainStrength (0.75) on both motors for fRumblePainTime
   (0.5 s), with the Vibration setting on (none of the three settings a GMST of the load order:
-  the engine's built-in defaults). TODO(M13): inferred that every painful hit gives all three
-  and that fPainDelay spaces all of them (the settings' names say only "pain"). The blow's own
+  the engine's built-in defaults). Observed in the original: one pain gives all three and
+  fPainDelay spaces them all (the actor's pain, the player's blur and rumble with it); TODO(M13):
+  inferred that every painful hit asks for its blur and cry both. The blow's own
   impact sound on the player is the impact's second sound (IPCT NAM1, src/audio/impacts.ts
   blowSound): an arrow's on flesh is WPNImpactArrowVsFleshPLAYER (SNDR 0x000EA9F8, in
   WPNArrowVsFleshImpact, WPNArrowVsFleshDraugrImpact and BloodSprayImpactArrowInsect), where
@@ -833,10 +834,20 @@ Format/SPEL"; the game settings.
   NPCs release a ready spell at once; a concentration spell they hold while it serves: at a
   target while it lives and stays within its projectile's reach (and the magicka lasts), one
   without a target 2.5 s at most, a ward at least the combat AI's fCombatMagicWardMinCastTime
-  (1.5 s) and then while a spell or arrow flies at it and its magicka share is at least
-  fCombatMagicWardMagickaCastLimit (0.25) (projectile-flight.ts wardHeld; TODO(M13): inferred,
-  the ward caster's own checks past its minimum are not read: fCombatMagicWardMagickaEquipLimit,
-  fCombatMagicWardAttackRangeDistance and fCombatMagicWardAttackReachMult are not read yet), a healing spell less once their health is whole; UseMagic's for its cast time. The combat AI's spells, staffs, heals,
+  (1.5 s); then (observed in the original: the ward caster's check) it ends at once below
+  fCombatMagicWardMagickaCastLimit (0.25) of its magicka, and is otherwise held while an attack
+  threatens it and fCombatMagicWardCooldownTime (1 s) after the last one did
+  (projectile-flight.ts wardHeld). What threatens it (combat-subtrees.ts wardThreatened): a
+  projectile coming at it, or one who fights it (its target the warder, or the player) within
+  fCombatMaximumProjectileRange (4096) and before it (within a right angle of its heading;
+  TODO(M13): either side inferred) that swings at it within its radius plus the attacker's reach ×
+  fCombatMagicWardAttackReachMult (1.5), draws a bow aimed within fCombatRangedProjectileFiringArc
+  (30°) of it, or charges or casts an aimed spell aimed within fCombatMagicProjectileFiringArc
+  (30°) of it whose range reaches it. A ward is taken up only above
+  fCombatMagicWardMagickaEquipLimit (0.5) of its magicka, with its target within the target's
+  reach, both radii and fCombatMagicWardAttackRangeDistance (384) (wardTargetNear; TODO(M13): the
+  equip check's choice by the ward's duration against fCombatMagicDefault{Short,Long}Duration is
+  not read), a healing spell less once their health is whole; UseMagic's for its cast time. The combat AI's spells, staffs, heals,
   potions, summons, wards and buffs: docs/ai.md, "Combat AI".
 - What shows (src/shell/actor-casting.ts, magic-projectiles.ts, magic-fx.ts): the casting art
   in the hand (MGEF casting art, on the player's hands while their magic is drawn; dual cast:
@@ -1016,9 +1027,30 @@ same aim; what differs is where they leave from and, for an NPC, what it aims at
 - Lobbers (the runes; CommonLibSSE GrenadeProjectile): meeting a surface a lobber bounces off it
   by fGrenadeRestitution (0.01 of its speed into the surface: too little to bounce, it lands) and
   fGrenadeFriction (5, a coefficient per contact on its speed along it: projectile-flight.ts
-  bounceLobber); one with an alternative trigger then lies, or slides down a slope steeper than
+  bounceLobber; observed in the original: neither setting is read by any code, both only
+  registered, so the original's bounce and slide are its body's own simulation, and ours with
+  these two numbers stays inferred, TODO(M13)); one with an alternative trigger then lies, or slides down a slope steeper than
   the friction's angle (78.7°) until one holds it, and waits at rest for an actor within its
   proximity (the runes' 150) or its timer, then bursts; without one it bursts on the surface.
+  A mine (observed in the original) is set off by an actor other than its caster whose position
+  (its feet) is within its proximity (in an exterior times fMineExteriorRadiusMult, 1), or by the
+  player as their Calculate Mine Explode Chance (from 100, the mine's projectile its item tab)
+  comes up on a roll of 0..99; a failed roll lets the player pass that mine for good. It bursts
+  fMinesDelayMin (the engine's 0.1 s, Skyrim.esm 0.2) after (projectile-flight.ts
+  withinMineRadius, mineBursts). Either only as the mine's check of the actor lets them
+  (observed in the original; mayTriggerMine): not its placer (unless
+  iProjectileMineShooterCanTrigger is above 0; Skyrim.esm 0), not dead, not a member of the
+  faction owning a mine no actor placed, not one its placer regards as an ally or friend, and not
+  one its placer commands (a summon, a commanded thrall). TODO(M13): two more of the actor's own
+  states the original checks are not read, and a mine no actor placed is owned as its launcher
+  is (ours: projectiles have no ownership of their own). From being set off to its burst a mine blinks (observed in the original): each time
+  its blink's seconds run out its model's ##LightOn node is shown or hidden again and its
+  projectile's countdown sound plays; the next blink comes after fMinesBlinkSlow (0.25 s) with
+  more than fMinesBlinkMax (2 s) to go, else after (time left / fMinesBlinkMax) × (Slow −
+  fMinesBlinkFast) + Fast (0.1 s) (projectile-flight.ts mineBlinkInterval, magic-projectiles.ts
+  #blink: the node's shapes drawn apart). No vanilla rune model has the node nor any vanilla
+  mine projectile a countdown sound. TODO(M13): that the first blink comes at once as it is set
+  off is inferred.
   An actor it meets in flight sets it off. A lobber's age (observed in the original, asked at
   each of its updates): the most it lives is its PROJ's Lifetime; where that is zero,
   fGrenadeAgeMax, or for a mine (Alt. Trigger with an explosion proximity above zero)
@@ -1693,11 +1725,35 @@ spell and target the tabs: the second actor value's weight), Mod Max Placeable M
 player's, of iMaxPlayerRunes: Skyrim.esm 1; the player's oldest rune at rest gives way to the
 next, TODO(M13): inferred, UESP "Skyrim:Rune") and Get Should Attack (the other actor the
 owner, the would-be attacker its tab; TODO(M13): where the engine asks it is not read, here a 0
-keeps the other off the attacker's targets). The engine also asks Calculate Mine Explode
-Chance (the player, from 100), Adjust Limb Damage and Mod Addiction Chance (the potion usage
-monitor past fAddictionUsageMonitorThreshold, 25): TODO(M13), not run yet; no call was found
-for Mod Addiction Duration, Mod Positive Chem Duration, Mod Player Reputation, Mod Lockpick
-Level Allowed and Set Progression Picking.
+keeps the other off the attacker's targets). The engine also asks (observed in the original):
+
+- **Calculate Mine Explode Chance**: the player's, from 100, the mine's projectile its tab, as
+  they come within a mine's reach (see "Delivery": a failed roll passes that mine for good).
+- **Adjust Limb Damage**: the target's, its tabs the attacker and the hit's weapon (the unarmed
+  weapon, WEAP 0x1F4, where the hit has none), as an explosion's hit takes the condition of the
+  actor's body parts. An explosion keeps at most two parts of each actor it meets: with two kept,
+  a body no nearer than the nearer of them is passed over and a nearer one takes that one's place.
+  Each kept part with an actor value (BPND's signed byte; -1 on every vanilla part, so only mods'
+  parts) loses the hit's damage over the target's base Health times the part's health share,
+  times 100, as the perks leave it (`casting-engine.ts` explode, `dismemberment.ts`
+  keepLimbReached, explosionLimbs). TODO(M13): which of the actor's bodies a burst meets and in
+  what order (ours: each part whose node lies within its radius, in the body part data's order),
+  and the weapon an explosion of a weapon's ammunition passes (ours: the unarmed one).
+- **Mod Addiction Chance**: the drinker's, as a potion-type item is applied to an actor, after
+  its effects took hold. A potion with no addiction or a chance of 0 gives none and asks nothing.
+  A potion carrying the engine's Usage Monitor Effect (form 0x14B: a script effect flagged
+  Recover, fire and forget on self, that the engine makes itself where no plugin defines that
+  form) takes its chance from that potion's monitors running on the drinker: their magnitudes
+  summed, at or below fAddictionUsageMonitorThreshold (the engine's 25, Skyrim.esm 70) no
+  addiction, above it the excess as a percentage. The chance (a share) goes through the perks
+  and is rolled against 0-99; taken, the potion's monitors on the drinker end and the drinker
+  gets the addiction. The original then asks for an image-space modifier on the player newly
+  addicted by a fixed form that in Skyrim.esm is a placed reference, so nothing shows
+  (`addiction.ts`, `magic-engine.ts` consumed). No vanilla potion has an addiction.
+
+The engine asks Mod Addiction Duration, Mod Positive Chem Duration, Mod Player Reputation, Mod
+Lockpick Level Allowed and Set Progression Picking nowhere (observed in the original: none of
+the calls of its entry point handler names them); a mod's entry on them does nothing there.
 
 ### Records
 
@@ -1850,11 +1906,12 @@ HasBeenEaten, IsPoison.
   percent (the Left or Right Mobility Condition; no plugin sets them, and nothing vanilla reads
   those values; TODO(M13): inferred from the names). TODO(M13): difficulty.
 
-No vanilla perk uses and no system asks Calculate Mine Explode Chance,
-Adjust Limb Damage, Get Should Attack, Mod Addiction Chance / Duration, Mod Positive Chem
-Duration, Mod Max Placeable Mines, the Telekinesis ones, Mod Secondary Value Weight, Mod Player
-Reputation, Ignore Running During Detection, Ignore Broken Lock, Mod Lockpick Level Allowed and
-Set Progression Picking (Fallout's; TODO(M13) should a mod use them).
+The entry points no vanilla perk uses (Calculate Mine Explode Chance, Adjust Limb Damage, Get
+Should Attack, Mod Addiction Chance, Mod Max Placeable Mines, the Telekinesis ones, Mod Secondary
+Value Weight, Ignore Running During Detection, Ignore Broken Lock) are asked where the engine asks
+them, for mods: see "Perks" above, which also names the five the original asks nowhere (Mod
+Addiction Duration, Mod Positive Chem Duration, Mod Player Reputation, Mod Lockpick Level Allowed,
+Set Progression Picking).
 
 ## Beast forms
 

@@ -1496,6 +1496,11 @@ export class ActorCombat implements CombatBridge {
     };
   }
 
+  /** Whether an attack threatens an actor as its ward weighs it (ActorCombatAi.wardThreatened). */
+  wardThreatened(reference: number): Promise<boolean> {
+    return this.#brain.wardThreatened(reference);
+  }
+
   /** A fighter's combat state (the player's input reads it). */
   combatState(reference: number): CombatState | undefined {
     return this.#fighters.get(reference)?.state;
@@ -5516,14 +5521,14 @@ export class ActorCombat implements CombatBridge {
 
   /**
    * A hit by `attacker` hurt the player: their pain (src/gameplay/player-pain.ts), a Painless
-   * one none. The hit blur (the image-space modifier GetHit, IMAD 0x162), their Hit line (the
+   * one none. The hit blur (the image-space modifier GetHit, IMAD 0x162, at fGetHitPainMult), their Hit line (the
    * Hit topic's grunts the player may say, in their voice: talk.bark), and the gamepad's pain
    * rumble with the Vibration setting on.
    */
   #hurtPlayer(painful: boolean, attacker: number): void {
     const pain = this.#pain.react(this.#clock, painful);
     if (!pain) return;
-    void this.#options.session.imageSpaceModifiers.apply(pain.blur);
+    void this.#options.session.imageSpaceModifiers.apply(pain.blur, pain.blurStrength);
     this.#options
       .talk?.()
       ?.bark(PLAYER_REF, 'Hit', attacker)

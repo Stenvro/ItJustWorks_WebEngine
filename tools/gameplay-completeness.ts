@@ -150,6 +150,19 @@ const EXPLAINED: ReadonlyMap<string, string> = new Map([
     "src/scripting/runtime/perk-engine.ts: no vanilla entry belongs to a rank past the first (PRKE rank 0 in all), and a tree's ranks are its NNAM chain (Novice Locks: DATA 5, one record; the original's menu shows one rank); the count is the Creation Kit's",
   ],
   ['Magic effect flags|goryVisuals', 'not used by the game (Creation Kit "Magic Effect")'],
+  ...[
+    'modAddictionDuration',
+    'modPositiveChemDuration',
+    'modPlayerReputation',
+    'modLockpickLevelAllowed',
+    'setProgressionPicking',
+  ].map(
+    (name) =>
+      [
+        `Perk entry points|${name}`,
+        "an earlier game's entry point the original asks nowhere (observed in the original: none of the calls of its entry point handler names it); a mod's entry on it changes nothing there either",
+      ] as const,
+  ),
   [
     'Equip slots (EQUP)|useAllParents',
     "src/world/equip-slots.ts (EquipSlots.place, beside the parser): a slot whose parents are both hands takes both (BothHands: a two-handed weapon) with the flag, one of them (EitherHand) without; Shield's one parent is the left hand (src/world/equip-slots.test.ts)",
@@ -205,7 +218,23 @@ const INERT: readonly (readonly [RegExp, string])[] = [
 ];
 
 /** Why an open item stays open, by name (the checklist's reason). */
-const OPEN: ReadonlyMap<string, string> = new Map<string, string>();
+const OPEN: ReadonlyMap<string, string> = new Map<string, string>([
+  ...[
+    'trait',
+    'medicine',
+    'parentsOptional',
+    'itemSlot',
+    'npcsUseAmmo',
+    'minorCrime',
+    'rangeFixed',
+  ].map(
+    (name) =>
+      [
+        name,
+        "an earlier game's field no record of the load order sets; TODO(M13): whether the original reads it at all is not yet looked up",
+      ] as const,
+  ),
+]);
 
 /**
  * Items the engine reads under another name than the table's (the parser turns the bit into a

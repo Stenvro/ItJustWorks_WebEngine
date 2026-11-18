@@ -62,6 +62,11 @@ export interface BodyPart {
   readonly damageMult: number;
   /** Its health share, percent. */
   readonly healthPercent: number;
+  /**
+   * The actor value that is its condition (BPND's signed byte; -1 none: every vanilla part): an
+   * explosion's limb damage takes it down (src/gameplay/combat/dismemberment.ts explosionLimbs).
+   */
+  readonly actorValue: number;
   /** The chance (percent) that a killing blow that may blow it apart does. */
   readonly explosionChance: number;
   /** Severing: its debris, explosion and blood. */
@@ -115,6 +120,7 @@ interface Building {
   flags: number;
   damageMult: number;
   healthPercent: number;
+  actorValue: number;
   explosionChance: number;
   severed: BodyPartGore;
   exploded: BodyPartGore;
@@ -134,6 +140,7 @@ const emptyPart = (name: string): Building => ({
   flags: 0,
   damageMult: 1,
   healthPercent: 0,
+  actorValue: -1,
   explosionChance: 0,
   severed: NO_GORE,
   exploded: NO_GORE,
@@ -158,6 +165,7 @@ function readNodeData(record: BodyPartRecord, data: Uint8Array, part: Building):
   part.type = data[5] ?? -1;
   if (!has(10)) return;
   part.healthPercent = data[6] ?? 0;
+  part.actorValue = view.getInt8(7);
   part.explosionChance = data[9] ?? 0;
   if (!has(28)) return;
   const explodedDebrisCount = view.getUint16(10, true);

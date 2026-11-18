@@ -3375,11 +3375,16 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   at most fCombatSearchWanderDistance, looking fCombatSearchLookTime at each. The points, their
   order and their number are inferred from the behaviours' and settings' names (TODO(M13): the
   original's choice of points).
-- **Casters** (`chooseCombatSupport`: the Potion slot, then `chooseCaster`; `holdsRestore`,
-  `holdsWard`; the stage's support every second, `src/shell/actor-combat-ai.ts`): a health
+- **Casters** (`chooseCombatSupport`: the Potion slot, then `chooseCaster`; `holdsRestore`; the
+  ward's hold: `wardHeld` in `src/gameplay/magic/projectile-flight.ts`, asked by
+  `src/shell/actor-casting.ts`; the stage's support every second, `src/shell/actor-combat-ai.ts`): a health
   potion below its restore share, a magicka potion below its magicka share, then a ward against
-  what comes at it with
-  fCombatMagicWardMagickaCastLimit of its magicka, held at least fCombatMagicWardMinCastTime;
+  an attack that threatens it (`wardThreatened`: a projectile, a swing within its reach ×
+  fCombatMagicWardAttackReachMult, a drawn bow or an aimed spell at it), taken up above
+  fCombatMagicWardMagickaEquipLimit of its magicka with its target near (`wardTargetNear`,
+  fCombatMagicWardAttackRangeDistance), held at least fCombatMagicWardMinCastTime, then until
+  its magicka is below fCombatMagicWardMagickaCastLimit or fCombatMagicWardCooldownTime passed
+  without a threat (observed in the original);
   restore below its restore share, a held healing spell cast on while its health is below that
   share plus fCombatRestoreStopCastThreshold (observed in the original, `restoreWanted`,
   `holdsRestore`: no stop at full health of its own; its health is wanted whatever its share

@@ -17,6 +17,8 @@ import {
   stepFlight,
   sweepCone,
   withinProximity,
+  WARD_MAGICKA_CAST_LIMIT,
+  wardHeld,
   WORLD_GRAVITY,
   type FlightData,
 } from './projectile-flight.ts';
@@ -46,6 +48,20 @@ describe('a Magelight on a surface', () => {
     const theirs = stuck(8);
     expect(lightsGivingWay([mine, theirs], 7)).toEqual([mine]);
     expect(lightsGivingWay([theirs], 7)).toEqual([]);
+  });
+});
+
+describe('an NPC’s ward', () => {
+  it('ends below the cast limit, else fCombatMagicWardCooldownTime after the last threat', () => {
+    // Within fCombatMagicWardMinCastTime it holds whatever its magicka.
+    expect(wardHeld(1, 1.5, false, 0.1)).toBe(true);
+    // Past it: below fCombatMagicWardMagickaCastLimit it ends though something threatens it.
+    expect(wardHeld(2, 1.5, true, 0.2)).toBe(false);
+    expect(wardHeld(2, 1.5, true, 0.3)).toBe(true);
+    // Calm: held for the cooldown after the last threat, then let go.
+    expect(wardHeld(2, 1.5, false, 1, WARD_MAGICKA_CAST_LIMIT, 0.9)).toBe(true);
+    expect(wardHeld(2, 1.5, false, 1, WARD_MAGICKA_CAST_LIMIT, 1.1)).toBe(false);
+    expect(wardHeld(2, 1.5, false)).toBe(false);
   });
 });
 

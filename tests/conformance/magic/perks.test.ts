@@ -14,7 +14,16 @@ import { parsePerk } from '../../../src/world/perk-records.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
 import { openGameFolder } from '../../../tools/gamedata-path.ts';
 import { hasGamedata } from '../../helpers/sim.ts';
-import { MAX_PLAYER_RUNES, runesGivingWay } from '../../../src/gameplay/magic/projectile-flight.ts';
+import { USAGE_MONITOR_EFFECT } from '../../../src/gameplay/magic/addiction.ts';
+import type { MagicItemRecord } from '../../../src/world/magic-records.ts';
+import {
+  isMine,
+  MAX_PLAYER_RUNES,
+  mayTriggerMine,
+  mineBlinkInterval,
+  mineBursts,
+  runesGivingWay,
+} from '../../../src/gameplay/magic/projectile-flight.ts';
 import { Layer } from '../../../src/physics/collision-layers.ts';
 import type { PhysicsWorld } from '../../../src/physics/physics-world.ts';
 import type { Vec3 } from '../../../src/render/math.ts';
@@ -92,11 +101,19 @@ describe.skipIf(!hasGamedata())('the perks across the load order (data)', () => 
 
 describe('the entry points no vanilla perk uses that the engine asks (mods)', () => {
   // Observed in the original: the engine asks Get Should Attack, Mod Max Placeable Mines (of the
-  // player, for iMaxPlayerRunes) and Mod Secondary Value Weight (as a Dual Value Modifier is
-  // adjusted for its caster's perks); where it asks the first is inferred here.
+  // player, for iMaxPlayerRunes), Mod Secondary Value Weight (as a Dual Value Modifier is
+  // adjusted for its caster's perks), Calculate Mine Explode Chance, Adjust Limb Damage and Mod
+  // Addiction Chance; where it asks the first and the last three is inferred here.
   it('asks them from the systems they belong to', () => {
     const sources = engineSources(path.resolve(import.meta.dirname, '../../../src')).join('\n');
-    for (const name of ['getShouldAttack', 'modMaxPlaceableMines', 'modSecondaryValueWeight'])
+    for (const name of [
+      'getShouldAttack',
+      'modMaxPlaceableMines',
+      'modSecondaryValueWeight',
+      'calculateMineExplodeChance',
+      'adjustLimbDamage',
+      'modAddictionChance',
+    ])
       expect(sources.includes(`EntryPoint.${name}`), name).toBe(true);
   });
 
@@ -108,7 +125,23 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
   });
 
   /** The player's runes falling onto the ground: projectiles with a runtime and physics stubbed. */
-  async function placed(maxRunes: number): Promise<number[]> {
+  async function placed(
+    maxRunes: number,
+    mine?: {
+      readonly chance: number;
+      readonly xs?: readonly number[];
+      readonly walker?: number;
+      readonly frames?: number;
+      /** The seconds of each frame once the walker comes (0.1). */
+      readonly step?: number;
+      /** The rune's countdown sound, and where its plays are told. */
+      readonly countdownSound?: number;
+      readonly played?: number[];
+      /** How the mine's placer regards the walker, and whom the walker obeys. */
+      readonly regard?: 'hostile' | 'neutral' | 'ally' | 'friend';
+      readonly commander?: number;
+    },
+  ): Promise<number[]> {
     const SPELL = 0x2001;
     const RUNE = {
       formId: 0x3001,
@@ -121,14 +154,14 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
       light: undefined,
       muzzleFlashLight: undefined,
       tracerChance: 0,
-      proximity: 10,
+      proximity: 60,
       timer: 0,
       explosion: undefined,
       sound: undefined,
       muzzleFlashDuration: 0,
       fadeDuration: 0,
       impactForce: 0,
-      countdownSound: undefined,
+      countdownSound: mine?.countdownSound,
       disableSound: undefined,
       defaultWeaponSource: undefined,
       coneSpread: 0,
@@ -143,7 +176,14 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
     } satisfies ProjectileRecord;
     const item = { formId: SPELL, effects: [], delivery: 4 };
     const runtime = {
-      magic: { item: () => Promise.resolve(item) },
+      magic: { item: () => Promise.resolve(item), commander: () => mine?.commander },
+      actors: {
+        isActor: () => Promise.resolve(true),
+        isDead: () => Promise.resolve(false),
+        factionRank: () => Promise.resolve(-1),
+      },
+      crime: { reaction: () => Promise.resolve(mine?.regard ?? 'neutral') },
+      owner: () => Promise.resolve({ actor: undefined, faction: undefined }),
       casting: {
         projectile: () => Promise.resolve(RUNE),
         cost: () => Promise.resolve(0),
@@ -152,13 +192,23 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
       gameSetting: (name: string) => Promise.resolve(name === 'iMaxPlayerRunes' ? 1 : undefined),
       perks: {
         apply: (entryPoint: number, _owner: number, value: number) =>
-          Promise.resolve(entryPoint === EntryPoint.modMaxPlaceableMines ? maxRunes : value),
+          Promise.resolve(
+            entryPoint === EntryPoint.modMaxPlaceableMines
+              ? maxRunes
+              : entryPoint === EntryPoint.calculateMineExplodeChance
+                ? (mine?.chance ?? value)
+                : value,
+          ),
       },
     };
     const session = {
       scriptsReady: runtime,
       settings: () => new Promise(() => undefined),
       model: () => Promise.resolve(undefined),
+      playSound: (sound: number) => {
+        mine?.played?.push(sound);
+        return Promise.resolve(undefined);
+      },
     };
     // The ground at z 0.
     const physics = {
@@ -180,20 +230,29 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
       knock: () => false,
       movingPose: () => undefined,
     };
+    // An actor walking up to the first rune once they rest: within its proximity, not on it.
+    let walker:
+      | {
+          reference: number;
+          heading: number;
+          shape: { feet: Vec3; height: number; radius: number };
+        }
+      | undefined;
     const magic = new MagicProjectiles({
       session: session as unknown as GameSession,
       renderer: {} as RenderPort,
       terminal: { log: () => undefined } as unknown as Terminal,
-      targets: () => [],
+      targets: () => (walker ? [walker] : []),
     });
     magic.attach(physics as unknown as PhysicsWorld);
-    for (const x of [100, 200, 300]) {
+    for (const x of mine?.xs ?? [100, 200, 300]) {
       await magic.restore([
         {
           projectile: RUNE.formId,
           item: SPELL,
           via: 'spell',
-          caster: PLAYER_REF,
+          // A mine of the tests is another's (its caster sets it off never).
+          caster: mine ? 0x5555 : PLAYER_REF,
           dual: false,
           position: [x, 0, 2],
           velocity: [0, 0, -10],
@@ -203,6 +262,17 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
       ]);
       magic.frame(0.5);
       for (let tick = 0; tick < 5; tick++) await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    if (mine) {
+      walker = {
+        reference: mine.walker ?? PLAYER_REF,
+        heading: 0,
+        shape: { feet: [140, 0, 0], height: 128, radius: 30 },
+      };
+      for (let frame = 0; frame < (mine.frames ?? 3); frame++) {
+        magic.frame(mine.step ?? 0.1);
+        for (let tick = 0; tick < 5; tick++) await new Promise((resolve) => setTimeout(resolve, 0));
+      }
     }
     return magic
       .save()
@@ -214,6 +284,86 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
     expect(await placed(1)).toEqual([300]);
     // A mod's perk raising Mod Max Placeable Mines keeps more.
     expect(await placed(2)).toEqual([200, 300]);
+  });
+
+  it('bursts a mine for one who comes near as their Calculate Mine Explode Chance says', async () => {
+    expect(isMine({ flags: ProjectileFlag.altTrigger, proximity: 10 })).toBe(true);
+    expect(isMine({ flags: ProjectileFlag.altTrigger, proximity: 0 })).toBe(false);
+    expect(mineBursts(100, 0.99)).toBe(true);
+    expect(mineBursts(30, 0.5)).toBe(false);
+    // Without perks the chance is 100: the rune is gone fMinesDelayMin (0.1 s) after;
+    // a perk setting it to 0 lets the player pass it for good.
+    expect(await placed(1, { chance: 100, xs: [100] })).toEqual([]);
+    expect(await placed(1, { chance: 0, xs: [100], frames: 6 })).toEqual([100]);
+    // Another actor sets it off without a roll.
+    expect(await placed(1, { chance: 0, xs: [100], walker: 0x1234 })).toEqual([]);
+  });
+
+  it('lets no ally of its placer, nor one its placer commands, set a mine off (original)', async () => {
+    const off = { chance: 100, xs: [100], walker: 0x1234, frames: 4 };
+    expect(await placed(1, { ...off, regard: 'hostile' })).toEqual([]);
+    expect(await placed(1, { ...off, regard: 'ally' })).toEqual([100]);
+    expect(await placed(1, { ...off, regard: 'friend' })).toEqual([100]);
+    expect(await placed(1, { ...off, commander: 0x5555 })).toEqual([100]);
+    expect(await placed(1, { ...off, commander: 0x6666 })).toEqual([]);
+    // The player is weighed so too, before their roll.
+    expect(await placed(1, { chance: 100, xs: [100], frames: 4, regard: 'ally' })).toEqual([100]);
+    expect(
+      mayTriggerMine({
+        shooter: true,
+        dead: false,
+        inOwnerFaction: false,
+        shooterRegard: undefined,
+        commandedByShooter: false,
+      }),
+    ).toBe(false);
+    expect(
+      mayTriggerMine(
+        {
+          shooter: true,
+          dead: false,
+          inOwnerFaction: false,
+          shooterRegard: undefined,
+          commandedByShooter: false,
+        },
+        1,
+      ),
+    ).toBe(true);
+    expect(
+      mayTriggerMine({
+        shooter: false,
+        dead: false,
+        inOwnerFaction: true,
+        shooterRegard: undefined,
+        commandedByShooter: false,
+      }),
+    ).toBe(false);
+  });
+
+  it('blinks a set-off mine to its burst, its countdown sound at each blink (original)', async () => {
+    // fMinesBlinkMax 2, Slow 0.25, Fast 0.1: within 2 s of the burst the next blink comes after
+    // (left / 2) × (0.25 − 0.1) + 0.1 seconds; further away after 0.25.
+    expect(mineBlinkInterval(3)).toBeCloseTo(0.25);
+    expect(mineBlinkInterval(2)).toBeCloseTo(0.25);
+    expect(mineBlinkInterval(1)).toBeCloseTo(0.175);
+    expect(mineBlinkInterval(0)).toBeCloseTo(0.1);
+    // Weighed in the first 0.03 s frame, set off in the second (fMinesDelayMin 0.1 to go): it
+    // blinks in the next at once, then waits 0.105 s, and bursts before blinking again.
+    const played: number[] = [];
+    const left = await placed(1, {
+      chance: 100,
+      xs: [100],
+      frames: 6,
+      step: 0.03,
+      countdownSound: 0x4001,
+      played,
+    });
+    expect(left).toEqual([]);
+    expect(played).toEqual([0x4001]);
+    // Without a countdown sound it is silent.
+    const quiet: number[] = [];
+    await placed(1, { chance: 100, xs: [100], frames: 6, step: 0.03, played: quiet });
+    expect(quiet).toEqual([]);
   });
 });
 
@@ -297,8 +447,126 @@ describe('Mod Secondary Value Weight (observed in the original: the caster’s p
   );
 });
 
-describe('what the original’s perks do that ours do not yet', () => {
-  it.todo(
-    'Calculate Mine Explode Chance, Adjust Limb Damage and Mod Addiction Chance as the engine asks them, and the five no call was found for (mods)',
+describe('Mod Addiction Chance (the engine asks it; no vanilla potion has an addiction)', () => {
+  let vfs: Vfs;
+  let db: RecordDatabase;
+  let runtime: ScriptRuntime;
+
+  beforeAll(async () => {
+    if (!hasGamedata()) return;
+    vfs = await Vfs.mount(openGameFolder());
+    db = await RecordDatabase.open(vfs);
+    const library = new ScriptLibrary(async (name) => {
+      const at = `scripts\\${name}.pex`;
+      return vfs.has(at) ? vfs.read(at) : undefined;
+    });
+    runtime = new ScriptRuntime(db, library);
+    await runtime.magic.prepare(PLAYER_REF);
+  }, 300_000);
+  afterAll(async () => {
+    if (!hasGamedata()) return;
+    await db.close();
+    await vfs.close();
+  });
+
+  it.skipIf(!hasGamedata())(
+    'gives a potion’s addiction by its chance as the drinker’s perks change it',
+    async () => {
+      const { magic, actors, perks } = runtime;
+      let potion = 0;
+      let addiction = 0;
+      // A potion of the load order, and an ability as the addiction it gives.
+      for (const formId of db.formIdsOfType('ALCH')) {
+        const item = await magic.item(formId);
+        if (item?.potion && item.kind !== 'poison' && item.kind !== 'food') {
+          potion = formId;
+          break;
+        }
+      }
+      for (const formId of db.formIdsOfType('SPEL'))
+        if ((await magic.item(formId))?.kind === 'ability') {
+          addiction = formId;
+          break;
+        }
+      const base = await magic.item(potion);
+      if (!base?.potion || addiction === 0) throw new Error('potion or spell not read');
+      // Observed in the original: a chance of 0 gives no addiction and asks no perk.
+      const never = {
+        ...base,
+        formId: 0x7f000500,
+        potion: { ...base.potion, addiction, addictionChance: 0 },
+      };
+      const addictive = {
+        ...base,
+        formId: 0x7f000501,
+        potion: { ...base.potion, addiction, addictionChance: 0.5 },
+      };
+      // Potions carrying the engine's Usage Monitor Effect (600 s; a drink of the same potion
+      // replaces the monitor its last drink left, as any recast of the same item).
+      const potionData = base.potion;
+      const monitoredBy = (formId: number, magnitude: number) => ({
+        ...base,
+        formId,
+        effects: [
+          ...base.effects,
+          { effect: USAGE_MONITOR_EFFECT, magnitude, area: 0, duration: 600, conditions: [] },
+        ],
+        potion: { ...potionData, addiction, addictionChance: 0.5 },
+      });
+      const light = monitoredBy(0x7f000502, 60);
+      const monitored = monitoredBy(0x7f000503, 75);
+      const made = new Map<number, MagicItemRecord>(
+        [never, addictive, light, monitored].map((item): [number, MagicItemRecord] => [
+          item.formId,
+          item,
+        ]),
+      );
+      const reader = magic.item.bind(magic);
+      magic.item = (formId) => {
+        const item = made.get(formId);
+        return item ? Promise.resolve(item) : reader(formId);
+      };
+      const applier = perks.apply.bind(perks);
+      let chance = 0;
+      const asked: number[] = [];
+      perks.apply = (entryPoint, owner, value, targets, context) => {
+        if (entryPoint !== EntryPoint.modAddictionChance)
+          return applier(entryPoint, owner, value, targets, context);
+        asked.push(value);
+        return Promise.resolve(chance);
+      };
+      try {
+        chance = 1;
+        await magic.consumed(PLAYER_REF, never.formId);
+        expect(asked).toEqual([]);
+        expect(await actors.hasSpell(PLAYER_REF, addiction)).toBe(false);
+        // The potion's chance through the perks, rolled.
+        chance = 0;
+        await magic.consumed(PLAYER_REF, addictive.formId);
+        expect(asked).toEqual([0.5]);
+        expect(await actors.hasSpell(PLAYER_REF, addiction)).toBe(false);
+        // Monitored: 60 running stays within fAddictionUsageMonitorThreshold (Skyrim.esm 70) and asks
+        // nothing, drink after drink; 75 asks the excess, 5 %, whatever the potion's own chance.
+        asked.length = 0;
+        chance = 1;
+        await magic.consumed(PLAYER_REF, light.formId);
+        await magic.consumed(PLAYER_REF, light.formId);
+        expect(asked).toEqual([]);
+        expect(await actors.hasSpell(PLAYER_REF, addiction)).toBe(false);
+        await magic.consumed(PLAYER_REF, monitored.formId);
+        expect(asked).toHaveLength(1);
+        expect(asked[0]).toBeCloseTo(0.05);
+        expect(await actors.hasSpell(PLAYER_REF, addiction)).toBe(true);
+        // Taken: the potion's monitors on the drinker end.
+        const running = [...runtime.state.activeEffects.values()].filter(
+          (entry) => entry.item === monitored.formId && entry.effect === USAGE_MONITOR_EFFECT,
+        );
+        expect(running).toEqual([]);
+      } finally {
+        magic.item = reader;
+        perks.apply = applier;
+      }
+    },
+    60_000,
   );
 });

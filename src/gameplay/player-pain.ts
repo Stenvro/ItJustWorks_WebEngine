@@ -4,7 +4,7 @@
 //
 // - The hit blur: the image-space modifier GetHit (Skyrim.esm IMAD 0x00000162, one of the forms
 //   below 0x800 that the engine refers to by id; a radial blur from 0.4 down to none over
-//   0.25 s: `node tools/imad-info.ts GetHit`), applied at full strength.
+//   0.25 s: `node tools/imad-info.ts GetHit`), applied at fGetHitPainMult's strength (1.5).
 // - The cry: the player says their Hit line (the Hit topic subtype, HIT_), as the dialogue
 //   engine picks it for them. The load order has it: the generic Hit topic (DIAL 0x13EBB) begins
 //   with six grunts, "Agh!", "Oof!", "Nargh!", "Argh!", "Weergh!", "Yeagh!" (each at
@@ -17,10 +17,10 @@
 // src/audio/impacts.ts blowSound. The screen blood of a blow that bleeds:
 // src/render/screen-blood-data.ts.
 //
-// TODO(M13): inferred: that every painful hit gives the reaction and that fPainDelay (between
-// the player's pains) spaces all of it, the blur and the cry as the rumble; that the blur shows
-// in both cameras. The rumble's settings are none of them a GMST of the load order (their
-// values are the engine's built-in defaults).
+// Observed in the original: one pain gives all three, and fPainDelay (between an actor's pains)
+// spaces all of them; the blur at fGetHitPainMult. TODO(M13): inferred that every painful hit asks
+// for a pain with both the blur and the cry, and that the blur shows in both cameras. None of the
+// four settings is a GMST of the load order (their values are the engine's built-in defaults).
 
 /** GetHit: the player's hit blur (Skyrim.esm IMAD 0x00000162). */
 export const PLAYER_HIT_IMAGE_SPACE_MODIFIER = 0x162;
@@ -32,6 +32,8 @@ export interface PlayerPainSettings {
   /** fRumblePainTime (seconds) and fRumblePainStrength (0..1, both motors). */
   readonly rumbleSeconds: number;
   readonly rumbleStrength: number;
+  /** fGetHitPainMult: the hit blur's strength. */
+  readonly blurStrength: number;
 }
 
 /** The engine's built-in defaults. */
@@ -39,6 +41,7 @@ export const DEFAULT_PLAYER_PAIN_SETTINGS: PlayerPainSettings = {
   delay: 1.5,
   rumbleSeconds: 0.5,
   rumbleStrength: 0.75,
+  blurStrength: 1.5,
 };
 
 /** The settings by their names, the defaults for those the load order lacks. */
@@ -50,6 +53,7 @@ export function readPlayerPainSettings(
     delay: read('fPainDelay') ?? d.delay,
     rumbleSeconds: read('fRumblePainTime') ?? d.rumbleSeconds,
     rumbleStrength: read('fRumblePainStrength') ?? d.rumbleStrength,
+    blurStrength: read('fGetHitPainMult') ?? d.blurStrength,
   };
 }
 
@@ -61,8 +65,9 @@ export interface PainRumble {
 
 /** What a pain does to the player. */
 export interface PainReaction {
-  /** The image-space modifier of the hit blur (GetHit), applied at full strength. */
+  /** The image-space modifier of the hit blur (GetHit), and its strength (fGetHitPainMult). */
   readonly blur: number;
+  readonly blurStrength: number;
   /** The player cries out: their Hit line (the Hit topic subtype). */
   readonly cry: true;
   /** The gamepad's rumble; none with either setting at 0. */
@@ -88,6 +93,7 @@ export class PlayerPain {
     const { rumbleStrength, rumbleSeconds } = this.settings;
     return {
       blur: PLAYER_HIT_IMAGE_SPACE_MODIFIER,
+      blurStrength: this.settings.blurStrength,
       cry: true,
       rumble:
         rumbleSeconds > 0 && rumbleStrength > 0
