@@ -33,6 +33,7 @@ import {
   HINGE_LIMIT_TAU_FACTOR,
   RAGDOLL_LIMIT_TAU_FACTOR,
   type JointMotor,
+  type LimitStop,
   type SolverConstraint,
   type SolverJoint,
   type SolverSettings,
@@ -167,8 +168,22 @@ const DEACTIVATION_TURN = 0.05;
 const DEACTIVATION_CHECK = 0.25;
 const DEACTIVATION_SECONDS = 1;
 
-/** A body's deactivation reference (PhysicsWorld.#deactivate): Havok units and a rotation. */
-interface DeactivationReference {
+/**
+ * Havok's rarer deactivation check (PhysicsWorld.#deactivate): within RARE_SCALE times the
+ * frequent check's distance and turn (four times, as Havok derives its two checks from the
+ * reference distance: observed in the original), run every RARE_CHECKS frequent checks, and a
+ * body that stays within it for RARE_SECONDS is inactive too. A ragdoll lying on the floor whose
+ * limbs still sag or slide along their limits by less than that is at rest by it.
+ * TODO(M13): inferred, how often Havok runs its rarer check and for how long a body must pass
+ * it are not read: here it runs four times as seldom and asks four times as long, as its reach
+ * is four times the frequent one's.
+ */
+const RARE_SCALE = 4;
+const RARE_CHECKS = 4;
+const RARE_SECONDS = 4;
+
+/** One level of a body's deactivation reference: Havok units and a rotation. */
+interface DeactivationLevel {
   x: number;
   y: number;
   z: number;
@@ -178,19 +193,32 @@ interface DeactivationReference {
 }
 
 /**
- * Whether a body has left its deactivation reference: moved farther than DEACTIVATION_DISTANCE
- * from it or turned farther than DEACTIVATION_TURN.
+ * A body's deactivation reference (PhysicsWorld.#deactivate): the frequent check's, and the
+ * rarer check's (RARE_SCALE).
  */
-function movedFrom(reference: DeactivationReference, body: RAPIER.RigidBody): boolean {
+interface DeactivationReference extends DeactivationLevel {
+  rare: DeactivationLevel;
+}
+
+/** A deactivation reference level where a body is now. */
+function deactivationLevel(body: RAPIER.RigidBody): DeactivationLevel {
   const t = body.translation();
-  if (Math.hypot(t.x - reference.x, t.y - reference.y, t.z - reference.z) > DEACTIVATION_DISTANCE) {
-    return true;
-  }
+  return { x: t.x, y: t.y, z: t.z, rotation: body.rotation(), seconds: 0 };
+}
+
+/**
+ * Whether a body has left a deactivation reference level: moved farther than
+ * DEACTIVATION_DISTANCE × `scale` from it or turned farther than DEACTIVATION_TURN × `scale`.
+ */
+function movedFrom(reference: DeactivationLevel, body: RAPIER.RigidBody, scale = 1): boolean {
+  const t = body.translation();
+  const distance = Math.hypot(t.x - reference.x, t.y - reference.y, t.z - reference.z);
+  if (distance > DEACTIVATION_DISTANCE * scale) return true;
   const q = body.rotation();
   const r = reference.rotation;
   const turned =
     2 * Math.acos(Math.min(1, Math.abs(r.x * q.x + r.y * q.y + r.z * q.z + r.w * q.w)));
-  return turned > DEACTIVATION_TURN;
+  return turned > DEACTIVATION_TURN * scale;
 }
 
 /** A deactivation group (PhysicsWorld.#deactivate): one system's awake bodies. */
@@ -1425,6 +1453,10 @@ export class PhysicsWorld {
   readonly #still = new Map<number, DeactivationReference>();
   /** Simulated seconds since the deactivation was last checked. */
   #sinceDeactivation = 0;
+  /** Simulated seconds since its rarer check last ran (RARE_CHECKS). */
+  #sinceRareDeactivation = 0;
+  /** The deactivation checks since the rarer one last ran. */
+  #checksSinceRare = 0;
   /** Simulated seconds. */
   #time = 0;
   /** Collision was placed or removed since the last step (queries do not see it yet). */
@@ -2148,7 +2180,10 @@ export class PhysicsWorld {
     const inner = articulated(placed.constraint.data);
     if (!joint?.isValid() || !solved || !inner) {
       this.#giving.delete(placed);
-      if (solved) solved.coneGives = false;
+      if (solved) {
+        solved.coneGives = false;
+        solved.limitStops = undefined;
+      }
       return;
     }
     const raw = joint as unknown as RawJointLimits;
@@ -2249,6 +2284,12 @@ export class PhysicsWorld {
         push.damping += spring.stiffness * this.#size * GIVE_DAMPING;
       }
     }
+    // Past its own limits, the speed further past them is taken out (SolverJoint.limitStops).
+    const stops: LimitStop[] = [];
+    for (const axis of axes) {
+      if (axis.side !== 0) stops.push({ index: axis.index, side: axis.side > 0 ? 1 : -1 });
+    }
+    solved.limitStops = stops.length > 0 ? stops : undefined;
     // The cone: Rapier's two swing angles are 2 asin of the turn's parts about the plane axis
     // and the third, and the sine of half the angle between the twist axes is the two's length.
     // (The solver takes out what swings the joint further past it: SolverJoint.coneGives.)
@@ -4506,12 +4547,14 @@ export class PhysicsWorld {
     if (!slept) return;
     const elapsed = this.#sinceDeactivation + this.#size;
     const waking: RAPIER.RigidBody[] = [];
+    const rareElapsed = this.#sinceRareDeactivation + this.#size;
     for (const body of slept.values()) {
       const reference = this.#still.get(body.handle);
       const resting =
         reference !== undefined &&
-        !movedFrom(reference, body) &&
-        reference.seconds + elapsed >= DEACTIVATION_SECONDS;
+        ((!movedFrom(reference, body) && reference.seconds + elapsed >= DEACTIVATION_SECONDS) ||
+          (!movedFrom(reference.rare, body, RARE_SCALE) &&
+            reference.rare.seconds + rareElapsed >= RARE_SECONDS));
       if (!resting) waking.push(body);
     }
     for (const body of waking) slept.delete(body.handle);
@@ -4561,6 +4604,13 @@ export class PhysicsWorld {
     if (this.#sinceDeactivation < DEACTIVATION_CHECK) return;
     const elapsed = this.#sinceDeactivation;
     this.#sinceDeactivation = 0;
+    this.#sinceRareDeactivation += elapsed;
+    const rare = ++this.#checksSinceRare >= RARE_CHECKS;
+    const rareElapsed = this.#sinceRareDeactivation;
+    if (rare) {
+      this.#checksSinceRare = 0;
+      this.#sinceRareDeactivation = 0;
+    }
     const still = this.#still;
     const seen = new Set<number>();
     // Per system (its colliders' system; a lone body is its own): awake bodies and whether all
@@ -4570,16 +4620,21 @@ export class PhysicsWorld {
       const handle = body.handle;
       seen.add(handle);
       let entry = still.get(handle);
-      if (!entry || movedFrom(entry, body)) {
-        const t = body.translation();
-        entry = { x: t.x, y: t.y, z: t.z, rotation: body.rotation(), seconds: 0 };
+      if (!entry) {
+        entry = { ...deactivationLevel(body), rare: deactivationLevel(body) };
         still.set(handle, entry);
       } else {
-        entry.seconds += elapsed;
+        if (movedFrom(entry, body)) Object.assign(entry, deactivationLevel(body));
+        else entry.seconds += elapsed;
+        if (rare) {
+          if (movedFrom(entry.rare, body, RARE_SCALE)) entry.rare = deactivationLevel(body);
+          else entry.rare.seconds += rareElapsed;
+        }
       }
+      const inactive = entry.seconds >= DEACTIVATION_SECONDS || entry.rare.seconds >= RARE_SECONDS;
       // Not inactive long enough: Rapier's own sleep timer starts over (it sleeps a body after
       // half a second, these checks come every quarter), so Rapier does not stop it (#holdAwake).
-      if (entry.seconds < DEACTIVATION_SECONDS) body.wakeUp();
+      if (!inactive) body.wakeUp();
       const collider = body.numColliders() > 0 ? body.collider(0) : undefined;
       const system = collider ? this.#systems.get(collider.handle) : undefined;
       const key = system === undefined ? 'b' + String(handle) : 's' + String(system);
@@ -4589,7 +4644,7 @@ export class PhysicsWorld {
         systems.set(key, group);
       }
       group.bodies.push(body);
-      if (entry.seconds < DEACTIVATION_SECONDS || this.#settling.has(handle)) group.resting = false;
+      if (!inactive || this.#settling.has(handle)) group.resting = false;
     });
     for (const handle of still.keys()) if (!seen.has(handle)) still.delete(handle);
     // Havok deactivates a simulation island as a whole: the awake bodies joined by contacts

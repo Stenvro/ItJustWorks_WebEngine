@@ -88,6 +88,10 @@ interface Drop {
   readonly stretch: number;
   /** Its highest body at the end over its highest at the start (it lay down: well below 1). */
   readonly height: number;
+  /** The fastest any body went over the last second (game units a second). */
+  readonly creep: number;
+  /** The fastest any body turned over the last second (radians a second). */
+  readonly spin: number;
 }
 
 function drop(
@@ -130,6 +134,8 @@ function drop(
   let rest: number | undefined;
   let fastest = 0;
   let flips = 0;
+  let creep = 0;
+  let spin = 0;
   const lastVz = new Map<number, number>();
   for (let i = 0; i < steps; i++) {
     physics.step(PHYSICS_STEP);
@@ -139,6 +145,11 @@ function drop(
       if (!body.isSleeping()) asleep = false;
       const v = body.linvel();
       fastest = Math.max(fastest, Math.hypot(v.x, v.y, v.z) * HAVOK_SCALE);
+      if (t > seconds - 1) {
+        creep = Math.max(creep, Math.hypot(v.x, v.y, v.z) * HAVOK_SCALE);
+        const w = body.angvel();
+        spin = Math.max(spin, Math.hypot(w.x, w.y, w.z));
+      }
       const vz = v.z * HAVOK_SCALE;
       if (t > seconds - 5 && Math.abs(vz) > 30) {
         const before = lastVz.get(body.handle);
@@ -193,6 +204,8 @@ function drop(
     awake,
     stretch,
     height: top() / startTop,
+    creep,
+    spin,
   };
   physics.free();
   return result;
@@ -536,6 +549,7 @@ for (const [path, race] of [...skeletons].sort()) {
       `awake ${String(result.awake).padStart(2)}`,
       `stretch ${result.stretch.toFixed(1).padStart(5)}`,
       `height ${result.height.toFixed(2)}`,
+      `creep ${result.creep.toFixed(2).padStart(6)} u/s ${result.spin.toFixed(3)} rad/s`,
       path,
     ].join('  '),
   );
