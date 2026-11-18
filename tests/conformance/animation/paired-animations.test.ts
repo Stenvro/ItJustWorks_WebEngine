@@ -489,8 +489,8 @@ describe.skipIf(!hasGamedata())('a rider’s mount clip (headless simulation)', 
 });
 
 describe('paired animations (todo)', () => {
-  // TODO(M11): our AI runs no vampire feeding procedure (docs/animation.md, the handlers'
-  // table: VampireFeedEnd), so neither side's procedure can be ended; the feeder's
-  // GetVampireFeed ends at its VampireFeedEnd (above).
-  it.todo('a vampire feeding pair (pa_VampireFeed*) ends both sides’ procedures  [original]');
+  // TODO(M13): observed in the original, VampireFeedEnd ends only the feeder's vampire feeding
+  // procedure (above; src/scripting/runtime/engine-events.test.ts); the player's feed also puts a
+  // created Do Nothing package on its victim, whose end was not read, and ours gives it none.
+  it.todo('the player’s feeding victim is held by a Do Nothing package until …  [original]');
 });
