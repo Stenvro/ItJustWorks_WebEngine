@@ -25,8 +25,11 @@ against docs/ai.md and the conformance suites (tests/conformance/ai/).
 | Idle markers, furniture |    25 |   24 |    1 |
 | Navmeshes (data)        |    12 |   11 |    1 |
 | Game settings           |   190 |  190 |    0 |
-| Mechanics (by hand)     |    40 |   29 |   11 |
-| Total                   |   472 |  459 |   13 |
+| Mechanics (by hand)     |    46 |   36 |   10 |
+| Total                   |   478 |  466 |   12 |
+
+(2026-11-18: the avoidance item split into what is now observed and done, the velocity's choice
+still open; the static avoider's node added, done.)
 
 Round 1 wrote the sweep and this list; Can Pickup Items (RACE DATA) became read: only a race that
 can pick up items runs the combat tree's Acquire Weapon.
@@ -174,9 +177,10 @@ Round 4b (2026-11-03; docs/ai.md, "Marker keywords, Disables Activation, Loose O
       triangles, No Large Creatures, door triangles, cover (src/ai/pathfinding.ts,
       combat-subtrees.ts, src/world/navmesh.ts). Skyrim's navmeshes have no ladder or jump links
       beyond the ledges.
-- [ ] Triangle flag Found (3.15 million triangles): not read. TODO(M13): whether the game reads
-      it (xEdit names it; it is set on nearly every triangle; the original's path search set-up
-      and step cost do not: round 4b).
+- [ ] Triangle flag Found: not read. The data (2026-11-18): 20,436 of 3,170,592 triangles lack
+      it, in 126 navmeshes, bordering triangles with it and with the same other flags: no island
+      or kind of ground; read as the editor's mark, inert. TODO(M13): inferred; whether the game
+      reads it (its path search set-up and step cost do not: round 4b) was not found elsewhere.
 
 ## Game settings
 
@@ -226,9 +230,19 @@ the readers ask for by name.
       Ours in form: convex parts for the original's new triangles, which were not read.
 - [x] Avoidance: whom it lays avoid nodes on, standing or moving, by the advanced avoidance
       (avoidance.ts layAvoidNode; the flag read: it is the velocity obstacles' switch).
-- [ ] Avoidance: the velocity obstacles' steering (ours: foresee and keep right; that only those
-      races steer is inferred); who yields: the original's avoider has no such rule, it reports
-      its way blocked; what its path manager does then is not read (ours: the slower gait).
+- [x] Avoidance: who yields, by the avoidance keys (the narrower of two on their way avoids the
+      wider, else the lower form id; one not on its way is avoided by all, one down by none); only
+      the advanced races steer (velocity obstacles of the two radii) and report their way blocked
+      by actors, which fails the path short of its goal; a node is dropped as its actor sets off
+      (observed in the original, 2026-11-18; src/ai/avoidance.ts, tested there, in
+      tests/conformance/ai/procedures.test.ts and in the movers by
+      tests/conformance/ai/actors-in-the-way.test.ts).
+- [ ] Avoidance: how the velocity obstacles choose the velocity (ours: foresee the first met and
+      keep right); the time held up (ours: under 16 units a second with one ranked above in its
+      way, ahead within reach); what short of its goal means (ours: beyond its arrival radius and
+      its radius; not short, its way is done; inferred).
+- [x] The static avoider's node: one radius ahead, the actor's radius wide (observed; its trigger,
+      the window against fAcceptableErrorRatio, is ours: the path follower's stuck test).
 - [x] Detection: sight, sound, light, line of sight, stealth, detection states (detection.ts).
 - [x] Detection: the light's sum: each light's mean channel × its fade × (1 − (d / r)²), the
       directional light's ambient and diffuse means, × 100; worked out every fLightRecalcTimer, the
@@ -318,8 +332,8 @@ the readers ask for by name.
 
 ## Next biggest
 
-1. Avoidance: the velocity obstacles' steering, and what the path manager does with a way
-   reported blocked by actors.
+1. Avoidance: how the velocity obstacles choose the velocity (the path manager's answer to a way
+   blocked by actors and who yields are done, 2026-11-18).
 2. The navmesh flag Found: where the original reads it (round 4b ruled out the path search's
    set-up and its step cost). IDLM Loose Only is the editor's (above).
 3. The mechanics left by hand (Continue If PC Near's reach, sandbox radii, the light's sum, NPC

@@ -123,17 +123,19 @@ describe('the engine’s own packages (no record holds them)', () => {
       most,
       playerStanding: true,
       askedPlayer: false,
-      otherTravels: false,
+      advanced: true,
     };
     // Held up no longer than fMaxTimeBlockedByActors: it waits. (Stepping aside itself, its time
     // held up does not run: actor-movers.ts #blockedByActors.)
     expect(blockedByActor({ ...held, blockedFor: most })).toBe('wait');
     // Then it asks the standing player to move (its ActorCollidewithActor line), once a travel.
     expect(blockedByActor(held)).toBe('ask');
-    expect(blockedByActor({ ...held, askedPlayer: true })).toBe('round');
-    // A player on the move is gone round at once; an actor on its way, one of the two gives way.
-    expect(blockedByActor({ ...held, playerStanding: false })).toBe('round');
-    expect(blockedByActor({ ...held, playerStanding: false, otherTravels: true })).toBe('giveWay');
+    // Asked already, or another in its way: its path fails (observed in the original: the path
+    // manager gives a path blocked by actors up; before, ours went round, or one of two actors
+    // gave way, a rule the original does not have).
+    expect(blockedByActor({ ...held, askedPlayer: true })).toBe('fail');
+    expect(blockedByActor({ ...held, playerStanding: false })).toBe('fail');
+    expect(blockedByActor({ ...held, playerStanding: false, advanced: false })).toBe('wait');
   });
 
   it('Movement Blocked is off (bUseMovementBlockedPackage 0); on, it stands for its time', async () => {

@@ -30,8 +30,10 @@ import {
   avoidanceNeighbours,
   blockedByActor,
   layAvoidNode,
+  staticAvoidNode,
+  avoidanceKey,
+  type AvoidanceKey,
   type AvoidedNeighbour,
-  givesWay,
   type AvoidanceSettings,
   type Neighbour,
 } from '../ai/avoidance.ts';
@@ -306,6 +308,8 @@ export interface ActorMoversOptions {
   readonly obstacles?: NavmeshObstacleField;
   /** Whether something else holds an actor now (furniture): it has no controller meanwhile. */
   readonly held?: (actor: number) => boolean;
+  /** Whether an actor is down (an essential actor's bleedout): no one avoids it. */
+  readonly down?: (actor: number) => boolean;
   /** The middle-high process's turns: walkers beyond the high process walk on theirs. */
   readonly slicer?: ProcessSlicer;
   /** Whether an actor's attack under way turns it to its target (ATKD Rotating Attack). */
@@ -381,7 +385,8 @@ interface Travel {
   readonly neighbours: Map<number, AvoidedNeighbour>;
   /** How long others in its way have kept it from going on (seconds), and the last that did. */
   blockedFor: number;
-  blockedBy: AvoidNode | undefined;
+  /** The avoid node round the last one in its way, and that one's reference (none: the player). */
+  blockedBy: (AvoidNode & { readonly of?: number | undefined }) | undefined;
   /** Where it was held on its way by what the navmesh does not know (its searches go round). */
   readonly held: AvoidNode[];
   /** It asked the player standing in its way to move (once a travel, before it goes round). */
@@ -540,10 +545,12 @@ const BUMP_SPEED = 40;
 const ASIDE_REACH = 48;
 /** An actor going round others takes itself to go at least this fast (a walk, units/s). */
 const AVOID_SPEED = 80;
-/** An actor going slower than this with another in its way is kept from going on (units/s). */
+/**
+ * An actor going slower than this with one ranked above it in its way (avoidance.ts avoidance's
+ * blocker: ahead, within reach in the next moment) is held up (units/s). TODO(M13): ours; the
+ * original measures being held up by its movement controller, which was not read.
+ */
 const BLOCKED_SPEED = 16;
-/** Gaits by speed (who gives way: avoidance.ts, givesWay). */
-const GAIT_RANK: Readonly<Record<Gait, number>> = { walk: 0, run: 1, sprint: 2 };
 /** A door this far ahead of an actor's shape is opened as it comes (units). */
 const DOOR_LOOKAHEAD = 96;
 /** ... seen at this height over its feet (its chest; units). */
@@ -838,6 +845,16 @@ export class ActorMovers {
     const travel = this.#travels.get(reference);
     if (!travel) return undefined;
     return travel.follower ? travel.follower.ahead : [travel.destination];
+  }
+
+  /**
+   * The avoid nodes an actor's searches on its travel go round now: the one on the last actor in
+   * its way (`of`: that actor), and the static avoider's where it was held (none: no travel).
+   */
+  avoidNodesOf(reference: number): readonly (AvoidNode & { readonly of?: number | undefined })[] {
+    const travel = this.#travels.get(reference);
+    if (!travel) return [];
+    return travel.blockedBy ? [travel.blockedBy, ...travel.held] : [...travel.held];
   }
 
   /** What is left of this frame's path search nodes (SEARCH_NODES_PER_FRAME). */
@@ -1209,12 +1226,20 @@ export class ActorMovers {
       if (key === undefined) continue;
       seen.add(key);
       const before = travel.neighbours.get(key);
-      const { lay, state } = layAvoidNode(before, other, mover.character.shape.radius, way, {
+      // Its width: twice its radius (the node goes on one within half of it of its way).
+      const width = 2 * mover.character.shape.radius;
+      const { lay, clear, state } = layAvoidNode(before, other, width, way, {
         advanced,
         step,
         refresh,
       });
       travel.neighbours.set(key, state);
+      // One with a node that sets off: its node is taken away and the way searched again.
+      if (clear && travel.blockedBy?.of === key) {
+        travel.blockedBy = undefined;
+        this.#searchAgain(travel);
+        travel.searches = Math.max(0, travel.searches - 1);
+      }
       if (lay) {
         this.#searchRound(mover, travel, other);
         // Going round one in its way is not a search of its being stuck (#obstaclesChanged).
@@ -1225,71 +1250,79 @@ export class ActorMovers {
   }
 
   /**
-   * An actor on its way whom others keep from going on (one in its way, it hardly moves) for
-   * longer than fMaxTimeBlockedByActors searches its path again round them (observed in the
-   * original: its path is then blocked by actors).
+   * An actor on its way whom those ranked above it keep from going on (one of them near, it
+   * hardly moves) for longer than fMaxTimeBlockedByActors (observed in the original: its way is
+   * blocked by actors, and with the advanced avoidance its path manager gives the path up: a path
+   * failure, avoidance.ts blockedByActor). The player standing in its way is asked to move first.
    */
   #blockedByActors(
     mover: Mover,
     blocker: (Neighbour & { readonly mover: Mover | undefined }) | undefined,
+    advanced: boolean,
     step: number,
     most: number,
   ): void {
-    const travel = this.#travels.get(mover.staged.reference);
+    const reference = mover.staged.reference;
+    const travel = this.#travels.get(reference);
     if (!travel) return;
-    // Stepping aside (giving way, bumped), its way waits.
-    if (this.#reactions.has(mover.staged.reference)) {
+    // Stepping aside (bumped), its way waits.
+    if (this.#reactions.has(reference)) {
       travel.blockedFor = 0;
       return;
     }
-    const stuck = blocker !== undefined && Math.hypot(...mover.velocity) < BLOCKED_SPEED;
-    travel.blockedFor = stuck ? travel.blockedFor + step : 0;
-    if (!blocker) return;
-    const reference = mover.staged.reference;
-    const other = blocker.mover;
-    const otherTravel = other && this.#travels.get(other.staged.reference);
-    // What it does about it (avoidance.ts blockedByActor): the player standing in its way is
-    // asked to move (its ActorCollidewithActor line) before it goes round them, once a travel.
+    // Held up: one ranked above it in its way (ahead, within reach: the one it goes round), and it
+    // hardly moves. One near but not in its way (behind, beside: the player following it) does
+    // not hold it up. TODO(M13): this measure is ours (BLOCKED_SPEED).
+    if (!blocker || Math.hypot(...mover.velocity) >= BLOCKED_SPEED) {
+      travel.blockedFor = 0;
+      return;
+    }
+    travel.blockedFor += step;
     const response = blockedByActor({
       blockedFor: travel.blockedFor,
       most,
-      playerStanding: other === undefined && Math.hypot(...blocker.velocity) < BLOCKED_SPEED,
+      playerStanding:
+        blocker.mover === undefined && Math.hypot(...blocker.velocity) < BLOCKED_SPEED,
       askedPlayer: travel.askedPlayer,
-      otherTravels: otherTravel !== undefined,
+      advanced,
+      shortOfGoal: this.#shortOfGoal(mover, travel),
     });
     if (response === 'wait') return;
+    // Not short of its goal: as near as those in its way let it come, its way is done.
+    if (response === 'done') {
+      travel.blockedFor = 0;
+      travel.done(true);
+      return;
+    }
     travel.blockedFor = 0;
     if (response === 'ask') {
       travel.askedPlayer = true;
       this.#options.blockedByPlayer?.(reference);
       return;
     }
-    // Another on its way into it: one of the two gives way (stepping off the other's way), the
-    // other goes on; one already giving way is waited for.
-    if (response === 'giveWay' && other && otherTravel) {
-      if (this.#reactions.has(other.staged.reference)) return;
-      const first = givesWay(
-        {
-          reference,
-          gait: GAIT_RANK[travel.gait],
-          pushable: racePushable(mover.staged.placed.look.raceFlags),
-          mover,
-        },
-        {
-          reference: other.staged.reference,
-          gait: GAIT_RANK[otherTravel.gait],
-          pushable: racePushable(other.staged.placed.look.raceFlags),
-          mover: other,
-        },
-      ).mover;
-      const second = first === mover ? other : mover;
-      if (this.#giveWay(first, second) || this.#giveWay(second, first)) return;
-    }
     // bUseMovementBlockedPackage: the engine's Movement Blocked package stands it a while.
     if (this.#options.session.ini.bool('General', 'bUseMovementBlockedPackage')) {
       this.#options.movementBlocked?.(reference, most);
     }
-    this.#searchRound(mover, travel, blocker);
+    this.#options.terminal.log(
+      'actor',
+      `${mover.staged.placed.actor.editorId || reference.toString(16)} is blocked by actors: ` +
+        'its path fails',
+      'info',
+    );
+    this.#giveUp(reference, travel);
+  }
+
+  /**
+   * Whether an actor held up by actors is short of its goal (then its path fails; else its way is
+   * done). TODO(M13): inferred; observed in the original is only that the path follower drops a
+   * path blocked by actors while the actor is short of its goal. Ours: farther from it (seen from
+   * above) than its arrival radius and its own radius, the most one standing on the goal leaves.
+   */
+  #shortOfGoal(mover: Mover, travel: Travel): boolean {
+    const [x, y] = mover.character.feet;
+    const [gx, gy] = travel.destination;
+    return Math.hypot(gx - x, gy - y) > travel.arrive + mover.character.shape.radius;
   }
 
   /**
@@ -1297,10 +1330,15 @@ export class ActorMovers {
    * node where it stands, its radius and fAvoidNodeRadiusAdd wide, each unit of a step through
    * it costing fAvoidNodeCost (observed in the original), the actor's own width kept off.
    */
-  #searchRound(mover: Mover, travel: Travel, blocker: Neighbour): void {
+  #searchRound(
+    mover: Mover,
+    travel: Travel,
+    blocker: Neighbour & { readonly mover: Mover | undefined },
+  ): void {
     const z = mover.character.feet[2];
     const ini = this.#options.session.ini;
     travel.blockedBy = {
+      of: blocker.mover?.staged.reference,
       at: [blocker.position[0], blocker.position[1], z],
       radius:
         blocker.radius +
@@ -1495,17 +1533,14 @@ export class ActorMovers {
    * of recent updates against fAcceptableErrorRatio; ours: the path follower's stuck check).
    */
   #heldAt(mover: Mover, travel: Travel, target: Vec3): void {
-    const [x, y, z] = mover.character.feet;
-    const dx = target[0] - x;
-    const dy = target[1] - y;
-    const length = Math.hypot(dx, dy);
-    if (length < 1e-3) return;
-    const radius = mover.character.shape.radius;
-    travel.held.push({
-      at: [x + (dx / length) * radius, y + (dy / length) * radius, z],
-      radius: radius + this.#options.session.ini.number('Pathfinding', 'fAvoidNodeRadiusAdd'),
-      cost: STATIC_AVOID_COST,
-    });
+    // The static avoider's node (avoidance.ts staticAvoidNode; observed in the original).
+    const node = staticAvoidNode(
+      mover.character.feet,
+      target,
+      mover.character.shape.radius,
+      STATIC_AVOID_COST,
+    );
+    if (node) travel.held.push(node);
   }
 
   /** The places an actor's search keeps off: doors the navmesh does not mark, shut to it. */
@@ -2233,16 +2268,12 @@ export class ActorMovers {
   }
 
   /**
-   * A path off another's way (the player's, or an actor's it gives way to), to the side the actor
-   * stands on (the other side where that has no room), if the navmesh has room.
+   * A path off the player's way, to the side the actor stands on (the other side where that has
+   * no room), if the navmesh has room.
    */
-  #aside(
-    mover: Mover,
-    way: readonly [number, number],
-    timing: BumpTiming,
-    other: Vec3 | undefined = this.#world?.player?.character.feet,
-  ): NavPath | undefined {
+  #aside(mover: Mover, way: readonly [number, number], timing: BumpTiming): NavPath | undefined {
     const set = this.#options.navmeshes?.();
+    const other = this.#world?.player?.character.feet;
     if (!set || !other) return undefined;
     const [x, y, z] = mover.staged.position;
     // Which side of the other's way it stands on: it steps further that way.
@@ -2259,45 +2290,6 @@ export class ActorMovers {
       }
     }
     return undefined;
-  }
-
-  /**
-   * An actor gives way to another on its way into it (avoidance.ts, givesWay): it steps off the
-   * other's way (as a bumped one steps off the player's: fBumpReactionIdealMoveDist, at least the
-   * minimum, where the navmesh has room), waits fBumpReactionSmallWaitTimer while the other
-   * passes, and goes on its way searched again. False: no room beside the way.
-   */
-  #giveWay(mover: Mover, other: Mover): boolean {
-    const [x, y] = mover.character.feet;
-    const [ox, oy] = other.character.feet;
-    const wanted = this.#requests.get(other.staged.reference)?.direction;
-    const [wx, wy] = wanted && Math.hypot(wanted[0], wanted[1]) > 1e-6 ? wanted : [x - ox, y - oy];
-    const length = Math.hypot(wx, wy);
-    if (length < 1e-6) return false;
-    const way: [number, number] = [wx / length, wy / length];
-    const aside = this.#aside(mover, way, this.#timing(), other.character.feet);
-    if (!aside) return false;
-    const reference = mover.staged.reference;
-    this.#reactions.set(reference, {
-      phase: 'aside',
-      left: 0,
-      way,
-      stood: true,
-      follower: new PathFollower(aside, { gait: 'walk', arrive: 16 }),
-    });
-    this.#requests.delete(reference);
-    const travel = this.#travels.get(reference);
-    if (travel) {
-      travel.blockedFor = 0;
-      travel.blockedBy = undefined;
-    }
-    this.#options.terminal.log(
-      'actor',
-      `${mover.staged.placed.actor.editorId || reference.toString(16)} gives way to ` +
-        (other.staged.placed.actor.editorId || other.staged.reference.toString(16)),
-      'info',
-    );
-    return true;
   }
 
   /**
@@ -2860,6 +2852,7 @@ export class ActorMovers {
           speed: Math.max(Math.hypot(...mover.velocity), AVOID_SPEED),
           direction: wanted.direction,
           advanced: mover.race === undefined || raceAdvancedAvoidance(mover.race.flags2),
+          key: this.#avoidanceKey(mover),
         };
         const near = avoidanceNeighbours(
           self,
@@ -2868,10 +2861,10 @@ export class ActorMovers {
         );
         this.#avoidNodes(mover, near, step, avoiding.maxTimeSizeNode, self.advanced);
         const passing = avoidance(self, near);
-        // Only the advanced avoidance steers round those near (avoidance.ts); the others keep
-        // their way, and their nodes take them round.
+        // Only the advanced avoidance steers round those near (avoidance.ts; observed in the
+        // original); the others keep their way, and their nodes take them round.
         if (self.advanced) request = { ...wanted, direction: passing.direction };
-        this.#blockedByActors(mover, passing.blocker, step, avoiding.maxTimeBlocked);
+        this.#blockedByActors(mover, passing.blocker, self.advanced, step, avoiding.maxTimeBlocked);
       }
       const surface = this.#atWater(mover, step);
       const types = this.#types(mover);
@@ -2980,6 +2973,7 @@ export class ActorMovers {
         position: [x, y],
         velocity: mover.velocity,
         radius: mover.character.shape.radius,
+        key: this.#avoidanceKey(mover),
         mover,
       });
     }
@@ -2997,6 +2991,25 @@ export class ActorMovers {
       });
     }
     return list;
+  }
+
+  /**
+   * An actor's avoidance key (avoidance.ts avoidanceKey): on its way while it has a travel and a
+   * way to go, down when dead or dying, or bleeding out (options.down). TODO(M13): inferred, the
+   * speed it asks along its path taken as its speed (at least AVOID_SPEED), so that one held up
+   * stays on its way; the original's own measure of its speed for the key was not identified.
+   */
+  #avoidanceKey(mover: Mover): AvoidanceKey {
+    const reference = mover.staged.reference;
+    const direction = this.#requests.get(reference)?.direction;
+    const going = direction !== undefined && Math.hypot(direction[0], direction[1]) > 1e-6;
+    return avoidanceKey({
+      down: mover.staged.dead || this.#options.down?.(reference) === true,
+      travelling: going && this.#travels.has(reference),
+      speed: going ? Math.max(Math.hypot(...mover.velocity), AVOID_SPEED) : 0,
+      radius: mover.character.shape.radius,
+      formId: reference,
+    });
   }
 
   /** The turn rate its steering made over the steps since it was last drawn (radians a second). */
