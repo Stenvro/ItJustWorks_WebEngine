@@ -2533,6 +2533,8 @@ meanwhile.
   fBlockWeaponScaling × the attacker's weapon damage × skill / 100; × fBlockPowerAttackMult
   against a power attack; then the blocker's perks (Mod Percent Blocked: Shield Wall, Fortify
   Block); at most fPlayerMaxResistance percent (85), for every blocker, not the player alone.
+  A paralysed blocker's block counts for nothing, neither the damage nor the stagger it would
+  hold off (observed in the original: `blockCounts`).
   The blocker's Shield Perks actor value adds to a shield's skill term there; no plugin effect
   sets it (TODO(M13): read it once one does). fBlockMax (0.7), fBlockSkillMult (2) and
   fBlockAmountWeaponMult (1) are registered by the original and never read: an earlier game's

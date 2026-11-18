@@ -152,6 +152,7 @@ import { ProjectileFlag } from '../world/projectile-data.ts';
 import type { AimTarget, ProjectileAim, ShotKind } from './projectile-aim.ts';
 import {
   bashStagger,
+  blockCounts,
   blockedStagger,
   hitStagger,
   recoilOf,
@@ -2927,13 +2928,14 @@ export class ActorCombat implements CombatBridge {
     if (attacker.player && targetRef !== PLAYER_REF)
       void this.#playerStrike(runtime, targetRef, stats, critical > 0, sneak ? sneakMult : 0);
     // The block: the target blocks and faces the blow (fCombatHitConeAngle). Observed in the
-    // original: a shot is blocked too, by a shield or a weapon, not by bare hands.
+    // original: a shot is blocked too, by a shield or a weapon, not by bare hands; a paralysed
+    // blocker's block counts for nothing (neither the damage nor the stagger it holds off).
     const targetFeet = this.#feet(target) ?? hit.point;
     const attackerFeet = this.#feet(attacker) ?? hit.point;
     const targetGear = target.gear;
     const shielded = targetGear?.shield !== undefined;
     const blocks =
-      target.state.blocking &&
+      blockCounts(target.state.blocking, runtime.magic.aiState(targetRef).paralyzed) &&
       (!hit.shot || shielded || targetGear?.right.weapon !== undefined) &&
       blockCovers(targetFeet, this.#heading(target), attackerFeet, settings.combatHitConeAngle);
     // An arrow at a raised shield may glance off (Mod Shield Deflect Arrow Chance, percent:
@@ -3049,7 +3051,10 @@ export class ActorCombat implements CombatBridge {
           },
           settings,
         );
-    const staggerValue = target.state.blocking
+    const staggerValue = blockCounts(
+      target.state.blocking,
+      runtime.magic.aiState(targetRef).paralyzed,
+    )
       ? blockedStagger(
           {
             hit: unblockedStagger,
