@@ -163,7 +163,10 @@ dialogue"): its range is the 3D dialogue output model's max distance from the so
 attack lines share one timer, AllyKilled and AvoidThreat are timed per group, a timer starts only
 on a line said; a Hit line for a blow above fCombatSpeakHitThreshold, else by its chance; the
 attack and taunt chances are never read; no one says GroupStrategy (the inferred rule above is
-gone); AllyKilled is said by the dead's nearest group member.
+gone); AllyKilled is said by the dead's nearest group member. It read too: the combat music's
+weighing per combat group and strength's damage (docs/audio.md, "Music"); the knockback's fade
+and the damage it weighs; a paralysed blocker's block counting for nothing; the magic kill
+camera's prediction (docs/gameplay.md, "The kill camera").
 
 ## Combat style (CSTY)
 

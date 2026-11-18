@@ -32,7 +32,7 @@ import { atMark, partnerMark } from '../animation/paired-clips.ts';
 import type { AnimationBinding } from '../formats/hkx/animation.ts';
 import type { GraphEvent } from '../animation/graph-events.ts';
 import type { ActorGraphSource } from './actor-graph-events.ts';
-import { ActorValue } from '../world/actor-values.ts';
+import { ActorValue, actorValueIndex } from '../world/actor-values.ts';
 import { BodyPartType, parseBodyPartData, type BodyPart } from '../world/body-part-data.ts';
 import { DefaultObjectUse } from '../world/default-objects.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -133,8 +133,8 @@ import {
   rangedKillCameraPlays,
   selfAreaKill,
   spellCameraRide,
-  spellLoosedDamage,
-  spellPredictedKill,
+  aimedSpellKills,
+  spellKill,
   type SelfAreaCandidate,
 } from '../gameplay/combat/ranged-kill-camera.ts';
 import { flightKind } from '../gameplay/magic/projectile-flight.ts';
@@ -4022,10 +4022,11 @@ export class ActorCombat implements CombatBridge {
    * the player looses that is predicted to kill, the casting type, delivery and projectile type
    * in GetVATSValue; the kill cameras' tree chooses by them what plays (spellCameraRide). An
    * aimed spell's kill is the one its projectile flies at: a missile's or lobber's camera rides
-   * it, a flame's its spray, a beam's (reaching at once) nothing; a concentration spell's spray
-   * is predicted by its interval's share (`seconds`: spellLoosedDamage). A self spell's kill is
-   * the nearest its area reaches and is predicted to kill (selfAreaKill; the SelfCastTest
-   * paths' cameras circle the caster).
+   * it, a flame's its spray, a beam's (reaching at once) nothing. Observed in the original: an
+   * aimed cast must kill at once (aimedSpellKills: a concentration spell by its whole magnitude,
+   * a kill over time plays none); a self spell's kill is weighed against everyone fighting the
+   * player (selfAreaKill; the SelfCastTest paths' cameras circle the caster). `dual`: it was
+   * dual cast.
    */
   spellLoosed(
     actor: number,
@@ -4037,14 +4038,14 @@ export class ActorCombat implements CombatBridge {
       readonly at: Vec3;
       readonly caster: number;
     }>,
-    seconds?: number,
+    dual = false,
   ): void {
     const fighter = this.#fighters.get(actor);
     if (!fighter?.player) return;
     const camera =
       item.delivery === Delivery.self
-        ? this.#selfKillCamera(fighter, item)
-        : this.#magicKillCamera(fighter, item, from, aim, flying, seconds);
+        ? this.#selfKillCamera(fighter, item, dual)
+        : this.#magicKillCamera(fighter, item, from, aim, flying, dual);
     camera.catch((error: unknown) => {
       this.#warn(`a spell's kill camera: ${describe(error)}`);
     });
@@ -4060,7 +4061,7 @@ export class ActorCombat implements CombatBridge {
       readonly at: Vec3;
       readonly caster: number;
     }>,
-    seconds: number | undefined,
+    dual: boolean,
   ): Promise<void> {
     const runtime = this.#options.session.scriptsReady;
     if (!runtime || !this.#shotCameraMay(fighter)) return;
@@ -4086,14 +4087,12 @@ export class ActorCombat implements CombatBridge {
       gravity: WORLD_GRAVITY * fired.gravity,
     });
     if (!victim || victim.state.life === LifeState.dead) return;
-    const health = await runtime.actors.value(victim.reference, ActorValue.health);
-    const damage = spellLoosedDamage(
-      await runtime.casting.predictedDamage(fighter.reference, item, victim.reference),
-      seconds,
-    );
     const fatal =
-      spellPredictedKill(damage, health.current) &&
-      !(await runtime.actors.isEssential(victim.reference));
+      aimedSpellKills(
+        await runtime.casting.killPrediction(fighter.reference, item, victim.reference, { dual }),
+        (await runtime.actors.value(victim.reference, ActorValue.health)).current,
+        await this.#wardPower(victim.reference, runtime),
+      ) && !(await runtime.actors.isEssential(victim.reference));
     const heading = Math.atan2(aim[0], aim[1]);
     await this.#shotCamera(fighter, victim, fatal, {
       projectile: () => {
@@ -4110,34 +4109,39 @@ export class ActorCombat implements CombatBridge {
    * nearest actor its area reaches whom the effects reaching that far are predicted to kill
    * (selfAreaKill; inferred, TODO(M13)). A self spell without an area (a cloak, a heal) has none.
    */
-  async #selfKillCamera(fighter: Fighter, item: MagicItemRecord): Promise<void> {
+  async #selfKillCamera(fighter: Fighter, item: MagicItemRecord, dual: boolean): Promise<void> {
     const runtime = this.#options.session.scriptsReady;
-    if (!runtime || !item.effects.some((entry) => entry.area > 0)) return;
-    if (!this.#shotCameraMay(fighter)) return;
+    // A fire and forget self spell with an area (a cloak, a heal: none).
+    if (!runtime || item.castType !== CastType.fireAndForget) return;
+    if (!item.effects.some((entry) => entry.area > 0)) return;
+    if (!this.#shotCameraMay(fighter, true)) return;
     const feet = this.#feet(fighter);
     if (!feet) return;
     const candidates: SelfAreaCandidate[] = [];
-    for (const other of this.#fighters.values()) {
-      if (other === fighter || other.state.life === LifeState.dead) continue;
-      const at = this.#feet(other);
+    for (const reference of this.enemiesOfPlayer()) {
+      const other = this.#fighters.get(reference);
+      const at = other && this.#feet(other);
       if (!at) continue;
       const distance = Math.hypot(at[0] - feet[0], at[1] - feet[1], at[2] - feet[2]);
-      const damage = await runtime.casting.predictedDamage(
-        fighter.reference,
-        item,
-        other.reference,
-        distance,
+      const prediction = await runtime.casting.killPrediction(fighter.reference, item, reference, {
+        areaDistance: distance,
+        dual,
+      });
+      const kill = spellKill(
+        prediction,
+        (await runtime.actors.value(reference, ActorValue.health)).current,
+        await this.#wardPower(reference, runtime),
       );
-      if (!(damage > 0)) continue;
       candidates.push({
-        reference: other.reference,
+        reference,
         distance,
-        damage,
-        health: (await runtime.actors.value(other.reference, ActorValue.health)).current,
-        essential: await runtime.actors.isEssential(other.reference),
+        kills: kill.kills && !(await runtime.actors.isEssential(reference)),
       });
     }
-    const kill = selfAreaKill(candidates);
+    const kill = selfAreaKill(
+      candidates,
+      this.#options.session.ini.number('VATS', 'bVATSAllowNoKill') !== 0,
+    );
     const victim = kill === undefined ? undefined : this.#fighters.get(kill);
     if (!victim) return;
     await this.#shotCamera(fighter, victim, true, {
@@ -4145,17 +4149,26 @@ export class ActorCombat implements CombatBridge {
     });
   }
 
-  /** Whether a shot's or spell's kill camera may begin at all: [VATS], a mount, its enemies. */
-  #shotCameraMay(fighter: Fighter): boolean {
+  /**
+   * Whether a shot's or spell's kill camera may begin at all: [VATS], a mount, its enemies (at
+   * most one unless [VATS] bVATSMultipleCombatants; a self spell's, observed in the original:
+   * at least one, any number, as it weighs them all).
+   */
+  #shotCameraMay(fighter: Fighter, selfArea = false): boolean {
     const session = this.#options.session;
     const runtime = session.scriptsReady;
     if (!this.#play || !runtime || this.#camera) return false;
     if (session.ini.number('VATS', 'bVATSDisable') !== 0) return false;
     if (runtime.world.mountOf?.(fighter.reference) !== undefined) return false;
-    return (
-      this.enemiesOfPlayer().length <= 1 ||
-      session.ini.number('VATS', 'bVATSMultipleCombatants') !== 0
-    );
+    const multiple = session.ini.number('VATS', 'bVATSMultipleCombatants') !== 0;
+    const enemies = this.enemiesOfPlayer().length;
+    return selfArea ? enemies > 0 || multiple : enemies <= 1 || multiple;
+  }
+
+  /** An actor's Ward Power (a ward held up takes it off a spell's predicted damage). */
+  async #wardPower(reference: number, runtime: ScriptRuntime): Promise<number> {
+    const index = actorValueIndex('WardPower');
+    return index === undefined ? 0 : (await runtime.actors.value(reference, index)).current;
   }
 
   /** A shot's or spell's kill camera on its victim, by its prediction, odds and clear way. */

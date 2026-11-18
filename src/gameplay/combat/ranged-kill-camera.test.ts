@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   rangedKillCameraChance,
   rangedKillCameraPlays,
+  aimedSpellKills,
   selfAreaKill,
   spellCameraRide,
-  spellLoosedDamage,
+  spellKill,
 } from './ranged-kill-camera.ts';
 
 const settings = {
@@ -62,18 +63,30 @@ describe('the magic kill camera', () => {
     expect(spellCameraRide('cone')).toBe('none');
   });
 
-  it("predicts a concentration spray by its interval's share, any other cast whole", () => {
-    // Flames: 8 a second; a spray every 0.25 s carries 2.
-    expect(spellLoosedDamage(8, 0.25)).toBe(2);
-    expect(spellLoosedDamage(25, undefined)).toBe(25);
+  it('kills at once by the whole magnitude, a concentration spell too; over time plays none  [original]', () => {
+    // Flames: 8 a second, taken whole as its magnitude, not its spray's share.
+    const flames = { immediate: 8, overTime: 0, longest: 0 };
+    expect(aimedSpellKills(flames, 8)).toBe(true);
+    expect(aimedSpellKills(flames, 9)).toBe(false);
+    // A poison's damage over 10 s kills in time: no kill camera for an aimed cast.
+    const poison = { immediate: 2, overTime: 20, longest: 10 };
+    expect(spellKill(poison, 15)).toEqual({ kills: true, seconds: 10 });
+    expect(aimedSpellKills(poison, 15)).toBe(false);
+    // A ward held up takes its Ward Power off both.
+    expect(aimedSpellKills({ immediate: 25, overTime: 0, longest: 0 }, 20, 10)).toBe(false);
+    expect(spellKill({ immediate: 25, overTime: 0, longest: 0 }, 20, -5).kills).toBe(true);
   });
 
-  it("takes the nearest a self spell's area is predicted to kill, not an essential one", () => {
-    const near = { reference: 1, distance: 300, damage: 225, health: 400, essential: false };
-    const killed = { reference: 2, distance: 900, damage: 175, health: 150, essential: false };
-    const nearer = { reference: 3, distance: 600, damage: 175, health: 100, essential: false };
-    const essential = { reference: 4, distance: 100, damage: 225, health: 50, essential: true };
-    expect(selfAreaKill([near, killed, nearer, essential])).toBe(3);
-    expect(selfAreaKill([near, essential])).toBeUndefined();
+  it('weighs a self spell against all fighting the player: each must die, the nearest within 2500  [original]', () => {
+    const near = { reference: 1, distance: 300, kills: true };
+    const far = { reference: 2, distance: 900, kills: true };
+    const lives = { reference: 3, distance: 600, kills: false };
+    expect(selfAreaKill([far, near])).toBe(1);
+    // One left standing: none, unless [VATS] bVATSAllowNoKill.
+    expect(selfAreaKill([near, lives])).toBeUndefined();
+    expect(selfAreaKill([lives, far], true)).toBe(3);
+    // None within 2500 units: none.
+    expect(selfAreaKill([{ reference: 4, distance: 2600, kills: true }])).toBeUndefined();
+    expect(selfAreaKill([])).toBeUndefined();
   });
 });

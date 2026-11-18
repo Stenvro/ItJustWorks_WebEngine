@@ -897,10 +897,10 @@ export class ActorStage {
       },
     });
     this.casting = new ActorCasting({
-      spellLoosed: (actor, item, from, aim, seconds) => {
+      spellLoosed: (actor, item, from, aim, dual) => {
         // A flame's sprays too: its kill camera rides them.
         const flying = () => this.projectiles.flying(true);
-        this.combat.spellLoosed(actor, item, from, aim, flying, seconds);
+        this.combat.spellLoosed(actor, item, from, aim, flying, dual);
       },
       session: options.session,
       renderer: options.renderer,

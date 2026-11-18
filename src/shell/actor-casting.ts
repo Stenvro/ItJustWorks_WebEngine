@@ -96,8 +96,8 @@ export interface ActorCastingOptions {
     item: MagicItemRecord,
     from: Vec3,
     aim: Vec3,
-    /** A concentration spell's spray: its interval (seconds). */
-    seconds?: number,
+    /** It was dual cast (its kill prediction takes the dual cast's power). */
+    dual?: boolean,
   ) => void;
   /** Where the casts go: the player's aim assistance, an NPC's aim at its target. */
   readonly aim?: ProjectileAim;
@@ -928,6 +928,7 @@ export class ActorCasting {
     source: number,
     target: number | undefined,
     seconds?: number,
+    dual = false,
   ): Promise<void> {
     const actor = delivered.caster;
     const origin = this.origin(actor, source);
@@ -984,8 +985,7 @@ export class ActorCasting {
       // A beam stays on the hand that cast it.
       follow: () => this.origin(actor, source),
     });
-    if (actor === PLAYER_REF)
-      this.#options.spellLoosed?.(actor, delivered.item, origin, aim, seconds);
+    if (actor === PLAYER_REF) this.#options.spellLoosed?.(actor, delivered.item, origin, aim, dual);
   }
 
   /**
@@ -1231,7 +1231,7 @@ export class ActorCasting {
     shown.spray = interval;
     const delivered = runtime.casting.held(cast.actor, cast.source);
     if (!delivered) return;
-    await this.#send(runtime, delivered, cast.source, shown.target, interval);
+    await this.#send(runtime, delivered, cast.source, shown.target, interval, cast.dual);
   }
 
   // --- The AI's API ---------------------------------------------------------------------------
@@ -1404,7 +1404,14 @@ export class ActorCasting {
       this.#breathe(runtime, pending.delivered, pending.target);
       return;
     }
-    void this.#send(runtime, pending.delivered, pending.source, pending.target);
+    void this.#send(
+      runtime,
+      pending.delivered,
+      pending.source,
+      pending.target,
+      undefined,
+      pending.dual,
+    );
   }
 
   /** A concentration shout let out (a dragon's breath): it sprays while its exhale lasts. */

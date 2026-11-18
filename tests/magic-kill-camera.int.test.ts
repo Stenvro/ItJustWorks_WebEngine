@@ -3,7 +3,6 @@
 // three fire effects of areas 100, 65 and 25 feet: "more damage to closer targets").
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { UNITS_PER_FOOT } from '../src/gameplay/magic/effect-rules.ts';
 import { PLAYER_REF } from '../src/scripting/runtime/forms.ts';
 import { ScriptRuntime } from '../src/scripting/runtime/runtime.ts';
 import { ScriptLibrary } from '../src/scripting/script-library.ts';
@@ -34,16 +33,18 @@ describe.skipIf(!hasGamedata())('the magic kill camera on the local game data', 
     await vfs.close();
   });
 
-  it("predicts a self spell's kill by the effects whose area reaches that far", async () => {
+  it("predicts a self spell's kill by the effects whose area reaches that far  [original]", async () => {
     const storm = await runtime.magic.item(FIRE_STORM);
     if (!storm) throw new Error('no Fire Storm');
-    const at = (feet: number | undefined): Promise<number> =>
-      runtime.casting.predictedDamage(
-        PLAYER_REF,
-        storm,
-        PLAYER_REF,
-        feet === undefined ? undefined : feet * UNITS_PER_FOOT,
-      );
+    // An area reaches its feet × fMagicUnitsPerFoot.
+    const setting = await runtime.gameSetting('fMagicUnitsPerFoot');
+    const unitsPerFoot = typeof setting === 'number' ? setting : 22;
+    const at = async (feet: number | undefined): Promise<number> =>
+      (
+        await runtime.casting.killPrediction(PLAYER_REF, storm, PLAYER_REF, {
+          ...(feet !== undefined && { areaDistance: feet * unitsPerFoot }),
+        })
+      ).immediate;
     const whole = await at(undefined);
     const close = await at(20);
     const middle = await at(50);
@@ -55,5 +56,10 @@ describe.skipIf(!hasGamedata())('the magic kill camera on the local game data', 
     expect(middle / close).toBeCloseTo(175 / 225, 3);
     expect(far / close).toBeCloseTo(100 / 225, 3);
     expect(beyond).toBe(0);
+    // A dual cast takes fMagicDualCastingEffectivenessBase where its power affects magnitude.
+    const dual = await runtime.casting.killPrediction(PLAYER_REF, storm, PLAYER_REF, {
+      dual: true,
+    });
+    expect(dual.immediate).toBeGreaterThanOrEqual(whole);
   });
 });
