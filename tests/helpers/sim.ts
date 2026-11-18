@@ -275,6 +275,16 @@ export class Sim {
    * ForceGreet is chosen while that package runs, though the conversation is heard later.
    */
   readonly #openings = new WeakMap<object, Promise<SpokenInfo | undefined>>();
+  /**
+   * The opening lines being picked (#openingLine), who was in dialogue before the first of them,
+   * and whether a conversation heard since says who is (#inDialogue): a pick that ends after
+   * the player began hearing one leaves its speaker in dialogue (Faralda's bridge warning heard
+   * while the greeting of the player's own activation was picked: her welcome asks
+   * IsInDialogueWithPlayer after the warning).
+   */
+  #picking = 0;
+  #beforePicking: number | undefined;
+  #heardSincePicking = false;
 
   constructor(world: SimWorld, vfs: Vfs, db: RecordDatabase) {
     openSims.add(this);
@@ -297,15 +307,28 @@ export class Sim {
     opening: number | undefined,
   ): Promise<SpokenInfo | undefined> {
     const runtime = this.runtime;
-    const before = runtime.dialogueSpeaker;
+    if (this.#picking === 0) {
+      this.#beforePicking = runtime.dialogueSpeaker;
+      this.#heardSincePicking = false;
+    }
+    this.#picking += 1;
     runtime.dialogueSpeaker = speaker;
     try {
       return opening === undefined
         ? await runtime.dialogue.greeting(speaker)
         : await runtime.dialogue.topicLine(opening, speaker);
     } finally {
-      if (runtime.dialogueSpeaker === speaker) runtime.dialogueSpeaker = before;
+      this.#picking -= 1;
+      if (this.#picking === 0 && !this.#heardSincePicking) {
+        runtime.dialogueSpeaker = this.#beforePicking;
+      }
     }
+  }
+
+  /** Who is in dialogue with the player now, as a conversation is heard or left. */
+  #inDialogue(speaker: number | undefined): void {
+    this.runtime.dialogueSpeaker = speaker;
+    this.#heardSincePicking = true;
   }
 
   get runtime(): ScriptRuntime {
@@ -362,10 +385,21 @@ export class Sim {
       if (place.world !== undefined) await this.world.openExterior(place.world, { arrival });
       else if (place.cell !== undefined) await this.world.openInterior(place.cell, arrival);
     };
+    // A player with no place yet (a game that skips ahead) sets out from nowhere: the original's
+    // player always has a place, and its journey to the quest's place takes hours (MG02's start
+    // leaves them at the College; Saarthal is a long walk off). Those hours are not counted (the
+    // clock stays where the case set it), but the world is as after them: every actor is where
+    // its package has it (ActorsAway.timeJumped), Tolfdir waiting at Saarthal's door.
+    const fromNowhere = passTime && !session.scriptWorld.livePlacement(PLAYER_REF);
     // Play's journey (src/shell/fast-travel-journey.ts): the hours, the sky, the arrival told.
     if (passTime) await fastTravelJourney(session, at, await fastTravelWay(session, at), enter);
     else await enter(at);
     await this.world.settle();
+    if (fromNowhere) {
+      const away = this.world.stage.away;
+      away.timeJumped();
+      await this.until(() => !away.scheduling.busy, 60);
+    }
   }
 
   /** Sets the game hour as a script does (GameHour.SetValue): the clock jumps there. */
@@ -988,7 +1022,7 @@ export class Sim {
       return undefined;
     };
     this.runtime.state.actor(actor).talkedToPlayer = true;
-    this.runtime.dialogueSpeaker = actor;
+    this.#inDialogue(actor);
     try {
       let offered = await goOn(
         opening === undefined
@@ -1004,7 +1038,7 @@ export class Sim {
       }
       return listed.map((choice) => choice.text);
     } finally {
-      this.runtime.dialogueSpeaker = undefined;
+      this.#inDialogue(undefined);
     }
   }
 
@@ -1465,7 +1499,7 @@ export class Sim {
     if (speaker === undefined) return undefined;
     const engine = this.runtime.dialogue;
     // In dialogue from before the greeting is chosen (src/shell/dialogue-menu.ts).
-    this.runtime.dialogueSpeaker = speaker;
+    this.#inDialogue(speaker);
     const picked = opened && this.#openings.get(opened);
     const greeting = await this.#drive(
       picked ??
@@ -1506,7 +1540,7 @@ export class Sim {
   /** The player leaves the conversation (Tab). */
   goodbye(): [] {
     this.#conversation = undefined;
-    this.runtime.dialogueSpeaker = undefined;
+    this.#inDialogue(undefined);
     return [];
   }
 
