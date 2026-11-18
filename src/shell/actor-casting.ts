@@ -45,6 +45,7 @@ import {
   aimDirection,
   comesAt,
   normalize,
+  WARD_COOLDOWN_TIME,
   WARD_MAGICKA_CAST_LIMIT,
   wardHeld,
   WORLD_GRAVITY,
@@ -131,6 +132,11 @@ export interface ActorCastingOptions {
     reach: number,
     caster: number,
   ) => number | undefined;
+  /**
+   * Whether an attack threatens an actor as its ward weighs it (the combat AI's
+   * wardThreatened); without it, only what flies at it counts.
+   */
+  readonly wardThreatened?: (actor: number) => Promise<boolean>;
 }
 
 /**
@@ -252,10 +258,20 @@ interface Shown {
   holdFor: number | undefined;
   /**
    * An NPC's ward (a spell on WardPower) without a target: held for fCombatMagicWardMinCastTime,
-   * then while something flies at it and its magicka share (looked at each hold check) is at
-   * least fCombatMagicWardMagickaCastLimit (projectile-flight.ts wardHeld); its seconds held.
+   * then while its magicka share (looked at each hold check) is at least
+   * fCombatMagicWardMagickaCastLimit and an attack threatens it, or did within
+   * fCombatMagicWardCooldownTime (projectile-flight.ts wardHeld); its seconds held, whether an
+   * attack threatened it at the last hold check, and the seconds since one did.
    */
-  ward?: { minimum: number; held: number; castLimit: number; magicka: number };
+  ward?: {
+    minimum: number;
+    held: number;
+    castLimit: number;
+    cooldown: number;
+    magicka: number;
+    threatened: boolean;
+    calmFor: number;
+  };
   /**
    * An NPC's held healing spell goes on while this holds of its health share (the combat AI's
    * restore stop threshold: combat-subtrees.ts holdsRestore); without it, until it is whole.
@@ -1009,13 +1025,17 @@ export class ActorCasting {
         if (cast.hand.phase === 'casting' && shown.ward) {
           shown.ward.held += seconds;
           const { ward } = shown;
+          const threatened = ward.threatened || this.#threatened(cast.actor);
+          ward.calmFor = threatened ? 0 : ward.calmFor + seconds;
           if (
             !wardHeld(
               ward.held,
               ward.minimum,
-              this.#threatened(cast.actor),
+              threatened,
               ward.magicka,
               ward.castLimit,
+              ward.calmFor,
+              ward.cooldown,
             )
           )
             void this.letGo(cast.actor, cast.source);
@@ -1111,20 +1131,28 @@ export class ActorCasting {
     if (main?.actorValue !== MagicValue.wardPower) return;
     const minimum = await runtime.gameSetting('fCombatMagicWardMinCastTime');
     const castLimit = await runtime.gameSetting('fCombatMagicWardMagickaCastLimit');
+    const cooldown = await runtime.gameSetting('fCombatMagicWardCooldownTime');
     shown.ward = {
       minimum: typeof minimum === 'number' ? minimum : WARD_MIN_CAST_TIME,
       held: 0,
       castLimit: typeof castLimit === 'number' ? castLimit : WARD_MAGICKA_CAST_LIMIT,
+      cooldown: typeof cooldown === 'number' ? cooldown : WARD_COOLDOWN_TIME,
       magicka: 1,
+      threatened: false,
+      calmFor: 0,
     };
   }
 
-  /** An NPC's magicka share as its held ward last looked (wardHeld's cast limit). */
+  /**
+   * An NPC's magicka share and whether an attack threatens it, as its held ward last looked
+   * (wardHeld's cast limit and threat).
+   */
   async #wardMagicka(runtime: ScriptRuntime, shown: Shown): Promise<void> {
     const ward = shown.ward;
     if (!ward) return;
     const magicka = await runtime.actors.value(shown.cast.actor, ActorValue.magicka);
     ward.magicka = magicka.max > 0 ? magicka.current / magicka.max : 0;
+    ward.threatened = (await this.#options.wardThreatened?.(shown.cast.actor)) ?? false;
   }
 
   /**

@@ -439,12 +439,16 @@ export function comesAt(position: Vec3, velocity: Vec3, at: Vec3, reach: number)
 /** fCombatMagicWardMagickaCastLimit's built-in default (the engine's; no plugin sets it). */
 export const WARD_MAGICKA_CAST_LIMIT = 0.25;
 
+/** fCombatMagicWardCooldownTime's built-in default (seconds). */
+export const WARD_COOLDOWN_TIME = 1;
+
 /**
  * Whether an NPC holds its ward on: always until the combat AI's fCombatMagicWardMinCastTime
- * (1.5 s), then while something flies at it and its magicka share is at least the ward caster's
- * fCombatMagicWardMagickaCastLimit (0.25: what it needs to begin one, chooseCaster). TODO(M13):
- * inferred: the combat AI's own rule past the minimum (its ward caster's checks) is not read; a
- * spell or arrow coming is what a ward is for, and the cast limit the caster's own measure.
+ * (1.5 s); then (observed in the original: the ward caster's check) it ends at once below
+ * fCombatMagicWardMagickaCastLimit (0.25) of its magicka, and is otherwise held while an attack
+ * threatens it (src/ai/combat-subtrees.ts wardThreatened) and for fCombatMagicWardCooldownTime
+ * (1 s) after the last did (`calmFor`: seconds since nothing threatened it; the default, a calm
+ * without end).
  */
 export function wardHeld(
   held: number,
@@ -452,8 +456,12 @@ export function wardHeld(
   threatened: boolean,
   magicka = 1,
   castLimit = WARD_MAGICKA_CAST_LIMIT,
+  calmFor = Infinity,
+  cooldown = WARD_COOLDOWN_TIME,
 ): boolean {
-  return held < minimum || (threatened && magicka >= castLimit);
+  if (held < minimum) return true;
+  if (magicka < castLimit) return false;
+  return threatened || calmFor <= cooldown;
 }
 
 /** An actor as projectiles meet it: an upright capsule from its feet. */

@@ -928,6 +928,7 @@ export class ActorStage {
         return reference;
       },
       ...(options.player && { player: options.player }),
+      wardThreatened: (actor) => this.combat.wardThreatened(actor),
       // A cast or a shout is heard (detection's action noise); the player's is commented on.
       acted: (actor, kind, soundLevel) => {
         this.senses.action(actor, soundLevel);

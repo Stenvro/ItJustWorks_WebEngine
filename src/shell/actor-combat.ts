@@ -1490,6 +1490,11 @@ export class ActorCombat implements CombatBridge {
     };
   }
 
+  /** Whether an attack threatens an actor as its ward weighs it (ActorCombatAi.wardThreatened). */
+  wardThreatened(reference: number): Promise<boolean> {
+    return this.#brain.wardThreatened(reference);
+  }
+
   /** A fighter's combat state (the player's input reads it). */
   combatState(reference: number): CombatState | undefined {
     return this.#fighters.get(reference)?.state;

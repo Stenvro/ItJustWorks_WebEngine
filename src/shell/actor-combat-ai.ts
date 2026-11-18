@@ -129,8 +129,11 @@ import {
   readCombatSubtreeSettings,
   searchPoints,
   searchRadius,
+  wardTargetNear,
+  wardThreatened,
   type CombatSubtreeSettings,
   type LooseWeapon,
+  type WardAttacker,
 } from '../ai/combat-subtrees.ts';
 import { readDetectionSettings } from '../ai/detection.ts';
 import type { Space } from '../ai/package-start.ts';
@@ -206,6 +209,7 @@ import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { ActorValue } from '../world/actor-values.ts';
 import { WeaponType } from '../world/item-records.ts';
+import { Delivery } from '../world/magic-records.ts';
 import { seededRandom } from '../world/actors.ts';
 import type { ActorAi } from './actor-ai.ts';
 import type { ActorMovers } from './actor-movers.ts';
@@ -2984,9 +2988,24 @@ export class ActorCombatAi {
     const settings = this.#settings;
     const subtrees = this.#subtrees;
     const restoreBelow = restoreShare(style, 'health', settings);
-    const ward = this.#threatened(mind, view)
+    const ward = (await this.wardThreatened(reference))
       ? await spells.chooseSpell(reference, 'ward')
       : undefined;
+    // Its ward is taken up only with its target near (wardTargetNear: the target's reach).
+    const opponent = this.#options.host.fighter(target);
+    const targetNear =
+      view.feet && opponent?.feet
+        ? wardTargetNear(
+            Math.hypot(
+              opponent.feet[0] - view.feet[0],
+              opponent.feet[1] - view.feet[1],
+              opponent.feet[2] - view.feet[2],
+            ),
+            opponent.reach,
+            view.radius + opponent.radius,
+            subtrees,
+          )
+        : undefined;
     const summon = await spells.chooseSpell(reference, 'summon');
     const buff = await spells.chooseSpell(reference, 'buff');
     const corpse = this.#nearestCorpse(view, subtrees.reanimateDistance);
@@ -3014,6 +3033,7 @@ export class ActorCombatAi {
         magicka: await share(ActorValue.magicka),
         restoreHealthBelow: restoreBelow,
         wardThreat: ward !== undefined,
+        ...(targetNear !== undefined && { wardTargetNear: targetNear }),
         sinceWard: this.#clock - mind.wardedAt,
         canHeal: heal !== undefined,
         sinceHealthRestore: this.#clock - mind.healthRestoredAt,
@@ -3099,15 +3119,61 @@ export class ActorCombatAi {
     return best;
   }
 
-  /** Whether a spell or a breath comes at it now (the threats it would dodge). */
-  #threatened(mind: Mind, view: FighterView | undefined): boolean {
+  /**
+   * Whether an attack threatens an actor as its ward weighs it (combat-subtrees wardThreatened,
+   * observed in the original): a spell, arrow or breath coming at it, or one who fights it
+   * swinging, drawing a bow or charging an aimed spell at it.
+   */
+  async wardThreatened(reference: number): Promise<boolean> {
+    const host = this.#options.host;
+    const view = host.fighter(reference);
     const feet = view?.feet;
     if (!view || !feet) return false;
-    for (const threat of this.#options.host.threats()) {
-      if (threat.source === mind.reference) continue;
-      if (threatens(threat, feet, view.radius, view.height) !== undefined) return true;
+    let coming = false;
+    for (const threat of host.threats()) {
+      if (threat.source === reference) continue;
+      if (threatens(threat, feet, view.radius, view.height) !== undefined) coming = true;
     }
-    return false;
+    if (coming) return true;
+    const runtime = this.#options.session.scriptsReady;
+    const attackers: WardAttacker[] = [];
+    for (const other of host.fighters()) {
+      if (other.reference === reference || !other.feet) continue;
+      if (other.target !== reference && !other.player) continue;
+      const distance = Math.hypot(
+        other.feet[0] - feet[0],
+        other.feet[1] - feet[1],
+        other.feet[2] - feet[2],
+      );
+      const current = other.state.current;
+      let spellRange: number | undefined;
+      if (runtime && !current) spellRange = await this.#aimedSpellRange(runtime, other.reference);
+      attackers.push({
+        distance,
+        offWarderFacing: Math.abs(turnBetween(view.heading, headingTo(feet, other.feet))),
+        offItsAim: Math.abs(turnBetween(other.heading, headingTo(other.feet, feet))),
+        targetsWarder: true,
+        meleeReach: current && !current.ranged ? other.reach : undefined,
+        aimingBow: (current?.ranged ?? false) || other.state.arrowNocked,
+        spellRange,
+      });
+    }
+    return wardThreatened(view.radius, attackers, false, this.#subtrees);
+  }
+
+  /** The range of an aimed spell an actor charges or casts now (undefined: none). */
+  async #aimedSpellRange(runtime: ScriptRuntime, actor: number): Promise<number | undefined> {
+    let range: number | undefined;
+    for (const source of [CastingSource.left, CastingSource.right, CastingSource.voice]) {
+      const cast = runtime.casting.casting(actor, source);
+      if (!cast || cast.hand.phase === 'done') continue;
+      if (cast.castable.item.delivery !== Delivery.aimed) continue;
+      const main = await runtime.casting.mainEffect(cast.castable.item);
+      if (main?.projectile === undefined) continue;
+      const projectile = await runtime.casting.projectile(main.projectile);
+      if (projectile && projectile.range > 0) range = Math.max(range ?? 0, projectile.range);
+    }
+    return range;
   }
 
   // --- The combat behaviour tree (src/ai/combat-tree.ts) ------------------------------------

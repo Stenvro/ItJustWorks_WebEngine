@@ -833,10 +833,20 @@ Format/SPEL"; the game settings.
   NPCs release a ready spell at once; a concentration spell they hold while it serves: at a
   target while it lives and stays within its projectile's reach (and the magicka lasts), one
   without a target 2.5 s at most, a ward at least the combat AI's fCombatMagicWardMinCastTime
-  (1.5 s) and then while a spell or arrow flies at it and its magicka share is at least
-  fCombatMagicWardMagickaCastLimit (0.25) (projectile-flight.ts wardHeld; TODO(M13): inferred,
-  the ward caster's own checks past its minimum are not read: fCombatMagicWardMagickaEquipLimit,
-  fCombatMagicWardAttackRangeDistance and fCombatMagicWardAttackReachMult are not read yet), a healing spell less once their health is whole; UseMagic's for its cast time. The combat AI's spells, staffs, heals,
+  (1.5 s); then (observed in the original: the ward caster's check) it ends at once below
+  fCombatMagicWardMagickaCastLimit (0.25) of its magicka, and is otherwise held while an attack
+  threatens it and fCombatMagicWardCooldownTime (1 s) after the last one did
+  (projectile-flight.ts wardHeld). What threatens it (combat-subtrees.ts wardThreatened): a
+  projectile coming at it, or one who fights it (its target the warder, or the player) within
+  fCombatMaximumProjectileRange (4096) and before it (within a right angle of its heading;
+  TODO(M13): either side inferred) that swings at it within its radius plus the attacker's reach ×
+  fCombatMagicWardAttackReachMult (1.5), draws a bow aimed within fCombatRangedProjectileFiringArc
+  (30°) of it, or charges or casts an aimed spell aimed within fCombatMagicProjectileFiringArc
+  (30°) of it whose range reaches it. A ward is taken up only above
+  fCombatMagicWardMagickaEquipLimit (0.5) of its magicka, with its target within the target's
+  reach, both radii and fCombatMagicWardAttackRangeDistance (384) (wardTargetNear; TODO(M13): the
+  equip check's choice by the ward's duration against fCombatMagicDefault{Short,Long}Duration is
+  not read), a healing spell less once their health is whole; UseMagic's for its cast time. The combat AI's spells, staffs, heals,
   potions, summons, wards and buffs: docs/ai.md, "Combat AI".
 - What shows (src/shell/actor-casting.ts, magic-projectiles.ts, magic-fx.ts): the casting art
   in the hand (MGEF casting art, on the player's hands while their magic is drawn; dual cast:

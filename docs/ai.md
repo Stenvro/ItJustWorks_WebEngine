@@ -3266,8 +3266,12 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
 - **Casters** (`chooseCombatSupport`: the Potion slot, then `chooseCaster`; `holdsRestore`,
   `holdsWard`; the stage's support every second, `src/shell/actor-combat-ai.ts`): a health
   potion below its restore share, a magicka potion below its magicka share, then a ward against
-  what comes at it with
-  fCombatMagicWardMagickaCastLimit of its magicka, held at least fCombatMagicWardMinCastTime;
+  an attack that threatens it (`wardThreatened`: a projectile, a swing within its reach ×
+  fCombatMagicWardAttackReachMult, a drawn bow or an aimed spell at it), taken up above
+  fCombatMagicWardMagickaEquipLimit of its magicka with its target near (`wardTargetNear`,
+  fCombatMagicWardAttackRangeDistance), held at least fCombatMagicWardMinCastTime, then until
+  its magicka is below fCombatMagicWardMagickaCastLimit or fCombatMagicWardCooldownTime passed
+  without a threat (observed in the original);
   restore below its restore share, a held healing spell cast on until its health is
   fCombatRestoreStopCastThreshold past that share (inferred); a summons (not within
   fCombatMagicSummonRestrictTime); the nearest corpse raised within
