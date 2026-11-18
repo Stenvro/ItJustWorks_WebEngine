@@ -261,6 +261,12 @@ and 290 built-in ones the readers ask for by name.
       by a shield or a weapon. A stagger's start takes the perks last and holds at most
       fStaggerMaxDuration (combat-state.ts tickStagger).
 - [x] Knockback: an unblocked hit's push back on the controller (knockback.ts, round 4).
+- [x] A melee blow or a bash that meets no actor but an object (clutter, a destructible, a
+      container, a door) or the world lands on it once an attack, as on an actor: its knock, its
+      recoil, its impact, the object's OnHit and a destructible's damage once, however often the
+      attack's hit frame is raised (actor-combat.ts #strike; tests/conformance/combat/
+      object-blow.test.ts). A shot ends at the first thing it meets and a spell projectile at its
+      impact, so each lands once by itself (combat-projectiles.ts, magic-projectiles.ts).
 - [x] Ranged combat: draw, hold, release, strafe, cover (ranged.test.ts).
 - [x] Line of fire: an actor in the way holds the shot, given up after
       fCombatAimProjectileBlockedTime (ranged.test.ts).

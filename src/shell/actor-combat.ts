@@ -2553,6 +2553,17 @@ export class ActorCombat implements CombatBridge {
       const wall = physics?.queriesCurrent
         ? physics.raycast(chest, forward, strike.reach, Layer.weapon, undefined, fighter.reference)
         : undefined;
+      // What it met is struck once an attack too, as an actor is (above, in the same step): an
+      // attack's hit frame raised again (two clips of a blend, within a frame or two) knocked the
+      // clutter twice over, recoiled twice, sounded its impact twice and told the object's OnHit
+      // and took its destructible health twice (seen in the playtest and in the physics work: a
+      // player's one blow on an object landed twice). The world itself (the
+      // landscape, a wall of no reference) counts as one thing met.
+      if (wall) {
+        const met = wall.owner?.reference ?? 0;
+        if (current.struck.has(met)) return;
+        current.struck.add(met);
+      }
       // The blow knocks the moving body it met (clutter, a corpse's ragdoll) by the weapon's
       // weight (src/gameplay/impulses.ts).
       if (wall && physics) {
