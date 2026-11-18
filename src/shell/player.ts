@@ -73,6 +73,7 @@ import { readPlayerBody, type PlayerBody } from '../world/player-body.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import { parseWaterBody } from '../world/water.ts';
 import type { WaterHarm } from '../gameplay/water-hazard.ts';
+import { FirstPersonDampening, readDampeningSettings } from './first-person-dampening.ts';
 import {
   floatSpeed,
   submersion,
@@ -737,6 +738,9 @@ export class Player implements Camera {
       { reference: 0x14, kind: 'actor' },
     );
     this.yaw = yaw;
+    this.dampening = new FirstPersonDampening(
+      readDampeningSettings((key) => ini.lookup('Camera', key)),
+    );
     this.#alwaysRun = ini.bool('Controls', 'bAlwaysRunByDefault');
     this.near = ini.number('Display', 'fNearDistance');
     // fDefaultWorldFOV is the horizontal field of view of a 4:3 frame (wider screens see
@@ -1568,7 +1572,17 @@ export class Player implements Camera {
       const [x, y, z] = this.#eyeOffset();
       const sin = Math.sin(this.yaw);
       const cos = Math.cos(this.yaw);
-      this.position = [feet[0] + x * cos + y * sin, feet[1] - x * sin + y * cos, feet[2] + z];
+      // The dampening eases the view after the player's place (a stair, a stop).
+      const [dx, dy, dz] = this.dampening.update(feet, deltaSeconds, {
+        override: this.cameraOverride,
+        paired: this.paired?.() === true,
+        ownControls: this.pilot === undefined,
+      });
+      this.position = [
+        feet[0] + x * cos + y * sin + dx,
+        feet[1] - x * sin + y * cos + dy,
+        feet[2] + z + dz,
+      ];
       return;
     }
     // Camera3rd hangs on the skeleton's root, not on its animated bones: a seated body (a cart's
@@ -1676,10 +1690,16 @@ export class Player implements Camera {
 
   /**
    * CameraOverrideStart / CameraOverrideStop (the player's graph): observed in the
-   * original, a flag of the camera's third-person state set and cleared. TODO(M13): what the
-   * third-person camera does with it is not read; nothing reads it yet.
+   * original, a flag of the first-person camera state set and cleared; while it is set the
+   * first-person dampening fades out (src/shell/first-person-dampening.ts).
    */
   cameraOverride = false;
+
+  /** The first-person camera's dampening of the player's place (observed in the original). */
+  readonly dampening: FirstPersonDampening;
+
+  /** Whether the player is in a paired interaction (a killmove): the dampening fades. */
+  paired: (() => boolean) | undefined;
 
   /**
    * The bow's zoom as the player's graph has it (BowZoomStart / BowZoomStop: observed in the
@@ -1693,9 +1713,14 @@ export class Player implements Camera {
     else this.#pitchOverride.end();
   }
 
-  /** A load, a new place, death: the camera's PitchOverride flag ends. */
+  /**
+   * A load, a new place, death: the camera's PitchOverride flag ends, and the first-person
+   * state's dampening and override flag are reset as the original reverts that state.
+   */
   endPitchOverride(): void {
     this.#pitchOverride.end();
+    this.dampening.reset();
+    this.cameraOverride = false;
   }
 
   /**

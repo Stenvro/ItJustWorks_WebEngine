@@ -14,6 +14,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AnimationDataLibrary } from '../../../src/animation/animation-data-library.ts';
 import { BehaviorRuntime } from '../../../src/animation/behavior-runtime.ts';
 import { CLIP_MODE } from '../../../src/animation/clip-playback.ts';
+import { pitchedMotion } from '../../../src/animation/extracted-motion.ts';
+import { INI_DEFAULTS } from '../../../src/world/ini-settings.ts';
 import {
   readAnimationContainer,
   type AnimationBinding,
@@ -371,5 +373,27 @@ describe.skipIf(!hasGamedata())('every vanilla graph (a data sweep)', () => {
   // engine's would differ from it only on such a clip, and no vanilla graph plays one mirrored.
   it('no mirrored clip of a vanilla graph is additive', () => {
     expect([...mirrored]).toEqual([]);
+  });
+});
+
+describe('the extracted motion turned by the controller’s pitch (original: bApplyPitchToExtractedMotion)', () => {
+  it('level, the motion is as the clip gives it', () => {
+    expect(pitchedMotion([3, 100, -2], 0)).toEqual([3, 100, -2]);
+    expect(pitchedMotion([3, 100, -2], 1e-8)).toEqual([3, 100, -2]);
+  });
+  it('leaning 30° up a slope, a clip’s forward step climbs it: cos 30° of it is ground speed', () => {
+    const [x, y, z] = pitchedMotion([0, 100, 0], Math.PI / 6);
+    expect(x).toBe(0);
+    expect(y).toBeCloseTo(86.6, 1);
+    expect(z).toBeCloseTo(50, 5);
+  });
+  it('leaning down, it falls; the sideways motion is not turned', () => {
+    const [x, y, z] = pitchedMotion([5, 100, 0], -Math.PI / 6);
+    expect(x).toBe(5);
+    expect(y).toBeCloseTo(86.6, 1);
+    expect(z).toBeCloseTo(-50, 5);
+  });
+  it('the built-in default turns it', () => {
+    expect(INI_DEFAULTS.Animation.bApplyPitchToExtractedMotion).toBe(1);
   });
 });
