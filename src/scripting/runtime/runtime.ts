@@ -2813,6 +2813,18 @@ export class ScriptRuntime implements VmHost {
     ) as Vec3;
   }
 
+  /** Its base object's bounds (OBND) about its origin, at its scale; undefined without them. */
+  async objectBounds(reference: number): Promise<{ min: Vec3; max: Vec3 } | undefined> {
+    const base = await this.baseOf(reference);
+    const obnd =
+      base === undefined ? undefined : (await this.forms.record(base))?.fields.first('OBND');
+    if (!obnd || obnd.length < 12) return undefined;
+    const scale = (await this.placement(reference))?.scale ?? 1;
+    const v = view(obnd);
+    const at = (i: number): number => v.getInt16(i * 2, true) * scale;
+    return { min: [at(0), at(1), at(2)], max: [at(3), at(4), at(5)] };
+  }
+
   /** Its Havok mass (its loaded bodies'; 0 while not loaded, as in the game). */
   mass(reference: number): number {
     return this.world.mass?.(reference) ?? 0;

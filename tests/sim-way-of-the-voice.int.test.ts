@@ -533,16 +533,20 @@ describe.skipIf(!hasGamedata())('MQ105 The Horn of Jurgen Windcaller', () => {
   }, 600_000);
 
   // The tomb in sight (190: 180's RegisterForLOS(player, tomb), OnGainLOS), the note in the
-  // Horn's place taken (200: the Horn quest's 20, Delphine's MQ106 begun). TODO(M13): 190 does
-  // not come here (reached 2026-10-29 by an earlier walk chained over saves): the player's
-  // line of sight to the tomb (actor-senses' camera check and ray) is not yet looked into. The
-  // three cases after it wait for this one.
-  it.skip('finds the note in the tomb (MQ105 190-200, Horn 20)', async () => {
+  // Horn's place taken (200: the Horn quest's 20, Delphine's MQ106 begun). OnGainLOS sets 190
+  // only while the player stands in the tomb's trigger (mq105questscript); the tomb is in sight
+  // from the hall's door, so its first OnGainLOS came there and set nothing, and no other came
+  // while it stayed in sight (tests/conformance/scripting/line-of-sight.test.ts). In the trigger
+  // the player looks back the way they came, then at the tomb.
+  it('finds the note in the tomb (MQ105 190-200, Horn 20)', async () => {
     if (!afterHall) return;
     const sim = await loadSim(afterHall);
     try {
       const tomb = await sim.position(TOMB);
-      expect(tomb && (await fightTo(sim, tomb, 120, 200))).toBe(true);
+      expect(tomb && (await fightTo(sim, tomb, 120, 300))).toBe(true);
+      const hall = await sim.position(SET_STAGE_180);
+      if (hall) sim.look([hall[0], hall[1], hall[2]]);
+      await sim.step(1);
       await face(sim, TOMB, true);
       expect(await sim.until(() => sim.stageDone(MQ105, 190), 10)).toBe(true);
       expect(sim.activate(TOMB_NOTE)).toBe(true);
@@ -557,13 +561,10 @@ describe.skipIf(!hasGamedata())('MQ105 The Horn of Jurgen Windcaller', () => {
   // To Riverwood and the Sleeping Giant Inn: asking Delphine for the attic room (MQ106 10), in
   // at the room (20); she follows (25) and her scene's ForceGreet opens MQ106DelphineIntroTopic,
   // whose greeting asks for that package (GetIsCurrentPackage): 30, the Horn given back (MQ105
-  // 220, the Horn's 30). TODO(M13): no greeting passes. The info's GetIsCurrentPackage
-  // (MQ106DelphineIntroGreet, her scene's package action) fails: the ForceGreet procedure
-  // succeeds as it opens the conversation, so the package (and the scene action) is done before
-  // the line is chosen. Holding the ForceGreet on until its conversation ended gave MQ106 30
-  // and MQ105 220 here, but stopped Gerdur's greeting in MQ102B; when the engine ends a
-  // ForceGreet is still to be found.
-  it.skip('has Delphine meet the player in the Sleeping Giant Inn (MQ106 10-30, MQ105 220)', async () => {
+  // 220, the Horn's 30). Found 2026-10-29: no greeting passed; the ForceGreet procedure was
+  // done as it opened the conversation, so its package had ended before the line was chosen.
+  // Now it is done as the conversation ends (tests/conformance/ai/force-greet.test.ts).
+  it('has Delphine meet the player in the Sleeping Giant Inn (MQ106 10-30, MQ105 220)', async () => {
     if (!afterNote) return;
     const sim = await loadSim(afterNote);
     try {
@@ -596,7 +597,7 @@ describe.skipIf(!hasGamedata())('MQ105 The Horn of Jurgen Windcaller', () => {
   // Back up to High Hrothgar with the Horn: Arngeir takes it (240) and the masters gather; the
   // player stands in the hall's middle (242), the Greybeards greet them, Wulfgar's word appears
   // and teaches Dah (255-265), and the greeting ends the quest (300, the Horn's 60).
-  it.skip('has the player return the Horn to Arngeir (MQ105 240-300)', async () => {
+  it('has the player return the Horn to Arngeir (MQ105 240-300)', async () => {
     if (!afterDelphine) return;
     const sim = await loadSim(afterDelphine);
     try {
