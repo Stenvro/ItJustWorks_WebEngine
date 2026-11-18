@@ -1018,12 +1018,15 @@ export class CastingEngine {
     // magic-engine.ts); a fire and forget spell's act at once by what reaches.
     let scale =
       options.effectiveness === undefined ? undefined : Math.max(0, options.effectiveness);
-    if (actor && hostile && !(await runtime.actors.isDead(target))) {
-      if (await this.#absorbed(delivered, target)) return 0;
+    // A ward meets hostile and detrimental spells alike (magic-engine.ts warded); Spell
+    // Absorption takes only the hostile.
+    const warded = hostile || (target !== caster && actor && (await runtime.magic.warded(item)));
+    if (actor && warded && !(await runtime.actors.isDead(target))) {
+      if (hostile && (await this.#absorbed(delivered, target))) return 0;
       const ward = await this.#ward(delivered, target, options);
       if (ward === 'absorbed') return 0;
       if (ward !== undefined) scale = (scale ?? 1) * ward;
-    } else if (actor && !hostile) await this.#friendlyWard(delivered, target, options);
+    } else if (actor && !warded) await this.#friendlyWard(delivered, target, options);
     const concentration = options.seconds !== undefined;
     // A concentration spell's effects that last while it is held go on rather than anew.
     const kept = concentration
@@ -1105,8 +1108,9 @@ export class CastingEngine {
   }
 
   /**
-   * A ward (WardPower, grown by a ward spell held) meets a hostile spell from the front: its
-   * damage (the magnitudes of its hostile value effects on Health, Magicka or Stamina) up to the
+   * A ward (WardPower, grown by a ward spell held) meets a hostile or detrimental spell from the
+   * front: its damage (the magnitudes of its hostile or detrimental value effects on Health,
+   * Magicka or Stamina) up to the
    * ward's strength is absorbed, the strength taken down by it; more breaks the ward and the
    * rest passes (UESP "Skyrim:Ward"). Returns 'absorbed', the share that passes, or undefined
    * (no ward). TODO(M13): the engine's rule for effects without damage (taken as absorbed).
@@ -1123,7 +1127,7 @@ export class CastingEngine {
     let damage = 0;
     for (const entry of delivered.item.effects) {
       const effect = await runtime.magic.effect(entry.effect);
-      if (!effect || (effect.flags & EffectFlag.hostile) === 0) continue;
+      if (!effect || (effect.flags & (EffectFlag.hostile | EffectFlag.detrimental)) === 0) continue;
       if (
         effect.actorValue === HEALTH ||
         effect.actorValue === MAGICKA ||

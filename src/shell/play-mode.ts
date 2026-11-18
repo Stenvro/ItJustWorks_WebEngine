@@ -12,6 +12,7 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { CellObject } from '../world/cell-loader.ts';
 import { parseItem } from '../world/item-records.ts';
+import { takeFromWorld } from './world-take.ts';
 import { DefaultObjectUse } from '../world/default-objects.ts';
 import { itemSound } from '../gameplay/inventory.ts';
 import {
@@ -60,7 +61,7 @@ import { MenuHost, type Menu } from '../ui/menu-host.ts';
 import { MenuName } from '../ui/menu-stack.ts';
 import { floatingMarker } from './hud-elements.ts';
 import type { GameSession } from './game-session.ts';
-import { headPosition, type PlacedActor } from './actors.ts';
+import { speakerPosition, type DialogueSpeaker } from './actors.ts';
 import type { PlayerData } from './player.ts';
 import type { PlayerView } from './race-menu.ts';
 import type { Terminal } from './terminal.ts';
@@ -1272,7 +1273,12 @@ export class PlayMode {
    * its dialogue mode and the mouse on the menu until it ends (an actor with nothing to talk
    * about only says its greeting: no menu, the mouse stays the game's).
    */
-  #talk(dialogue: DialogueMenu, menus: GameMenus, speaker: PlacedActor, opening?: number): void {
+  #talk(
+    dialogue: DialogueMenu,
+    menus: GameMenus,
+    speaker: DialogueSpeaker,
+    opening?: number,
+  ): void {
     if (dialogue.isOpen || menus.isOpen || this.#session.menuMode) return;
     const session = this.#session;
     // The view turns to the speaker and zooms in while they talk (src/shell/dialogue-camera.ts).
@@ -1285,7 +1291,7 @@ export class PlayMode {
             session.menuStack.open(MenuName.dialogue);
             this.#talking = true;
             this.#world.capturePointer(false);
-            camera?.open(() => headPosition(speaker));
+            camera?.open(() => speakerPosition(speaker));
           },
           closed: () => {
             this.#talking = false;
@@ -1373,11 +1379,7 @@ export class PlayMode {
   async #take(object: CellObject): Promise<void> {
     const runtime = this.#session.scriptsReady;
     if (!runtime) return;
-    const stealing = !(await runtime.crime.mayTake(PLAYER_REF, object.reference));
-    await runtime.pickUp(object.reference, PLAYER_REF);
-    const taken = runtime.state.references.get(object.reference)?.container?.count ?? 1;
-    if (stealing) await runtime.crime.steal(PLAYER_REF, object.base, taken, object.reference);
-    runtime.detach(runtime.storyEvents.pickedUp(object.base, object.reference, stealing));
+    await takeFromWorld(runtime, object);
     const record = await runtime.forms.record(object.base);
     const item = record && parseItem(record);
     const sounds = this.#session.soundSystem;

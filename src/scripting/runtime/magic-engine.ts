@@ -760,6 +760,20 @@ export class MagicEngine {
   }
 
   /**
+   * Whether a ward meets a magic item: one of its effects is hostile or detrimental. Derived
+   * from the data: MG01's ward lesson has Tolfdir cast MG01TeachFirebolt, whose fire is
+   * detrimental but not hostile (it makes no enemy of the student), at the player's ward, and
+   * passes the lesson only when the ward takes it (OnWardHit) without its effect reaching them
+   * (MG01FireEffectScript). TODO(M13): the engine's own rule beyond that case is inferred.
+   */
+  warded(item: MagicItemRecord): Promise<boolean> {
+    return this.#anyEffect(
+      item,
+      (flags) => (flags & (EffectFlag.hostile | EffectFlag.detrimental)) !== 0,
+    );
+  }
+
+  /**
    * Whether a hostile item's hit hurts: some hostile effect of it is not Painless (MGEF DATA
    * 0x4000000). Creation Kit "Magic Effect": with Painless a hostile effect's target does not
    * cry out in pain (the player: no hit blur, no ouch sound). The vanilla Painless hostile

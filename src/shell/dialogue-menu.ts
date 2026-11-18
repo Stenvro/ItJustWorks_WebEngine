@@ -18,7 +18,7 @@ import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { afterInfo } from '../scripting/runtime/dialogue-rules.ts';
 import { InfoFlag } from '../world/dialogue-records.ts';
 import { silentLineSeconds } from '../world/dialogue.ts';
-import type { PlacedActor, SpokenLine } from './actors.ts';
+import type { DialogueSpeaker, SpokenLine } from './actors.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
 
@@ -36,7 +36,7 @@ export class DialogueMenu {
   readonly #session: GameSession;
   readonly #terminal: Terminal;
   #menu: Menu | undefined;
-  #speaker: PlacedActor | undefined;
+  #speaker: DialogueSpeaker | undefined;
   #choices: TopicChoice[] = [];
   /** The topic said as the player walks away from the topics listed now (INFO Walk Away). */
   #walkAway: TopicChoice | undefined;
@@ -104,7 +104,7 @@ export class DialogueMenu {
    * in the game: a guard's line as the player talks to them).
    */
   async talk(
-    speaker: PlacedActor,
+    speaker: DialogueSpeaker,
     events: { readonly opened: () => void; readonly closed: () => void },
     opening?: number,
   ): Promise<void> {

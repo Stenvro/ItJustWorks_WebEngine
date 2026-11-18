@@ -158,4 +158,25 @@ describe.skipIf(!hasGamedata())('interiors on the local game data', () => {
     }
     expect(navmesh?.doors).toHaveLength(1);
   });
+
+  // The amulet on Saarthal's wall (MG02AmuletTrigger) is an activator placed as a box alone, on
+  // the non-collidable layer the crosshair's pick meets: the player activates it, though it has
+  // no model. A trigger's box (L_TRIGGER) beside it is not one.
+  it('keeps an activator placed as a box on the non-collidable layer to be activated', async () => {
+    const amulet = 0x79b2e;
+    const cell = db.cellOfReference(amulet);
+    expect(cell).toBeDefined();
+    const data = await loadCellData(db, cell ?? 0);
+    const box = data.activationBoxes?.find((each) => each.reference === amulet);
+    expect(box).toMatchObject({ baseType: 'ACTI', editorId: 'MG02AmuletTrigger' });
+    expect(box?.name).not.toBe('');
+    expect(data.objects.some((object) => object.reference === amulet)).toBe(false);
+    const triggers = data.primitives.filter((primitive) => primitive.layer === 12);
+    expect(triggers.length).toBeGreaterThan(0);
+    for (const trigger of triggers) {
+      expect(data.activationBoxes?.some((each) => each.reference === trigger.reference)).toBe(
+        false,
+      );
+    }
+  });
 });

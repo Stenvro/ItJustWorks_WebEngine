@@ -43,6 +43,35 @@ describe.skipIf(!hasGamedata())('an actor’s activation (headless simulation)',
     expect(sim.runtime.state.references.get(item.object.reference)?.container?.holder).toBe(actor);
   });
 
+  // The player's activation of an item lying in the world takes it (Play's Take, world-take.ts);
+  // a book's opens the book menu, which takes it only by its Take (Sim.takeBook).
+  it('has the player take an item, and a book only by the book menu’s Take', async () => {
+    const item = placed(
+      ({ object }) =>
+        object.baseType === 'MISC' &&
+        object.item !== undefined &&
+        sim.runtime.state.references.get(object.reference)?.container === undefined,
+    );
+    expect(item).toBeDefined();
+    if (!item) return;
+    const before = await sim.runtime.itemCount(PLAYER_REF, item.object.base);
+    expect(sim.activate(item.object.reference)).toBe(true);
+    await sim.step(0.2);
+    expect(await sim.runtime.itemCount(PLAYER_REF, item.object.base)).toBe(before + 1);
+    const book = placed(({ object }) => object.readable === true);
+    expect(book).toBeDefined();
+    if (!book) return;
+    const books = await sim.runtime.itemCount(PLAYER_REF, book.object.base);
+    expect(sim.activate(book.object.reference)).toBe(true);
+    await sim.step(0.2);
+    expect(sim.events('bookRead').some((read) => read.reference === book.object.reference)).toBe(
+      true,
+    );
+    expect(await sim.runtime.itemCount(PLAYER_REF, book.object.base)).toBe(books);
+    expect(await sim.takeBook(book.object.reference)).toBe(true);
+    expect(await sim.runtime.itemCount(PLAYER_REF, book.object.base)).toBe(books + 1);
+  });
+
   it('does not seat the actor or the player in furniture', async () => {
     const chair = placed(({ object }) => object.furniture?.sit === true);
     expect(chair).toBeDefined();
