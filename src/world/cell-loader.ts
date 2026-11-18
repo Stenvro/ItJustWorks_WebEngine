@@ -44,6 +44,7 @@ import {
   type CellRooms,
 } from './cell-rooms.ts';
 import type { GameRecord, RecordDatabase } from './record-db.ts';
+import { Layer, readCollisionMatrix, type CollisionMatrix } from '../physics/collision-layers.ts';
 
 export interface CellObject {
   readonly reference: number;
@@ -269,6 +270,11 @@ export interface CellPrimitive {
   readonly world: Mat4;
   /** XTRI, else the collision box layer. */
   readonly layer: number;
+  /**
+   * The activator a model-less activator's volume is (its `model` empty): the player activates
+   * it where the crosshair's pick meets the volume, as any activator.
+   */
+  readonly activator?: CellObject;
 }
 
 /**
@@ -325,15 +331,23 @@ function objectRagdollOf(record: Pick<GameRecord, 'fields'>): Pick<CellObject, '
   return ragdoll ? { ragdoll } : {};
 }
 
+const pickMatrices = new WeakMap<RecordDatabase, Promise<CollisionMatrix>>();
+/** The load order's collision matrix, read once per database (every COLL record). */
+function pickMatrix(db: RecordDatabase): Promise<CollisionMatrix> {
+  let matrix = pickMatrices.get(db);
+  if (!matrix) {
+    matrix = readCollisionMatrix(db);
+    pickMatrices.set(db, matrix);
+  }
+  return matrix;
+}
+
 /** The engine's collision primitive marker (STAT). */
 const COLLISION_MARKER = 0x21;
 /** SkyrimLayer L_TRIGGER: the layer of triggers' primitives without XTRI. */
 const TRIGGER_LAYER = 12;
 /** SkyrimLayer L_COLLISIONBOX: the layer of collision primitives without XTRI. */
 const COLLISION_BOX_LAYER = 35;
-/** SkyrimLayer L_NONCOLLIDABLE: nothing collides with it but the item picker (the crosshair's
- * pick: COLL records, tools/layer-matrix.ts) and a few picks besides. */
-const NONCOLLIDABLE_LAYER = 15;
 
 /** Where a load door leads: the destination cell, its worldspace, and its name. */
 export interface DoorDestination {
@@ -505,10 +519,10 @@ export interface CellData {
   /** Collision primitives; filter with `enabledReferences`. */
   readonly primitives: readonly CellPrimitive[];
   /**
-   * Activators placed as a primitive alone (XPRM, no model) on the non-collidable layer: the
-   * crosshair rests on the box and the player activates them (MG02AmuletTrigger, the amulet on
-   * Saarthal's wall), activated as any activator is. Filter with
-   * `enabledReferences`.
+   * Activators placed as a primitive alone (XPRM, no model) whose volume the crosshair's pick
+   * meets (the non-collidable layer): the crosshair rests on the box and the player activates them
+   * (MG02AmuletTrigger, the amulet on Saarthal's wall), activated as any activator is. They are
+   * the primitives' `activator`s, listed. Filter with `enabledReferences`.
    */
   readonly activationBoxes?: readonly CellObject[];
   /** Navmesh obstacles; filter with `enabledReferences` (and their open state). */
@@ -901,27 +915,53 @@ export async function loadCellData(
     }
     // A trigger: an activator placed with a primitive (XPRM), its volume on L_TRIGGER (XTRI
     // aside), whose scripts hear who enters and leaves it (defaultSetStageTRIG: MQ101's carts
-    // set stage 20 at Helgen's gate). Without a model it is nothing else, unless its box is on
-    // the non-collidable layer, which the crosshair's pick meets: an activation box.
+    // set stage 20 at Helgen's gate). Without a model it is nothing else.
+    // One without a model whose volume is on a layer the crosshair's pick (L_ITEMPICKER) meets
+    // in the load order's collision matrix is activated through that volume as any activator
+    // (its name and RNAM for the prompt, VNAM's sound): Dimhollow's coffin activator, the
+    // bookshelves' click triggers and the mannequins' activate triggers are all on
+    // L_NONCOLLIDABLE, as is the amulet on Saarthal's wall (MG02AmuletTrigger): these are also
+    // listed as the cell's activation boxes. A volume the pick does not meet (L_TRIGGER: the
+    // bookshelves' own enter triggers, scene triggers) is only a trigger.
     if (base.type === 'ACTI' && record.fields.has('XPRM')) {
+      const modelless = !base.fields.has('MODL');
       const primitive = primitiveOf(record, referenceMatrix(ref), TRIGGER_LAYER);
-      if (primitive) primitives.push(primitive);
-      if (primitive?.layer === NONCOLLIDABLE_LAYER && !base.fields.has('MODL')) {
-        activationBoxes.push({
-          reference: ref.formId,
-          base: ref.base,
-          baseType: base.type,
-          editorId: base.editorId ?? '',
-          name: base.text('FULL') ?? '',
-          model: '',
-          world: referenceMatrix(ref),
-          water: undefined,
-          ...(((record.fields.first('XAPD')?.[0] ?? 0) & 1) !== 0 && { parentActivateOnly: true }),
-          ...objectSoundsOf(base),
-          ...(base.text('RNAM') && { activateText: base.text('RNAM') }),
-        });
+      const name = base.text('FULL') ?? '';
+      if (primitive) {
+        const before = primitives.length;
+        const activateText = base.text('RNAM');
+        // TODO(M13): inferred, not confirmed in the original: that an unnamed one is never
+        // activated by the player even where the pick meets it (the crosshair names nothing,
+        // so we offer nothing; every pickable model-less activator in the vanilla data is
+        // named, so no vanilla case tells the two apart).
+        primitives.push(
+          modelless &&
+            name !== '' &&
+            (await pickMatrix(db)).collides(Layer.itemPicker, primitive.layer)
+            ? {
+                ...primitive,
+                activator: {
+                  reference: ref.formId,
+                  base: ref.base,
+                  baseType: base.type,
+                  editorId: base.editorId ?? '',
+                  name,
+                  model: '',
+                  world: referenceMatrix(ref),
+                  water: undefined,
+                  ...(((record.fields.first('XAPD')?.[0] ?? 0) & 1) !== 0 && {
+                    parentActivateOnly: true,
+                  }),
+                  ...objectSoundsOf(base),
+                  ...(activateText && { activateText }),
+                },
+              }
+            : primitive,
+        );
+        const activator = primitives[before]?.activator;
+        if (activator) activationBoxes.push(activator);
       }
-      if (!base.fields.has('MODL')) continue;
+      if (modelless) continue;
     }
     // Rooms, portals and occluders cull what is drawn; they stay markers too.
     addCullingMarker(culling, record, base.formId, referenceMatrix(ref), ref.scale);

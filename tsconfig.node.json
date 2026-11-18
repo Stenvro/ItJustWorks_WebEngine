@@ -13,6 +13,7 @@
     "tests/helpers/sim.ts",
     "tests/helpers/follower.ts",
     "tests/helpers/quest-play.ts",
+    "tests/helpers/sim-*.ts",
     "tests/sim-*.ts",
     "tests/conformance",
     "tools/sim-*.ts"

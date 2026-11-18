@@ -269,12 +269,43 @@ export class Sim {
    * they stay locked, as a player who met a locked door takes another way.
    */
   readonly #lockedDoors = new Map<number, Vec3>();
+  /**
+   * The line each conversation's menu opened with, picked as it opened, as the dialogue menu
+   * picks it (src/shell/dialogue-menu.ts): a force greet's info asking GetIsCurrentPackage of its
+   * ForceGreet is chosen while that package runs, though the conversation is heard later.
+   */
+  readonly #openings = new WeakMap<object, Promise<SpokenInfo | undefined>>();
 
   constructor(world: SimWorld, vfs: Vfs, db: RecordDatabase) {
     openSims.add(this);
     this.world = world;
     this.#vfs = vfs;
     this.db = db;
+    world.log.onTalk = (record) => {
+      const speaker = record.reference;
+      if (speaker === undefined) return;
+      const line = this.#openingLine(speaker, record.opening);
+      // (One never heard leaves no rejection unhandled; one heard is awaited, and throws there.)
+      line.catch(() => undefined);
+      this.#openings.set(record, line);
+    };
+  }
+
+  /** A conversation's first line (its greeting, or its opening topic's), picked in dialogue. */
+  async #openingLine(
+    speaker: number,
+    opening: number | undefined,
+  ): Promise<SpokenInfo | undefined> {
+    const runtime = this.runtime;
+    const before = runtime.dialogueSpeaker;
+    runtime.dialogueSpeaker = speaker;
+    try {
+      return opening === undefined
+        ? await runtime.dialogue.greeting(speaker)
+        : await runtime.dialogue.topicLine(opening, speaker);
+    } finally {
+      if (runtime.dialogueSpeaker === speaker) runtime.dialogueSpeaker = before;
+    }
   }
 
   get runtime(): ScriptRuntime {
@@ -1430,10 +1461,12 @@ export class Sim {
     const engine = this.runtime.dialogue;
     // In dialogue from before the greeting is chosen (src/shell/dialogue-menu.ts).
     this.runtime.dialogueSpeaker = speaker;
+    const picked = opened && this.#openings.get(opened);
     const greeting = await this.#drive(
-      opened?.opening === undefined
-        ? engine.greeting(speaker)
-        : engine.topicLine(opened.opening, speaker),
+      picked ??
+        (opened?.opening === undefined
+          ? engine.greeting(speaker)
+          : engine.topicLine(opened.opening, speaker)),
     );
     this.runtime.state.actor(speaker).talkedToPlayer = true;
     this.#conversation = { speaker, choices: [] };

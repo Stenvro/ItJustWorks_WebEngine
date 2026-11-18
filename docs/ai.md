@@ -3464,7 +3464,9 @@ engine's ([Combat movement](#combat-movement)).
   same rules of plain facts for tests and tools, with crime's faction and relationship rule and
   without frenzy, a script's combat or guards): summons, reanimated and commanded actors are their
   commander's allies and share its reactions; the player's teammates are the player's allies; one
-  scripts set to be attacked on sight (SetAttackActorOnSight) is everyone's enemy; else factions
+  scripts set to be attacked on sight (SetAttackActorOnSight) is the enemy of all who do not
+  hold it a friend or an ally (the Volkihar vampires name the transformed Vampire Lord player's
+  DLC1PlayerVampireLordFaction a friend; that an ally is spared too is inferred); else factions
   and relationships, one rule for both (`factionTies` and `reaction` in
   `src/gameplay/factions.ts`; docs/gameplay.md "Factions and reactions"): a relationship of enemy
   or worse, or a faction of the actor set as the player's enemy, makes an enemy; a relationship

@@ -151,9 +151,14 @@ describe('combat reactions', () => {
     expect(await combatReaction(world, WOLF, SUMMON)).toBe(FightReaction.enemy);
   });
 
-  it('makes one attacked on sight everyone’s enemy, and a player enemy faction the player’s', async () => {
-    const onSight = facts({ attackedOnSight: (actor) => actor === BANDIT });
+  it('makes one attacked on sight the enemy of all but its friends and allies, and a player enemy faction the player’s', async () => {
+    const onSight = facts({ attackedOnSight: (actor) => actor === BANDIT || actor === PRISONER });
     expect(await combatReaction(onSight, GUARD, BANDIT)).toBe(FightReaction.enemy);
+    expect(await combatReaction(onSight, WOLF, BANDIT)).toBe(FightReaction.enemy);
+    // A friend stays one (the Volkihar vampires and the transformed Vampire Lord player), an
+    // ally too.
+    expect(await combatReaction(onSight, WOLF, PRISONER)).toBe(FightReaction.friend);
+    expect(await combatReaction(onSight, BANDIT + 1, BANDIT)).toBe(FightReaction.ally);
     const wanted = facts({ playerEnemy: (faction) => faction === CRIME_FACTION });
     expect(await combatReaction(wanted, GUARD, PLAYER_REF)).toBe(FightReaction.enemy);
     expect(await combatReaction(wanted, GUARD, BANDIT)).toBe(FightReaction.neutral);
