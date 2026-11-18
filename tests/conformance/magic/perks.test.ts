@@ -14,6 +14,8 @@ import { parsePerk } from '../../../src/world/perk-records.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
 import { openGameFolder } from '../../../tools/gamedata-path.ts';
 import { hasGamedata } from '../../helpers/sim.ts';
+import { USAGE_MONITOR_EFFECT } from '../../../src/gameplay/magic/addiction.ts';
+import type { MagicItemRecord } from '../../../src/world/magic-records.ts';
 import {
   isMine,
   MAX_PLAYER_RUNES,
@@ -400,26 +402,78 @@ describe('Mod Addiction Chance (the engine asks it; no vanilla potion has an add
         }
       const base = await magic.item(potion);
       if (!base?.potion || addiction === 0) throw new Error('potion or spell not read');
+      // Observed in the original: a chance of 0 gives no addiction and asks no perk.
+      const never = {
+        ...base,
+        formId: 0x7f000500,
+        potion: { ...base.potion, addiction, addictionChance: 0 },
+      };
       const addictive = {
         ...base,
         formId: 0x7f000501,
-        potion: { ...base.potion, addiction, addictionChance: 0 },
+        potion: { ...base.potion, addiction, addictionChance: 0.5 },
       };
+      // Potions carrying the engine's Usage Monitor Effect (600 s; a drink of the same potion
+      // replaces the monitor its last drink left, as any recast of the same item).
+      const potionData = base.potion;
+      const monitoredBy = (formId: number, magnitude: number) => ({
+        ...base,
+        formId,
+        effects: [
+          ...base.effects,
+          { effect: USAGE_MONITOR_EFFECT, magnitude, area: 0, duration: 600, conditions: [] },
+        ],
+        potion: { ...potionData, addiction, addictionChance: 0.5 },
+      });
+      const light = monitoredBy(0x7f000502, 60);
+      const monitored = monitoredBy(0x7f000503, 75);
+      const made = new Map<number, MagicItemRecord>(
+        [never, addictive, light, monitored].map((item): [number, MagicItemRecord] => [
+          item.formId,
+          item,
+        ]),
+      );
       const reader = magic.item.bind(magic);
-      magic.item = (formId) =>
-        formId === addictive.formId ? Promise.resolve(addictive) : reader(formId);
+      magic.item = (formId) => {
+        const item = made.get(formId);
+        return item ? Promise.resolve(item) : reader(formId);
+      };
       const applier = perks.apply.bind(perks);
       let chance = 0;
-      perks.apply = (entryPoint, owner, value, targets, context) =>
-        entryPoint === EntryPoint.modAddictionChance
-          ? Promise.resolve(chance)
-          : applier(entryPoint, owner, value, targets, context);
+      const asked: number[] = [];
+      perks.apply = (entryPoint, owner, value, targets, context) => {
+        if (entryPoint !== EntryPoint.modAddictionChance)
+          return applier(entryPoint, owner, value, targets, context);
+        asked.push(value);
+        return Promise.resolve(chance);
+      };
       try {
-        await magic.consumed(PLAYER_REF, addictive.formId);
-        expect(await actors.hasSpell(PLAYER_REF, addiction)).toBe(false);
         chance = 1;
+        await magic.consumed(PLAYER_REF, never.formId);
+        expect(asked).toEqual([]);
+        expect(await actors.hasSpell(PLAYER_REF, addiction)).toBe(false);
+        // The potion's chance through the perks, rolled.
+        chance = 0;
         await magic.consumed(PLAYER_REF, addictive.formId);
+        expect(asked).toEqual([0.5]);
+        expect(await actors.hasSpell(PLAYER_REF, addiction)).toBe(false);
+        // Monitored: 60 running stays within fAddictionUsageMonitorThreshold (Skyrim.esm 70) and asks
+        // nothing, drink after drink; 75 asks the excess, 5 %, whatever the potion's own chance.
+        asked.length = 0;
+        chance = 1;
+        await magic.consumed(PLAYER_REF, light.formId);
+        await magic.consumed(PLAYER_REF, light.formId);
+        expect(asked).toEqual([]);
+        expect(await actors.hasSpell(PLAYER_REF, addiction)).toBe(false);
+        await magic.consumed(PLAYER_REF, monitored.formId);
+        expect(asked).toHaveLength(1);
+        expect(asked[0]).toBeCloseTo(0.05);
         expect(await actors.hasSpell(PLAYER_REF, addiction)).toBe(true);
+        // Taken: the potion's monitors on the drinker end.
+        const running = [...runtime.state.activeEffects.values()].filter(
+          (entry) => entry.item === monitored.formId && entry.effect === USAGE_MONITOR_EFFECT,
+        );
+        expect(running).toEqual([]);
       } finally {
         magic.item = reader;
         perks.apply = applier;
