@@ -29,6 +29,7 @@ import type { Vec3 } from '../render/math.ts';
 import type { InstanceVisibility } from '../render/scene-renderer.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { talkOnActivate } from '../shell/script-talk.ts';
+import { takeItem } from '../shell/take-item.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ActorStage, type StageObstacleCell, type StagePlace } from '../shell/actor-stage.ts';
 import type { AdoptedVehicle } from '../shell/actor-vehicles.ts';
@@ -1674,6 +1675,24 @@ export class SimWorld {
       this.#seat,
       activator,
     );
+    // An item lying in the world the player takes, as Play's object uses take it (a book is
+    // read first there: the simulation's player reads one with Sim.read). Without them the
+    // player's activation took nothing: Korvanjund's Ebony Claw stayed where it lay.
+    if (
+      target &&
+      !this.session.hud.uses &&
+      object.item &&
+      object.readable !== true &&
+      (activator ?? PLAYER_REF) === PLAYER_REF
+    ) {
+      return {
+        ...target,
+        activate: () => {
+          target.activate();
+          this.runtime.detach(takeItem(this.runtime, object.reference, object.base));
+        },
+      };
+    }
     const playback = instance?.playback;
     if (!target || !playback || this.session.hud.uses?.swung) return target;
     // A container the player searches: its lid opens as its menu does (Play's object uses).
