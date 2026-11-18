@@ -1020,12 +1020,13 @@ Who counts each stat (observed in the original: its misc stat handlers and incre
 sales, rewards); Chests Looted the first item taken from a container that is not an actor in one
 opening of the container menu; Barters each buy or sale; Quests Completed every completed quest
 but a miscellaneous one (type 6), with its type's own stat (Main, College, Thieves' Guild, Dark
-Brotherhood, Companions, Daedric, Civil War, Dawnguard, Dragonborn; a completed quest reset takes
-them back, TODO(M13): inferred); Misc Objectives Completed a shown objective of a miscellaneous quest completed; Hours
+Brotherhood, Companions, Daedric, Civil War, Dawnguard, Dragonborn; a completed quest whose completion
+is cleared, as a reset clears it, takes them back; only the rise of Quests Completed is told to
+scripts as a tracked stat); Misc Objectives Completed a shown objective of a miscellaneous quest completed; Hours
 Waiting each hour waited; Days as a Vampire / Werewolf each day passing while the PlayerIsVampire /
 PlayerIsWerewolf globals (default objects PIVV, PIWV) are set; Bunnies Slaughtered a kill in the
-Bunny Faction (AWWW); Mauls a kill while Game.SetBeastForm's flag is set (the werewolf and the
-Vampire Lord, as UESP has them). The vanilla scripts count the rest themselves
+Bunny Faction (AWWW); Mauls any kill while the flag Game.SetBeastForm sets is on (observed in the original: the
+Werewolf and Vampire Lord effects set it too as they start on the player). The vanilla scripts count the rest themselves
 (Game.IncrementStat): Side Quests and Questlines Completed, Werewolf Transformations, Necks
 Bitten, Horses and Houses Owned, Stores Invested In, Persuasions, Bribes, Intimidations, Standing
 Stones Found, Brawls Won, Nirnroots Found, Wings Plucked. Souls Trapped counts each soul the

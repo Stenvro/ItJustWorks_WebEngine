@@ -18,7 +18,8 @@
 //   GrandTheftHorse, AssaultCrime, MurderCrime, LocksPicked, LocationCleared, ShoutMastered;
 //   the stats the scripts count themselves (Game.IncrementStat in the load order's scripts).
 // - What UESP "Skyrim:Statistics" says each counts, where the original's rule was not read (Books
-//   Read and Skill Books Read, Shouts Learned, Soul Gems Used, Murders, Mauls: stat-events.ts).
+//   Soul Gems Used, Murders: stat-events.ts). Observed in the original since: Books Read and
+//   Skill Books Read, Shouts Learned, Mauls.
 // - The data (Skyrim.esm): BilegulchMine [0001B147] is in BilegulchMineLocation [00019269]
 //   (keyword LocTypeClearable [000F5E80]), whose one boss is [000EF02B] in that cell.
 
@@ -700,6 +701,10 @@ describe.skipIf(!hasGamedata())('the misc stats of a day at an inn (headless sim
     const quests = stat(sim, 'Quests Completed');
     expect(await change(sim, 'Main Quests Completed', () => complete(sim, main))).toBe(1);
     expect(stat(sim, 'Quests Completed')).toBe(quests + 1);
+    // Only Quests Completed is told to scripts as a tracked stat (observed in the original).
+    const told = sim.events('trackedStats').map((event) => event.stat);
+    expect(told).toContain('Quests Completed');
+    expect(told).not.toContain('Main Quests Completed');
     // Told once: a quest already completed is not counted again.
     expect(await change(sim, 'Main Quests Completed', () => complete(sim, main))).toBe(0);
     expect(runtime.state.quest(main).completed).toBe(true);

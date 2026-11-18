@@ -9,10 +9,9 @@
 // Killed; one with none of them is Creatures Killed. The engine's own counts are tracked stats
 // (TESTrackedStatsEvent: ScriptRuntime.incrementStat). After these the same handler counts a
 // victim in the Bunny Faction default object (AWWW: HareFaction) in Bunnies Slaughtered, and a
-// kill the player makes in beast form in Mauls (the engine reads a flag of the player there:
-// taken as Game.SetBeastForm's, so the werewolf and the Vampire Lord alike, as UESP
-// "Skyrim:Statistics" has them. TODO(M13): that page counts melee kills; the death event names
-// no weapon).
+// kill the player makes in beast form in Mauls (observed in the original: any kill while the
+// flag Game.SetBeastForm sets is on, which the Werewolf and Vampire Lord effects also set as they
+// start on the player; no weapon is asked).
 //
 // The engine's misc stat incrementers (observed in the original: one per event source,
 // MiscStatIncrementer<…>): a location cleared (LocationCleared) counts in Dungeons Cleared; a
@@ -23,8 +22,9 @@
 // Its other handlers (observed in the original), counted here: the player's gold going up
 // (InventoryToMiscStat) adds the rise to Gold Found, whatever brings it (loot, a sale, a
 // reward); a quest completed (QuestStatus) counts in Quests Completed and in its type's stat
-// (questTypeStats), a completed quest reset takes both back (TODO(M13): inferred, QuestStatus
-// also tells a reset of a quest never completed, and a start, which count nothing), a
+// (questTypeStats), a completed quest reset takes both back (observed in the original: the
+// quest's completed flag cleared tells QuestStatus so, a quest never completed tells nothing;
+// only Quests Completed's rise is told to scripts), a
 // miscellaneous quest (type 6) counts in neither; a shown objective of a miscellaneous quest
 // completed (ObjectiveState: to completed-and-shown) counts in Misc Objectives Completed; each hour waited counts in Hours
 // Waiting (HoursPassed, as each hour slept counts in Hours Slept); each day passing
@@ -184,8 +184,10 @@ export async function countQuestStatus(
 ): Promise<void> {
   const record = await runtime.forms.quest(quest);
   if (!record) return;
+  // Observed in the original: only Quests Completed's rise is told to scripts as a tracked
+  // stat; the type's own and the taking back are not.
   for (const stat of questTypeStats(record.type)) {
-    if (by > 0 || (runtime.stats.get(stat.toLowerCase()) ?? 0) > 0) runtime.incrementStat(stat, by);
+    runtime.incrementStat(stat, by, by > 0 && stat === 'Quests Completed');
   }
 }
 
@@ -383,7 +385,7 @@ export function relayStatEvents(runtime: ScriptRuntime): () => void {
     }),
     runtime.events.on('questStatus', (event) => {
       // A start counts nothing. A reset is told before the quest's completion is cleared: only
-      // a completed quest's reset is taken back (TODO(M13): taking it back is inferred).
+      // a completed quest's reset is taken back (observed in the original).
       if (event.status === 'completed') return countQuestStatus(runtime, event.quest, 1);
       if (event.status === 'reset' && runtime.state.quests.get(event.quest)?.completed === true)
         return countQuestStatus(runtime, event.quest, -1);
