@@ -1060,12 +1060,43 @@ export function blockAttackDelay(random: number): number {
 }
 
 /**
+ * The block attack's wait on an opening, kept for the one block it was taken in: the Block
+ * Attack is a child of the block, so a block that ends (lowered by the tree or an offensive
+ * bash, dropped by the graph as the actor staggers) or a bash out of it takes the wait along,
+ * and the next block has none until a new opening is taken.
+ */
+export class BlockAttackWait {
+  #open: { readonly at: number; readonly delay: number } | undefined;
+
+  /** The wait under way (when its opening was taken, and its delay), if any. */
+  get pending(): { readonly at: number; readonly delay: number } | undefined {
+    return this.#open;
+  }
+
+  /** An opening taken at `at` (seconds), its wait drawn by blockAttackDelay(`random`). */
+  open(at: number, random: number): void {
+    this.#open = { at, delay: blockAttackDelay(random) };
+  }
+
+  /** The block raised anew, a bash struck out of it, or the wait's strike taken: it ends. */
+  end(): void {
+    this.#open = undefined;
+  }
+
+  /** What the actor does now: not blocking, the wait goes with its block. */
+  seen(blocking: boolean): void {
+    if (!blocking) this.#open = undefined;
+  }
+}
+
+/**
  * Whether a block attack taken at an opening strikes now (observed in the original: the Block
  * Attack behaviour, after its opening, looks each update): once its wait (blockAttackDelay) is
  * over, or sooner as its target staggers or recoils; and then only while it is not bashing
  * already and its target is not swinging at it with it inside that swing's strike angle ×
  * fCombatBlockAttackStrikeAngleMult. Until then it holds its block and waits. TODO(M13): which
- * of the recoils counts (the original reads one of its two values; ours: either).
+ * of the recoils counts (the original reads one of its two values; ours: either); the node's
+ * 0.25 s timer is not modelled (not identified: the each-update look here, or a rest after it).
  */
 export function blockAttackStrikes(
   input: {

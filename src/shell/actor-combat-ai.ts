@@ -142,7 +142,7 @@ import {
   attackStrikeAngle,
   avoidsThreat,
   blockAttackChance,
-  blockAttackDelay,
+  BlockAttackWait,
   blockAttackOpening,
   blockAttackStrikes,
   blockStartDistance,
@@ -453,8 +453,8 @@ interface Mind {
   hand: 'right' | 'left';
   /** The block attack's opening last weighed (its target's swing), and its target's last place. */
   blockAttacked: object | undefined;
-  /** A block attack taken at an opening, waiting to strike (blockAttackStrikes): since, its wait. */
-  blockAttackOpen: { readonly at: number; readonly delay: number } | undefined;
+  /** A block attack taken at an opening, waiting to strike in its block (blockAttackStrikes). */
+  readonly blockAttackWait: BlockAttackWait;
   blockTargetAt:
     { readonly distance: number; readonly at: number; readonly speed: number } | undefined;
   maneuver: Maneuver;
@@ -1245,7 +1245,7 @@ export class ActorCombatAi {
         switchedAt: -Infinity,
         hand: 'right',
         blockAttacked: undefined,
-        blockAttackOpen: undefined,
+        blockAttackWait: new BlockAttackWait(),
         blockTargetAt: undefined,
         maneuver: 'advance',
         maneuverUntil: 0,
@@ -2478,6 +2478,8 @@ export class ActorCombatAi {
     if (range < this.#subtrees.rangedDistance) mind.leash = undefined;
     const leash = mind.leash;
     const tethered = leash !== undefined && flat(feet, leash.center) > leash.radius;
+    // A block attack's wait goes with its block (the graph may drop it, as the actor staggers).
+    mind.blockAttackWait.seen(view.state.blocking);
     const frame: CombatFrame = {
       mind,
       view,
@@ -3706,7 +3708,7 @@ export class ActorCombatAi {
             return (
               blow !== undefined &&
               f.mind.blockAttacked !== blow &&
-              f.mind.blockAttackOpen === undefined &&
+              f.mind.blockAttackWait.pending === undefined &&
               f.view.gear?.canBash === true &&
               blockAttackOpening(
                 {
@@ -3729,7 +3731,7 @@ export class ActorCombatAi {
           // A block attack taken at an opening strikes once its wait is over or its target
           // staggers or recoils, while its target does not swing at it.
           blockAttackReady: (f) => {
-            const open = f.mind.blockAttackOpen;
+            const open = f.mind.blockAttackWait.pending;
             return (
               open !== undefined &&
               blockAttackStrikes(
@@ -4202,10 +4204,12 @@ export class ActorCombatAi {
           offensiveBash: (f, run) => {
             const reference = f.mind.reference;
             if (!f.view.state.blocking) {
-              if (run.first) void host.block(reference, true);
+              if (run.first) this.#raiseBlock(f.mind);
               return run.elapsed > OFFENSIVE_BASH_RAISE ? 'failure' : 'running';
             }
             f.mind.blockUntil = this.#clock + OFFENSIVE_BASH_RAISE;
+            // A bash out of the block: a block attack waiting in it is spent.
+            f.mind.blockAttackWait.end();
             const status = this.#melee(f, 'ActionRightAttack', 'Bash');
             if (f.view.gear?.canBlock !== true) void host.block(reference, false);
             return status;
@@ -4273,7 +4277,7 @@ export class ActorCombatAi {
           block: (f) => {
             f.mind.blockUntil = this.#clock + blockTime(style(f), this.#settings);
             f.mind.blockTargetAt = undefined;
-            void host.block(f.mind.reference, true);
+            this.#raiseBlock(f.mind);
             this.#bark(f.mind.reference, 'Block', f.target.reference);
             return 'success';
           },
@@ -4287,15 +4291,12 @@ export class ActorCombatAi {
           },
           // The block attack taken: it waits on its opening (blockAttackDelay: 1 .. 2 s).
           openBlockAttack: (f) => {
-            f.mind.blockAttackOpen = {
-              at: this.#clock,
-              delay: blockAttackDelay(this.#random()),
-            };
+            f.mind.blockAttackWait.open(this.#clock, this.#random());
             return 'success';
           },
           // The block attack: the shield bash out of the block.
           blockAttack: (f) => {
-            f.mind.blockAttackOpen = undefined;
+            f.mind.blockAttackWait.end();
             return this.#melee(f, 'ActionRightAttack', 'Bash');
           },
           // Held, the block meets each blow that comes at it (ActionBlockAnticipate: its graph's
@@ -4433,8 +4434,14 @@ export class ActorCombatAi {
     );
   }
 
+  /** Its block raised: a new block, with no block attack waiting in it. */
+  #raiseBlock(mind: Mind): void {
+    mind.blockAttackWait.end();
+    void this.#options.host.block(mind.reference, true);
+  }
+
   #releaseBlock(mind: Mind, view: FighterView | undefined): void {
-    mind.blockAttackOpen = undefined;
+    mind.blockAttackWait.end();
     if (view?.state.blocking !== true) return;
     mind.blockUntil = 0;
     void this.#options.host.block(mind.reference, false);

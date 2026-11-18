@@ -20,10 +20,10 @@ conformance suites (tests/conformance/combat/).
 | Combat style (CSTY)      |    35 |   35 |    0 |
 | Attack data (ATKD, ATKE) |    16 |   16 |    0 |
 | Race combat (DATA, ATKR) |    15 |   15 |    0 |
-| Behaviour tree actions   |    63 |   63 |    0 |
+| Behaviour tree actions   |    67 |   67 |    0 |
 | Game settings            |   410 |  410 |    0 |
-| Mechanics (by hand)      |    24 |   24 |    0 |
-| Total                    |   563 |  563 |    0 |
+| Mechanics (by hand)      |    25 |   25 |    0 |
+| Total                    |   568 |  568 |    0 |
 
 Round 1 wrote the sweep and this list, and built down:
 
@@ -195,7 +195,7 @@ Flee package's safety (procedure-runs.ts fleeSafe: fFleeIsSafeTimer beyond fFlee
 
 ## Behaviour tree
 
-- [x] All 63 actions of the tree (src/ai/combat-tree.ts COMBAT_ACTIONS) have their action in the
+- [x] All 67 actions of the tree (src/ai/combat-tree.ts COMBAT_ACTIONS) have their action in the
       stage's registry (src/shell/actor-combat-ai.ts; typed: one missing does not compile).
 
 ## Game settings
@@ -253,8 +253,11 @@ and 290 built-in ones the readers ask for by name.
       fCombatAnticipateTime ahead (combat-tactics.ts blockAttackOpening). Taken, it waits 1 .. 2 s at
       random, or less as its target staggers or recoils, and strikes then unless it bashes already
       or its target swings at it within that strike angle (blockAttackStrikes; 2026-11-18, observed
-      in the original). TODO(M13): the original adds a value to that reach read here as the
-      actor's radius; which of the two recoils opens it (ours: either).
+      in the original). The wait belongs to its block: a block that ends (lowered, dropped by the
+      graph as the actor staggers) or a bash out of it takes it along (BlockAttackWait).
+      TODO(M13): the original adds a value to that reach read here as the actor's radius; which
+      of the two recoils opens it (ours: either); the node's 0.25 s timer is not modelled (not
+      identified: it may be the each-update look blockAttackStrikes makes, or a rest after it).
 - [x] Staggers, recoils, knockdowns, ragdolls on death (stagger.ts, actor-knockdowns.ts).
 - [x] The blocked hit's stagger, observed in the original: the hit's own stagger less
       fStaggerBlockAttackShieldMult × rating (a shield's, else fStaggerDaggerAR, 1WeapAR, 2WeapAR,
@@ -287,8 +290,11 @@ and 290 built-in ones the readers ask for by name.
       observed in the original: restoring is wanted below the restore share, a held restore goes
       on below the share plus fCombatRestoreStopCastThreshold with no stop at full of its own,
       and health is wanted whatever its share while bleeding out (restoreWanted, holdsRestore).
-      The close movement's range split: both bodies fCombatAnticipateTime ahead beyond its range,
-      unless in its place within it now; out of position with no place held (closeOutOfRange).
+- [x] Close Movement: Advance, Backoff, Circle, Fallback, Surround, Strafe (combat-movement.ts;
+      close-movement.test.ts). 2026-11-18, observed in the original: out of range means both
+      bodies fCombatAnticipateTime ahead beyond its range, unless it stands in its place within
+      it now; out of position means no place held, or left by more than half its width ×
+      fCombatTargetLocationRepositionAngleMult (closeOutOfRange).
 - [x] The casters by their spells' combat inventory scores, each with its own check (round 5).
       TODO(M13): a drain's count only for a target that uses the resource (ours: any).
 - [x] The shout in an actor's voice as an inventory item by its word's spell's score and caster,

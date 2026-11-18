@@ -14,6 +14,7 @@ import { blockCost } from '../../../src/gameplay/vitals.ts';
 import { COMBAT_AI_DEFAULTS } from '../../../src/ai/combat-ai.ts';
 import {
   bashChance,
+  BlockAttackWait,
   blockAttackDelay,
   blockAttackOpening,
   blockAttackStrikes,
@@ -127,6 +128,23 @@ describe('blocking and bashing (formula)', () => {
     expect(blockAttackStrikes({ ...due, bashing: true }, settings)).toBe(false);
     expect(blockAttackStrikes({ ...due, targetAttacking: true }, settings)).toBe(false);
     expect(blockAttackStrikes({ ...due, targetAttacking: true, off: 0.7 }, settings)).toBe(true);
+  });
+
+  it('the block attack’s wait belongs to its block: one that ends takes it along', () => {
+    // Taken at 10 s, drawn at 0.5: it waits 1.5 s.
+    const wait = new BlockAttackWait();
+    wait.open(10, 0.5);
+    expect(wait.pending).toEqual({ at: 10, delay: 1.5 });
+    wait.seen(true);
+    expect(wait.pending).toBeDefined();
+    // Dropped by the graph as it staggers (or lowered by an offensive bash without a shield):
+    // the next block has no wait, so it does not bash at once, and may take a new opening.
+    wait.seen(false);
+    expect(wait.pending).toBeUndefined();
+    // Raised anew, or a bash struck out of the block while it stays up: spent.
+    wait.open(20, 0);
+    wait.end();
+    expect(wait.pending).toBeUndefined();
   });
 
   it('the offensive bash: chosen out of no block by its chance  [original]', () => {
