@@ -6,6 +6,7 @@ import {
   footIk,
   footIkState,
   gainStep,
+  groundPlaneTurn,
   lookAt,
   lookAtState,
   ModelSpace,
@@ -410,5 +411,30 @@ describe('model space', () => {
     // The child's own turn is none: its parent's turn carries it.
     expect(p[2 * TRANSFORM_FLOATS + 6]).toBeCloseTo(1);
     expect(space.position(2)[2]).toBeCloseTo(20);
+  });
+});
+
+describe('the ground plane foot IK leans to (hkbFootIkDriver)', () => {
+  // Four feet: left front, right front, left back, right back (model x right, y forward).
+  const feet: [number, number, number][] = [
+    [-10, 40, 0],
+    [10, 40, 0],
+    [-10, -40, 0],
+    [10, -40, 0],
+  ];
+  it('a wide quadruped leans to a side slope', () => {
+    const turn = groundPlaneTurn(feet, [4, -4, 4, -4]);
+    expect(Math.abs(turn[1])).toBeGreaterThan(0.1);
+  });
+  it('a narrow quadruped leans forward and back only (original: isQuadrupedNarrow)', () => {
+    const level = groundPlaneTurn(feet, [4, -4, 4, -4], true);
+    [0, 0, 0, 1].forEach((value, i) => {
+      expect(level[i]).toBeCloseTo(value, 6);
+    });
+    // The front higher by 8 over 80 units: a turn about the right axis alone.
+    const pitch = groundPlaneTurn(feet, [4, 4, -4, -4], true);
+    expect(Math.abs(pitch[0])).toBeCloseTo(Math.sin(Math.atan(0.1) / 2), 5);
+    expect(pitch[1]).toBeCloseTo(0, 6);
+    expect(pitch[2]).toBeCloseTo(0, 6);
   });
 });
