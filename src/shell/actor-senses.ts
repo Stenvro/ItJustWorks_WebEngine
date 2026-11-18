@@ -111,6 +111,8 @@ export interface ActorSensesOptions {
   /** The camera (the player's sight for OnGainLOS: what is on screen). */
   readonly camera?: () =>
     { readonly position: Vec3; readonly forward?: Vec3; readonly fovY?: number } | undefined;
+  /** The screen's aspect, width over height (the camera frustum's width). */
+  readonly aspect?: () => number;
   /** Whether an actor flies now (noticed fSneakFlyingDistanceMult times as far). */
   readonly flying?: (actor: number) => boolean;
   /** How a flier in the air moves (it has no controller there). */
@@ -193,6 +195,8 @@ const SUN_RAY = 8192;
 const LIGHT_FIXTURE = 48;
 /** A sight ray counts as reaching what it aimed at within this of it (units). */
 const RAY_SLACK = 16;
+/** A screen that does not tell its size is taken as this wide against its height. */
+const DEFAULT_ASPECT = 16 / 9;
 /** The player's sight rays aim at these shares of a reference's height over its origin. */
 const SCREEN_POINTS = [0.75, 0.5, 0.25] as const;
 /** A reference that is not an actor is looked at this far over its origin (units). */
@@ -1059,11 +1063,8 @@ export class ActorSenses implements ScriptSenses {
     // Disabled it has no 3D to see, whether it was in view or not, where it stood.
     if (runtime.state.references.get(target)?.enabled === false) return false;
     const seen = bodies.get(target);
-    if (viewer === PLAYER_REF) {
-      const sight = this.#playerSees(runtime, seen, target);
-      // An actor the camera does not reach is still seen by the player's own eyes (below).
-      if (sight !== false || !seen) return sight;
-    }
+    // The player sees through the camera alone (an actor off screen is not seen).
+    if (viewer === PLAYER_REF) return this.#playerSees(runtime, seen, target);
     const points: Vec3[] = seen ? [seen.eye, seen.chest] : [];
     if (!seen) {
       const at = this.#placementOf(runtime, target);
@@ -1086,12 +1087,15 @@ export class ActorSenses implements ScriptSenses {
   }
 
   /**
-   * The player's sight of a reference (OnGainLOS, observed in the original): its 3D's bound in
-   * the camera's view frustum (the bound of its base object's OBND, at its scale and turned as
-   * it stands: a part of it on screen counts), then rays on the line-of-sight layer from the
-   * camera to three points over its origin, at 3/4, 1/2 and 1/4 of its bound's height (an
-   * actor's: of its height as it stands), one meeting nothing or the reference itself. No
-   * distance limits it. Undefined while its place or bounds are still being read.
+   * The player's sight of a reference (OnGainLOS). Observed in the original: its 3D's bound in
+   * the camera's view frustum (a part of it on screen counts), then rays on the line-of-sight
+   * layer from the camera to three points over its origin, at 3/4, 1/2 and 1/4 of its bound's
+   * height, one meeting nothing or the reference itself; no distance limits it, and the actor
+   * sight check (view cone, reach) is not used for the player.
+   * TODO(M13): the bound is inferred: the game tests its 3D's own bound; we stand in for it
+   * with a sphere around its base object's OBND (at its scale and turned as it stands), for an
+   * actor a sphere half its height across its middle. Undefined while its place or bounds are
+   * still being read.
    */
   #playerSees(runtime: ScriptRuntime, seen: Body | undefined, target: number): boolean | undefined {
     const camera = this.#options.camera?.();
@@ -1128,7 +1132,8 @@ export class ActorSenses implements ScriptSenses {
       radius = Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) / 2;
     }
     const half = camera.fovY === undefined ? undefined : camera.fovY / 2;
-    if (!inViewFrustum(camera.position, forward, half, center, radius)) return false;
+    const aspect = this.#options.aspect?.() ?? DEFAULT_ASPECT;
+    if (!inViewFrustum(camera.position, forward, half, aspect, center, radius)) return false;
     return SCREEN_POINTS.some(
       (share) =>
         this.#ray(

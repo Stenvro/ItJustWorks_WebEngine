@@ -802,6 +802,7 @@ export class ActorStage {
       interior: options.interior === true,
       ...(options.light && { light: options.light }),
       camera: () => options.renderer.view?.camera,
+      aspect: () => options.renderer.size[0] / Math.max(1, options.renderer.size[1]),
       bark: (actor, subtype, target) => this.talk.bark(actor, subtype, target),
       flying: (actor) => this.flight.isFlying(actor),
       flightMotion: (actor) => this.flight.motion(actor),
