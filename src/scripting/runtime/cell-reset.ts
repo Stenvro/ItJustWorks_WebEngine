@@ -21,8 +21,10 @@
 //   passed since it died, also where its zone reset sooner.
 // - What the game made in the cell goes with its reset: references created there (dropped
 //   items, PlaceAtMe) lying in the world, unless a quest's alias holds them.
-// - Corpses: as a cell that left comes back, a dead actor that does not respawn, did not start
-//   dead and died more than iHoursToClearCorpses hours ago is removed.
+// - Corpses: as a cell that left comes back, a dead actor whose own respawn is not due (one
+//   that does not respawn, or one dead too short a time for it), that did not start dead, is
+//   not Initially Disabled and died more than iHoursToClearCorpses hours ago is removed, unless
+//   a quest's alias holds it or an item it carries.
 //
 // The reset is decided as the cell is about to load (so its references load as reset) and told
 // as its references attach (ScriptRuntime.cellAttached: after OnCellAttach). Platform-independent.
@@ -195,7 +197,8 @@ export class CellResets {
       const record = await runtime.forms.record(reference);
       if (!record || record.deleted) continue;
       if (record.type === 'ACHR') {
-        if (await this.#clearCorpse(record, now, waits.corpses)) continue;
+        const respawns = !neverResets && (await this.#mayReset(record));
+        if (await this.#clearCorpse(record, now, waits, cleared, respawns)) continue;
       }
       if (!decision.reset || !(await this.#mayReset(record))) continue;
       // An actor's own clock: its respawn waits from its death.
@@ -313,19 +316,31 @@ export class CellResets {
     }
   }
 
-  /** A dead actor that does not respawn is removed once its corpse is old enough. */
-  async #clearCorpse(record: GameRecord, now: number, wait: number): Promise<boolean> {
+  /** A dead actor whose respawn is not due is removed once its corpse is old enough. */
+  async #clearCorpse(
+    record: GameRecord,
+    now: number,
+    waits: ResetWaits & { readonly corpses: number },
+    cleared: boolean,
+    respawns: boolean,
+  ): Promise<boolean> {
     const runtime = this.#runtime;
     const reference = record.formId;
     if (runtime.state.actors.get(reference)?.dead !== true) return false;
     if ((record.flags & (RecordFlag.startsDead | RecordFlag.initiallyDisabled)) !== 0) return false;
-    if (await this.#mayReset(record)) return false;
     const died = runtime.state.deathHours.get(reference) ?? 0;
-    if (died === 0 || now - died <= wait) return false;
-    // TODO(M13): two more checks of the engine's before it removes a corpse are not identified
-    // (read: an extra data of the reference and a flag of it); a corpse a quest's alias holds
-    // is kept here.
+    // Observed in the original: one whose own respawn is due respawns instead; one that
+    // respawns, dead too short a time for that, has its corpse cleared all the same.
+    if (respawns && respawnDue(now, died, cleared, waits)) return false;
+    if (died === 0 || now - died <= waits.corpses) return false;
+    // Observed in the original: a corpse a quest's alias holds is kept, and so is one carrying
+    // an item an alias holds (a quest item in its inventory).
     if (runtime.aliasesHolding(reference).length > 0) return false;
+    for (const [item, entry] of runtime.state.references) {
+      if (entry.container?.holder === reference && entry.deleted !== true) {
+        if (runtime.aliasesHolding(item).length > 0) return false;
+      }
+    }
     await runtime.setEnabled(reference, false);
     return true;
   }

@@ -864,9 +864,13 @@ times are whole game hours, 0 for never):
   original forces its detach time; ours, `CellResets.force` and `GameState.cellResetsForced`,
   forces the reset past a zone and for a cell met the first time too: inferred, TODO(M13)), so
   its cell doors are locked again.
-- Corpses: as a cell that left comes back, an actor that does not respawn, did not start dead
-  and died more than iHoursToClearCorpses (24) hours ago is removed (disabled); two further
-  checks of the engine's are not identified (a corpse a quest's alias holds is kept here).
+- Corpses (observed in the original): as a cell that left comes back, a dead actor whose own
+  respawn is not due (one that does not respawn, or one that does, dead too short a time for
+  it: its corpse goes and it respawns later), that did not start dead (ACHR 0x200), is not
+  Initially Disabled (0x800) and died more than iHoursToClearCorpses (24) hours ago is removed
+  (disabled), unless a quest's alias holds it or an item it carries (a quest item in its
+  inventory). The engine disables its ash pile with it (TODO(M13): ours keeps no link from an
+  actor to its ash pile in the game state).
 - A location is cleared once each of its bosses (its LCSR/ACSR references of the default
   object LocRefType - Boss, LRTB) is dead; disabled bosses do not count, a boss dead longer than
   the respawn wait counts as alive. The engine counts as an actor dies where the player is (the
