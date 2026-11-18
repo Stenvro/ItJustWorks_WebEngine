@@ -58,7 +58,7 @@ const ANY_TYPE_PLUGIN = /^(HearthFires\.esm|cc.*\.es[mlp])$/i;
 /** Seconds the world runs after a start for the quest's fragments, scenes and first objectives. */
 const RUN_SECONDS = 4;
 /** Seconds a start (its aliases, its start-up fragment) may take, the world stepping meanwhile. */
-const START_SECONDS = 30;
+const START_SECONDS = 60;
 /** How deep a chain of quests starting quests (external aliases) is followed. */
 const MAX_CHAIN = 3;
 /** The events tried at most for a quest, each with other candidates for its open members. */
@@ -278,6 +278,34 @@ class Sweep {
       }
     }
     return false;
+  }
+
+  /**
+   * Where the player is as an event is raised: for a change of location, in its new location
+   * (L2), as the player who walked in raises it; for a path whose conditions ask the player to be
+   * in a location (the tree's and the quests' conditions run on the player: a bounty's hold, a
+   * cavern), in that one. Of an OR group only the first condition counts.
+   */
+  async #placeFor(event: StoryEventData, conditions: readonly Condition[]): Promise<void> {
+    const runtime = this.#runtime;
+    const wanted: number[] = [];
+    const entered = event.type === 'CLOC' ? event.forms.get('L2') : undefined;
+    if (entered !== undefined) wanted.push(entered);
+    let inOrGroup = false;
+    for (const condition of conditions) {
+      const skip = inOrGroup;
+      inOrGroup = condition.or;
+      if (skip || conditionFunctionName(condition.function) !== 'GetInCurrentLoc') continue;
+      const onPlayer =
+        condition.runOn === ConditionRunOn.subject || condition.reference === PLAYER_REF;
+      const n = await this.#number(condition);
+      if (onPlayer && satisfying(condition.operator, n, 0) !== 0) wanted.push(condition.form);
+    }
+    for (const location of wanted) {
+      const at = await runtime.locationOf(PLAYER_REF);
+      if (at !== undefined && (await runtime.locationWithin(at, location))) continue;
+      await this.#placeIn(location);
+    }
   }
 
   /**
@@ -510,26 +538,54 @@ class Sweep {
       // A quest that runs once, started by the tree already for an earlier case's event (a
       // node that shares its event: DA09 with DA06's Increase Level), was started as the game
       // starts it then.
+      // So is one the engine's own event started meanwhile and that still runs (the player put
+      // in a location for an earlier case walked into its place).
       const ran = (runtime.state.quests.get(id)?.starts ?? 0) > 0;
-      if (ran && (record.flags & QuestFlag.runOnce) !== 0 && this.#byTree.has(id)) {
+      const byTree =
+        this.#byTree.has(id) ||
+        this.sim.events('eventProcessed').some(({ started }) => started.includes(id));
+      const still = runtime.quests.isRunning(id) || (record.flags & QuestFlag.runOnce) !== 0;
+      if (ran && still && byTree) {
         return { how: 'story manager', whyNot: undefined, firstStage: startUp?.index };
       }
       // Each quest node that lists it is a way the event reaches it (Favor001's Markarth node
       // finds its quest giver, its Windhelm node none): the events of every node are tried.
       const events: StoryEventData[] = [];
+      /** The conditions of the path each event goes by (where the player is for it). */
+      const pathOf = new Map<StoryEventData, readonly Condition[]>();
       for (const path of paths.get(id) ?? [[]]) {
         const conditions = [...path.flatMap((node) => node.conditions), ...record.eventConditions];
         await this.#prepare(conditions, id);
-        events.push(...(await this.#events(record, record.event, conditions)));
+        for (const event of await this.#events(record, record.event, conditions)) {
+          events.push(event);
+          pathOf.set(event, conditions);
+        }
       }
       events.splice(MAX_EVENTS);
       // Through the story manager first (its first events: each runs the whole tree).
       const treeWhy = new Set<string>();
-      for (const event of events.slice(0, SM_EVENTS)) {
+      // With fewer events than tries, an event is raised again: a node that picks at random or
+      // does all its quests before repeating starts another of them the next time.
+      // The events the engine raises meanwhile count too: the player put in a location raises
+      // its Change Location event, as one who walks in does.
+      const processed = this.sim.events('eventProcessed').length;
+      const byEngine = (): boolean => {
+        const told = this.sim.events('eventProcessed').slice(processed);
+        for (const { started } of told) for (const quest of started) this.#byTree.add(quest);
+        return told.some(({ started }) => started.includes(id));
+      };
+      for (let i = 0; i < Math.min(SM_EVENTS, events.length * SM_EVENTS); i++) {
+        const event = events[i % events.length];
+        if (!event) break;
+        await this.#placeFor(event, pathOf.get(event) ?? []);
+        await this.#drive(runtime.storyManager.idle());
+        if (byEngine()) {
+          return { how: 'story manager', whyNot: undefined, firstStage: startUp?.index, treeWhy };
+        }
         const why = await this.#treeWhy(id, event);
         const started = (await this.#drive(runtime.storyManager.quests(event))) ?? [];
         for (const quest of started) this.#byTree.add(quest);
-        if (started.includes(id)) {
+        if (started.includes(id) || byEngine()) {
           return { how: 'story manager', whyNot: undefined, firstStage: startUp?.index, treeWhy };
         }
         const others = started.map((other) => other.toString(16)).join(' ');

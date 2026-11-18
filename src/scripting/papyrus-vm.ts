@@ -487,10 +487,12 @@ export class PapyrusVm {
           continue;
         }
         if (property.autoVariable) {
-          instance.vars
-            .get(level.name)
-            ?.set(property.autoVariable.toLowerCase(), retype(value, property.type));
-          instance.filled.add(property.autoVariable.toLowerCase());
+          const bound = retype(value, property.type);
+          instance.vars.get(level.name)?.set(property.autoVariable.toLowerCase(), bound);
+          // An object property the plugin gives no object (form 0: FXCameraAttachScript's
+          // CameraAttachFX on the Blue Palace's references) is None in the game too: a call on
+          // it is the plugin's own fault, as one it leaves out.
+          if (bound !== null) instance.filled.add(property.autoVariable.toLowerCase());
         } else if (property.setter) {
           instance.bound.push({ level, name: property.name, value: retype(value, property.type) });
         } else {
