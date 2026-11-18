@@ -579,6 +579,8 @@ interface Mind {
   sheatheAt: number | undefined;
   /** Where its targets were last known, by target. */
   readonly lastKnown: Map<number, Vec3>;
+  /** Its last detection test of each actor: whether it had a line of sight, and when. */
+  readonly sight: Map<number, { readonly clear: boolean; readonly at: number }>;
   /** A combat style its combat override package gives (PACK CNAM). */
   packageStyle: number | undefined;
   /** The combat override package it runs as it fights (ECOR's first that holds). */
@@ -1195,8 +1197,18 @@ export class ActorCombatAi {
   /** A member's detection of a target: its group's knowledge of it moves. */
   #report(member: number, target: number, report: DetectionReport): void {
     const mind = this.#minds.get(member);
+    // A test (not an event's notice, level 0): its line of sight, for target selection.
+    if (mind && report.level !== 0) {
+      mind.sight.set(target, { clear: report.lineOfSight, at: this.#clock });
+    }
     if (!mind || mind.mode === 'idle') return;
     this.#groups.report(member, target, report, this.#groupWorld, this.#clock);
+  }
+
+  /** Whether its last detection test of an actor, within 2 s, had a line of sight to it. */
+  #inSight(mind: Mind, reference: number): boolean {
+    const sight = mind.sight.get(reference);
+    return sight !== undefined && sight.clear && this.#clock - sight.at <= TARGET_SENSED_SECONDS;
   }
 
   /** What the combat groups ask of the fight (combat-groups.ts CombatGroupWorld). */
@@ -1321,6 +1333,7 @@ export class ActorCombatAi {
         lowTree: undefined,
         sheatheAt: undefined,
         lastKnown: new Map(),
+        sight: new Map(),
         packageStyle: undefined,
         armed: false,
         nextSupport: 0,
@@ -1610,7 +1623,7 @@ export class ActorCombatAi {
           (reference === mind.target &&
             tracked !== undefined &&
             this.#clock - tracked.detectedTime < TARGET_SENSED_SECONDS),
-        hears: tracked !== undefined && this.#clock - tracked.eventTime < TARGET_SENSED_SECONDS,
+        inSight: this.#inSight(mind, reference),
         sameKind: fightsByMelee(view.gear) === fightsByMelee(other.gear),
         fleeing: this.#minds.get(reference)?.mode === 'flee',
         sinceKnown: tracked && this.#clock - tracked.lastKnownTime,

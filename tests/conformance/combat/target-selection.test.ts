@@ -48,9 +48,9 @@ describe('target selection', () => {
     expect(targetScore(at(1, { distance: 1024 }), false)).toBe(500);
     expect(targetScore(at(1, { distance: 4096 }), false)).toBe(0);
     const far = at(1, { distance: 4096 });
-    // Its senses having it 1000, heard 100, its current target 100, fighting the same way 100.
+    // Its senses having it 1000, in sight 100, its current target 100, fighting the same way 100.
     expect(targetScore({ ...far, sees: true }, false)).toBe(1000);
-    expect(targetScore({ ...far, hears: true }, false)).toBe(100);
+    expect(targetScore({ ...far, inSight: true }, false)).toBe(100);
     expect(targetScore(far, true)).toBe(100);
     expect(targetScore({ ...far, sameKind: true }, false)).toBe(100);
     // Unreachable −2000, in another space with no way there −2500, fleeing −500.

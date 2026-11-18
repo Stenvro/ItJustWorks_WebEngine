@@ -3434,8 +3434,9 @@ engine's ([Combat movement](#combat-movement)).
 - **Targets** (`selectTarget`, observed in the original: the standard selector): among those
   its group knows and has not lost, and its current target if known, the highest sum wins; a
   group's sole target needs none; with none known, the one known most recently. The sum: its own
-  senses have it within the last 2 s 1000 (its current target also if seen 2 s ago), heard 100,
-  its current target 100, fighting the same way as the actor (melee or not) 100, nearness up to
+  last detection test of it, within 2 s, saw it 1000 (its current target also if detected within
+  2 s), that test had a line of sight to it 100 (before, read here as hearing it), its current
+  target 100, fighting the same way as the actor (melee or not) 100, nearness up to
   1000 (nothing from 2048 units; in another space counted as that far, its current target as
   near); less 2000 if out of reach (a weapon short of fCombatRangedDistance, or in another space),
   2500 in another space with no way there, 500 if it flees. How many allies fight it is added with

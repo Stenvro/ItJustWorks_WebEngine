@@ -596,8 +596,8 @@ export interface TargetCandidate {
   readonly threat: number;
   /** Its own senses have it: it sees it now, or (its current target) saw it within 2 s. */
   readonly sees?: boolean;
-  /** It hears it now. */
-  readonly hears?: boolean;
+  /** Its last detection test of it, within 2 s, found a line of sight to it. */
+  readonly inSight?: boolean;
   /** It fights as the actor does: both by melee (the hands empty count), or neither. */
   readonly sameKind?: boolean;
   /** It flees (a fleeing target counts less). */
@@ -689,7 +689,7 @@ export function fixedTarget(
 
 /** Target selection's weights and its distance's reach (observed in the original). */
 const TARGET_SENSED_SCORE = 1000;
-const TARGET_HEARD_SCORE = 100;
+const TARGET_IN_SIGHT_SCORE = 100;
 const TARGET_CURRENT_SCORE = 100;
 const TARGET_SAME_KIND_SCORE = 100;
 const TARGET_NEAR_SCORE = 1000;
@@ -699,14 +699,16 @@ const TARGET_UNCONNECTED_LOSS = 2500;
 const TARGET_FLEEING_LOSS = 500;
 
 /**
- * A candidate's score, the sum of (observed in the original): its own senses having it, heard,
- * being its current target, fighting the same way as the actor; its nearness (full at its feet,
+ * A candidate's score, the sum of (observed in the original): its own senses having it (its
+ * last detection test of it, within 2 s, saw it; its current target also when detected within
+ * 2 s), a line of sight to it in that test, being its current target, fighting the same way as
+ * the actor; its nearness (full at its feet,
  * nothing from 2048 units; in another space as far, its current target as near); less for one it
  * cannot reach (a weapon short of fCombatRangedDistance, or in another space), one with no way
  * there, and one that flees. How many allies already fight it is counted by the original and
  * added with a weight of 0, so crowding does not move the choice; a target's strength, whether
- * it attacks the actor and whether it is the player do not count at all.
- * TODO(M13): the two sense flags' names are inferred from the fields beside them.
+ * it attacks the actor and whether it is the player do not count at all. (The original also
+ * takes 500 from a dead one; here the dead are no candidates.)
  */
 export function targetScore(candidate: TargetCandidate, current: boolean): number {
   const away =
@@ -714,7 +716,7 @@ export function targetScore(candidate: TargetCandidate, current: boolean): numbe
   const near = 1 - Math.min(away, TARGET_NEAR_DISTANCE) / TARGET_NEAR_DISTANCE;
   return (
     (candidate.sees === true ? TARGET_SENSED_SCORE : 0) +
-    (candidate.hears === true ? TARGET_HEARD_SCORE : 0) +
+    (candidate.inSight === true ? TARGET_IN_SIGHT_SCORE : 0) +
     (current ? TARGET_CURRENT_SCORE : 0) +
     (candidate.sameKind === true ? TARGET_SAME_KIND_SCORE : 0) +
     near * TARGET_NEAR_SCORE -
