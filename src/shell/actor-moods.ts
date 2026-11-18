@@ -25,9 +25,17 @@ export class ActorMoods {
   readonly #moods = new Map<number, { mood: number; at: number }>();
   readonly #reading = new Set<number>();
   #clock = 0;
+  /** The game setting iMoodFaceValue, once read (the mood's strength). */
+  #moodFaceValue: number | undefined;
 
   constructor(session: GameSession) {
     this.#session = session;
+    void session
+      .settings()
+      .then((settings) => {
+        this.#moodFaceValue = settings.number('iMoodFaceValue');
+      })
+      .catch(() => undefined);
   }
 
   /** Sets every face's expression for this frame. */
@@ -44,6 +52,7 @@ export class ActorMoods {
         shouting: runtime.casting.isShouting(reference),
         inCombat: combat?.inCombat === true,
         mood: this.#mood(runtime, reference),
+        moodFaceValue: this.#moodFaceValue,
       });
       face.setExpression(shown.expression, shown.strength);
     }

@@ -2245,12 +2245,13 @@ export class ScriptRuntime implements VmHost {
 
   /**
    * An actor's feeding is done (its graph's VampireFeedEnd: src/shell/actor-graph-events.ts):
-   * GetVampireFeed and GetCannibal hold for it no more (StartVampireFeed's own time is the
-   * fallback of a graph that raises none).
+   * GetVampireFeed holds for it no more (StartVampireFeed's own time is the fallback of a graph
+   * that raises none). Observed in the original, only a vampire feeding procedure is ended so: a
+   * cannibal's feeding is not.
    */
   feedingDone(actor: number): void {
     const state = this.state.actors.get(actor);
-    if (state) state.feeding = undefined;
+    if (state?.feeding?.kind === 'vampire') state.feeding = undefined;
   }
 
   /** The game settings the scripts read (the console's setgs changes them). */

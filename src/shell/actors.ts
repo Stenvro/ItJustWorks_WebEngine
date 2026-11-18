@@ -797,6 +797,8 @@ export class ActorPlacer {
         settings.number('fLookDownDisableBlinkingAmt') ??
         EXPRESSION_DEFAULTS.fLookDownDisableBlinkingAmt,
       fTrackSpeed: settings.number('fTrackSpeed') ?? EXPRESSION_DEFAULTS.fTrackSpeed,
+      fTrackEyeXY: settings.number('fTrackEyeXY') ?? EXPRESSION_DEFAULTS.fTrackEyeXY,
+      fTrackEyeZ: settings.number('fTrackEyeZ') ?? EXPRESSION_DEFAULTS.fTrackEyeZ,
     }));
     return this.#blink;
   }

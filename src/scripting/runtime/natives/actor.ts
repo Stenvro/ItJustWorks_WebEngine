@@ -6,6 +6,7 @@
 
 import { hostileTo } from '../../../ai/combat-ai.ts';
 import { feedOn, type Feeding } from '../../../ai/engine-packages.ts';
+import { overrideAccepted, overrideStrength } from '../../../ai/moods.ts';
 import { keepOffsetOf } from '../../../ai/movement-overrides.ts';
 import { NpcFlag } from '../../../world/actor-records.ts';
 import { ActorValue } from '../../../world/actor-values.ts';
@@ -635,9 +636,13 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     delete state.actor(actor).lookAt;
     world.lookAt?.(actor, undefined, 'script');
   });
-  act('setexpressionoverride', (actor, call) =>
-    world.expression?.(actor, int(call.args[0]), int(call.args[1])),
-  );
+  // Observed in the original: only mfg expressions 1..16 are taken (0 and beyond: an error, the
+  // face as it was), the strength unsigned and held to 100 (src/ai/moods.ts).
+  act('setexpressionoverride', (actor, call) => {
+    const expression = int(call.args[0]);
+    if (!overrideAccepted(expression)) return;
+    world.expression?.(actor, expression, overrideStrength(int(call.args[1])));
+  });
   act('clearexpressionoverride', (actor) => world.expression?.(actor, undefined, 0));
   // SetEyeTexture: its eyes take another texture set (a vampire's red eyes): it is made again.
   act('seteyetexture', (actor, call) => {
@@ -709,10 +714,16 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     const kindOf = kind === 'vampire' ? 'vampireFeed' : 'cannibal';
     if (world.putCreatedPackage?.(actor, kindOf, feedOn(feeding), target) !== true) feeding.begin();
   };
+  // Observed in the original: a dead target is refused (an error, nothing happens), and an NPC
+  // feeder in combat does not feed (its feeding package is made only out of combat; the
+  // player's is made all the same); the feeding's event is sent either way.
   act('startvampirefeed', async (actor, call) => {
     const target = ref(call.args[0]);
     if (target === undefined) return;
-    feed(actor, target, 'vampire');
+    if (await actors.isDead(target)) return;
+    if (actor === PLAYER_REF || world.combat?.(actor)?.inCombat !== true) {
+      feed(actor, target, 'vampire');
+    }
     await runtime.crime.vampireFeed(actor, target);
     runtime.detach(runtime.sendEvent(actor, 'OnVampireFeed', [runtime.actorHandle(target)]));
   });

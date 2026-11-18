@@ -55,18 +55,18 @@ const LOOK_UP = MODIFIER_BASE + LIP_MODIFIERS.indexOf('LookUp');
 const LOOK_DOWN = MODIFIER_BASE + LIP_MODIFIERS.indexOf('LookDown');
 
 /**
- * How far the eyes turn at a look morph's full weight (radians). The engine turns the eyes by
- * the look morphs (BSFaceGenAnimationData eyesHeading, eyesPitch); a look beyond this holds the
- * morph at full weight. Inferred, TODO(M13): the engine's own scale is not documented and no
- * game setting gives it (the face's eye tracking reads fTrackSpeed alone; the fTrackEye* range
- * settings are an earlier game's, absent from this one's load order). The values are a rough
- * estimate from the eyes' TRI (eyesmale.tri, eyesfemale.tri), whose look morphs are no rigid
- * turn of the eyeball: how far one turns the eye depends on how it is measured (the centroid
- * of an eye's vertices about the centre of the sphere fitted to them turns some 11–25° to the
- * sides and 9–18° up and down, unevenly between the two eyes).
+ * How far the eyes turn at a look morph's full weight (radians), observed in the original: the
+ * face's eye heading is held within fTrackEyeXY degrees to either side and its pitch within
+ * fTrackEyeZ up and down (each at most a quarter turn), and the look morph of its side
+ * (LookLeft, LookRight; LookUp, LookDown) takes the turn over that range as its weight. The
+ * load order sets neither setting: the engine's own 28 and 20 hold.
  */
-export const EYE_MORPH_HEADING = (29 * Math.PI) / 180;
-export const EYE_MORPH_PITCH = (16 * Math.PI) / 180;
+export function eyeMorphRange(degrees: number): number {
+  return Math.min(Math.PI / 2, Math.max(0, (degrees * Math.PI) / 180));
+}
+/** The eyes' turns at full look morph weight by the engine's fTrackEyeXY and fTrackEyeZ. */
+export const EYE_MORPH_HEADING = eyeMorphRange(28);
+export const EYE_MORPH_PITCH = eyeMorphRange(20);
 
 /** The emotions the eyes' random offsets are given for (fEye*OffsetEmotion<name>). */
 export const EYE_EMOTIONS = ['Neutral', 'Angry', 'Fear', 'Happy', 'Sad'] as const;
@@ -123,7 +123,8 @@ export interface BlinkSettings {
   readonly fBlinkUpTime: number;
   /**
    * An expression's morphs move towards what it shows by fExpressionChangePerSec a second, and
-   * fExpressionStrengthAdd a second more times its strength (the engine's, observed in the original).
+   * fExpressionStrengthAdd a second more times the strongest morph of what it shows (observed in
+   * the original: going back to no expression, the first alone).
    */
   readonly fExpressionChangePerSec?: number;
   readonly fExpressionStrengthAdd?: number;
@@ -138,14 +139,19 @@ export interface BlinkSettings {
    * pitch each (observed in the original: the face's eye tracking; Skyrim.esm 5, the engine 2).
    */
   readonly fTrackSpeed?: number;
+  /** The eyes' look morphs' range (degrees): eyeMorphRange. */
+  readonly fTrackEyeXY?: number;
+  readonly fTrackEyeZ?: number;
 }
 
-/** The engine's built-in expression settings (Skyrim.esm sets none). */
+/** The engine's built-in expression settings (Skyrim.esm sets none of these but fTrackSpeed). */
 export const EXPRESSION_DEFAULTS = {
   fExpressionChangePerSec: 2,
   fExpressionStrengthAdd: 1,
   fLookDownDisableBlinkingAmt: 0.25,
   fTrackSpeed: 2,
+  fTrackEyeXY: 28,
+  fTrackEyeZ: 20,
 } as const;
 
 /** Skyrim.esm's values. */
@@ -353,9 +359,9 @@ export class FaceAnimation implements FaceWeights {
 
   /**
    * Shows a response's emotion (its type, EMOTION_EXPRESSIONS, and value 0..100) over the
-   * face's mood while it is said, eased in; `undefined` lets it go (eased out). Inferred,
-   * TODO(M13): the expression's strength is the value / 100 (the scale of the mfg console's
-   * expression strengths, 0..100); the engine's own scale is not documented.
+   * face's mood while it is said, eased in; `undefined` lets it go (eased out). The expression's
+   * strength is the value / 100 (observed in the original: the speaker's emotion value times
+   * 0.01, as a script's SetExpressionOverride strength).
    */
   showEmotion(emotion: number | undefined, value = 50): void {
     const name = emotion === undefined ? undefined : EMOTION_EXPRESSIONS[emotion];
@@ -403,8 +409,8 @@ export class FaceAnimation implements FaceWeights {
 
     // The emotion of the response said, else the mood: its morph moves towards its strength,
     // the others towards none, by fExpressionChangePerSec a second (and fExpressionStrengthAdd
-    // more times the strength shown). TODO(M13): which strength scales the rate (taken as the
-    // target expression's; none when the face goes back to no expression) is inferred.
+    // more times the strongest morph of what it moves to: observed in the original, the shown
+    // expression's strength; none when the face goes back to no expression).
     const target = this.#emotion ?? this.#expression;
     const perSecond =
       this.#blink.fExpressionChangePerSec ?? EXPRESSION_DEFAULTS.fExpressionChangePerSec;
@@ -452,16 +458,18 @@ export class FaceAnimation implements FaceWeights {
     weights[BLINK_RIGHT] = Math.max(weights[BLINK_RIGHT] ?? 0, blink);
 
     // The eyes: where the look turns them, by the look morphs (a line's own looks join them),
-    // a morph at full weight at its turn (EYE_MORPH_HEADING, EYE_MORPH_PITCH) and held there
-    // beyond it.
+    // a morph at full weight at its turn (fTrackEyeXY, fTrackEyeZ: eyeMorphRange) and held
+    // there beyond it.
     const eyes = this.#eyes(dt);
     const look = (index: number, amount: number): void => {
       weights[index] = Math.max(weights[index] ?? 0, Math.min(1, Math.max(0, amount)));
     };
-    look(LOOK_RIGHT, eyes.heading / EYE_MORPH_HEADING);
-    look(LOOK_LEFT, -eyes.heading / EYE_MORPH_HEADING);
-    look(LOOK_UP, eyes.pitch / EYE_MORPH_PITCH);
-    look(LOOK_DOWN, -eyes.pitch / EYE_MORPH_PITCH);
+    const across = eyeMorphRange(this.#blink.fTrackEyeXY ?? EXPRESSION_DEFAULTS.fTrackEyeXY);
+    const upDown = eyeMorphRange(this.#blink.fTrackEyeZ ?? EXPRESSION_DEFAULTS.fTrackEyeZ);
+    look(LOOK_RIGHT, across > 0 ? eyes.heading / across : 0);
+    look(LOOK_LEFT, across > 0 ? -eyes.heading / across : 0);
+    look(LOOK_UP, upDown > 0 ? eyes.pitch / upDown : 0);
+    look(LOOK_DOWN, upDown > 0 ? -eyes.pitch / upDown : 0);
 
     for (let i = 0; i < weights.length; i++) {
       if (Math.abs((weights[i] ?? 0) - (before[i] ?? 0)) > 1 / 1024) {
