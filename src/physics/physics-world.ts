@@ -1397,6 +1397,8 @@ export class PhysicsWorld {
   readonly #giving = new Map<PlacedJoint, GivingJoint>();
   /** Bodies settling after being placed: silent until they first sleep (or this time). */
   readonly #settling = new Map<number, number>();
+  /** Bodies ever placed to settle (the warm start's), while they are in the world. */
+  readonly #settled = new Set<number>();
   /**
    * The system (one placed object of several bodies) of each of its colliders: its bodies do
    * not collide with one another (a hanging pheasant's body against the hook it hangs on).
@@ -1504,6 +1506,16 @@ export class PhysicsWorld {
    * stay silent at most, if they do not fall asleep before.
    */
   settleSeconds = 4;
+  /**
+   * Whether the warm start's end deactivates its islands (#endWarmStart), as the original's
+   * does. Off, what still moves at its end moves on until it comes to rest. Off for now:
+   * TODO(M13): with it on, 62 of the 64,248 loose objects of the interiors that settle end
+   * through what they lie on, against 38 without (`node tools/settle-audit.ts`, 2026-11-18):
+   * Rapier pushes what was placed sunk into a surface out more slowly and by other ways than
+   * Havok's recovery does, and coins in piles, eggs in a nest and baskets still on their way
+   * out at 4 s were stopped under the surface. It waits on that recovery.
+   */
+  deactivateAtWarmStartEnd = false;
   /** At most this many steps per frame (`[HAVOK] uMaxNumPhysicsStepsPerUpdate`). */
   maxSteps = MAX_STEPS_PER_UPDATE;
   /**
@@ -1902,6 +1914,7 @@ export class PhysicsWorld {
         });
       }
       if (dynamic && settle) {
+        // Placed in play (a severed head, a dropped item): no part of a cell's warm start.
         this.#settling.set(body.handle, this.#time + this.settleSeconds);
         this.#depenetrating.set(body.handle, this.#time + DEPENETRATE_SECONDS);
       }
@@ -3365,15 +3378,19 @@ export class PhysicsWorld {
 
   /**
    * Lets a placed object's simulated bodies settle (the warm start): they wake, and make no
-   * impact sounds until they first sleep (at most settleSeconds).
+   * impact sounds until they first sleep (at most settleSeconds). With `warmStart` false they
+   * settle so, but are no part of the warm start, whose end leaves them moving (a cart set
+   * going on its tether: src/ai/cart-tether.ts).
    */
-  settle(placed: PlacedCollision): void {
+  settle(placed: PlacedCollision, warmStart = true): void {
     if (isHung(placed)) this.#checkHung(placed);
     for (const { body } of placed.bodies) this.release(body);
     for (const { body, data } of placed.bodies) {
       if (data.motion !== 'dynamic' || data.phantom) continue;
       body.wakeUp();
       this.#settling.set(body.handle, this.#time + this.settleSeconds);
+      if (warmStart) this.#settled.add(body.handle);
+      else this.#settled.delete(body.handle);
       this.#depenetrating.set(body.handle, this.#time + DEPENETRATE_SECONDS);
     }
   }
@@ -3718,6 +3735,8 @@ export class PhysicsWorld {
       if (!dynamicBody(data)) continue;
       this.release(body);
       this.#depenetrating.delete(body.handle);
+      // Set going: no longer a part of its cell's warm start, whose end leaves it moving.
+      this.#settled.delete(body.handle);
       body.setLinvel({ x: toHavok(linear[0]), y: toHavok(linear[1]), z: toHavok(linear[2]) }, true);
       body.setAngvel({ x: angular[0], y: angular[1], z: angular[2] }, true);
     }
@@ -4589,7 +4608,12 @@ export class PhysicsWorld {
     }
     // Asleep by the rule: woken, it is inactive only after DEACTIVATION_SECONDS again (as
     // #deactivate leaves what it puts to sleep).
-    for (const handle of slept.keys()) this.#still.delete(handle);
+    // A settling body asleep is placed for good (#recordVelocities): its warm start is over, so
+    // its end (#endWarmStart) puts it to sleep no more once woken.
+    for (const handle of slept.keys()) {
+      this.#still.delete(handle);
+      this.#settling.delete(handle);
+    }
     for (const body of waking) {
       body.wakeUp();
       const v = this.#velocities.get(body.handle);
@@ -4872,9 +4896,78 @@ export class PhysicsWorld {
     });
     // A settling body is placed for good once it first sleeps (our deactivation leaves it be
     // until then, at most fWarmStartMaxTime: bAllowDeactivationWhileWarmStarting 0).
+    let ended: RAPIER.RigidBody[] | undefined;
     for (const [handle, until] of this.#settling) {
       const body = this.world.getRigidBody(handle) as RAPIER.RigidBody | null;
-      if (!body || body.isSleeping() || this.#time >= until) this.#settling.delete(handle);
+      if (!body || body.isSleeping() || this.#time >= until) {
+        this.#settling.delete(handle);
+        if (!body) this.#settled.delete(handle);
+        const warm = body !== null && this.#settled.has(handle);
+        if (warm && !body.isSleeping() && body.isDynamic() && this.#time >= until) {
+          (ended ??= []).push(body);
+        }
+      }
+    }
+    if (ended && this.deactivateAtWarmStartEnd) this.#endWarmStart(ended);
+  }
+
+  /**
+   * The warm start's end (observed in the original: once fWarmStartMaxTime has been stepped,
+   * every simulation island is deactivated): the islands of the bodies whose settling ended now
+   * go to sleep where they are, without speed, whether they still move or not. An island with
+   * a body in it that is not settling (something thrown into it, a ragdoll falling onto it) is
+   * left awake: it was not part of the warm start. TODO(M13): the original's world steps the
+   * warm start at once as a cell is set up; ours spreads it over the cell's first
+   * fWarmStartMaxTime of play, so other bodies may have joined the island meanwhile.
+   */
+  #endWarmStart(ended: readonly RAPIER.RigidBody[]): void {
+    const systems = new Map<number, RAPIER.RigidBody[]>();
+    this.forEachAwake((body) => {
+      if (!body.isDynamic()) return;
+      const system = this.#systemOf(body);
+      if (system === undefined) return;
+      let members = systems.get(system);
+      if (!members) systems.set(system, (members = []));
+      members.push(body);
+    });
+    const done = new Set<number>();
+    for (const start of ended) {
+      if (done.has(start.handle)) continue;
+      const island = new Map<number, RAPIER.RigidBody>([[start.handle, start]]);
+      const queue = [start];
+      let foreign = false;
+      // What is pushed onto the queue as it goes is visited too.
+      for (const body of queue) {
+        const near: RAPIER.RigidBody[] = [];
+        for (const handle of touchingBodies(this.world, body)) {
+          const other = this.world.getRigidBody(handle) as RAPIER.RigidBody | null;
+          if (other) near.push(other);
+        }
+        const system = this.#systemOf(body);
+        if (system !== undefined) near.push(...(systems.get(system) ?? []));
+        for (const other of near) {
+          if (island.has(other.handle) || !other.isDynamic() || other.isSleeping()) continue;
+          if (!other.isEnabled()) continue;
+          // Placed by a cell's warm start: part of it. Anything else moving (placed in play,
+          // launched, set going on a tether) keeps the island awake.
+          if (!this.#settled.has(other.handle)) foreign = true;
+          island.set(other.handle, other);
+          queue.push(other);
+        }
+      }
+      for (const handle of island.keys()) done.add(handle);
+      if (foreign) continue;
+      const still = { x: 0, y: 0, z: 0 };
+      for (const body of island.values()) {
+        this.#settling.delete(body.handle);
+        body.setLinvel(still, false);
+        body.setAngvel(still, false);
+        body.sleep();
+        this.#still.delete(body.handle);
+        // Asleep by the warm start, not by Rapier in this step: #holdAwake leaves it be.
+        this.#velocities.delete(body.handle);
+        this.#spins.delete(body.handle);
+      }
     }
   }
 

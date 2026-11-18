@@ -212,6 +212,69 @@ describe('a loose object sunk into what it lies on (the engine’s rule, inferre
   });
 });
 
+// Off in the play for now (PhysicsWorld.deactivateAtWarmStartEnd: with it, more of the interiors'
+// loose objects end through what they lie on, stopped on their way out of it); on here.
+describe('the warm start’s end (observed in the original: every island deactivated)', () => {
+  /** A box placed 6000 units over a floor, settled for `seconds`: its height and whether asleep. */
+  const dropped = (end: boolean, seconds: number): { z: number; asleep: boolean } => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    physics.deactivateAtWarmStartEnd = end;
+    physics.addObject(floor([{ z: 0, up: true }]), IDENTITY, { reference: 1, kind: 'object' });
+    const at = new Float32Array(IDENTITY);
+    at[14] = 6000;
+    const placed = physics.addObject(clutter(5, 10), at, { reference: 2, kind: 'object' }, false);
+    physics.step(physics.stepSeconds);
+    physics.settle(placed);
+    for (let t = 0; t < seconds; t += physics.stepSeconds) physics.step(physics.stepSeconds);
+    const body = placed.bodies[0]?.body;
+    const result = {
+      z: (body?.translation().z ?? NaN) * HAVOK_SCALE,
+      asleep: body?.isSleeping() ?? false,
+    };
+    physics.free();
+    return result;
+  };
+
+  it('puts what still moves after fWarmStartMaxTime (4 s) to sleep where it is', () => {
+    // A fall of 6000 units takes some 4.2 s: at 4 s it is still in the air, and stays there.
+    const at = dropped(true, 4.5);
+    expect(at.asleep).toBe(true);
+    expect(at.z).toBeGreaterThan(100);
+    expect(dropped(true, 8).z).toBeCloseTo(at.z, 0);
+  });
+
+  it('leaves what is placed in play (no cell’s warm start) or set going moving', () => {
+    for (const how of ['placed', 'launched', 'tethered'] as const) {
+      const physics = new PhysicsWorld(matrix, GRAVITY);
+      physics.deactivateAtWarmStartEnd = true;
+      const at = new Float32Array(IDENTITY);
+      at[14] = 6000;
+      // A severed head, a dropped item: placed to settle by itself, not by its cell.
+      const placed = physics.addObject(
+        clutter(5, 10),
+        at,
+        { reference: 2, kind: 'object' },
+        how === 'placed',
+      );
+      physics.step(physics.stepSeconds);
+      if (how === 'launched') {
+        physics.settle(placed);
+        physics.setVelocity(placed, [0, 0, -1], [0, 0, 0]);
+      } else if (how === 'tethered') physics.settle(placed, false);
+      for (let t = 0; t < 4.5; t += physics.stepSeconds) physics.step(physics.stepSeconds);
+      expect(placed.bodies[0]?.body.isSleeping(), how).toBe(false);
+      physics.free();
+    }
+  });
+
+  it('lets it move on with the end turned off', () => {
+    // Half a second on it has fallen on, some 700 units further (it reaches the floor at 5 s).
+    const at = dropped(false, 4.5);
+    expect(at.asleep).toBe(false);
+    expect(at.z).toBeLessThan(dropped(true, 4.5).z - 300);
+  });
+});
+
 describe.skipIf(!hasGamedata())('cells settle with every loose object in place (data)', () => {
   // Breezehome is not among them: unbought, it has no loose objects; bought and furnished, the
   // greatswords on its coat-of-arms plaque [00102A38, 00102A39], which WeaponRackActivateSCRIPT

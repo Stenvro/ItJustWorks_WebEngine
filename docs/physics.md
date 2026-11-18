@@ -201,7 +201,17 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   body to sleep once it has rested a second by the rule below, `#holdAwake`) and leaves what still moves at its end moving. TODO(M13): the settling at once, and the
   deactivation at its end: putting to sleep what still moves at the 4 s of `tools/settle-audit.ts` took
   the objects of the interiors that go through what they lie on from 92 to 159 (a sleeping body's
-  contacts drop while what lies on it still moves, as under "Deactivation by island").
+  contacts drop while what lies on it still moves, as under "Deactivation by island"). The end is
+  built by islands (`PhysicsWorld.deactivateAtWarmStartEnd`, `#endWarmStart`): as a body's
+  settling ends still moving, its island (what touches it, its object's other bodies) goes to
+  sleep without speed, unless something in it is no part of a cell's warm start (placed in play,
+  launched by `setVelocity`, a cart set going on its tether); a settling body that slept once is
+  placed for good and is not stopped again. Measured alone on 2026-11-18 (`--end-sleep`): 62 of
+  the 64,248 fall through against 38 without, 415 lifted against 403; the new ones are coin
+  piles, a nest's slaughterfish eggs, baskets and plates still on their way out of what they
+  were placed sunk into at 4 s, stopped under its surface (Rapier puts them out more slowly and
+  by other ways than Havok's recovery). So it stays off in the play until that recovery is
+  Havok's (tests/conformance/physics/settling.test.ts holds the rule).
 - **Weapon racks** are the game's own WeaponRackActivateSCRIPT (docs/scripting.md): as its
   cell attaches, the rack takes the reference it links to without a keyword, checks it against
   its RackType (1: anything but a shield; 2: a shield; 3: neither a dagger, a shield nor a

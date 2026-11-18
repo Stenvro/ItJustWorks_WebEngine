@@ -11,6 +11,7 @@
 //   node tools/settle-audit.ts                     every interior cell
 //   node tools/settle-audit.ts mistwatch           interior cells whose editor id contains it
 //   node tools/settle-audit.ts --seconds 8 dungeon
+//   node tools/settle-audit.ts --end-sleep          the warm start's end deactivates its islands
 
 import type { SkeletonNode } from '../src/animation/animated-skeleton.ts';
 import { parseNif } from '../src/formats/nif/nif.ts';
@@ -122,6 +123,12 @@ export class CollisionCache {
 }
 
 /**
+ * Whether the warm start's end deactivates its islands, as the original's does
+ * (PhysicsWorld.deactivateAtWarmStartEnd, off in the play for now); on with `--end-sleep`.
+ */
+let warmStartEnd = false;
+
+/**
  * Settles one cell's loose objects for `seconds` (physics only: no scripts, actors or graphs)
  * and reports those that fell through what they were placed on. An exterior cell's objects
  * settle on its landscape (`land`: its heights and grid position), as the session places it.
@@ -139,6 +146,7 @@ export async function settleCell(
   const toggles = findToggles(data);
   const enabled = enabledReferences(data, toggles, gameStartSelection(toggles));
   const physics = new PhysicsWorld(matrix, GRAVITY);
+  physics.deactivateAtWarmStartEnd = warmStartEnd;
   const watched: {
     reference: number;
     editorId: string;
@@ -291,7 +299,11 @@ if (import.meta.main) {
   const { Vfs: VfsClass } = await import('../src/vfs/vfs.ts');
   const { RecordDatabase: Db } = await import('../src/world/record-db.ts');
   const { openGameFolder } = await import('./gamedata-path.ts');
-  const args = process.argv.slice(2);
+  const args = process.argv.slice(2).filter((arg) => {
+    if (arg !== '--end-sleep') return true;
+    warmStartEnd = true;
+    return false;
+  });
   const secondsAt = args.indexOf('--seconds');
   const seconds = secondsAt >= 0 ? Number(args[secondsAt + 1]) : 5;
   const query = (
