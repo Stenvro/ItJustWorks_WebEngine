@@ -61,7 +61,7 @@ import { MenuHost, type Menu } from '../ui/menu-host.ts';
 import { MenuName } from '../ui/menu-stack.ts';
 import { floatingMarker } from './hud-elements.ts';
 import type { GameSession } from './game-session.ts';
-import { headPosition, type PlacedActor } from './actors.ts';
+import { speakerPosition, type DialogueSpeaker } from './actors.ts';
 import type { PlayerData } from './player.ts';
 import type { PlayerView } from './race-menu.ts';
 import type { Terminal } from './terminal.ts';
@@ -1273,7 +1273,12 @@ export class PlayMode {
    * its dialogue mode and the mouse on the menu until it ends (an actor with nothing to talk
    * about only says its greeting: no menu, the mouse stays the game's).
    */
-  #talk(dialogue: DialogueMenu, menus: GameMenus, speaker: PlacedActor, opening?: number): void {
+  #talk(
+    dialogue: DialogueMenu,
+    menus: GameMenus,
+    speaker: DialogueSpeaker,
+    opening?: number,
+  ): void {
     if (dialogue.isOpen || menus.isOpen || this.#session.menuMode) return;
     const session = this.#session;
     // The view turns to the speaker and zooms in while they talk (src/shell/dialogue-camera.ts).
@@ -1286,7 +1291,7 @@ export class PlayMode {
             session.menuStack.open(MenuName.dialogue);
             this.#talking = true;
             this.#world.capturePointer(false);
-            camera?.open(() => headPosition(speaker));
+            camera?.open(() => speakerPosition(speaker));
           },
           closed: () => {
             this.#talking = false;

@@ -65,7 +65,7 @@ import type { Player } from './player.ts';
 import { attachPlayerInput } from './player-input.ts';
 import { attachGamepad } from './gamepad-input.ts';
 import type { HudSignals } from './hud-signals.ts';
-import type { ActorTarget } from './actors.ts';
+import type { ActorTarget, TalkingObject } from './actors.ts';
 import { turnSwing } from './open-close.ts';
 import {
   bodyOnPose,
@@ -251,6 +251,27 @@ export function autoDoorsOf(objects: readonly CellObject[]): readonly CellObject
  * may open it, and what an actor's activation does besides: an item taken, a load door gone
  * through); an activate parent swings a locked door.
  */
+/**
+ * A talking activator (TACT) as the dialogue menu's speaker: activated by the player, it talks
+ * with them as an actor does, in its own voice type (VNAM), where it stands (CK wiki "Talking
+ * Activator": the Augur of Dunlain, the Night Mother's coffin).
+ */
+export async function talkingObject(
+  runtime: ScriptRuntime,
+  object: CellObject,
+): Promise<TalkingObject> {
+  const voice = await runtime.voiceType(object.reference);
+  const record = voice === undefined ? undefined : await runtime.forms.record(voice);
+  const at = runtime.world.livePlacement?.(object.reference)?.position;
+  return {
+    actor: { reference: object.reference },
+    look: { name: object.name, voiceType: record?.editorId },
+    talkingAt: at
+      ? [at[0], at[1], at[2]]
+      : [object.world[12] ?? 0, object.world[13] ?? 0, object.world[14] ?? 0],
+  };
+}
+
 export function objectActivation(
   object: CellObject,
   instance: ModelInstance | undefined,

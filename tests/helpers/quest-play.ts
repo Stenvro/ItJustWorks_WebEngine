@@ -2,6 +2,10 @@
 // the player's ways of going after an actor, through the doors it takes, and of getting through
 // a fight that is not what the case tests.
 
+import type { Space } from '../../src/ai/package-start.ts';
+import { loadRouteMap } from '../../src/ai/route-map.ts';
+import { findRoute, type RouteEnd, type RouteMap } from '../../src/ai/routes.ts';
+import { ObjectHandle } from '../../src/scripting/values.ts';
 import { parseTeleport } from '../../src/world/cell-records.ts';
 import { ActorValue } from '../../src/world/actor-values.ts';
 import { PLAYER_REF, SIM_STEP, type Sim } from './sim.ts';
@@ -54,6 +58,83 @@ export async function doorInto(
     if (!best || distance < best.distance) best = { door: reference, distance };
   }
   return best?.door;
+}
+
+/** The load doors' routes of the load order, read once per file (src/ai/routes.ts). */
+let routeMap: Promise<RouteMap> | undefined;
+
+/**
+ * The player makes their way to where a reference is now, as one who knows the way: the load
+ * doors of the route there (src/ai/routes.ts, as actors find theirs) gone through in turn, what
+ * fights them falling, then up to it within `reach`. Whether they got there.
+ */
+export async function travelTo(
+  sim: Sim,
+  target: number,
+  seconds: number,
+  reach = 150,
+): Promise<boolean> {
+  const until = sim.time + seconds;
+  routeMap ??= loadRouteMap(sim.db);
+  const map = await routeMap;
+  const endOf = async (reference: number): Promise<RouteEnd | undefined> => {
+    const at = await sim.runtime.placement(reference);
+    if (!at) return undefined;
+    const space: Space =
+      at.world !== undefined
+        ? { kind: 'world', world: at.world }
+        : { kind: 'interior', cell: at.cell ?? 0 };
+    const navmesh = map.nearestNavmesh(space, at.position);
+    return navmesh === undefined ? undefined : { space, position: at.position, navmesh };
+  };
+  for (let leg = 0; leg < 12 && sim.time < until; leg++) {
+    const [from, to] = await Promise.all([endOf(PLAYER_REF), endOf(target)]);
+    if (!from || !to) return false;
+    const route = findRoute(map, from, to);
+    const door = route?.doors[0]?.door;
+    if (door === undefined) break;
+    const at = await sim.position(door);
+    if (!at || !(await walkFighting(sim, at, until - sim.time, 150))) return false;
+    if (!sim.activate(door)) return false;
+    await sim.world.settle();
+    await sim.step(1);
+  }
+  const at = await sim.position(target);
+  return at !== undefined && walkFighting(sim, at, Math.max(1, until - sim.time), reach);
+}
+
+/**
+ * The player solves a Nordic pillar puzzle as one who has read its carved hints: each pillar
+ * (defaultPuzzlePillarNoFurn) turned until it shows the face its hint names (its solveState), then
+ * the lever pulled (defaultPillarPuzzleLeverNoFurn), which opens the way. Whether every pillar
+ * came to its face.
+ */
+export async function solvePillars(
+  sim: Sim,
+  pillars: readonly number[],
+  lever: number,
+): Promise<boolean> {
+  const vm = sim.runtime.vm;
+  let solved = true;
+  for (const pillar of pillars) {
+    const handle = new ObjectHandle(pillar, 'defaultpuzzlepillarnofurn');
+    const at = await sim.position(pillar);
+    if (at) await walkFighting(sim, at, 60, 180);
+    const want = `position0${String(await vm.getVariable(handle, '::solveState_var'))}`;
+    for (let turn = 0; turn < 4 && (await vm.stateOf(handle)) !== want; turn++) {
+      sim.activate(pillar);
+      for (let wait = 0; wait < 10 && (await vm.stateOf(handle)) === 'busy'; wait++) {
+        await sim.step(0.5);
+      }
+      await sim.step(0.5);
+    }
+    if ((await vm.stateOf(handle)) !== want) solved = false;
+  }
+  const at = await sim.position(lever);
+  if (at) await walkFighting(sim, at, 60, 150);
+  sim.activate(lever);
+  await sim.step(4);
+  return solved;
 }
 
 /** The player goes through a load door: walks up to it and opens it. */

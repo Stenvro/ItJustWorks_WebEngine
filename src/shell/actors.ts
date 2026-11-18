@@ -309,6 +309,25 @@ async function corpseLootSounds(
   return { open: sound('ONAM'), close: sound('LNAM') };
 }
 
+/**
+ * A talking activator (TACT) the player talks with: its reference, name and voice type (VNAM), and
+ * where it stands; it has no face to move (the Augur of Dunlain's light).
+ */
+export interface TalkingObject {
+  readonly actor: { readonly reference: number };
+  readonly look: { readonly name: string; readonly voiceType: string | undefined };
+  readonly face?: undefined;
+  readonly talkingAt: Vec3;
+}
+
+/** Who the player talks with in the dialogue menu: an actor, or a talking activator. */
+export type DialogueSpeaker = PlacedActor | TalkingObject;
+
+/** Where a speaker's voice comes from: an actor's head, a talking activator's place. */
+export function speakerPosition(speaker: DialogueSpeaker): Vec3 {
+  return 'talkingAt' in speaker ? speaker.talkingAt : headPosition(speaker);
+}
+
 /** Where an actor's head is, in the world: its race's head node (its body part data's). */
 export function headPosition(placed: PlacedActor): Vec3 {
   const world = placed.instances[0]?.world;
@@ -700,11 +719,11 @@ export class ActorPlacer {
   }
 
   /**
-   * The actor says a voice file at its head, its face lip-syncing (lines with lip-sync data
+   * The actor says a voice file at its head (a talking activator where it stands), its face lip-syncing (lines with lip-sync data
    * start their curves first, by their lead-in). Undefined if the file cannot be read.
    */
   async say(
-    placed: PlacedActor,
+    placed: DialogueSpeaker,
     path: string,
     inPlayersHead = false,
     /** The info's Audio Output Override (INFO ONAM), if it has one. */
@@ -735,7 +754,7 @@ export class ActorPlacer {
     let instance: Promise<SoundInstance | undefined> | undefined;
     let stopped = false;
     const start = (): void => {
-      if (!stopped) instance = line.play(() => headPosition(placed));
+      if (!stopped) instance = line.play(() => speakerPosition(placed));
     };
     const timer = lead > 0 ? setTimeout(start, lead * 1000) : undefined;
     if (lead <= 0) start();
@@ -756,10 +775,10 @@ export class ActorPlacer {
    * at its head, as a response without a voice file of its own does; undefined if it does not
    * play (its conditions, no sound system).
    */
-  async saySound(placed: PlacedActor, descriptor: number): Promise<SpokenLine | undefined> {
+  async saySound(placed: DialogueSpeaker, descriptor: number): Promise<SpokenLine | undefined> {
     const instance = await this.#session.playSound(
       descriptor,
-      () => headPosition(placed),
+      () => speakerPosition(placed),
       0,
       placed.actor.reference,
     );

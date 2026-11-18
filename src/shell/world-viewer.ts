@@ -145,6 +145,7 @@ import { SUN_GAZE_DEFAULTS, type SunGazeSettings } from '../gameplay/sun-gaze.ts
 import {
   collisionGroup,
   objectActivation,
+  talkingObject,
   perkActivation,
   PlaySession,
   autoDoorsOf,
@@ -1138,6 +1139,32 @@ export class WorldViewer {
   }
 
   #objectActivation(
+    object: CellObject,
+    instance: ModelInstance | undefined,
+    activator?: number,
+  ): Activatable | undefined {
+    const target = this.#plainActivation(object, instance, activator);
+    const runtime = this.#session?.scriptsReady;
+    // A talking activator talks with the player who activates it (the dialogue menu).
+    if (
+      !target ||
+      !runtime ||
+      object.baseType !== 'TACT' ||
+      (activator ?? PLAYER_REF) !== PLAYER_REF
+    )
+      return target;
+    return {
+      ...target,
+      activate: () => {
+        target.activate();
+        void talkingObject(runtime, object).then((speaker) => {
+          this.#session?.hud.menus?.talk(speaker);
+        });
+      },
+    };
+  }
+
+  #plainActivation(
     object: CellObject,
     instance: ModelInstance | undefined,
     activator?: number,

@@ -45,6 +45,7 @@ import { tellSwing } from '../shell/open-close.ts';
 import {
   collisionGroup,
   objectActivation,
+  talkingObject,
   perkActivation,
   PlaySession,
   autoDoorsOf,
@@ -1698,6 +1699,19 @@ export class SimWorld {
           if (object.readable) {
             void openBookUnseen(runtime, { book: object.base, reference: object.reference });
           } else void takeFromWorld(runtime, object);
+        },
+      };
+    }
+    // A talking activator talks with the player who activates it (the dialogue menu).
+    if (target && object.baseType === 'TACT' && (activator ?? PLAYER_REF) === PLAYER_REF) {
+      const runtime = this.runtime;
+      return {
+        ...target,
+        activate: () => {
+          target.activate();
+          void talkingObject(runtime, object).then((speaker) => {
+            this.session.hud.menus?.talk(speaker);
+          });
         },
       };
     }

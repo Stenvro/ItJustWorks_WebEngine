@@ -12,7 +12,7 @@ import type { MenuRequest, QuestUpdate } from '../scripting/runtime/runtime.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { StoryEventData } from '../scripting/runtime/story-manager.ts';
 import { ObjectHandle, PapyrusArray, type Value } from '../scripting/values.ts';
-import type { PlacedActor } from '../shell/actors.ts';
+import type { DialogueSpeaker } from '../shell/actors.ts';
 import type { ActorSoundOutput } from '../shell/actor-sounds.ts';
 import type { GameSession } from '../shell/game-session.ts';
 import type { HelpMessage, HudSink, MenuSink } from '../shell/hud-signals.ts';
@@ -370,7 +370,7 @@ export class SimLog {
       return Promise.resolve(this.answers.shift() ?? 0);
     },
     userEvent: () => undefined,
-    talk: (speaker: PlacedActor, opening?: number) => {
+    talk: (speaker: DialogueSpeaker, opening?: number) => {
       this.#push({
         kind: 'menu',
         at: this.clock(),
