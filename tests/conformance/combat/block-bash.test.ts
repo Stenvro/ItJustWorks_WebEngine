@@ -14,7 +14,9 @@ import { blockCost } from '../../../src/gameplay/vitals.ts';
 import { COMBAT_AI_DEFAULTS } from '../../../src/ai/combat-ai.ts';
 import {
   bashChance,
+  blockAttackDelay,
   blockAttackOpening,
+  blockAttackStrikes,
   blockChance,
   blockStartDistance,
   blockStopDistance,
@@ -99,6 +101,32 @@ describe('blocking and bashing (formula)', () => {
     expect(blockAttackOpening({ ...far, distanceSoon: 170 }, settings)).toBe(true);
     // Outside the swing's own strike angle.
     expect(blockAttackOpening({ ...opening, off: 0.7 }, settings)).toBe(false);
+  });
+
+  it('the block attack waits 1 .. 2 s on its opening, or strikes as its target staggers  [original]', () => {
+    expect(blockAttackDelay(0)).toBe(1);
+    expect(blockAttackDelay(0.999)).toBeCloseTo(1.999);
+    const waiting = {
+      sinceOpening: 0.5,
+      delay: 1.5,
+      targetStaggered: false,
+      targetRecoiling: false,
+      bashing: false,
+      targetAttacking: false,
+      off: 0.6,
+      strikeAngle: 0.5,
+    };
+    expect(blockAttackStrikes(waiting, settings)).toBe(false);
+    expect(blockAttackStrikes({ ...waiting, sinceOpening: 1.6 }, settings)).toBe(true);
+    // Sooner as its target staggers or recoils (its blow met the block).
+    expect(blockAttackStrikes({ ...waiting, targetStaggered: true }, settings)).toBe(true);
+    expect(blockAttackStrikes({ ...waiting, targetRecoiling: true }, settings)).toBe(true);
+    // Not while it bashes already, nor while its target swings at it within the strike angle ×
+    // fCombatBlockAttackStrikeAngleMult (0.5 × 1.25 = 0.625).
+    const due = { ...waiting, sinceOpening: 2 };
+    expect(blockAttackStrikes({ ...due, bashing: true }, settings)).toBe(false);
+    expect(blockAttackStrikes({ ...due, targetAttacking: true }, settings)).toBe(false);
+    expect(blockAttackStrikes({ ...due, targetAttacking: true, off: 0.7 }, settings)).toBe(true);
   });
 
   it('the offensive bash: chosen out of no block by its chance  [original]', () => {

@@ -141,7 +141,9 @@ import {
   attackStrikeAngle,
   avoidsThreat,
   blockAttackChance,
+  blockAttackDelay,
   blockAttackOpening,
+  blockAttackStrikes,
   blockStartDistance,
   holdsBlock,
   blockChance,
@@ -450,6 +452,8 @@ interface Mind {
   hand: 'right' | 'left';
   /** The block attack's opening last weighed (its target's swing), and its target's last place. */
   blockAttacked: object | undefined;
+  /** A block attack taken at an opening, waiting to strike (blockAttackStrikes): since, its wait. */
+  blockAttackOpen: { readonly at: number; readonly delay: number } | undefined;
   blockTargetAt:
     { readonly distance: number; readonly at: number; readonly speed: number } | undefined;
   maneuver: Maneuver;
@@ -1240,6 +1244,7 @@ export class ActorCombatAi {
         switchedAt: -Infinity,
         hand: 'right',
         blockAttacked: undefined,
+        blockAttackOpen: undefined,
         blockTargetAt: undefined,
         maneuver: 'advance',
         maneuverUntil: 0,
@@ -2995,6 +3000,10 @@ export class ActorCombatAi {
         ? undefined
         : await spells.chooseSpell(reference, 'reanimate', corpse.reference);
     const health = await share(ActorValue.health);
+    // Bleeding out, health is wanted whatever its share (restoreWanted). TODO(M13): the stage
+    // stands a bleeding-out fighter out of its tree (the tick's bleedingOut gate), so this
+    // holds only for one whose support was under way as it went down.
+    const bleedingOut = view.state.life === LifeState.bleedout;
     const heal = await spells.chooseSpell(reference, 'heal');
     // The combat inventory takes its items by their scores (spell-score.ts).
     const score = async (
@@ -3013,6 +3022,7 @@ export class ActorCombatAi {
         health,
         magicka: await share(ActorValue.magicka),
         restoreHealthBelow: restoreBelow,
+        bleedingOut,
         wardThreat: ward !== undefined,
         sinceWard: this.#clock - mind.wardedAt,
         canHeal: heal !== undefined,
@@ -3046,7 +3056,10 @@ export class ActorCombatAi {
         break;
       case 'restore':
         // A held healing spell goes on past its restore share by the stop threshold.
-        purpose = { kind: 'heal', holds: (now) => holdsRestore(now, restoreBelow, subtrees) };
+        purpose = {
+          kind: 'heal',
+          holds: (now) => holdsRestore(now, restoreBelow, subtrees, bleedingOut),
+        };
         break;
       case 'reanimate':
         if (!corpse) return;
@@ -3669,6 +3682,7 @@ export class ActorCombatAi {
             return (
               blow !== undefined &&
               f.mind.blockAttacked !== blow &&
+              f.mind.blockAttackOpen === undefined &&
               f.view.gear?.canBash === true &&
               blockAttackOpening(
                 {
@@ -3683,6 +3697,31 @@ export class ActorCombatAi {
                   ),
                   reach: f.target.reach,
                   radius: f.view.radius,
+                },
+                settings(),
+              )
+            );
+          },
+          // A block attack taken at an opening strikes once its wait is over or its target
+          // staggers or recoils, while its target does not swing at it.
+          blockAttackReady: (f) => {
+            const open = f.mind.blockAttackOpen;
+            return (
+              open !== undefined &&
+              blockAttackStrikes(
+                {
+                  sinceOpening: this.#clock - open.at,
+                  delay: open.delay,
+                  targetStaggered: f.target.state.staggered,
+                  targetRecoiling: f.target.state.recoiling,
+                  bashing: f.view.state.attack === AttackState.bash,
+                  targetAttacking: f.target.state.attack !== AttackState.none,
+                  off: Math.abs(turnBetween(f.target.heading, f.facing + Math.PI)),
+                  strikeAngle: attackStrikeAngle(
+                    f.target.gear?.strikeAngle ?? 0,
+                    false,
+                    settings(),
+                  ),
                 },
                 settings(),
               )
@@ -4222,8 +4261,19 @@ export class ActorCombatAi {
             f.mind.blockAttacked = this.#blowAt(f);
             return 'success';
           },
-          // The block attack: the shield bash out of the block, against the target's swing.
-          blockAttack: (f) => this.#melee(f, 'ActionRightAttack', 'Bash'),
+          // The block attack taken: it waits on its opening (blockAttackDelay: 1 .. 2 s).
+          openBlockAttack: (f) => {
+            f.mind.blockAttackOpen = {
+              at: this.#clock,
+              delay: blockAttackDelay(this.#random()),
+            };
+            return 'success';
+          },
+          // The block attack: the shield bash out of the block.
+          blockAttack: (f) => {
+            f.mind.blockAttackOpen = undefined;
+            return this.#melee(f, 'ActionRightAttack', 'Bash');
+          },
           // Held, the block meets each blow that comes at it (ActionBlockAnticipate: its graph's
           // block anticipation raises the shield or weapon at the attacker's weapon).
           holdBlock: (f) => {
@@ -4360,6 +4410,7 @@ export class ActorCombatAi {
   }
 
   #releaseBlock(mind: Mind, view: FighterView | undefined): void {
+    mind.blockAttackOpen = undefined;
     if (view?.state.blocking !== true) return;
     mind.blockUntil = 0;
     void this.#options.host.block(mind.reference, false);

@@ -829,6 +829,8 @@ export interface CasterState {
   readonly magicka: number;
   /** Its restore shares (restoreShare in combat-tactics.ts). */
   readonly restoreHealthBelow: number;
+  /** It bleeds out (its life state bleedout): health is wanted whatever its share. */
+  readonly bleedingOut?: boolean;
   /** A spell or breath comes at it and it has a ward. */
   readonly wardThreat: boolean;
   readonly sinceWard: number;
@@ -872,7 +874,7 @@ export function chooseCaster(
   }
   if (
     state.canHeal &&
-    state.health < state.restoreHealthBelow &&
+    healthWanted(state) &&
     state.sinceHealthRestore >= state.restoreHealthRestrictTime
   ) {
     ready.push('restore');
@@ -897,6 +899,13 @@ export function chooseCaster(
     }
   }
   return best;
+}
+
+/** Health is wanted below its restore share, or while it bleeds out (restoreWanted). */
+function healthWanted(state: CasterState): boolean {
+  return restoreWanted(state.health, state.restoreHealthBelow, {
+    bleedingOut: state.bleedingOut === true,
+  });
 }
 
 /** Its potions as the Action Equipment Selector's Potion slot weighs them. */
@@ -927,7 +936,7 @@ export function chooseCombatSupport(
 ): CombatSupportChoice | undefined {
   if (
     potions.health &&
-    state.health < state.restoreHealthBelow &&
+    healthWanted(state) &&
     state.sinceHealthRestore >= state.restoreHealthRestrictTime
   ) {
     return { kind: 'potion', value: 'health' };
@@ -944,16 +953,37 @@ export function chooseCombatSupport(
 }
 
 /**
- * A held (concentration) restoring spell: cast on until its health share is
- * fCombatRestoreStopCastThreshold past the share it started below, or full. TODO(M13): the
- * engine's use of the threshold (inferred: the margin above the restore share).
+ * Whether it wants a value (health, magicka) restored (observed in the original): its share of
+ * the value below its style's restore share; one already restoring it (a held spell cast on)
+ * goes on below that share plus fCombatRestoreStopCastThreshold. Health is always wanted while it
+ * bleeds out (its life state bleedout), whatever its share.
+ */
+export function restoreWanted(
+  share: number,
+  restoreBelow: number,
+  options: { readonly restoring?: boolean; readonly bleedingOut?: boolean } = {},
+  settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+): boolean {
+  if (options.bleedingOut === true) return true;
+  return (
+    share < restoreBelow + (options.restoring === true ? settings.restoreStopCastThreshold : 0)
+  );
+}
+
+/**
+ * A held (concentration) restoring spell (observed in the original): cast on while its health is
+ * below the restore share plus fCombatRestoreStopCastThreshold of its base health (the cast's
+ * restoring caster stops it once more than that), and on while it bleeds out. Its share here is
+ * of its current maximum (TODO(M13): the original weighs the base value; they part only while a
+ * spell or an item changes its health's maximum).
  */
 export function holdsRestore(
   health: number,
   restoreBelow: number,
   settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+  bleedingOut = false,
 ): boolean {
-  return health < 1 && health < restoreBelow + settings.restoreStopCastThreshold;
+  return restoreWanted(health, restoreBelow, { restoring: true, bleedingOut }, settings);
 }
 
 /** A ward is held at least fCombatMagicWardMinCastTime, and while something comes at it. */

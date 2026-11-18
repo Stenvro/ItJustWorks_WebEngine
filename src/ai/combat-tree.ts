@@ -80,6 +80,7 @@ export const COMBAT_VALUES = [
   'blockChance',
   'blockAttackChance',
   'mayBlockAttack',
+  'blockAttackReady',
   // Flee.
   'fleeing',
   'cornered',
@@ -168,6 +169,7 @@ export const COMBAT_ACTIONS = [
   'block',
   'releaseBlock',
   'noteBlockAttack',
+  'openBlockAttack',
   'blockAttack',
   'holdBlock',
   // Flee.
@@ -376,15 +378,17 @@ export const COMBAT_TREES: Readonly<Record<string, NodeSpec>> = {
     child: first(
       // Blocking: held (sustained while its target stays near) until its block time ran out or
       // its target is gone or backs off; meanwhile the block attack, the shield bash out of the
-      // block, by its block attack chance once per opening.
+      // block: taken by its block attack chance once per opening, it strikes once its wait is
+      // over or its target staggers or recoils (combat-tactics.ts blockAttackStrikes).
       seq(
         test(v('blocking')),
         first(
           seq(test(v('blockOver')), act('releaseBlock')),
+          seq(test(v('blockAttackReady')), act('blockAttack')),
           seq(
             test(v('mayBlockAttack')),
             act('noteBlockAttack'),
-            chance(v('blockAttackChance'), act('blockAttack')),
+            chance(v('blockAttackChance'), act('openBlockAttack')),
           ),
           ok(act('holdBlock')),
         ),

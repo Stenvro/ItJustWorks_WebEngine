@@ -1051,6 +1051,45 @@ export function blockAttackOpening(
   return input.distance < limit || input.distanceSoon < limit;
 }
 
+/**
+ * How long a block attack waits on its opening at most (observed in the original): drawn at
+ * random from 1 to 2 seconds as the opening is taken (`random`: 0 .. 1).
+ */
+export function blockAttackDelay(random: number): number {
+  return 1 + random;
+}
+
+/**
+ * Whether a block attack taken at an opening strikes now (observed in the original: the Block
+ * Attack behaviour, after its opening, looks each update): once its wait (blockAttackDelay) is
+ * over, or sooner as its target staggers or recoils; and then only while it is not bashing
+ * already and its target is not swinging at it with it inside that swing's strike angle ×
+ * fCombatBlockAttackStrikeAngleMult. Until then it holds its block and waits. TODO(M13): which
+ * of the recoils counts (the original reads one of its two values; ours: either).
+ */
+export function blockAttackStrikes(
+  input: {
+    /** Seconds since the opening was taken, and its wait. */
+    readonly sinceOpening: number;
+    readonly delay: number;
+    readonly targetStaggered: boolean;
+    readonly targetRecoiling: boolean;
+    /** It is bashing already. */
+    readonly bashing: boolean;
+    /** Its target attacks, how far it stands off its target's facing, the swing's strike angle. */
+    readonly targetAttacking: boolean;
+    readonly off: number;
+    readonly strikeAngle: number;
+  },
+  settings: CombatAiSettings,
+): boolean {
+  const opened = input.sinceOpening > input.delay || input.targetStaggered || input.targetRecoiling;
+  if (!opened || input.bashing) return false;
+  return !(
+    input.targetAttacking && input.off <= input.strikeAngle * settings.blockAttackStrikeAngleMult
+  );
+}
+
 export interface ShotInput extends Opponent {
   /** Seconds since its last attack (undefined: none yet in this fight). */
   readonly sinceLastAttack: number | undefined;
