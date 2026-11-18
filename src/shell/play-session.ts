@@ -941,6 +941,10 @@ export class PlaySession {
       get forward() {
         return active().forward;
       },
+      // The field of view looked through (the player's sight frustum, the animation rates).
+      get fovY() {
+        return active().fovY;
+      },
       update: (deltaSeconds) => {
         this.#frame(deltaSeconds);
         this.cameraOverride?.update(deltaSeconds);

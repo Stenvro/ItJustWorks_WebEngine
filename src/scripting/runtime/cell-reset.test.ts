@@ -48,7 +48,9 @@ async function comeBack(
   setup: (state: GameState) => void,
   hour: number,
   force = false,
-): Promise<GameState & { held: number[] }> {
+  /** The references quest aliases hold. */
+  aliased: ReadonlySet<number> = new Set(),
+): Promise<GameState & { held: number[]; disabled: number[] }> {
   const records = new Map<number, unknown>([
     [CELL, record('CELL', CELL)],
     [CHEST_LID, record('REFR', CHEST_LID, STATIC)],
@@ -60,7 +62,7 @@ async function comeBack(
     [VAMPIRE_BASE, record('NPC_', VAMPIRE_BASE, undefined, 0, { template: VAMPIRE_LIST })],
     [VAMPIRE_LIST, record('LVLN', VAMPIRE_LIST)],
   ]);
-  const state = Object.assign(new GameState(), { held: [] as number[] });
+  const state = Object.assign(new GameState(), { held: [] as number[], disabled: [] as number[] });
   const runtime = {
     state,
     events: { on: () => undefined },
@@ -73,12 +75,15 @@ async function comeBack(
     },
     gameSetting: () => Promise.resolve(undefined),
     locationClearing: { revived: () => Promise.resolve() },
-    aliasesHolding: () => [],
+    aliasesHolding: (reference: number) => (aliased.has(reference) ? [1] : []),
     removeFromGame: (reference: number) => {
       state.reference(reference).deleted = true;
       return true;
     },
-    setEnabled: () => Promise.resolve(),
+    setEnabled: (reference: number, enabled: boolean) => {
+      if (!enabled) state.disabled.push(reference);
+      return Promise.resolve();
+    },
     resetHeld: (reference: number) => {
       state.held.push(reference);
       state.inventories.delete(reference);
@@ -170,5 +175,38 @@ describe('what a cell reset puts back', () => {
     const forced = await comeBack(opened, 5, true);
     expect(forced.references.get(CHEST_LID)?.openState).toBeUndefined();
     expect(forced.cellResetsForced.size).toBe(0);
+  });
+
+  it('clears a corpse that does not respawn after iHoursToClearCorpses, unless an alias holds it or an item it carries', async () => {
+    const killed = (s: GameState): void => {
+      s.actor(GHOST).dead = true;
+      s.deathHours.set(GHOST, 2);
+    };
+    // Dead 38 hours: past the corpse wait (24), not the respawn wait (72).
+    expect((await comeBack(killed, 40)).disabled).toEqual([GHOST]);
+    expect((await comeBack(killed, 20)).disabled).toEqual([]);
+    expect((await comeBack(killed, 40, false, new Set([GHOST]))).disabled).toEqual([]);
+    // A quest item in its inventory (a reference an alias holds, held by the corpse).
+    const QUEST_ITEM = 0x60;
+    const carrying = (s: GameState): void => {
+      killed(s);
+      s.reference(QUEST_ITEM).container = { holder: GHOST, base: 0x61, count: 1 };
+    };
+    expect((await comeBack(carrying, 40, false, new Set([QUEST_ITEM]))).disabled).toEqual([]);
+    expect((await comeBack(carrying, 40)).disabled).toEqual([GHOST]);
+  });
+
+  it("clears a respawning actor's corpse too while its own respawn is not due", async () => {
+    const killed = (hour: number) => (s: GameState) => {
+      s.actor(BANDIT).dead = true;
+      s.deathHours.set(BANDIT, hour);
+    };
+    // Dead 30 hours of the 72 it waits: its corpse goes; dead 78: it respawns instead.
+    const early = await comeBack(killed(50), 80);
+    expect(early.disabled).toEqual([BANDIT]);
+    expect(early.actors.get(BANDIT)?.dead).toBe(true);
+    const late = await comeBack(killed(2), 80);
+    expect(late.disabled).toEqual([]);
+    expect(late.actors.has(BANDIT)).toBe(false);
   });
 });

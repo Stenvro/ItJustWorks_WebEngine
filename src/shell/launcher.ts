@@ -2,8 +2,8 @@
 // Options keeps what the launcher writes to SkyrimPrefs.ini: whether the game runs in a window
 // or full screen, and the detail preset. The prefs live in the browser's storage (per player,
 // as the INI lives in the player's documents); storage that is unavailable leaves the
-// defaults. TODO(M13): the detail presets and the Advanced settings (detail, view distance,
-// water) applied by the renderer; it draws at Ultra for now.
+// defaults. A preset chosen (and the first start's, where no SkyrimPrefs.ini was written yet)
+// writes its file's settings into the prefs (src/world/detail-presets.ts: onDetailChosen).
 
 import { iniValue, type Ini } from '../formats/ini/ini.ts';
 
@@ -73,11 +73,23 @@ export class Launcher {
   /** Play pressed (a user gesture: full screen may be asked for here). */
   onPlay: ((prefs: LauncherPrefs) => void) | undefined;
   onExit: (() => void) | undefined;
+  /**
+   * A detail preset is to be written into the prefs: chosen in the Options (OK with another
+   * preset than before), or the first start's, before Play starts the game.
+   */
+  onDetailChosen: ((detail: LauncherPrefs['detail']) => void) | undefined;
+  /** No SkyrimPrefs.ini was written yet (the launcher's first start writes its preset). */
+  #firstStart = !hasStoredPrefs();
 
   constructor(ui: LauncherUi, adapter: string) {
     this.#ui = ui;
     ui.adapter.textContent = adapter;
     ui.play.addEventListener('click', () => {
+      if (this.#firstStart) {
+        this.#firstStart = false;
+        savePrefs(this.#prefs);
+        this.onDetailChosen?.(this.#prefs.detail);
+      }
       this.onPlay?.(this.#prefs);
     });
     ui.exit.addEventListener('click', () => {
@@ -90,12 +102,17 @@ export class Launcher {
       ui.dialog.close();
     });
     ui.ok.addEventListener('click', () => {
+      const before = this.#prefs.detail;
       this.#prefs = {
         windowed: ui.windowed.checked,
         detail: this.#chosenDetail(),
       };
       savePrefs(this.#prefs);
       ui.dialog.close();
+      if (this.#firstStart || this.#prefs.detail !== before) {
+        this.#firstStart = false;
+        this.onDetailChosen?.(this.#prefs.detail);
+      }
     });
     for (const button of ui.detail.querySelectorAll<HTMLButtonElement>('button[data-detail]')) {
       button.addEventListener('click', () => {
@@ -114,6 +131,8 @@ export class Launcher {
     if (hasStoredPrefs()) return;
     const fullScreen = iniValue(ini, 'Display', 'bFull Screen');
     if (fullScreen === undefined) return;
+    // The player's own SkyrimPrefs.ini: no first start writes a preset over it.
+    this.#firstStart = false;
     this.#prefs = { ...this.#prefs, windowed: Number.parseInt(fullScreen, 10) === 0 };
   }
 

@@ -405,8 +405,17 @@ Play starts where the game starts, at its launcher (`src/shell/launcher.ts`): Pl
 Exit. Options keeps what the launcher writes to SkyrimPrefs.ini (in the browser's storage, per
 player): Windowed Mode (off: Play asks for full screen in the click that starts it) and the
 Detail preset. The Graphics Adapter shows the GPU. The launcher's art lives in its program,
-not in the game's data, so it wears the engine's own look. TODO(M13): the detail presets and the
-Advanced settings (detail, view distance, water) applied by the renderer, which draws at Ultra.
+not in the game's data, so it wears the engine's own look. A detail preset is a file of the
+installation beside Skyrim_Default.ini (`Low.ini`, `Medium.ini`, `High.ini`, `Ultra.ini`):
+choosing one (OK with another preset than before), or the first start where no prefs were
+written yet, writes that file's settings into the prefs over what the player had there, keeping
+their other settings (`src/world/detail-presets.ts`, the launcher's `onDetailChosen`); the
+engine reads them as it reads the prefs (IniSettings over Preferences), so the settings it reads
+there (TAA, focus shadows, grass fade, LOD fades, decals, lens flare, volumetric light) follow
+the preset. Only the Data folder picked: the preset files are not reachable and the
+log says so. TODO(M13): the renderer still holds some preset settings at their Ultra values
+(fShadowDistance, iShadowMapResolution, the terrain's block distances, bSAOEnable, FXAA, SSR,
+depth of field), and the Advanced dialog is not built.
 
 ## New game and loading screens
 

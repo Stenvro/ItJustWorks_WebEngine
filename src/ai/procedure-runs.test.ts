@@ -231,7 +231,7 @@ function harness(
     };
     return runner(procedureRun);
   };
-  return { run, done, found, meals };
+  return { run, done, found, meals, body };
 }
 
 describe('flying procedures', () => {
@@ -662,6 +662,28 @@ describe('procedures', () => {
       }),
     ).toBe('success');
     expect(done).toEqual(['say 291 to 900 subtitled']);
+  });
+
+  it('force greets, done once the conversation its greeting opened has ended', async () => {
+    const { run, done, body } = harness();
+    const topic: PackageInput = { id: 0, type: 'Topic', value: { kind: 'topic', topic: 0x123 } };
+    // Begun after a poll, held for three, then over.
+    const talking = [false, true, true, true, false];
+    let polls = 0;
+    body.greet = () => {
+      done.push('greet');
+      return true;
+    };
+    Object.assign(body, {
+      conversing: () => {
+        polls++;
+        return talking.shift() ?? false;
+      },
+    });
+    expect(await run('ForceGreet', [0, 255, 255], [topic])).toBe('success');
+    expect(done).toEqual(['greet']);
+    expect(polls).toBe(5);
+    expect(talking).toEqual([]);
   });
 
   it('talks with another actor (DialogueActivate between actors)', async () => {

@@ -152,6 +152,15 @@ export class Vfs {
   }
 
   /**
+   * A text file of the installation folder itself (beside Data: the launcher's detail presets),
+   * undefined where it is missing or only the Data folder is reachable.
+   */
+  async readRootText(name: string): Promise<string | undefined> {
+    const bytes = await this.#folder.readRootFile(name);
+    return bytes && decodeWindows1252(bytes);
+  }
+
+  /**
    * Builds the VFS: load order, open archives, merge the index.
    * Corrupt or unreadable files are skipped and reported in `problems`.
    */

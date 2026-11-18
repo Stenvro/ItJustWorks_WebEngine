@@ -697,7 +697,8 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   EatingRoot or DrinkingRoot by GetIsUsedItemType); LockDoors and UnlockDoors lock and unlock
   the load doors of their place (a door without a lock gets a novice one); Say says its topic,
   facing its target; ForceGreet waits at its place until the player comes into its trigger
-  area and opens the conversation with its topic from where it stands, the way to the player
+  area and opens the conversation with its topic from where it stands (done once that
+  conversation has ended, so its lines still find its package current: inferred, TODO(M13)), the way to the player
   being the package's Travel before it (to its Forcegreet Distance: a dragon's 1200 is as near as
   it comes; one that could not, the player busy, tries again after fAIForceGreetingTimer, 3 s, by
   its name: TODO(M13)); DialogueActivate talks to the

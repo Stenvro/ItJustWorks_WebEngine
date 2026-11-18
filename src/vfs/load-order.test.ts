@@ -132,6 +132,36 @@ describe('computeLoadOrder', () => {
     ]);
   });
 
+  it("loads a master file's later masters before it, and only a master file's", () => {
+    const withMasters = (name: string, masters: string[], master = false): PluginCandidate => ({
+      ...plugin(name, { master }),
+      masters,
+    });
+    const { entries, problems } = computeLoadOrder({
+      plugins: [
+        ...vanilla,
+        withMasters('Patch.esm', ['Skyrim.esm', 'Base.esm', 'Light.esl']),
+        withMasters('Other.esm', ['Skyrim.esm']),
+        withMasters('Base.esm', ['Skyrim.esm', 'Core.esm']),
+        withMasters('Core.esm', ['Skyrim.esm']),
+        withMasters('Light.esl', ['Skyrim.esm'], true),
+        withMasters('Late.esp', ['Skyrim.esm']),
+        withMasters('Early.esp', ['Late.esp']),
+      ],
+      pluginsTxt: '*Patch.esm\n*Other.esm\n*Base.esm\n*Core.esm\n*Light.esl\n*Early.esp\n*Late.esp',
+    });
+    expect(entries.slice(5).map((e) => [e.name, formatModIndex(e)])).toEqual([
+      ['Core.esm', '05'],
+      ['Base.esm', '06'],
+      ['Light.esl', 'FE:000'],
+      ['Patch.esm', '07'],
+      ['Other.esm', '08'],
+      ['Early.esp', '09'],
+      ['Late.esp', '0A'],
+    ]);
+    expect(problems).toEqual(['Early.esp loads before its master Late.esp']);
+  });
+
   it('reports plugins beyond the limit of 254 full plugins', () => {
     const many = Array.from({ length: 260 }, (_, i) => plugin(`Mod${i}.esp`));
     const { entries, problems } = computeLoadOrder({

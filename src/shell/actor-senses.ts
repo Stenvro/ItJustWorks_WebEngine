@@ -51,6 +51,7 @@ import {
 } from '../ai/detection-states.ts';
 import { brightestAmbient, lightLevel, skyLevel, type LightProbe } from '../ai/light-level.ts';
 import { InterruptFlag, PackageFlag } from '../ai/package-records.ts';
+import { inViewFrustum } from '../ai/view-frustum.ts';
 import {
   parseNpcCombat,
   parseRaceCombat,
@@ -112,6 +113,8 @@ export interface ActorSensesOptions {
   /** The camera (the player's sight for OnGainLOS: what is on screen). */
   readonly camera?: () =>
     { readonly position: Vec3; readonly forward?: Vec3; readonly fovY?: number } | undefined;
+  /** The screen's aspect, width over height (the camera frustum's width). */
+  readonly aspect?: () => number;
   /** Whether an actor flies now (noticed fSneakFlyingDistanceMult times as far). */
   readonly flying?: (actor: number) => boolean;
   /** How a flier in the air moves (it has no controller there). */
@@ -194,10 +197,10 @@ const SUN_RAY = 8192;
 const LIGHT_FIXTURE = 48;
 /** A sight ray counts as reaching what it aimed at within this of it (units). */
 const RAY_SLACK = 16;
-/** The camera's frame is about this wide against its height (OnGainLOS for the player). */
-const SCREEN_ASPECT = 16 / 9;
-/** A camera that does not say its field of view sees this far either side (radians). */
-const SCREEN_HALF_WIDTH = (50 * Math.PI) / 180;
+/** A screen that does not tell its size is taken as this wide against its height. */
+const DEFAULT_ASPECT = 16 / 9;
+/** The player's sight rays aim at these shares of a reference's height over its origin. */
+const SCREEN_POINTS = [0.75, 0.5, 0.25] as const;
 /** A reference that is not an actor is looked at this far over its origin (units). */
 const OBJECT_LIFT = 16;
 /** A fight is over (for spectators) once its last blow is this old with none since (seconds). */
@@ -270,7 +273,13 @@ export class ActorSenses implements ScriptSenses {
   readonly #watched = new Map<string, boolean>();
   #watchDue = 0;
   /** Placements of references that are not actors (OnGainLOS targets), read now and then. */
-  readonly #placements = new Map<number, { at: Vec3 | undefined; read: number }>();
+  readonly #placements = new Map<
+    number,
+    { at: Vec3 | undefined; rotation?: Vec3 | undefined; read: number }
+  >();
+  /** Base objects' bounds (OBND at the reference's scale) of OnGainLOS targets (null: none). */
+  readonly #bounds = new Map<number, { min: Vec3; max: Vec3 } | null>();
+  readonly #boundsRead = new Set<number>();
   /** The dead of the play: when they died (game hours), and who looked at them. */
   readonly #corpses = new Map<number, number>();
   readonly #seenCorpses = new Map<number, Set<number>>();
@@ -1121,8 +1130,7 @@ export class ActorSenses implements ScriptSenses {
 
   /**
    * Whether a viewer sees a reference: an actor within its view cone and reach with nothing
-   * between (its eyes to the reference's head, chest or middle); the player what is on
-   * screen with nothing between the camera and it.
+   * between (its eyes to the reference's head, chest or middle); the player as below.
    */
   lineOfSight(viewer: number, target: number): boolean {
     const runtime = this.#options.session.scriptsReady;
@@ -1139,6 +1147,8 @@ export class ActorSenses implements ScriptSenses {
     // Disabled it has no 3D to see, whether it was in view or not, where it stood.
     if (runtime.state.references.get(target)?.enabled === false) return false;
     const seen = bodies.get(target);
+    // The player sees through the camera alone (an actor off screen is not seen).
+    if (viewer === PLAYER_REF) return this.#playerSees(runtime, seen, target);
     const points: Vec3[] = seen ? [seen.eye, seen.chest] : [];
     if (!seen) {
       const at = this.#placementOf(runtime, target);
@@ -1146,24 +1156,6 @@ export class ActorSenses implements ScriptSenses {
       points.push([at[0], at[1], at[2] + OBJECT_LIFT]);
     }
     const middle = points[points.length - 1] ?? [0, 0, 0];
-    if (viewer === PLAYER_REF) {
-      const camera = this.#options.camera?.();
-      const forward = camera?.forward;
-      if (!camera || !forward) return false;
-      const to: Vec3 = [
-        middle[0] - camera.position[0],
-        middle[1] - camera.position[1],
-        middle[2] - camera.position[2],
-      ];
-      const length = Math.hypot(...to) || 1;
-      const cos = (to[0] * forward[0] + to[1] * forward[1] + to[2] * forward[2]) / length;
-      const half =
-        camera.fovY === undefined
-          ? SCREEN_HALF_WIDTH
-          : Math.atan(Math.tan(camera.fovY / 2) * SCREEN_ASPECT);
-      if (cos < Math.cos(half)) return false;
-      return points.some((point) => this.#ray(camera.position, point, PLAYER_REF, target) === true);
-    }
     const eyes = bodies.get(viewer);
     if (!eyes) return false;
     const settings = this.#settings;
@@ -1178,6 +1170,88 @@ export class ActorSenses implements ScriptSenses {
     return points.some((point) => this.#ray(eyes.eye, point, viewer, target) === true);
   }
 
+  /**
+   * The player's sight of a reference (OnGainLOS). Observed in the original: its 3D's bound in
+   * the camera's view frustum (a part of it on screen counts), then rays on the line-of-sight
+   * layer from the camera to three points over its origin, at 3/4, 1/2 and 1/4 of its bound's
+   * height, one meeting nothing or the reference itself; no distance limits it, and the actor
+   * sight check (view cone, reach) is not used for the player.
+   * TODO(M13): the bound is inferred: the game tests its 3D's own bound; we stand in for it
+   * with a sphere around its base object's OBND (at its scale and turned as it stands), for an
+   * actor a sphere half its height across its middle. Undefined while its place or bounds are
+   * still being read.
+   */
+  #playerSees(runtime: ScriptRuntime, seen: Body | undefined, target: number): boolean | undefined {
+    const camera = this.#options.camera?.();
+    const forward = camera?.forward;
+    if (!camera || !forward) return false;
+    let origin: Vec3;
+    let height: number;
+    let center: Vec3;
+    let radius: number;
+    if (seen) {
+      origin = seen.feet;
+      height = seen.height;
+      center = [origin[0], origin[1], origin[2] + height / 2];
+      radius = height / 2;
+    } else {
+      const at = this.#placementOf(runtime, target);
+      const bounds = this.#boundsOf(runtime, target);
+      if (!at || bounds === undefined) return undefined;
+      origin = at;
+      const min = bounds?.min ?? [0, 0, 0];
+      const max = bounds?.max ?? [0, 0, 0];
+      height = max[2] - min[2];
+      const yaw = this.#rotationOf(runtime, target)?.[2] ?? 0;
+      const cx = (min[0] + max[0]) / 2;
+      const cy = (min[1] + max[1]) / 2;
+      // Skyrim's yaw turns clockwise seen from above.
+      const cos = Math.cos(yaw);
+      const sin = Math.sin(yaw);
+      center = [
+        at[0] + cx * cos + cy * sin,
+        at[1] - cx * sin + cy * cos,
+        at[2] + (min[2] + max[2]) / 2,
+      ];
+      radius = Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) / 2;
+    }
+    const half = camera.fovY === undefined ? undefined : camera.fovY / 2;
+    const aspect = this.#options.aspect?.() ?? DEFAULT_ASPECT;
+    if (!inViewFrustum(camera.position, forward, half, aspect, center, radius)) return false;
+    return SCREEN_POINTS.some(
+      (share) =>
+        this.#ray(
+          camera.position,
+          [origin[0], origin[1], origin[2] + height * share],
+          PLAYER_REF,
+          target,
+        ) === true,
+    );
+  }
+
+  /** Its base object's bounds (read once; undefined while being read, null: it has none). */
+  #boundsOf(
+    runtime: ScriptRuntime,
+    reference: number,
+  ): { min: Vec3; max: Vec3 } | null | undefined {
+    if (this.#bounds.has(reference)) return this.#bounds.get(reference);
+    if (this.#boundsRead.has(reference)) return undefined;
+    this.#boundsRead.add(reference);
+    void runtime.objectBounds(reference).then((bounds) => {
+      this.#bounds.set(reference, bounds ?? null);
+      this.#boundsRead.delete(reference);
+    });
+    return undefined;
+  }
+
+  /** How a reference that is not an actor is turned (read with its place). */
+  #rotationOf(runtime: ScriptRuntime, reference: number): Vec3 | undefined {
+    return (
+      runtime.world.livePlacement?.(reference)?.rotation ??
+      this.#placements.get(reference)?.rotation
+    );
+  }
+
   /** Where a reference that is not an actor is (read now and then: it may be moved). */
   #placementOf(runtime: ScriptRuntime, reference: number): Vec3 | undefined {
     const live = runtime.world.livePlacement?.(reference);
@@ -1186,7 +1260,11 @@ export class ActorSenses implements ScriptSenses {
     if (!kept || this.#clock - kept.read > PROFILE_SECONDS) {
       this.#placements.set(reference, { at: kept?.at, read: this.#clock });
       void runtime.placement(reference).then((at) => {
-        this.#placements.set(reference, { at: at?.position, read: this.#clock });
+        this.#placements.set(reference, {
+          at: at?.position,
+          rotation: at?.rotation,
+          read: this.#clock,
+        });
       });
     }
     return kept?.at;
