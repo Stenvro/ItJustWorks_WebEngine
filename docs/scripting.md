@@ -417,6 +417,41 @@ quests (the College's MGR quests) may come out differently from one new game to 
   for up to 8 s. TODO(M13): the engine's own share of a frame for quest start-up. Who an alias
   holds is kept per reference (`aliasesHolding`; the player is in hundreds of aliases), and the
   alias factions read from it once per change (`ActorEngine`).
+- **A talking activator** (TACT) the player activates starts a conversation with it, as an
+  actor does: the dialogue engine's speaker is the activator (its voice type is its VNAM), the
+  dialogue menu names it and says its lines from where it stands, with no face
+  (`src/shell/script-talk.ts` talkingActivation). Its OnActivate runs first, as for any
+  activator, and a blocked activation keeps the conversation from starting; anyone else
+  activating it only runs its scripts. From the data: DA08's Whispering Door says "(Listen at
+  the door)" and Mephala's lines, and the quest's stage 25 waits for them.
+  TODO(M13): a talking activator's greeting with no topics to list (said where it stands, as an
+  actor's) is not said: the world's lines are an actor's.
+- **A stopped event quest's script** (FavorChangeLocationQuestScript's game-time updates go on
+  after its quest stopped) that calls SetStage on it gets the original's "attempting to start
+  event scoped quest outside of story manager": it is the game's own script error, logged as the
+  game's (`PapyrusVm.gameLog`), not as a fault of the engine.
+
+### The quest sweep
+
+`tests/sim-quest-sweep.int.test.ts` starts every quest of the load order that is neither the
+main quest, a guild's, the civil war's nor a DLC story's (types 6, 7, 8 of Skyrim.esm and
+Update.esm; every quest of HearthFires.esm and the Creation Club files), of those the player
+follows (with an objective or a journal entry), on one headless simulation, one case per QUST
+record, and reads it at its first objectives: started (and how), the aliases filled, the faults
+logged meanwhile (the game's own script errors apart), the first stage reached. A quest starts as
+the game starts it: with the new game (Start Game Enabled); through the story manager's tree for
+its event, once per quest node that lists it (each node is a way the event reaches it: Favor001's
+Markarth node finds its quest giver, its Windhelm node none), with the event data the nodes' and
+its own GetEventData conditions ask for (the form they name, the locations with the keyword they
+name; for a member an event alias fills, the forms its conditions accept), after the world state
+the nodes' conditions wait for is set (stages, completed quests, the player's level, globals);
+else by Quest.Start (a start-up stage) or its lowest stage, as the other quest's script or the
+dialogue line that starts it does. A quest whose aliases are another quest's (external) starts
+with that quest started first (DA14 after DA14Start). An event quest whose alias matches in the
+loaded area has the player put where the event happens (the location's world marker or one of
+its references). The world encounters and interactions typed miscellaneous that show neither an
+objective nor a journal entry (most WE and WI quests) are not part of it: the WE trigger
+references raise them in the wilderness, with the trigger as the event's reference.
 
 ## The world
 
