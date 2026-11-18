@@ -301,7 +301,7 @@ every half second of its fall; with nothing there it is set back on the navmesh 
 last stood (else there), on the floor the position check finds, and its way is searched again
 (`ActorMovers.#watchFall`). TODO(M13): the engine's own rule was not found: no setting, debug text
 or message names it (its warp after repeated path failures, "FailSafe Warp", is the pathing's:
-[ai.md](ai.md#movement)). Actors beyond the high process have no controller and do not fall:
+[ai.md](ai.md#movement)). Actors beyond the controllers' reach have no controller and do not fall:
 their walk keeps them on the navmesh.
 
 **Not on each other.** An NPC's controller does not stand on another actor's
