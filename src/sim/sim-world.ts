@@ -1656,7 +1656,12 @@ export class SimWorld {
       placed?.object ??
       created?.object ??
       [...this.#cells.values()]
-        .map((cell) => cell.data.objects.find((candidate) => candidate.reference === reference))
+        .map(
+          (cell) =>
+            cell.data.objects.find((candidate) => candidate.reference === reference) ??
+            // An activation box (an activator's primitive alone).
+            cell.data.activationBoxes?.find((candidate) => candidate.reference === reference),
+        )
         .find((candidate) => candidate !== undefined);
     if (!object) return undefined;
     const instance = placed?.instance ?? created?.instance;

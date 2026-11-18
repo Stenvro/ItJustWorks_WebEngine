@@ -331,6 +331,9 @@ const COLLISION_MARKER = 0x21;
 const TRIGGER_LAYER = 12;
 /** SkyrimLayer L_COLLISIONBOX: the layer of collision primitives without XTRI. */
 const COLLISION_BOX_LAYER = 35;
+/** SkyrimLayer L_NONCOLLIDABLE: nothing collides with it but the item picker (the crosshair's
+ * pick: COLL records, tools/layer-matrix.ts) and a few picks besides. */
+const NONCOLLIDABLE_LAYER = 15;
 
 /** Where a load door leads: the destination cell, its worldspace, and its name. */
 export interface DoorDestination {
@@ -501,6 +504,13 @@ export interface CellData {
   readonly decals: readonly CellDecal[];
   /** Collision primitives; filter with `enabledReferences`. */
   readonly primitives: readonly CellPrimitive[];
+  /**
+   * Activators placed as a primitive alone (XPRM, no model) on the non-collidable layer: the
+   * crosshair rests on the box and the player activates them (MG02AmuletTrigger, the amulet on
+   * Saarthal's wall), activated as any activator is. Filter with
+   * `enabledReferences`.
+   */
+  readonly activationBoxes?: readonly CellObject[];
   /** Navmesh obstacles; filter with `enabledReferences` (and their open state). */
   readonly obstacles?: readonly CellObstacle[];
   /** Looping sound sources; filter with `enabledReferences`. */
@@ -791,6 +801,7 @@ export async function loadCellData(
   const lights: CellLight[] = [];
   const decals: CellDecal[] = [];
   const primitives: CellPrimitive[] = [];
+  const activationBoxes: CellObject[] = [];
   const obstacles: CellObstacle[] = [];
   const emitters: CellSoundEmitter[] = [];
   const markers: CellMarker[] = [];
@@ -890,10 +901,26 @@ export async function loadCellData(
     }
     // A trigger: an activator placed with a primitive (XPRM), its volume on L_TRIGGER (XTRI
     // aside), whose scripts hear who enters and leaves it (defaultSetStageTRIG: MQ101's carts
-    // set stage 20 at Helgen's gate). Without a model it is nothing else.
+    // set stage 20 at Helgen's gate). Without a model it is nothing else, unless its box is on
+    // the non-collidable layer, which the crosshair's pick meets: an activation box.
     if (base.type === 'ACTI' && record.fields.has('XPRM')) {
       const primitive = primitiveOf(record, referenceMatrix(ref), TRIGGER_LAYER);
       if (primitive) primitives.push(primitive);
+      if (primitive?.layer === NONCOLLIDABLE_LAYER && !base.fields.has('MODL')) {
+        activationBoxes.push({
+          reference: ref.formId,
+          base: ref.base,
+          baseType: base.type,
+          editorId: base.editorId ?? '',
+          name: base.text('FULL') ?? '',
+          model: '',
+          world: referenceMatrix(ref),
+          water: undefined,
+          ...(((record.fields.first('XAPD')?.[0] ?? 0) & 1) !== 0 && { parentActivateOnly: true }),
+          ...objectSoundsOf(base),
+          ...(base.text('RNAM') && { activateText: base.text('RNAM') }),
+        });
+      }
       if (!base.fields.has('MODL')) continue;
     }
     // Rooms, portals and occluders cull what is drawn; they stay markers too.
@@ -1065,6 +1092,7 @@ export async function loadCellData(
     lights,
     decals,
     primitives,
+    activationBoxes,
     obstacles,
     emitters,
     markers,

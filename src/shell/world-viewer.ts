@@ -1129,6 +1129,11 @@ export class WorldViewer {
       const instance = cell.placed.find((placed) => placed.object === object)?.instance;
       return this.#objectActivation(object, instance, activator);
     }
+    // An activation box (an activator's primitive alone: cell-loader.ts activationBoxes).
+    for (const cell of created ? [] : this.#cells.values()) {
+      const box = cell.data?.activationBoxes?.find((each) => each.reference === reference);
+      if (box) return this.#objectActivation(box, undefined, activator);
+    }
     return created && this.#objectActivation(created.object, created.instance, activator);
   }
 
