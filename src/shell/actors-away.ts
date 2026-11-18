@@ -399,9 +399,7 @@ export class ActorsAway {
       previous !== undefined && gameSeconds - previous > seconds * timescale + SKIP_SECONDS;
     this.#sinceAsked += seconds;
     if (jumped) {
-      // Every actor of the world is where its package has it after the time passed.
-      this.#finishAll();
-      this.#ask({ mode: 'jump', far: true });
+      this.timeJumped();
     } else if (this.#hour !== undefined && hour !== this.#hour) {
       // The hour changed: the low process's actors set out where their packages send them.
       this.#sinceAsked = 0;
@@ -420,6 +418,17 @@ export class ActorsAway {
       this.#sincePlayer = 0;
       void this.#watchPlayer();
     }
+  }
+
+  /**
+   * The game's time jumped (waiting, sleeping, fast travel): every trip ends at once and every
+   * actor of the world is where its package has it after the time passed. Told by the clock's
+   * watch, and by a journey whose hours are not counted (the headless simulation's fast travel
+   * of a player who had no place yet: tests/helpers/sim.ts).
+   */
+  timeJumped(): void {
+    this.#finishAll();
+    this.#ask({ mode: 'jump', far: true });
   }
 
   /** The player came into another space: what is there now is put where it should be. */
