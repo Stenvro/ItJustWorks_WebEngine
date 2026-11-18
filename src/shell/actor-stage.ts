@@ -460,6 +460,8 @@ export class ActorStage {
       session: options.session,
       terminal: options.terminal,
       slicer: this.process,
+      restrained: (actor) =>
+        options.session.scriptsReady?.state.actors.get(actor)?.restrained === true,
       rotatingAttack: (actor) => this.combat.rotatingAttack(actor),
       ...(options.onTrigger && { onTrigger: options.onTrigger }),
       bodyColliders: (actor) => this.bodies.colliders(actor),

@@ -127,6 +127,7 @@ import type { GameSession } from './game-session.ts';
 import type { CellRecord } from '../world/cell-records.ts';
 import { clock, startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
 import type { Terminal } from './terminal.ts';
+import { talkToActivator } from './talking-activator.ts';
 import type { LocalMapContent } from './local-map.ts';
 
 /** NorthMarker (Skyrim.esm STAT 0x3): which way an interior's local map is up. */
@@ -402,6 +403,10 @@ export class ModelViewer {
       {
         name: (teleport) => this.#destinations.get(teleport.door)?.name ?? '',
         go: (teleport) => this.onTravel?.(teleport),
+        talk: (object) => {
+          const session = this.#session;
+          if (session) void talkToActivator(session, object);
+        },
       },
       (descriptor, at) => void this.#session?.playSound(descriptor, at),
       this.#session?.hud.uses,

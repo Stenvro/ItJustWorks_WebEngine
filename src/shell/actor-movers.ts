@@ -311,6 +311,11 @@ export interface ActorMoversOptions {
   readonly held?: (actor: number) => boolean;
   /** Whether an actor is down (an essential actor's bleedout): no one avoids it. */
   readonly down?: (actor: number) => boolean;
+  /**
+   * Whether an actor is restrained (Actor.SetRestrained: its restrained life state): it goes
+   * nowhere, as one its race keeps from moving, but turns and talks.
+   */
+  readonly restrained?: (actor: number) => boolean;
   /** The middle-high process's turns: walkers beyond the high process walk on theirs. */
   readonly slicer?: ProcessSlicer;
   /** Whether an actor's attack under way turns it to its target (ATKD Rotating Attack). */
@@ -732,9 +737,11 @@ export class ActorMovers {
     options: TravelOptions = {},
   ): Promise<boolean> {
     this.#travels.get(reference)?.done(false);
-    // One its race keeps from moving (RACE DATA Immobile: the mannequins) goes nowhere.
+    // One its race keeps from moving (RACE DATA Immobile: the mannequins) goes nowhere, nor does
+    // one restrained (a captive).
     const staged = (this.#movers.get(reference) ?? this.#walkers.get(reference))?.staged;
     if (staged && raceImmobile(staged.placed.look.raceFlags)) return Promise.resolve(false);
+    if (this.#options.restrained?.(reference) === true) return Promise.resolve(false);
     const going = this.#arrived.get(reference);
     this.#arrived.delete(reference);
     if (going) this.#requests.set(reference, going);
@@ -2838,12 +2845,15 @@ export class ActorMovers {
       // Its movement controller steered by a script's override (KeepOffsetFromActor, the
       // player's controls) instead of its AI's wish.
       const steered = this.steering?.(staged.reference);
-      // One its race keeps from moving (Immobile) stands, keeping its facing.
-      const wanted = raceImmobile(staged.placed.look.raceFlags)
-        ? undefined
-        : steered
-          ? steered.request
-          : this.#requests.get(staged.reference);
+      // One its race keeps from moving (Immobile) stands, keeping its facing; so does one
+      // restrained.
+      const wanted =
+        raceImmobile(staged.placed.look.raceFlags) ||
+        this.#options.restrained?.(staged.reference) === true
+          ? undefined
+          : steered
+            ? steered.request
+            : this.#requests.get(staged.reference);
       // On its way it goes round the others and the player in it (the nearest of them within
       // its avoidance radius, iMaxActorsToAvoid at the most).
       let request = wanted;

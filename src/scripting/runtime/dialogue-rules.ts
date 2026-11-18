@@ -75,12 +75,35 @@ export function afterInfo(
   return 'topics';
 }
 
-/** A topic's info is said as the player walks away from the menu (Walk Away). */
-export function saidOnWalkAway(info: Pick<InfoRecord, 'flags'>): boolean {
-  return (info.flags & InfoFlag.walkAway) !== 0;
+/**
+ * Whether a topic among an info's choices is the one said as the player walks away from the
+ * menu: the info's Walk Away topic (TWAT), with its Walk Away flag. The flags belong to the info
+ * that offers the choices, not to the topic's own info: of the load order's 40,928 infos, 665
+ * name a Walk Away topic, every one of them among their own choices, 665 of them with the Walk
+ * Away flag; Walk Away Invisible In Menu is on 252 of those and on 9 infos naming none.
+ */
+export function saidOnWalkAway(
+  offering: Pick<InfoRecord, 'flags' | 'walkAwayTopic'> | undefined,
+  topic: number,
+): boolean {
+  return (
+    offering !== undefined &&
+    (offering.flags & InfoFlag.walkAway) !== 0 &&
+    offering.walkAwayTopic === topic
+  );
 }
 
-/** A Walk Away topic the menu does not list (Walk Away Invisible In Menu). */
-export function hiddenInMenu(info: Pick<InfoRecord, 'flags'>): boolean {
-  return (info.flags & InfoFlag.walkAwayInvisibleInMenu) !== 0;
+/**
+ * Whether the menu leaves an info's Walk Away topic out of its list (Walk Away Invisible In
+ * Menu): it is only said as the player walks away. DB02's Astrid offers "DB02AstridWalkAwayTopic",
+ * a topic whose text is its editor id, so.
+ */
+export function hiddenInMenu(
+  offering: Pick<InfoRecord, 'flags' | 'walkAwayTopic'> | undefined,
+  topic: number,
+): boolean {
+  return (
+    saidOnWalkAway(offering, topic) &&
+    ((offering?.flags ?? 0) & InfoFlag.walkAwayInvisibleInMenu) !== 0
+  );
 }

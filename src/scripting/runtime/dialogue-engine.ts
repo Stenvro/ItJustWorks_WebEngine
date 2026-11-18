@@ -32,6 +32,9 @@ import { refill } from './runtime-save.ts';
 import type { ScriptRuntime } from './runtime.ts';
 import { failsForSpeaker, type SpeakerFacts } from './speaker-filter.ts';
 
+/** The info whose choices the menu lists (its Walk Away topic and flags go with them). */
+export type OfferingInfo = Pick<InfoRecord, 'choices' | 'flags' | 'walkAwayTopic'>;
+
 /** A topic the player may choose. */
 export interface TopicChoice {
   readonly topic: TopicRecord;
@@ -156,8 +159,11 @@ export class DialogueEngine {
   async goesOnUnlisted(spoken: SpokenInfo, speaker: number): Promise<boolean> {
     const info = spoken.info;
     if (info.choices.length === 0 || afterInfo(info) !== 'topics') return false;
-    if ((await this.topics(speaker, info.choices)).length > 0) return false;
+    const listed = await this.topics(speaker, info);
+    if (listed.some((choice) => choice.hidden !== true)) return false;
     for (const choice of info.choices) {
+      // Its Walk Away topic waits for the player to walk away.
+      if (saidOnWalkAway(info, choice)) continue;
       if ((await this.index.topic(choice))?.text === '') return true;
     }
     return false;
@@ -173,9 +179,15 @@ export class DialogueEngine {
    * topics of the top-level branches of the running quests; a topic shows if it has an info
    * whose conditions hold. A blocking branch's valid topic is offered alone.
    */
-  async topics(speaker: number, offered?: readonly number[]): Promise<TopicChoice[]> {
+  async topics(
+    speaker: number,
+    offeredBy?: readonly number[] | OfferingInfo,
+  ): Promise<TopicChoice[]> {
     const runtime = this.#runtime;
     await this.index.build();
+    // The info whose choices these are (its Walk Away topic: dialogue-rules.ts saidOnWalkAway).
+    const offering = offeredBy && 'choices' in offeredBy ? offeredBy : undefined;
+    const offered = offering ? offering.choices : (offeredBy as readonly number[] | undefined);
     const candidates: { topic: TopicRecord; blocking: boolean }[] = [];
     if (offered && offered.length > 0) {
       for (const formId of offered) {
@@ -217,13 +229,10 @@ export class DialogueEngine {
         priority: (record?.priority ?? 0) * 1000 + topic.priority,
         blocking,
         rumor: topic.subtypeName === RUMORS,
-        ...(saidOnWalkAway(info) && { walkAway: true }),
-        // Walk Away Invisible In Menu keeps a topic without text for walking away; one with
-        // text is listed as any other: 175 of the 261 vanilla infos with the flag are choices
-        // the player makes in the original ("Tell me about the Goldenglow job.", Saadia's
-        // "Relax, I'm not going to hurt you.", Delphine's questions in MQ106).
-        // TODO(M13): what the flag does to a listed topic is not known.
-        ...(hiddenInMenu(info) && text === '' && { hidden: true }),
+        // The offering info's Walk Away topic, said as the player walks away; not listed when
+        // that info marks it invisible in the menu.
+        ...(saidOnWalkAway(offering, topic.formId) && { walkAway: true }),
+        ...(hiddenInMenu(offering, topic.formId) && { hidden: true }),
       });
     }
     const blocking = choices.filter((choice) => choice.blocking);

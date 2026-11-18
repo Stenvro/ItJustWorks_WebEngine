@@ -145,7 +145,6 @@ import { SUN_GAZE_DEFAULTS, type SunGazeSettings } from '../gameplay/sun-gaze.ts
 import {
   collisionGroup,
   objectActivation,
-  talkingObject,
   perkActivation,
   PlaySession,
   autoDoorsOf,
@@ -154,6 +153,7 @@ import {
   type CollisionGroup,
 } from './play-session.ts';
 import { worldSaveParts } from './world-save-parts.ts';
+import { talkToActivator } from './talking-activator.ts';
 
 /**
  * Cells loaded around the cell of the streaming centre (#streamCenter: the player while playing)
@@ -1143,38 +1143,16 @@ export class WorldViewer {
     instance: ModelInstance | undefined,
     activator?: number,
   ): Activatable | undefined {
-    const target = this.#plainActivation(object, instance, activator);
-    const runtime = this.#session?.scriptsReady;
-    // A talking activator talks with the player who activates it (the dialogue menu).
-    if (
-      !target ||
-      !runtime ||
-      object.baseType !== 'TACT' ||
-      (activator ?? PLAYER_REF) !== PLAYER_REF
-    )
-      return target;
-    return {
-      ...target,
-      activate: () => {
-        target.activate();
-        void talkingObject(runtime, object).then((speaker) => {
-          this.#session?.hud.menus?.talk(speaker);
-        });
-      },
-    };
-  }
-
-  #plainActivation(
-    object: CellObject,
-    instance: ModelInstance | undefined,
-    activator?: number,
-  ): Activatable | undefined {
     return objectActivation(
       object,
       instance,
       {
         name: (teleport) => this.#destinations.get(teleport.door)?.name ?? '',
         go: (teleport) => this.onTravel?.(teleport),
+        talk: (object) => {
+          const session = this.#session;
+          if (session) void talkToActivator(session, object);
+        },
       },
       (descriptor, at) => void this.#session?.playSound(descriptor, at),
       this.#session?.hud.uses,

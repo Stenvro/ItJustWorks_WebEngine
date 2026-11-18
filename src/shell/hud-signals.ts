@@ -11,7 +11,7 @@ import type {
   SkillIncrease,
 } from '../scripting/runtime/progression-engine.ts';
 import type { MenuRequest, QuestUpdate } from '../scripting/runtime/runtime.ts';
-import type { DialogueSpeaker } from './actors.ts';
+import type { Speaker } from './actors.ts';
 import type { StealthReading } from './hud-stealth.ts';
 import type { ObjectUses } from './play-session.ts';
 
@@ -79,7 +79,7 @@ export interface MenuSink {
    * A conversation with an actor (or a talking activator) in the dialogue menu; `opening`: it begins with that topic's line (a package's
    * ForceGreet) instead of its greeting.
    */
-  talk(speaker: DialogueSpeaker, opening?: number): void;
+  talk(speaker: Speaker, opening?: number): void;
   /** A container's menu (a chest, a corpse searched); `closed` once it has closed. */
   container(reference: number, closed: () => void): void;
   /** A menu a script opens; resolves once it has closed, with what it returns. */
