@@ -430,6 +430,15 @@ quests (the College's MGR quests) may come out differently from one new game to 
   after its quest stopped) that calls SetStage on it gets the original's "attempting to start
   event scoped quest outside of story manager": it is the game's own script error, logged as the
   game's (`PapyrusVm.gameLog`), not as a fault of the engine.
+- **A None the game has too** is the script's own error when it calls on it, logged as the
+  game's: what an alias of a quest that is not running gives (ReferenceAlias.GetReference,
+  GetActorReference, LocationAlias.GetLocation: a stopped quest's aliases are empty; the same
+  FavorChangeLocationQuestScript asks `IsInLocation(pFavorLocation.GetLocation())` after its
+  quest stopped, and ObjectReference.IsInLocation calls IsChild on the None), and an object
+  property the plugin gives form 0 (FXCameraAttachScript's CameraAttachFX on 3 references),
+  which is None as one it leaves out. The VM marks such a None as the engine's (`gameNone`), as
+  it marks an event's None argument; a None the engine gives where the game has an object stays
+  a warning, a fault of the engine.
 
 ### The quest sweep
 
@@ -438,29 +447,47 @@ main quest, a guild's, the civil war's nor a DLC story's (types 6, 7, 8 of Skyri
 Update.esm; every quest of HearthFires.esm and the Creation Club files), of those the player
 follows (with an objective or a journal entry), on one headless simulation, one case per QUST
 record, and reads it at its first objectives: started (and how), the aliases filled, the faults
-logged meanwhile (the game's own script errors apart), the first stage reached. A quest starts as
-the game starts it: with the new game (Start Game Enabled); through the story manager's tree for
-its event, once per quest node that lists it (each node is a way the event reaches it: Favor001's
-Markarth node finds its quest giver, its Windhelm node none), with the event data the nodes' and
-its own GetEventData conditions ask for (the form they name, the locations with the keyword they
-name; for a member an event alias fills, the forms its conditions accept), after the world state
-the nodes' conditions wait for is set (stages, completed quests, the player's level, globals);
-else by Quest.Start (a start-up stage) or its lowest stage, as the other quest's script or the
-dialogue line that starts it does. A quest whose aliases are another quest's (external) starts
-with that quest started first (DA14 after DA14Start). An event quest whose alias matches in the
-loaded area has the player put where the event happens (the location's world marker or one of
-its references). The world encounters and interactions typed miscellaneous that show neither an
-objective nor a journal entry (most WE and WI quests) are not part of it: the WE trigger
-references raise them in the wilderness, with the trigger as the event's reference.
+logged meanwhile, the first stage reached. A fault is every warning the engine logs (a None it
+gave where the game has an object, a call it could not make); the game's own script errors (those
+the engine proves the plugin's: `PapyrusVm.gameLog`) and a node marked to warn when it starts no
+quest are not. A quest starts as the game starts it: with the new game (Start Game Enabled);
+through the story manager's tree for its event, once per quest node that lists it (each node is
+a way the event reaches it: Favor001's Markarth node finds its quest giver, its Windhelm node
+none), with the event data the nodes' and its own GetEventData conditions ask for (the form they
+name, the locations with the keyword they name; for a member an event alias fills, the forms its
+conditions accept), after the world state the nodes' conditions wait for is set (stages,
+completed quests, the player's level, globals) and with the player where the event happens (in
+a Change Location event's new location, in the location a path's GetInCurrentLoc asks for: the
+tree's conditions run on the player); an event the engine raises meanwhile counts too (the
+player put in a location raises its Change Location event). Each case wants a story manager
+quest started through the tree: the sweep's start past it (the quest started with the event, as
+its node would) is kept only to read the rest of the case, and fails it. Of its tries, an event is
+raised again when there are fewer than three (a random node, or one that does all its quests
+before repeating, starts another the next time); the story manager's memory of what it started
+is let go between cases, as on a new game's world. A quest with an event type that runs as its
+case begins, or that runs once and ran, was started by its event (the engine refuses any other
+start) and counts so, unless the sweep started it past the tree. Every other quest is started by
+Quest.Start (a start-up stage) or its lowest stage, as the other quest's script or the dialogue
+line that starts it does. A quest whose aliases are another quest's (external) starts with that
+quest started first (DA14 after DA14Start). The world encounters and interactions typed
+miscellaneous that show neither an objective nor a journal entry (most WE and WI quests) are not
+part of it: the WE trigger references raise them in the wilderness, with the trigger as the
+event's reference.
 
-On 2026-11-18, 260 of the 285 quests start and reach their first stage without a fault of the
-engine. Of the 25 left, 18 wait for event data only the place where the event happens gives (the
-courier's letter of WE100's objectives, the actors of the WI interactions, WEDA02's trigger, the
-bounties' locations: BQ01, BQ04); the others want the world as the game had it by then
-(CWMiscObj the civil war's faction leader, DA14 the inn DA14Start found, Favor253's quest giver
-in Whiterun, FreeformSkyHavenTempleB a dragon lair, BYOHHouseBanditAttack2 a house built,
-ccBGSSSE001_Radiant_1 an innkeeper in the loaded area). TODO(M13): the sweep gives none of them
-that world yet.
+On 2026-11-18, 253 of the 285 quests start as the game starts them and reach their first stage
+without a fault of the engine. The 32 left are expected to fail (`it.fails`), each with its reason
+(the file's `OPEN`), and a case that passes fails the run until it comes off the list. 20 want
+event data only the place where the event happens gives (WE100's ten objectives the treasure
+hunter's letter and item, the WI interactions' actors, WEDA02's trigger) or what the player is
+(the skills and spells WIChangeLocation03 and 04 ask for, a node's roll); 2 the bounty's location
+the steward's script sends (BQ02, BQ04); 6 the world as the game had it by then (CWMiscObj the
+civil war's faction leader, DA14 the inn DA14Start found, Favor253's quest giver in Whiterun,
+FreeformSkyHavenTempleB a dragon lair, BYOHHouseBanditAttack2 a house built,
+ccBGSSSE001_Radiant_1 an innkeeper in the loaded area); 4 a fault of the engine not yet fixed
+(Survival's cold update finds no current weather on the simulation before the sky has one; the
+civil war's mission generator gets a global as None; StockadeBarricade01ActivatorScript finds no
+linked reference; dunStonehillBarrowQST's start-up fragment calls on an alias left empty).
+TODO(M13): each of them.
 
 ## The world
 
@@ -682,6 +709,13 @@ location. From the data: Aeri's persist location is Anga's Mill and she stands i
 cells, and AngasMillLocation's list gives her AngasMillAerisHouseLocation; Favor001's
 QuestGiverHouse alias asks for the dwelling of the quest giver's editor location, and with the
 mill no favor quest giver had one (the house is inside the mill, so a check for the mill holds).
+Across the load order 907 unique actors have both: for 897 the list's location is the persist
+location or one inside it (the College's people: their dormitories, inside
+WinterholdCollegeLocation), and the 10 others have VirtualLocation as their persist location (a
+holding place: Paarthurnax, MQ206's heroes, whom the list puts at the Throat of the World). So a
+check for the persist location (GetIsEditorLocation, which takes one inside) still holds for
+the 897, and HasSameEditorLocAsRef without a keyword is the same room's people now, not the whole
+place's. `tests/conformance/scripting/scripted-inventory-items.test.ts` pins the order.
 TODO(M13): inferred from the data (xEdit names the list's third field "Editor Location").
 
 ### Actor location change
@@ -749,8 +783,12 @@ there (one standing for the count given): its scripts start (OnInit) and hear ea
 (OnContainerChanged), as the Creation Kit's ObjectReference scripts on inventory items do.
 From the data: DA08's Whispering Door key is given to Farengar and the Jarl by AddItem, and its
 own OnContainerChanged sets the quest's stage 40 as it reaches the player (picked from a pocket,
-taken from a corpse). TODO(M13): the items of a container's own inventory (CNTO) with scripts
-are not references yet, and whether one AddItem's items are one reference is inferred.
+taken from a corpse). A leveled list AddItem names gives what it resolves to, each item told
+as given (OnItemAdded, containerChanged: the item, never the list), and one with scripts is a
+reference too (LItemDawnguardWarAxe gives DLC1DawnguardAxe;
+`tests/conformance/scripting/scripted-inventory-items.test.ts`). TODO(M13): the items of a
+container's own inventory (CNTO) with scripts, and those a leveled list in it resolves to, are
+not references yet, and whether one AddItem's items are one reference is inferred.
 
 **The producers**, each where the engine raises its event (observed in the original):
 
