@@ -20,12 +20,14 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
   /**
    * Observed in the original: Start, and SetStage on a quest that does not run, do
    * nothing to a quest the story manager starts (one with an event): the game logs it as an
-   * error of the calling script and returns false.
+   * error of the calling script and returns false. It is the game's own script error (its
+   * Papyrus log has it), not a fault of the engine: a quest's script still registered for
+   * updates after the quest stopped calls it (FavorChangeLocationQuestScript).
    */
   const outsideStoryManager = async (quest: number, where: () => string): Promise<boolean> => {
     const record = await forms.quest(quest);
     if (record?.event === undefined || quests.isRunning(quest)) return false;
-    runtime.warn(
+    runtime.gameLog(
       `${where()}: attempting to start event scoped quest ${record.editorId} outside of story manager`,
     );
     quests.notStarted.set(quest, `starts only from the story manager's ${record.event} event`);
