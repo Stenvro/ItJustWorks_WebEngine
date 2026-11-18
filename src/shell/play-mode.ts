@@ -1008,7 +1008,7 @@ export class PlayMode {
       return;
     // The hours pass, the sky changes, the player goes there behind a loading screen, and the
     // arrival is told (fast-travel-journey.ts).
-    await fastTravelJourney(session, at, distance ?? fastTravelWay(session, at), (place) =>
+    await fastTravelJourney(session, at, distance ?? (await fastTravelWay(session, at)), (place) =>
       this.#loadInto(place),
     );
   }
