@@ -11,7 +11,6 @@ import {
   dualCastHold,
   exitWaterPoint,
   holdsRestore,
-  holdsWard,
   lowCombatBlow,
   pickCover,
   pickFleeDoor,
@@ -190,13 +189,6 @@ describe('the combat subtrees', () => {
     expect(wardThreatened(30, [at({ distance: 2500, spellRange: 2000 })], false)).toBe(false);
     expect(wardThreatened(30, [], true)).toBe(true);
     expect(wardThreatened(30, [], false)).toBe(false);
-  });
-
-  it('a ward ends below the cast limit, else fCombatMagicWardCooldownTime after the last threat', () => {
-    expect(holdsWard(1, false, S, 0.1)).toBe(true);
-    expect(holdsWard(2, true, S, 0.2)).toBe(false);
-    expect(holdsWard(2, false, S, 1, 0.9)).toBe(true);
-    expect(holdsWard(2, false, S, 1, 1.1)).toBe(false);
   });
 
   it('the held healing spell stops fCombatRestoreStopCastThreshold past its share', () => {

@@ -980,24 +980,6 @@ export function holdsRestore(
   return health < 1 && health < restoreBelow + settings.restoreStopCastThreshold;
 }
 
-/**
- * A ward is held at least fCombatMagicWardMinCastTime; then (observed in the original) it ends at
- * once below fCombatMagicWardMagickaCastLimit of its magicka, and is otherwise held while an
- * attack threatens it (wardThreatened) and fCombatMagicWardCooldownTime after the last one did
- * (`calmFor`: seconds since nothing threatened it; the default, a calm without end).
- */
-export function holdsWard(
-  heldFor: number,
-  threat: boolean,
-  settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
-  magicka = 1,
-  calmFor = Infinity,
-): boolean {
-  if (heldFor < settings.wardMinCastTime) return true;
-  if (magicka < settings.wardMagickaCastLimit) return false;
-  return threat || calmFor <= settings.wardCooldownTime;
-}
-
 /** One who fights a warder, as its ward weighs it (wardThreatened). */
 export interface WardAttacker {
   /** Its distance from the warder (units). */
