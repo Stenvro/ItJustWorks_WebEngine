@@ -271,17 +271,22 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   it is blocked, whose MovementBlocked handler would put it in an engine-made "movement blocked"
   package (procedure 36; bUseMovementBlockedPackage, off, is read in the actor's update, its role
   not read).
-  Ours lays that node when the path follower finds the actor stuck (above): one radius ahead of
-  it towards the point it was making for, the actor's radius and fAvoidNodeRadiusAdd wide, at
-  cost 32; each node it laid on a travel is kept for that travel's later searches, which also
+  The node (observed in the original, 2026-11-18): one radius of the actor ahead of where it
+  stands towards where it meant to be, the actor's radius wide, at fDefaultAvoidNodeCost; the
+  avoider reports that as its way blocked, which the path manager answers as it answers actors
+  (below: short of its goal, the path fails and is asked for again round the node).
+  Ours lays that node when the path follower finds the actor stuck (above): so placed and as
+  wide (`staticAvoidNode`, src/ai/avoidance.ts; before, ours made it fAvoidNodeRadiusAdd wider); each node it laid on a travel is kept for that travel's later searches, which also
   search wider as before (`ActorMovers`, `#heldAt`). Found in the opening: Helgen's fallen rubble
   (BurntRubbleNoDirt03, enabled by dunCGRubbleDMarker) reaches some 50 units out past the
   CollisionMarker boxes that cut the navmesh round it; Hadvar, leading the player to the keep
   as it fell, ran along a box's face into the rubble and stood wedged between the two, his
   searches finding the same way each time, until he was warped and his scene stopped. Round the
   node he goes north of the rubble and on.
-  TODO(M13): the avoider's own trigger (the window against fAcceptableErrorRatio) and the
-  node's own width.
+  TODO(M13): the avoider's own trigger (over its window of updates, the gap between where it
+  meant to be and where it is against fAcceptableErrorRatio times the way it meant to cover,
+  that way longer than a least distance; the window's length and that distance were not read):
+  ours is the path follower's stuck test.
 - **Against a wall** (observed in the original): its graph is told what the actor wants,
   not what its controller made of it, whenever the two disagree (motion feedback:
   [animation.md](animation.md#driving-the-graphs)), and the player's graph always
@@ -302,23 +307,42 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
 - **Others in the way** (`src/ai/avoidance.ts`): an actor on its way looks at the nearest
   iMaxActorsToAvoid (10; at most 32) actors with controllers and the player within its
   avoidance radius (its speed times fAvoidanceTimeDelta, 3 s, between fMinAvoidanceRadius 256
-  and fMaxAvoidanceRadius 512, and its radius: observed in the original), and goes round
-  those its way would bring within reach (both radii and 8 units) in the next 1.5 seconds, the
+  and fMaxAvoidanceRadius 512, and its radius: observed in the original), of those only the ones
+  ranked above it (below), and goes round
+  those its way would bring within reach (both radii: the velocity obstacle's radius, observed)
+  in the next 1.5 seconds, the
   first it would meet: on the side away from it (right of one straight ahead), two that meet
   head-on both keeping right, turning just as far as passing needs (at most 1.2 radians). The
   player riding (a horse, a cart) is carried and no one to go round: their own horse went round
   them every step, its way wavering left and right under its rider.
-  Kept from going on by one in its way (slower than 16 units a second) for longer than
-  fMaxTimeBlockedByActors (1 s), it searches its path again round that one. The player standing
-  in its way is first asked to move (its ActorCollidewithActor line, once a travel); it goes
-  round them once it is kept another fMaxTimeBlockedByActors. TODO(M13): the turn is ours: the
-  engine's velocity obstacles (below) are not reproduced.
+  Kept from going on (slower than 16 units a second) with one ranked above it near for longer
+  than fMaxTimeBlockedByActors (1 s), its way is blocked by actors (observed in the original,
+  2026-11-18): with the advanced avoidance its path manager asks the path follower, which, short
+  of its goal, drops the path, and the path fails (MovementMessagePathFailed): a path failure as
+  any other (logged "is blocked by actors"; the travel ends, its package asks for a new one,
+  three in a row near one place warp it: Warped, below). Without the advanced avoidance it never
+  reports that; its nodes take it round. The player standing in its way is first asked to move
+  (its ActorCollidewithActor line, once a travel; inferred) and given another
+  fMaxTimeBlockedByActors. TODO(M13): the turn is ours: how the velocity obstacles (below) choose
+  the velocity was not read; the time held up is ours (the original's is its controller's own
+  measure), and a condition on what is left of its way (half its width) was not identified.
+- **Whom it avoids** (observed in the original, 2026-11-18; `avoidanceKey`, src/ai/avoidance.ts):
+  each actor has a key in the engine's avoidance manager and avoids (steers round, is blocked
+  by) only those whose key is greater. One on its way (following a path, faster than 5 units a
+  second) has its radius in whole units, then its form id: of two on their way the narrower
+  avoids the wider, of two as wide the lower form id the higher, and the other keeps its way
+  (their bodies push). One not on its way (standing, the player) has the greatest key: all go
+  round it, it round no one. One dead, dying or down has the least: no one goes round it. Ours
+  takes the speed it asks along its path as its speed (one held up stays on its way); down is
+  dead (TODO(M13): an essential actor's bleedout is not told to the movers).
 - **Its avoid nodes on those near** (observed in the original; `layAvoidNode`, src/ai/avoidance.ts):
   it keeps a record of each it looks at, whether it moves (more than 5 units a second) and how old
   the record is. A node goes on one whose middle lies within half the actor's width and its own
   radius of the way ahead, and its path is searched again round it at once. With the advanced
   avoidance that is looked at only as the other comes to stand; without it, also whenever the other
   starts or stops and at least every fMaxTimeSizeAvoidNode (1 s), so those moving get nodes too.
+  With the advanced avoidance one with a node that sets off has it taken away and the way is
+  searched again without it (observed; `clear`).
   Ours leaves the player to the line above. TODO(M13): the order of that line and the node.
 - **Round one standing in its way** (observed in the original): the path request the engine
   makes then lays an avoid node on each actor it records near the way, where it stands, its
@@ -336,26 +360,21 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   for 36 s, the same way through the scene actor standing there found every second.
   TODO(M13): what the engine's cost weighs (ours: per unit inside), which actors besides the
   blocker it records.
-- **Two on their way into each other** (a narrow way, neither able to go round: going round a
-  moving one does not part them, the engine lays no avoid node for it): kept from going on by
-  the other, one of the two gives way (`givesWay`, src/ai/avoidance.ts: the slower gait, else
-  the lower reference, the same one whichever asks; one whose race is Not Pushable, the dragons,
-  never). It steps off the other's way as a bumped
-  actor steps off the player's (fBumpReactionIdealMoveDist, at least fBumpReactionMinMoveDist,
-  to the side it stands on, else the other), waits fBumpReactionSmallWaitTimer while the other
-  passes, and searches its way again (logged "gives way"); no room beside the way, the other
-  gives way. That rule is ours (inferred): the original's avoider has no rule for who yields (it
-  was read: with the advanced avoidance, kept from going on over fMaxTimeBlockedByActors by one
-  across its way, it only reports its way blocked by actors). TODO(M13): what its path manager does
-  with that report.
+- **Two on their way into each other** (a narrow way; observed in the original, 2026-11-18): no
+  one steps aside. Only the lower ranked of the two (Whom it avoids) looks at the other: it steers
+  round it and, kept from going on, its path fails after fMaxTimeBlockedByActors and is asked for
+  again from where it stands; the other keeps its way and their bodies push. Before, ours had the
+  slower gait step off the other's way (a rule the original does not have).
 - **Advanced avoidance** (RACE DATA Flags 2, 90 races: the people, the undead, trolls, giants,
   atronachs, the dwarven machines; observed in the original): the flag, with
-  bUseVelocityObstacles (on), is the actor's use of velocity obstacles. It decides whom it lays nodes
-  on (above) and, inferred, who steers: only these turn their way round those moving (ours: foresee
-  where they will be, keep right of one coming head-on); the others (wolves, bears, deer, horses) keep
-  their way and go round by their nodes. TODO(M13): the velocity obstacles themselves (cones
-  from the others' velocities, with lists built from the navmesh's open edges) are not reproduced,
-  and the code that steers by them was not reached from the flag.
+  bUseVelocityObstacles (on), is the actor's use of velocity obstacles. It decides whom it lays
+  nodes on (above), whether its way blocked by actors is reported (above) and who steers
+  (observed, 2026-11-18): only these build velocity obstacles, one for each neighbour ranked above
+  it, made of where the other is from it, the two radii and the other's velocity; the others
+  (wolves, bears, deer, horses) keep their way and go round by their nodes. TODO(M13): how the
+  velocity is chosen among the obstacles (that code also weighs the navmesh's open edges) was not
+  read: ours foresees where the first it would meet will be and turns just past it, keeping right
+  of one coming head-on.
 - **Bumped** (`src/shell/actor-movers.ts`): one whose race is Not Pushable does not react; the
   player walking into an actor's controller (at
   40 units a second or more, towards it) is a bump: where the player came from, clockwise from
@@ -1116,9 +1135,14 @@ Actors use furniture as the engine's furniture handling does, as far as the data
   editor's reading is not documented; the five markers flagged with idles of the tree
   (PatrolIdleMarker, CowEatingIdleMarker, ChoppingIdleMarker, DA08NelkirPatrolIdleMarker,
   FlowersIdleMarker) play their lists as the others.
-- **Navmesh triangle flag Found** (0x800, 3.15 million triangles, nearly all): still open. The
-  original's path search set-up and its step's cost (which reads Water and Preferred) read no
-  such bit. TODO(M13): whether other navmesh code reads it.
+- **Navmesh triangle flag Found** (0x800): still open. The original's path search set-up and its
+  step's cost (which reads Water and Preferred) read no such bit. The data (2026-11-18): of
+  3,170,592 triangles in 19,201 navmeshes, 20,436 lack it, in 126 navmeshes (27 lack it on every
+  triangle, 99 on some); those lacking it border triangles with it across 5,094 edges and carry
+  the same other flags (Water, Preferred, Door) in the same shares, so it marks no island, kind of
+  ground or edge, and reads as the editor's own mark left from its last pass over a navmesh
+  (inert at run time, as ours). TODO(M13): inferred; whether any other navmesh code of the
+  original reads it was not found.
 
 ### Executions
 

@@ -4,7 +4,12 @@ import {
   avoid,
   avoidance,
   avoidanceNeighbours,
-  givesWay,
+  avoidanceKey,
+  blockedByActor,
+  DOWN_AVOIDANCE_KEY,
+  IDLE_AVOIDANCE_KEY,
+  ranksAbove,
+  staticAvoidNode,
   type Avoider,
   type Neighbour,
 } from './avoidance.ts';
@@ -44,9 +49,15 @@ describe('avoid nodes on those near its way', () => {
     expect(layAvoidNode(undefined, near(0, 100), 40, way, advanced).lay).toBe(false);
     // Moving at 5 units a second counts as standing.
     expect(layAvoidNode(undefined, near(5), 40, way, advanced).lay).toBe(true);
-    // It sets off and stops again: looked at anew.
+    // It sets off and stops again: looked at anew. Setting off, its node is taken away (the
+    // way searched again without it: observed in the original); one without a node keeps none.
     const off = layAvoidNode(again.state, near(100), 40, way, advanced);
     expect(off.lay).toBe(false);
+    expect(off.clear).toBe(true);
+    expect(off.state.noded).toBe(false);
+    expect(layAvoidNode(off.state, near(100), 40, way, advanced).clear).toBe(false);
+    const besideStanding = layAvoidNode(undefined, near(0, 100), 40, way, advanced).state;
+    expect(layAvoidNode(besideStanding, near(100, 100), 40, way, advanced).clear).toBe(false);
     expect(layAvoidNode(off.state, near(0), 40, way, advanced).lay).toBe(true);
   });
 
@@ -88,10 +99,11 @@ describe('avoidance', () => {
     // A little to the left of its way: it turns right; a little to the right: left.
     expect(avoid(walker, [standing(-15, 100)])[0]).toBeGreaterThan(0);
     expect(avoid(walker, [standing(15, 100)])[0]).toBeLessThan(0);
-    // The turn grazes the other's reach (48: both radii and the margin).
+    // The turn grazes the other's velocity obstacle (40: the two radii, observed in the
+    // original; before, ours kept 8 units more).
     const [gx, gy] = avoid(walker, [standing(0, 100)]);
     const turn = Math.atan2(gx, gy);
-    expect(turn).toBeCloseTo(Math.asin(48 / 100), 6);
+    expect(turn).toBeCloseTo(Math.asin(40 / 100), 6);
   });
 
   it('keeps right when two meet head-on, whichever side the other is on', () => {
@@ -152,21 +164,78 @@ describe('whom it goes round', () => {
   });
 });
 
-describe('two on their way into each other', () => {
-  it('has exactly one give way, whichever asks: the slower gait, else the lower reference', () => {
-    const walking = { reference: 0x20, gait: 0 };
-    const running = { reference: 0x10, gait: 1 };
-    expect(givesWay(walking, running)).toBe(walking);
-    expect(givesWay(running, walking)).toBe(walking);
-    const other = { reference: 0x30, gait: 0 };
-    expect(givesWay(walking, other)).toBe(walking);
-    expect(givesWay(other, walking)).toBe(walking);
+describe('whom it avoids: the avoidance keys (observed in the original)', () => {
+  const onItsWay = (radius: number, formId: number) =>
+    avoidanceKey({ down: false, travelling: true, speed: 80, radius, formId });
+
+  it('of two on their way the narrower avoids the wider, of two as wide the lower form id', () => {
+    const person = onItsWay(20.7, 0x2000);
+    const troll = onItsWay(35, 0x1000);
+    expect(person).toEqual([20, 0x2000]);
+    expect(ranksAbove(troll, person)).toBe(true);
+    expect(ranksAbove(person, troll)).toBe(false);
+    const lower = onItsWay(20, 0x1000);
+    expect(ranksAbove(person, lower)).toBe(true);
+    expect(ranksAbove(lower, person)).toBe(false);
+    // Exactly one of a pair avoids the other, whichever asks.
+    expect(ranksAbove(person, person)).toBe(false);
   });
 
-  it('never has one its race keeps from being pushed (a dragon) give way', () => {
-    const dragon = { reference: 0x10, gait: 0, pushable: false };
-    const running = { reference: 0x20, gait: 1 };
-    expect(givesWay(dragon, running)).toBe(running);
-    expect(givesWay(running, dragon)).toBe(running);
+  it('one not on its way avoids no one and all avoid it; no one avoids one down', () => {
+    const standingKey = avoidanceKey({
+      down: false,
+      travelling: true,
+      speed: 5,
+      radius: 20,
+      formId: 0x10,
+    });
+    expect(standingKey).toEqual(IDLE_AVOIDANCE_KEY);
+    expect(avoidanceKey({ down: false, travelling: false, speed: 80, radius: 20, formId: 1 })).toBe(
+      IDLE_AVOIDANCE_KEY,
+    );
+    const going = onItsWay(60, 0xff000000);
+    expect(ranksAbove(IDLE_AVOIDANCE_KEY, going)).toBe(true);
+    expect(ranksAbove(going, IDLE_AVOIDANCE_KEY)).toBe(false);
+    const dead = avoidanceKey({ down: true, travelling: true, speed: 80, radius: 20, formId: 7 });
+    expect(dead).toBe(DOWN_AVOIDANCE_KEY);
+    expect(ranksAbove(dead, onItsWay(1, 1))).toBe(false);
+  });
+
+  it('steers round only those ranked above it: the other keeps its way', () => {
+    const me = { ...walker, key: onItsWay(20, 0x10) };
+    const wider: Neighbour = { ...standing(0, 100), key: onItsWay(30, 0x5) };
+    const narrower: Neighbour = { ...standing(0, 100), key: onItsWay(10, 0x50) };
+    expect(avoid(me, [wider])[0]).toBeGreaterThan(0);
+    expect(avoid(me, [narrower])).toEqual([0, 10]);
+    expect(avoidance(me, [narrower]).blocker).toBeUndefined();
+  });
+});
+
+describe('blocked by actors (observed in the original)', () => {
+  const held = { blockedFor: 1.5, most: 1, playerStanding: false, askedPlayer: false };
+  it('fails its path after fMaxTimeBlockedByActors, only with the advanced avoidance', () => {
+    expect(blockedByActor({ ...held, blockedFor: 1, advanced: true })).toBe('wait');
+    expect(blockedByActor({ ...held, advanced: true })).toBe('fail');
+    // Without it, it never reports its way blocked: its avoid nodes take it round.
+    expect(blockedByActor({ ...held, advanced: false })).toBe('wait');
+  });
+
+  it('asks the standing player to move first, once a travel (inferred)', () => {
+    const player = { ...held, playerStanding: true, advanced: true };
+    expect(blockedByActor(player)).toBe('ask');
+    expect(blockedByActor({ ...player, askedPlayer: true })).toBe('fail');
+  });
+});
+
+describe("the static avoider's node (observed in the original)", () => {
+  it("lies one radius ahead towards where it meant to be, the actor's radius wide", () => {
+    const node = staticAvoidNode([100, 0, 5], [100, 300, 5], 24, 32);
+    expect(node?.at[0]).toBeCloseTo(100);
+    expect(node?.at[1]).toBeCloseTo(24);
+    expect(node?.at[2]).toBe(5);
+    // Its width plus the actor's own (the circle its middle keeps out of).
+    expect(node?.radius).toBe(48);
+    expect(node?.cost).toBe(32);
+    expect(staticAvoidNode([0, 0, 0], [0, 0, 9], 24, 32)).toBeUndefined();
   });
 });
