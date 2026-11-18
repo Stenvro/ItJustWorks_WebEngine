@@ -78,6 +78,24 @@ are, their layer, speed and spin, how far from the player, for how long they hav
 `--from-stage` leaves the windows before an MQ101 stage out. The numbers of 2026-11-09 and
 2026-11-12 are in [rendering.md](rendering.md) ("The opening's frame", "The opening's physics").
 
+### Frame time in the simulation
+
+The systems' share of a frame without a browser: `tests/sim-frame-profile.int.test.ts` steps a
+scene of the headless simulation at 60 frames a second under V8's CPU profiler. It runs only when
+asked, `FRAME_PROFILE=<folder>` naming where its output goes (outside the repository), through
+the sim queue like any sim: `FRAME_PROFILE_SCENE=attack` (the default: the opening played to
+Alduin's attack, kept as `<folder>/mq101-attack.save` and loaded from there by later runs) or
+`whiterun` (the market at 9:00), `FRAME_PROFILE_SECONDS` (20), `FRAME_PROFILE_TAG` (the output's
+name), `FRAME_PROFILE_HEAP=1` (also what the frames allocate, by function, collected objects
+included). It writes `<scene>-<tag>.cpuprofile` and a `.json` with the frame's wall and CPU
+milliseconds (the CPU time is the steadier of the two on a shared machine), and
+`node tools/cpu-profile-summary.ts <file> <frames> [--children <regex>]` sums the profile by
+system, file and function (`--children`: what the matching functions spend their time on). The
+simulation has no renderer, audio or menus, and no camera, so every actor animates every frame
+(the browser's animation LOD does not apply); the step's own settling of scripts and reads is
+part of it. Runs compare with runs from the same save on the same machine load only. The numbers
+of 2026-11-18 are in [rendering.md](rendering.md) ("The opening's frame, round three").
+
 The output folder holds `summary.md` / `summary.json` (all scenarios: counts per system, frame
 times, the worst anomalies per system) and per scenario `report.md`, `report.json` (every
 anomaly kept, grouped by kind and by system, the worst first, the timeline of quest stages and
