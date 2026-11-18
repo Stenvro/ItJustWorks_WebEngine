@@ -1838,6 +1838,7 @@ export class ScriptRuntime implements VmHost {
     if (previous !== undefined) this.aliasCleared(quest, alias, previous);
     aliases.set(alias, filled);
     this.aliasFilled(quest, alias, filled);
+    this.detach(this.actors.aliasFactionsJoined(quest, alias, filled));
   }
 
   clearAlias(quest: number, alias: number): void {
@@ -2386,8 +2387,16 @@ export class ScriptRuntime implements VmHost {
       if (voice) return voice;
     }
     const base = await this.baseOf(reference);
-    const record = base === undefined ? undefined : await this.forms.record(base);
-    return record?.formIdField(record.type === 'TACT' ? 'VNAM' : 'VTCK');
+    let record = base === undefined ? undefined : await this.forms.record(base);
+    if (record?.type === 'TACT') return record.formIdField('VNAM');
+    // An actor's voice is a trait: a leveled actor's comes from the NPC_ it came down to, and
+    // one that uses its template's traits takes the template's (TemplateFlag.traits), as its
+    // race and sex do.
+    if (record?.type === 'LVLN' || record?.type === 'NPC_') {
+      const traits = (await this.actors.info(reference))?.traits.formId;
+      if (traits !== undefined && traits !== base) record = await this.forms.record(traits);
+    }
+    return record?.formIdField('VTCK');
   }
 
   /** XLOC: whether it is locked, its level (1 novice .. 100 master, 255 a key), its key. */

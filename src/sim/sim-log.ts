@@ -240,6 +240,8 @@ export class SimLog {
   readonly records: SimRecord[] = [];
   /** The simulation's clock (seconds), stamped on every record. */
   clock: () => number = () => 0;
+  /** A script's fast travel (Game.FastTravel): the world takes the player there. */
+  onFastTravel: ((destination: number) => void) | undefined;
   /** The buttons message boxes answer with, in order (then the first button). */
   readonly answers: number[] = [];
   /**
@@ -402,6 +404,7 @@ export class SimLog {
     },
     fastTravel: (destination) => {
       this.#push({ kind: 'menu', at: this.clock(), menu: 'FastTravel', reference: destination });
+      this.onFastTravel?.(destination);
     },
   };
 

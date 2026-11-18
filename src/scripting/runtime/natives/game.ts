@@ -198,12 +198,12 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     return runtime.referenceHandleOrNone(await runtime.findReference(forms, args, false));
   });
   n('game.findclosestactor', async ({ args }) =>
-    runtime.referenceHandleOrNone(
+    runtime.actorHandleOrNone(
       await runtime.findActor([num(args[0]), num(args[1]), num(args[2])], num(args[3]), true),
     ),
   );
   n('game.findrandomactor', async ({ args }) =>
-    runtime.referenceHandleOrNone(
+    runtime.actorHandleOrNone(
       await runtime.findActor([num(args[0]), num(args[1]), num(args[2])], num(args[3]), false),
     ),
   );

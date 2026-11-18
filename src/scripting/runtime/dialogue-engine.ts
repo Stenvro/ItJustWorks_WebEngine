@@ -374,9 +374,16 @@ export class DialogueEngine {
       // A persuasion's outcome is the fragment's own (FavorDialogueScript's Persuade, Bribe and
       // Intimidate: the skill use, the count, the mark). Observed in the original: no story
       // manager event comes of it (Flatter, Bribe and Intimidate are never raised).
-      await runtime.vm.call(new ObjectHandle(info.formId, fragment.script), fragment.function, [
-        runtime.referenceHandle(speaker),
-      ]);
+      // The conversation goes on once the fragment returns or waits (Utility.Wait): the
+      // original dispatches it and does not wait for it. Gjalund's sailing (DLC2MQ01's
+      // passage, SetSail) waits for the conversation to end before it fades and travels.
+      // TODO(M13): inferred that what a fragment does before its first wait is done before the
+      // line goes on (ours runs it up to there; the original's menu does not wait at all).
+      await runtime.vm.callUntilLatent(
+        new ObjectHandle(info.formId, fragment.script),
+        fragment.function,
+        [runtime.referenceHandle(speaker)],
+      );
     }
   }
 

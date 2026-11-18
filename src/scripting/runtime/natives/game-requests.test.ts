@@ -95,3 +95,19 @@ describe('Game natives that ask the shell', () => {
     expect(await call(scripts, 'isplayersungazing')).toBe(false);
   });
 });
+
+describe('Game natives that find actors', () => {
+  // Found 2026-11-18: DLC2PillarPlayerScript asks the actor FindRandomActorFromRef gives
+  // IsInFaction; given back as an ObjectReference, the method was not found on it.
+  it('give the actor found as an Actor (FindClosestActor, FindRandomActor)', async () => {
+    const scripts = runtime({});
+    scripts.findActor = () => Promise.resolve(0x4017a0d);
+    for (const name of ['findclosestactor', 'findrandomactor']) {
+      const found = await call(scripts, name, [0, 0, 0, 1000]);
+      expect(found).toBeInstanceOf(ObjectHandle);
+      expect((found as ObjectHandle).type).toBe('actor');
+    }
+    scripts.findActor = () => Promise.resolve(undefined);
+    expect(await call(scripts, 'findrandomactor', [0, 0, 0, 1000])).toBeNull();
+  });
+});

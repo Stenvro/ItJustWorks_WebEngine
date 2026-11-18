@@ -259,6 +259,11 @@ export class PlayerAvatar {
    */
   facesAim = false;
 
+  /** The player looks through their own eyes (first person). */
+  get inFirstPerson(): boolean {
+    return this.#player.pov === 'first';
+  }
+
   /** The first-person skeleton and its graph (its Camera1st node is the camera). */
   get firstPerson(): AnimatedSkeleton | undefined {
     return this.#firstPerson?.skeleton;

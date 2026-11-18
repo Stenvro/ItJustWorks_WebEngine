@@ -38,16 +38,44 @@ function record(type: string, field: string, ids: number[]) {
   };
 }
 
-/** ScriptRuntime.voiceType on a runtime holding the Player base and the Khajiit race. */
+/** A leveled cultist (LVLN), the NPC_ it comes down to, and the template that NPC_ takes its
+ * traits from (the voice is the template's). */
+const LEVELED_CULTIST = 0x4035475;
+const PICKED_CULTIST = 0x4035470;
+const CULTIST_TEMPLATE = 0x4035471;
+const CULTIST_REF = 0xff000864;
+const CULTIST_VOICE = 0x4034e60;
+
+/**
+ * ScriptRuntime.voiceType on a runtime holding the Player base and the Khajiit race, and a
+ * leveled cultist whose traits come from a template.
+ */
 function voiceOf(state: GameState, reference: number): Promise<number | undefined> {
   const records = new Map<number, unknown>([
     [PLAYER_BASE, record('NPC_', 'VTCK', [MALE_EVEN_TONED])],
     [KHAJIIT, record('RACE', 'VTCK', [MALE_KHAJIIT, FEMALE_KHAJIIT])],
+    [LEVELED_CULTIST, record('LVLN', 'LVLO', [PICKED_CULTIST])],
+    [PICKED_CULTIST, record('NPC_', 'TPLT', [CULTIST_TEMPLATE])],
+    [CULTIST_TEMPLATE, record('NPC_', 'VTCK', [CULTIST_VOICE])],
+  ]);
+  const bases = new Map([
+    [PLAYER_REF, PLAYER_BASE],
+    [CULTIST_REF, LEVELED_CULTIST],
+  ]);
+  const traits = new Map([
+    [PLAYER_REF, PLAYER_BASE],
+    [CULTIST_REF, CULTIST_TEMPLATE],
   ]);
   const runtime = {
     state,
     forms: { record: (formId: number) => Promise.resolve(records.get(formId)) },
-    baseOf: (ref: number) => Promise.resolve(ref === PLAYER_REF ? PLAYER_BASE : undefined),
+    baseOf: (ref: number) => Promise.resolve(bases.get(ref)),
+    actors: {
+      info: (ref: number) => {
+        const formId = traits.get(ref);
+        return Promise.resolve(formId === undefined ? undefined : { traits: { formId } });
+      },
+    },
   };
   return ScriptRuntime.prototype.voiceType.call(runtime as unknown as ScriptRuntime, reference);
 }
@@ -63,5 +91,13 @@ describe("the player's voice type", () => {
     expect(await voiceOf(state, PLAYER_REF)).toBe(FEMALE_KHAJIIT);
     state.playerAppearance = { ...appearance, sex: 0 };
     expect(await voiceOf(state, PLAYER_REF)).toBe(MALE_KHAJIIT);
+  });
+});
+
+describe("an actor's voice type", () => {
+  // Found 2026-11-18: the Dragonborn cultists' ambush (DLC2CultistAmbush) has dialogue only for
+  // their voice type, and its leveled actors had none: the voice was read off the LVLN.
+  it('is the voice of the NPC_ that gives its traits: a leveled pick, through its template', async () => {
+    expect(await voiceOf(new GameState(), CULTIST_REF)).toBe(CULTIST_VOICE);
   });
 });

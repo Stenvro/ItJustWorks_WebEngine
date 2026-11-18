@@ -29,6 +29,7 @@ import type { Vec3 } from '../render/math.ts';
 import type { InstanceVisibility } from '../render/scene-renderer.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { talkOnActivate } from '../shell/script-talk.ts';
+import { fastTravelJourney, fastTravelWay } from '../shell/fast-travel-journey.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ActorStage, type StageObstacleCell, type StagePlace } from '../shell/actor-stage.ts';
 import type { AdoptedVehicle } from '../shell/actor-vehicles.ts';
@@ -304,6 +305,9 @@ export class SimWorld {
     this.clock = clock;
     this.#gridRadius = gridRadius;
     log.clock = () => this.#time;
+    log.onFastTravel = (destination) => {
+      this.#scriptFastTravel(destination);
+    };
     const render = session.render;
     this.#created = new CreatedObjects(session, render);
     this.#flora = new FloraLooks(session, render);
@@ -2090,6 +2094,30 @@ export class SimWorld {
     if (!here) return false;
     play.placePlayer(at.position, at.rotation[2]);
     return true;
+  }
+
+  /**
+   * A script fast travels the player (Game.FastTravel), as Play does (play-mode.ts): the hours
+   * the way takes pass and the player goes where the marker sends them, their followers along.
+   * A journey as a script's move is: the settle under way waits for it. Found 2026-11-18:
+   * Gjalund's boat (DLC2DialogueRRQuestScript's SetSail) fast travels the player to Solstheim;
+   * here it was only noted, and the player stayed on Windhelm's docks.
+   */
+  #scriptFastTravel(destination: number): void {
+    const before = this.#travel;
+    this.#travel = (async () => {
+      await before;
+      const runtime = this.runtime;
+      const at = await runtime.placement(await runtime.fastTravelArrival(destination));
+      if (!at) {
+        this.terminal.log('ui', `fast travel: ${destination.toString(16)} is nowhere`, 'warn');
+        return;
+      }
+      await fastTravelJourney(this.session, at, fastTravelWay(this.session, at), async (place) => {
+        await this.stage.followers.comeAlong(place, true);
+        await this.#journey(place);
+      });
+    })();
   }
 
   /** The player is sent to another place: it opens with them there, as they left this one. */

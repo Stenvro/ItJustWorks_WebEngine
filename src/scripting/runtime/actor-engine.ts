@@ -621,14 +621,37 @@ export class ActorEngine {
   /** Every faction it is in (its record's, its aliases' and those scripts set) with its rank. */
   async factionsOf(reference: number): Promise<Map<number, number>> {
     const ranks = new Map((await this.info(reference))?.factions.factions ?? []);
-    for (const [faction, rank] of this.#runtime.state.actors.get(reference)?.factions ?? []) {
+    const set = this.#runtime.state.actors.get(reference)?.factions;
+    for (const [faction, rank] of set ?? []) {
       if (rank === -2) ranks.delete(faction);
       else ranks.set(faction, rank);
     }
+    // An alias's factions are joined as it takes the actor (`aliasFactionsJoined`): a script
+    // that takes the actor out of one afterwards (RemoveFromFaction) has it out, as
+    // DLC2CultistAmbush's stage 10 takes its cultists out of WEPlayerFriend and
+    // dunPrisonerFaction, their aliases' factions, to turn them on the player.
     for (const faction of await this.#aliasFactions(reference)) {
-      if ((ranks.get(faction) ?? -2) < 0) ranks.set(faction, 0);
+      if ((ranks.get(faction) ?? -2) < 0 && set?.get(faction) !== -2) ranks.set(faction, 0);
     }
     return ranks;
+  }
+
+  /**
+   * An alias takes an actor: it joins the alias's factions (Creation Kit: Alias Factions, the
+   * factions the reference is in while the alias holds it), a removal from them before then
+   * undone. TODO(M13): inferred that the fill adds them as AddToFaction would (rank 0), so that a
+   * later RemoveFromFaction takes the actor out while the alias still holds it.
+   */
+  async aliasFactionsJoined(quest: number, alias: number, reference: number): Promise<void> {
+    const factions = (await this.#runtime.forms.alias(quest, alias))?.factions ?? [];
+    const set = this.#runtime.state.actors.get(reference)?.factions;
+    let changed = false;
+    for (const faction of factions) {
+      if (set?.get(faction) !== -2) continue;
+      set.delete(faction);
+      changed = true;
+    }
+    if (changed) this.reactionsChanged();
   }
 
   /**

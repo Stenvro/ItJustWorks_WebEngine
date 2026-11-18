@@ -359,3 +359,53 @@ describe('a deferred kill across a save', () => {
     expect(loaded.log.calls[0]).toBe('killed 14 by 1234');
   });
 });
+
+describe("an alias's factions", () => {
+  const CULTIST = 0xff000863;
+  const AMBUSH = 0x403546d;
+  const CULTIST_ALIAS = 0;
+  const PLAYER_FRIEND = 0x1dd09;
+  const PRISONER = 0xaa784;
+
+  /** A runtime whose ambush alias (holding the cultist) lists two factions. */
+  function ambush(state: GameState): ActorEngine {
+    const actors = new ActorEngine({
+      state,
+      forms: {
+        record: () => Promise.resolve(undefined),
+        alias: () => Promise.resolve({ factions: [PLAYER_FRIEND, PRISONER] }),
+      },
+      baseOf: () => Promise.resolve(undefined),
+      aliasesHolding: (reference: number) =>
+        reference === CULTIST ? [{ quest: AMBUSH, alias: CULTIST_ALIAS }] : [],
+    } as unknown as ScriptRuntime);
+    return actors;
+  }
+
+  it('make the actor a member while the alias holds it', async () => {
+    const actors = ambush(new GameState());
+    const ranks = await actors.factionsOf(CULTIST);
+    expect(ranks.get(PLAYER_FRIEND)).toBe(0);
+    expect(ranks.get(PRISONER)).toBe(0);
+  });
+
+  // Found 2026-11-18: DLC2CultistAmbush's stage 10 takes its cultists out of their aliases'
+  // WEPlayerFriend and dunPrisonerFaction to turn them on the player; the aliases put them back
+  // at once, and the cultists stayed the player's friends.
+  it('are left by RemoveFromFaction while the alias still holds it', async () => {
+    const state = new GameState();
+    const actors = ambush(state);
+    actors.setFactionRank(CULTIST, PRISONER, -2);
+    const ranks = await actors.factionsOf(CULTIST);
+    expect(ranks.has(PRISONER)).toBe(false);
+    expect(ranks.get(PLAYER_FRIEND)).toBe(0);
+  });
+
+  it('are joined again as an alias takes the actor after a removal', async () => {
+    const state = new GameState();
+    const actors = ambush(state);
+    actors.setFactionRank(CULTIST, PRISONER, -2);
+    await actors.aliasFactionsJoined(AMBUSH, CULTIST_ALIAS, CULTIST);
+    expect((await actors.factionsOf(CULTIST)).get(PRISONER)).toBe(0);
+  });
+});

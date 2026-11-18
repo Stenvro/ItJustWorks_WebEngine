@@ -152,6 +152,7 @@ export class AliasFiller {
     if (previous !== undefined) this.#runtime.aliasCleared(quest, alias, previous);
     aliases.set(alias, value);
     this.#runtime.aliasFilled(quest, alias, value);
+    this.#runtime.detach(this.#runtime.actors.aliasFactionsJoined(quest, alias, value));
   }
 
   async #fill(alias: QuestAlias, context: FillContext): Promise<number | undefined> {
