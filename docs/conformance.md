@@ -147,11 +147,11 @@ gridRadius? })` starts a new game and opens the place; `openInterior`, `openExte
 editorId)`;
 - references and actors: `actor`, `actors`, `position`, `distance`, `package`, `place` (PlaceAtMe),
   `kill`;
-- the player: `activate` (as through the crosshair), `moveTo`, `walkTo`, `equip`, `cast`, `press`;
+- the player: `activate` (as through the crosshair: an item lying in the world is taken, as Play takes it), `moveTo`, `walkTo`, `equip`, `cast`, `press`;
 - conversations (the dialogue menu's rules, headless): `talk(actor)` activates the actor and hears
 - `converse(actor, patterns, opening?)` says a whole conversation at once (greeting or opening topic, then the listed topic matching each pattern, fragments run, Invisible Continue followed): for a ForceGreet whose opening topic `menus()` records.
   its greeting, `listen(actor?)` waits for one the actor starts (a force greet, with its opening
-  topic), `choose(text)` says a listed topic (its fragments run as the world steps), `topics`,
+  topic), `choose(text)` says a listed topic (its fragments run as the world steps; one still running after a line's step, waiting on a scene the speaker plays once the conversation is over, goes on as its own thread), `topics`,
   `goodbye()`;
 - what happened: `records`, `scriptEvents({ event, target, since })`, `events(kind)`, `stagesSet`,
   `questsStarted`, `packages`, `deaths`, `notices`, `sounds`, `itemsMoved`, `storyEvents(type)`, `menus`,
