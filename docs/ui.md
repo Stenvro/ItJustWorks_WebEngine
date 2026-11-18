@@ -447,9 +447,9 @@ stepped, so everyone stands there before the fade) and the actors' face tints.
 on the player), NNAM the static whose model is shown, SNAM its scale, RNAM its rotation
 (degrees), ONAM the rotation limits, XNAM its offset, MOD2 a camera path. Of the 371 vanilla
 screens 134 have conditions; after a new game's opening exactly one holds, `ChargenLoadScreen`
-(MQ101 stage 10: Alduin's wall and the Song of the Dragonborn). Screens whose conditions hold
-are taken before those without (inferred from the new game always showing its own); else one at
-random.
+(MQ101 stage 10: Alduin's wall and the Song of the Dragonborn). Observed in the original: of the
+screens whose conditions hold (one without conditions always does) and that have a model to
+show, one at random among those with conditions, else among them all.
 
 **Camera paths** (`meshes\cameras\LSCamera*.nif`, `src/render/camera-path.ts`): a
 `CameraPathNode` moved by the 60-second looping `CameraPath` sequence, with an NiCamera under it
@@ -692,6 +692,19 @@ AllowSaving, ...). The stack answers what the flags say together: menu mode foll
 open (F5 in an item menu, a book or the map saves nothing), and scripts ask it through SKSE's
 `UI.IsMenuOpen`. A mod registers its own menus with their flags (`register`).
 
+SKSE's UI script reaches an open menu's movie by the menu's name (Get*, Set*, Invoke*,
+InvokeForm: `src/scripting/runtime/natives/ui-script.ts`). `UI.OpenCustomMenu(path)` opens SKSE's
+CustomMenu (`src/shell/custom-menu.ts`): the movie at that path under the interface folder (no
+extension), modal and pausing the game at depth 10, the cursor shown while no gamepad is in use,
+as SKSE's constructor makes it; the flags argument is unused, one open already stays, and
+`UI.CloseCustomMenu()` closes it. `UI.IsTextInputEnabled()` asks the control map's count of
+what allows text input now (`src/ui/text-input.ts`): a byte each allowing raises (past 255 it
+wraps) and each taking back lowers, never below 0. Observed in the original, the vanilla menus
+that move it are the console (raised as it shows, lowered as it hides), the race menu (its
+movie's SetAllowTextInput raises it once per call whatever the arguments, each ChangeName lowers
+it) and the enchanting name field (raised as the menu calls EditItemName, lowered at
+EndItemRename); the rest are the consoles' on-screen keyboard and the Creations menus.
+
 The title cards are `TitleSequence Menu` while open. `LoadWaitSpinner` (always open, saving
 allowed; `src/shell/load-wait-spinner.ts`) shows while a save is written: the movie's icon turns
 in the bottom right corner (`InitExtensions` locks it there), with its `FadeInMenu` and
@@ -927,7 +940,96 @@ every tree, the near TREE references with their shadows and harvested looks as w
 distant tree LOD; their collision and their part in the game stay, a disabled tree stays hidden:
 `src/render/switched-visibility.ts`). coc (`src/shell/cell-placement.ts`) puts the player in an interior cell at
 its entrance, in an exterior cell at its COC marker (COCMarkerHeading), else at its middle on
-the ground. TODO(M13): the rest of the game's commands, selecting references by clicking.
+the ground. A click on the world while the console is open selects the reference under it (as
+prid).
+
+**The game's table** (`src/shell/console-functions.ts`, observed in the original): its 342
+console commands and 737 script functions, each with its name, short name, whether it is a
+reference function, its parameters (the name its messages use and the script parameter type,
+read as `src/shell/console-table.ts` says: the record types each takes are xEdit's for the
+condition parameter of the same type, the two numberings matched function by function) and
+whether its action returns at once. A script function's place among them is its condition
+function index. Every name the game knows is known; how each runs:
+
+- **Returns at once** (124 console commands, 38 script functions; observed in the original: the
+  action's body is a bare return): the tools of the game's makers left without their body in the
+  release (ToggleNavMesh, the memory trackers and checkpoints, the SPU and ESRAM switches,
+  ShowScenegraph, CellInfo, Timing, ToggleMarkers, KillAllProjectiles, IsUndead and the
+  EP... perk functions as typed, ...). Typed, they are accepted and print nothing, as in the game.
+- **A condition function** (397 script functions): the console prints that function's value for
+  the reference (`src/scripting/runtime/condition-values.ts`, the same evaluator the conditions
+  use), in the game's words for it (`src/shell/console-script-functions.ts`: most say
+  "GetIsID >> 1.00", some round ("GetDisabled >> 0") or name it otherwise
+  ("Is Weapon/Magic Out >> 1.00", "GetRelAng: Z >> 12.50"); observed in the original). A
+  function the evaluator does not value prints "This function not supported".
+- **A Papyrus native** (StartCombat, SetGhost, DamageAV, PushActorAway, EquipSpell, imod and
+  rimod, SetPCExpelled, SetEnemy, SetAlly, StartScene, PMS and SMS, PlaySound, AddMusic,
+  CameraShake, Autosave, AddFormToFormList, ... : `NATIVE_FUNCTIONS`): done by the native the
+  scripts call, with the console's parameters; GetObjectiveCompleted / Displayed / Failed print
+  the quest's answer, GetLinkedRef, GetCombatTarget, GetPlayerGrabbedRef and GetSelf the
+  reference ("GetSelf >> (00012345)").
+- **The math functions** Sin, Cos, Tan (degrees; 1 after the value gives the inverse), Sqrt,
+  Log (natural, or to a base given) and Abs. TODO(M13): what they take is inferred from their
+  parameters and the earlier games' script documentation.
+- **Built here** (the lines observed in the original; src/shell/console-papyrus.ts):
+  - sglv: "--- Global Variables -----------------------------", then each global in the load
+    order as "Name = value": a float's with four decimals, a long's whole, a short's as 16 bits.
+  - sv on a reference: "--- Papyrus ---------------------------------", its update
+    registrations ("\tRegistered for update every 5.00 seconds", "\tRegistered for game-time
+    update every 1.00 hours"), then each script attached: "Name:", "\tScript state = "..."" and
+    its variables and its parents' sorted by name with case ignored, each "\tName = value" with
+    "[]" after an array's name ("\tNo variables" when it has none), or "No papyrus scripts
+    attached"; then the same under "--- Papyrus - Alias <alias> on Quest <quest> (<id>)" for
+    each alias holding it. A value is written as the script engine writes values: an Int whole,
+    a Float with six decimals, True or False, a String in quotes, None, an object as
+    "[Type <what it is>]" (an alias "alias Hadvar on quest MQ101 (0003372B)"), an array as
+    "[a, b, ...]" or "[]", within a 256-character buffer. TODO(M13): a form's and a
+    reference's "what it is" (its editor id and id, a reference its id alone) is written as the
+    game's Papyrus logs show it, not confirmed in the original; the object's type is the
+    variable's declared one; an actor's active magic effects' scripts, which the original lists
+    after its aliases ("--- Papyrus - Active magic effect <n>"), are not listed.
+  - sqv on a quest: the same for the quest, then ShowQuestAliases' lines, then
+    "--- Quest state -----------------------------", "Enabled?" Yes or No, "State:" (Running,
+    Stopped, Waiting For Stage while its start waits to run; the original's Waiting For
+    Promotion never, as there is no reference promotion here), "Current stage:" and
+    "Priority:".
+  - ShowQuestAliases: "- 3 Aliases for quest 'MQ101' (0003372B)-", then each alias as
+    "REF 'Hadvar'-> 'Hadvar' (0002BF9F)" or "LOC 'Town'-> 'WhiterunLocation' (...)", or
+    "-> NONE" while empty. TODO(M13): the name the original gives a reference or location there
+    (its form's editor-id call) is not confirmed: the reference's name and the location's
+    editor id here.
+  - sqt: per quest with targets "Current quest: MQ101", "2 current targets", then
+    "Target 1: Reference: <name> (<id>), load door: <door> (<id>)", the door the compass's
+    route toward it goes through. TODO(M13): the original also names a container carrying the
+    target ("(carrying ...)"), not tracked here; a target without a door reads
+    "Same cell/exterior" in the player's space and "UNREACHABLE" without a route, a mapping of
+    the original's two cases that is inferred.
+  - setpqv and setpv (a script property set to a number, a bool, None or a form), saq ("All
+    Quests Enabled."), caqs ("All Quest Stages Completed."), ssq (the scope quest, whose aliases
+    a line may then name as references: "Console Scope Quest >> MQ101 (0003372B)", "...
+    EMPTY"), save and load by name, ShowMenu and HideMenu (the menus by their names on the
+    stack), GetINISetting ("INISetting fJumpHeightMin:Movement >> 76.00", "... NOT FOUND") and
+    SetINISetting (the running value; the player's settings keep it for the session), SetRace
+    (the player's, as Actor.SetRace).
+  - sucsm sets the INI setting fFreeCameraTranslationSpeed:Camera (default 20), the units the
+    free camera moves each update with a move key held, whatever the update's length, times
+    fFreeCameraRunSpeed (2) while running (src/render/fly-camera.ts); the mouse wheel does
+    not change it. Only the game's tfc in Play moves so (src/shell/free-camera.ts); the
+    Sandbox's free camera keeps the viewers' speed in units per second, which the wheel
+    adjusts.
+- **Cast** takes the casting source the game's table marks as needed (its "(Optional)" name
+  notwithstanding). TODO(M13): the node the spell leaves from by that source.
+
+Still answering "This function not supported", each for the reason given: the debug displays
+of the makers' tools that have a body in the release but draw what our renderer has no part
+for (ToggleWireframe, TCS, TMS, TDETECT's stats, the HDR, tint, cinematic and refraction
+parameter commands, ToggleCellNode, ...), the profiling and memory tools (OutputMemContexts,
+DumpPapyrusStacks, the Papyrus profiles, LTGraph), the file tools (SaveWorld, CopySaves,
+SaveIniFiles, RefreshINI, ReloadScript, HotLoadPlugin, RunConsoleBatch: the browser has no game
+folder to write), and the script functions no evaluator or native does yet (ModCrimeGold,
+SetActorFullName, SetClass, the radio and pip-boy functions of the shared code, ...).
+TODO(M13): build the remaining ones that change the game (FindForm, ShowQuestLog, GetAVInfo,
+SetFog, SetGlobalTimeMultiplier, ToggleScripts, PlayIdle, AddFormToLeveledList, ...).
 
 The console opens at the main menu too, as in the game: there `coc <cell>` starts a new game in
 that cell without the opening (Unbound, MQ101, is not started: `ScriptRuntime.newGame`'s
@@ -966,21 +1068,25 @@ turned off active again.
 Stats: `updateStats` is answered with every statistic as name, value, category and an unused
 field (`src/gameplay/misc-stats.ts`: the game's stats in the journal's order and categories,
 after UESP); the menu shows `"$" + name`, translated as it is set. Favorite Weapon, Spell,
-School and Shout are names: what the player used most (`src/scripting/runtime/usage-stats.ts`:
-each swing of a melee weapon or shot of a bow, each spell cast (a concentration spell each time
-it is let go) and its school (its cost's skill, named by its AVIF), each shout; the first to reach
-the most on a tie; TODO(M13): what the engine counts as a use), read as the journal opens.
+School and Shout are names: what the player used most (`src/scripting/runtime/usage-stats.ts`;
+observed in the original: the last 100 uses of each kind are kept, the oldest dropped, and the
+favorite is the one most often among them, the school the one most often among the kept spells'
+schools; a weapon's use is a swing of a melee weapon or the release of a bow, crossbow or staff,
+a shout's each shout let out). TODO(M13): which of several tied the original names (ours the
+first in the window) and which moments of the caster count a spell (ours: each spell cast, a
+concentration spell each time it is let go). Read as the journal opens.
 Who counts each stat (observed in the original: its misc stat handlers and incrementers,
 `src/scripting/runtime/stat-events.ts`): Gold Found is every rise of the player's gold (loot,
 sales, rewards); Chests Looted the first item taken from a container that is not an actor in one
 opening of the container menu; Barters each buy or sale; Quests Completed every completed quest
 but a miscellaneous one (type 6), with its type's own stat (Main, College, Thieves' Guild, Dark
-Brotherhood, Companions, Daedric, Civil War, Dawnguard, Dragonborn; a completed quest reset takes
-them back, TODO(M13): inferred); Misc Objectives Completed a shown objective of a miscellaneous quest completed; Hours
+Brotherhood, Companions, Daedric, Civil War, Dawnguard, Dragonborn; a completed quest whose completion
+is cleared, as a reset clears it, takes them back; only the rise of Quests Completed is told to
+scripts as a tracked stat); Misc Objectives Completed a shown objective of a miscellaneous quest completed; Hours
 Waiting each hour waited; Days as a Vampire / Werewolf each day passing while the PlayerIsVampire /
 PlayerIsWerewolf globals (default objects PIVV, PIWV) are set; Bunnies Slaughtered a kill in the
-Bunny Faction (AWWW); Mauls a kill while Game.SetBeastForm's flag is set (the werewolf and the
-Vampire Lord, as UESP has them). The vanilla scripts count the rest themselves
+Bunny Faction (AWWW); Mauls any kill while the flag Game.SetBeastForm sets is on (observed in the original: the
+Werewolf and Vampire Lord effects set it too as they start on the player). The vanilla scripts count the rest themselves
 (Game.IncrementStat): Side Quests and Questlines Completed, Werewolf Transformations, Necks
 Bitten, Horses and Houses Owned, Stores Invested In, Persuasions, Bribes, Intimidations, Standing
 Stones Found, Brawls Won, Nirnroots Found, Wings Plucked. Souls Trapped counts each soul the
@@ -1000,10 +1106,15 @@ recharging a weapon, not enchanting (UESP "Skyrim:Statistics"); Times Shouted: a
 whatever its words (ShoutAttack, the hub's `shoutAttack`; a shout's word goes out as a spell, so
 OnSpellCast does not tell it); Poisons Used: a poison put on the player's weapon (PoisonedWeapon);
 Diseases Contracted: a disease the player catches (ContractedDisease; Survival's script counts
-its own). By UESP "Skyrim:Statistics", where the original's own rule was not read
-(`TODO(M13)` beside each): Books Read and Skill Books Read count a book's first read, a skill book
-in the latter alone, a spell tome in the former; Shouts Learned counts a shout as its last word
-is learned; Murders counts the player's or a follower's kill of one not hostile, seen or not.
+its own). Observed in the original: the player's first read of a book (its read flag, set
+then) counts in Books Read, or, when that read raised a skill (a skill book's, which teaches
+once), in Skill Books Read instead; a spell tome counts in Books Read; only Skill Books Read is
+told to scripts as a tracked stat. A word of power new to the player counts in Words Of Power
+Learned and, when it gave them a shout they did not have, in Shouts Learned (once however many
+shouts it gave): a shout counts at its first word. By UESP "Skyrim:Statistics", where the
+original's own rule was not read (`TODO(M13)`): Murders counts the player's or a follower's
+kill of one not hostile, seen or not (the crime system's MurderCrime event; the engine counts
+the event).
 
 System: the menu lists Quicksave, Save, Load, Installed Content, Settings, Controls, Help and
 Quit. Quit to the main menu ends the game and opens its main menu; quit to the desktop leaves

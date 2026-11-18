@@ -5,6 +5,8 @@
 import type { Camera } from './renderer.ts';
 import { lookAt, multiply, perspectiveReversedZ, type Mat4, type Vec3 } from './math.ts';
 
+import { flightStep, VIEWER_SPEED, wheelSpeed, type FreeCameraSettings } from './free-flight.ts';
+
 const MAX_PITCH = 1.55;
 
 export class FlyCamera implements Camera {
@@ -14,7 +16,9 @@ export class FlyCamera implements Camera {
   pitch = 0;
   position: [number, number, number] = [0, 0, 0];
   /** Units per second (Skyrim: 1 unit ≈ 1.43 cm, walking ≈ 100 units/s). */
-  speed = 260;
+  speed = VIEWER_SPEED;
+  /** Set: it moves as the game's free camera does, by these settings (read each update). */
+  game: (() => FreeCameraSettings) | undefined;
   lensShift = 0;
   /** Near plane (game units). */
   readonly near = 4;
@@ -35,8 +39,7 @@ export class FlyCamera implements Camera {
   }
 
   update(deltaSeconds: number): void {
-    const fast = this.#keys.has('shift') ? 3 : 1;
-    const step = this.speed * fast * deltaSeconds;
+    const step = flightStep(this.speed, this.#keys.has('shift'), deltaSeconds, this.game?.());
     const forward = this.forward;
     const right: Vec3 = [Math.cos(this.yaw), -Math.sin(this.yaw), 0];
     const move = (axis: Vec3, amount: number): void => {
@@ -90,7 +93,7 @@ export class FlyCamera implements Camera {
     };
     const onWheel = (event: WheelEvent): void => {
       event.preventDefault();
-      this.speed = Math.max(20, Math.min(5000, this.speed * Math.exp(-event.deltaY * 0.001)));
+      this.speed = wheelSpeed(this.speed, event.deltaY, this.game !== undefined);
     };
     element.addEventListener('mousedown', onDown);
     document.addEventListener('mousemove', onMove);

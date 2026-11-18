@@ -9,10 +9,9 @@
 // Killed; one with none of them is Creatures Killed. The engine's own counts are tracked stats
 // (TESTrackedStatsEvent: ScriptRuntime.incrementStat). After these the same handler counts a
 // victim in the Bunny Faction default object (AWWW: HareFaction) in Bunnies Slaughtered, and a
-// kill the player makes in beast form in Mauls (the engine reads a flag of the player there:
-// taken as Game.SetBeastForm's, so the werewolf and the Vampire Lord alike, as UESP
-// "Skyrim:Statistics" has them. TODO(M13): that page counts melee kills; the death event names
-// no weapon).
+// kill the player makes in beast form in Mauls (observed in the original: any kill while the
+// flag Game.SetBeastForm sets is on, which the Werewolf and Vampire Lord effects also set as they
+// start on the player; no weapon is asked).
 //
 // The engine's misc stat incrementers (observed in the original: one per event source,
 // MiscStatIncrementer<…>): a location cleared (LocationCleared) counts in Dungeons Cleared; a
@@ -23,8 +22,9 @@
 // Its other handlers (observed in the original), counted here: the player's gold going up
 // (InventoryToMiscStat) adds the rise to Gold Found, whatever brings it (loot, a sale, a
 // reward); a quest completed (QuestStatus) counts in Quests Completed and in its type's stat
-// (questTypeStats), a completed quest reset takes both back (TODO(M13): inferred, QuestStatus
-// also tells a reset of a quest never completed, and a start, which count nothing), a
+// (questTypeStats), a completed quest reset takes both back (observed in the original: the
+// quest's completed flag cleared tells QuestStatus so, a quest never completed tells nothing;
+// only Quests Completed's rise is told to scripts), a
 // miscellaneous quest (type 6) counts in neither; a shown objective of a miscellaneous quest
 // completed (ObjectiveState: to completed-and-shown) counts in Misc Objectives Completed; each hour waited counts in Hours
 // Waiting (HoursPassed, as each hour slept counts in Hours Slept); each day passing
@@ -61,15 +61,15 @@
 //
 // The others this relay counts, each from the hub event that causes it (the stats' names as the
 // journal lists them): the first read of a book by the player (the BooksRead source, told by
-// src/shell/book-reading.ts after TESBookReadEvent: Books Read; one that teaches a
-// skill, Skill Books Read instead: UESP "Skyrim:Statistics", which counts spell tomes and not
-// skill books in the former. TODO(M13): that a re-read counts in neither is inferred from a skill
-// book's teaching once), a shout the player lets out, whatever its words (Times Shouted: the
+// src/shell/book-reading.ts after TESBookReadEvent: Books Read; one whose read raised a skill,
+// Skill Books Read instead, and only that one told to scripts as a tracked stat; observed in
+// the original: the book's read flag sends the event once, a spell tome counts in Books Read),
+// a shout the player lets out, whatever its words (Times Shouted: the
 // ShoutAttack event), a word of power learned (Words of Power Learned), the hours of a sleep (Hours Slept, at its end), food, a potion or an ingredient the
 // player takes (Food Eaten, Potions Used, Ingredients Eaten: an equip of the item), and the most
 // gold the player has had (Most Gold Carried, as gold comes in). Counted where they happen
-// instead: Shouts Learned (CastingEngine.teachWord: the shout's last word, by UESP;
-// TODO(M13): the original's writer is not read), Words of Power Unlocked
+// instead: Shouts Learned (CastingEngine.teachWord: a new word that gives the player a shout,
+// observed in the original), Words of Power Unlocked
 // (CastingEngine.unlockWord), the crimes' (the crime engine).
 //
 // The combat and magic counts (observed in the original: CriticalHitToMiscStatHandler,
@@ -184,8 +184,10 @@ export async function countQuestStatus(
 ): Promise<void> {
   const record = await runtime.forms.quest(quest);
   if (!record) return;
+  // Observed in the original: only Quests Completed's rise is told to scripts as a tracked
+  // stat; the type's own and the taking back are not.
   for (const stat of questTypeStats(record.type)) {
-    if (by > 0 || (runtime.stats.get(stat.toLowerCase()) ?? 0) > 0) runtime.incrementStat(stat, by);
+    runtime.incrementStat(stat, by, by > 0 && stat === 'Quests Completed');
   }
 }
 
@@ -287,8 +289,13 @@ export function relayStatEvents(runtime: ScriptRuntime): () => void {
     runtime.events.on('locationCleared', () => {
       runtime.incrementStat(DUNGEONS_CLEARED);
     }),
+    // Only a skill book's is told to scripts as a tracked stat (observed in the original).
     runtime.events.on('booksRead', (event) => {
-      runtime.incrementStat(event.skillBook ? 'Skill Books Read' : 'Books Read');
+      runtime.incrementStat(
+        event.skillBook ? 'Skill Books Read' : 'Books Read',
+        1,
+        event.skillBook,
+      );
     }),
     runtime.events.on('chestsLooted', () => {
       runtime.incrementStat('Chests Looted');
@@ -378,7 +385,7 @@ export function relayStatEvents(runtime: ScriptRuntime): () => void {
     }),
     runtime.events.on('questStatus', (event) => {
       // A start counts nothing. A reset is told before the quest's completion is cleared: only
-      // a completed quest's reset is taken back (TODO(M13): taking it back is inferred).
+      // a completed quest's reset is taken back (observed in the original).
       if (event.status === 'completed') return countQuestStatus(runtime, event.quest, 1);
       if (event.status === 'reset' && runtime.state.quests.get(event.quest)?.completed === true)
         return countQuestStatus(runtime, event.quest, -1);

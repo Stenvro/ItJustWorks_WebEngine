@@ -596,6 +596,13 @@ export interface WorldBridge {
   savedGraph?(reference: number): SavedGraph | undefined;
 }
 
+/** A menu's movie as scripts reach into it (SKSE's UI script): paths as "_root.Menu_mc.x". */
+export interface MenuMovie {
+  get(path: string): unknown;
+  set(path: string, value: unknown): void;
+  invoke(path: string, ...args: unknown[]): unknown;
+}
+
 /** A quest's update as the HUD announces it. */
 export interface QuestUpdate {
   readonly quest: number;
@@ -1039,6 +1046,12 @@ export class ScriptRuntime implements VmHost {
   inMenuMode = false;
   /** Whether a menu of that name is open (the menu manager's stack: SKSE's UI.IsMenuOpen). */
   menuOpen: ((name: string) => boolean) | undefined;
+  /** An open menu's movie by the menu's name: what SKSE's UI script reads, sets and calls in. */
+  menuMovie: ((name: string) => MenuMovie | undefined) | undefined;
+  /** SKSE's custom menu: its movie opened by its path under the interface folder, or closed. */
+  customMenu: { open(path: string): void; close(): void } | undefined;
+  /** The control map's count of what allows text input now (SKSE's UI.IsTextInputEnabled). */
+  textInputCount: (() => number) | undefined;
   /** The actor the player is in a conversation with (IsInDialogueWithPlayer), if any. */
   dialogueSpeaker: number | undefined;
   frameRate = 60;
@@ -1883,6 +1896,11 @@ export class ScriptRuntime implements VmHost {
     };
     fire(first);
     return null;
+  }
+
+  /** The interval an object is registered for updates at (seconds, or game hours), if it is. */
+  updateInterval(target: ObjectHandle, gameTime: boolean): number | undefined {
+    return this.#updateInfo.get(`${target.key}:${gameTime ? 'game' : 'real'}`)?.interval;
   }
 
   unregisterUpdate(target: ObjectHandle | null, gameTime: boolean): null {

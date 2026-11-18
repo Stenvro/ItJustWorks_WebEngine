@@ -13,19 +13,30 @@
 // a function it does not support ("This function not supported"), never pretending.
 // Notes: docs/ui.md ("The console").
 
+import { ConditionRunOn, NOT_VALUED, type Condition } from '../scripting/conditions.ts';
 import type { NativeCall } from '../scripting/papyrus-vm.ts';
+import { conditionFunctionValue } from '../scripting/runtime/condition-values.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { referenceName } from '../scripting/runtime/quest-text.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
-import { ObjectHandle, type Value } from '../scripting/values.ts';
+import { ObjectHandle, PapyrusArray, type Value } from '../scripting/values.ts';
 import { actorValueIndex } from '../world/actor-values.ts';
 import type { GameSettings } from '../world/game-settings.ts';
 import { ITEM_TYPES } from '../world/item-records.ts';
 import { MapMarkerFlag, readMapMarkers } from '../world/map-markers.ts';
+import type { QuestRecord } from '../world/quest-records.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import { parseSpell, SpellType } from '../world/spell-records.ts';
 import { cellPlacement, gridPlacement } from './cell-placement.ts';
 
+import {
+  conditionLine,
+  mathFunction,
+  NATIVE_FUNCTIONS,
+  referenceLine,
+  type NativeArgument,
+  type NativeFunction,
+} from './console-script-functions.ts';
 import { parseAxis, parseConsoleLine, parseConsoleNumber, parseFormId } from './console-parse.ts';
 import {
   CONSOLE_COMMANDS,
@@ -35,7 +46,23 @@ import {
   type ConsoleParamType,
 } from './console-table.ts';
 
+import {
+  globalLine,
+  hex8,
+  PAPYRUS_HEADER,
+  questStateLines,
+  registrationLines,
+  scriptsLines,
+} from './console-papyrus.ts';
+
 export { parseConsoleLine } from './console-parse.ts';
+
+/** A quest target as movetoqt and sqt take it: its quest, its reference and where that is. */
+export interface QuestTargetEntry {
+  readonly quest: number;
+  readonly reference: number;
+  readonly placement?: Placement;
+}
 
 /** What the commands act on. */
 export interface ConsoleContext {
@@ -70,7 +97,12 @@ export interface ConsoleContext {
   /** The game settings the session's systems read (setgs changes them there too). */
   gameSettings?(): Promise<GameSettings>;
   /** The active quests' targets (movetoqt). */
-  questTargets?(): Promise<readonly { readonly quest: number; readonly reference: number }[]>;
+  questTargets?(): Promise<readonly QuestTargetEntry[]>;
+  /**
+   * The load door toward a quest target (sqt): the door, 'same' when the target is in the
+   * player's space, 'unreachable' when no way there is found.
+   */
+  questTargetDoor?(target: QuestTargetEntry): Promise<number | 'same' | 'unreachable'>;
   /** Clears the console's history (clear). */
   clear?(): void;
   /** The renderer's switches (tll: distant LOD, tt: trees, tws: water); whether it is on now. */
@@ -81,6 +113,16 @@ export interface ConsoleContext {
   freezeWorld?(frozen: boolean): void;
   /** The reference under a point of the frame (see ConsoleRunner.click). */
   pick?(x: number, y: number, aspect: number): number | undefined;
+  /** Saves the game under a name (save <name>). */
+  saveGame?(name: string): Promise<void>;
+  /** Loads a save by its name (load <name>); whether there is one. */
+  loadGame?(name: string): Promise<boolean>;
+  /** Opens or closes a menu by its name (ShowMenu, HideMenu); whether there is one. */
+  showMenu?(name: string, shown: boolean): boolean;
+  /** An INI setting ("fJumpHeightMin:Movement") as the session reads it, if there is one. */
+  iniSetting?(name: string): number | undefined;
+  /** Sets an INI setting for the session; whether there is one. */
+  setIniSetting?(name: string, value: number): boolean;
 }
 
 /** The types help searches, and those a form's editor id is looked up in. */
@@ -116,6 +158,33 @@ const SEARCHED = [
   'EXPL',
   'HAZD',
   'ARTO',
+  // The other record types the game's parameters take (src/shell/console-table.ts).
+  'SNDR',
+  'SOUN',
+  'DIAL',
+  'CLAS',
+  'PACK',
+  'CSTY',
+  'EFSH',
+  'IMAD',
+  'IMGS',
+  'VTYP',
+  'ECZN',
+  'IDLE',
+  'MESG',
+  'EQUP',
+  'MUSC',
+  'KYWD',
+  'LCRT',
+  'LCTN',
+  'SCEN',
+  'ASTP',
+  'RFCT',
+  'SNCT',
+  'REGN',
+  'AACT',
+  'LIGH',
+  'SCRL',
 ] as const;
 
 /** Record types of placed references. */
@@ -139,6 +208,11 @@ const TAMRIEL = 0x3c;
 const NOT_SAVED = 'Compiled script not saved!';
 /** What the game prints for a function it does not support. */
 const NOT_SUPPORTED = 'This function not supported';
+
+/** EquipItemEx's slot of a casting source parameter's hand (0 left, 1 right): 2 left, 1 right. */
+function handOfSource(source: number): number | undefined {
+  return source === 1 ? 1 : source === 0 ? 2 : undefined;
+}
 
 /** EquipItemEx's slot of a hand the console names: 1 right, 2 left. */
 export function handSlot(hand: string): number | undefined {
@@ -165,6 +239,61 @@ export function placementOffset(
 const onOff = (on: boolean): string => (on ? 'On' : 'Off');
 const fixed = (value: number): string => value.toFixed(2);
 const hex = (formId: number): string => formId.toString(16).toUpperCase().padStart(8, '0');
+
+/** SetRace's parameter, for its message when the race is not found. */
+const RACE_PARAM: ConsoleParam = { name: 'String', type: { kind: 'string' }, code: 0 };
+
+/** An INI setting's value as GetINISetting prints it, by its name's type letter. */
+function iniValue(name: string, value: number): string {
+  const letter = name.charAt(0).toLowerCase();
+  if (letter === 'i' || letter === 'b') return String(Math.trunc(value));
+  if (letter === 'u') return String(Math.trunc(value) >>> 0);
+  return value.toFixed(2);
+}
+
+/** A float as the condition's integer parameter holds it (its bits). */
+function floatBits(value: number): number {
+  const view = new DataView(new ArrayBuffer(4));
+  view.setFloat32(0, value, true);
+  return view.getInt32(0, true);
+}
+
+/**
+ * The condition a script function's parameters make: the first two as its parameters (a form
+ * by its id, an axis by its letter's code, an actor value by its index, a float by its bits),
+ * text as its strings, run on the reference.
+ */
+export function consoleCondition(info: ConsoleCommandInfo, args: readonly Arg[]): Condition {
+  const raw = (index: number): number => {
+    const param = info.params[index];
+    const value = args[index];
+    if (param === undefined || value === undefined) return 0;
+    if (param.type.kind === 'axis' && typeof value === 'number') return 0x58 + value;
+    if (param.type.kind === 'actorValue' && typeof value === 'string')
+      return actorValueIndex(value) ?? 0;
+    if (param.type.kind === 'float' && typeof value === 'number') return floatBits(value);
+    return typeof value === 'number' ? value : 0;
+  };
+  const strings = args.filter((value): value is string => typeof value === 'string');
+  return {
+    function: info.condition ?? 0,
+    operator: 0,
+    or: false,
+    comparand: 0,
+    form: raw(0),
+    raw1: raw(0),
+    param2: raw(1),
+    form2: raw(1),
+    strings,
+    runOn: ConditionRunOn.subject,
+    reference: 0,
+    param3: -1,
+    eventMember: '',
+  };
+}
+
+/** A casting source parameter's words (0 left hand, 1 right hand, 2 voice, 3 instant). */
+const CASTING_SOURCES = ['left', 'right', 'voice', 'instant'];
 
 /** A parameter's value as read: a number (a form, reference, number, axis, sex) or text. */
 type Arg = number | string | undefined;
@@ -194,6 +323,8 @@ export class ConsoleCommands {
   #references: Promise<Map<string, number>> | undefined;
   /** The reference selected (prid, a click). */
   #selected: number | undefined;
+  /** The console's scope quest (ssq): its aliases may be named as references. */
+  #scope: number | undefined;
 
   constructor(context: ConsoleContext) {
     this.#context = context;
@@ -265,6 +396,10 @@ export class ConsoleCommands {
         const sex = text.toLowerCase();
         return sex === 'male' ? 0 : sex === 'female' ? 1 : undefined;
       }
+      case 'castingSource': {
+        const source = CASTING_SOURCES.indexOf(text.toLowerCase());
+        return source < 0 ? undefined : source;
+      }
       case 'reference':
         return this.#reference(text);
       case 'form':
@@ -304,15 +439,17 @@ export class ConsoleCommands {
     const formId = parseFormId(name);
     if (formId !== undefined) {
       const type = await this.#typeOf(formId);
-      if (type !== undefined && types.includes(type)) return formId;
+      if (type !== undefined && (types.length === 0 || types.includes(type))) return formId;
     }
     const named = (await this.#index()).get(name.toLowerCase());
-    return named && types.includes(named.type) ? named.formId : undefined;
+    return named && (types.length === 0 || types.includes(named.type)) ? named.formId : undefined;
   }
 
   /** A placed reference by "player", hex form id or (a persistent one's) editor id. */
   async #reference(name: string): Promise<number | undefined> {
     if (name.toLowerCase() === 'player') return PLAYER_REF;
+    const aliased = await this.#scopeAlias(name);
+    if (aliased !== undefined) return aliased;
     const formId = parseFormId(name);
     if (formId !== undefined) {
       if (formId === PLAYER_REF) return formId;
@@ -585,8 +722,8 @@ export class ConsoleCommands {
       case 'equipitem':
       case 'unequipitem':
         // A hand named (left, right): as EquipItemEx/UnequipItemEx's slot (1 right, 2 left).
-        if (text(2) !== '') {
-          const hand = handSlot(text(2));
+        if (typeof args[2] === 'number') {
+          const hand = handOfSource(args[2]);
           if (hand === undefined) return [NOT_SUPPORTED];
           await this.#native(`actor.${name}ex`, target, [
             this.#formValue(num(0)),
@@ -623,7 +760,7 @@ export class ConsoleCommands {
         if (runtime.progression.skillIndex(text(0)) === undefined) {
           return this.#notFound(
             call.typed[0] ?? '',
-            call.info.params[0] ?? { name: 'Actor Value', type: { kind: 'actorValue' } },
+            call.info.params[0] ?? { name: 'Actor Value', type: { kind: 'actorValue' }, code: 5 },
           );
         }
         if (name === 'incrementpcskill') await runtime.progression.incrementSkill(text(0), 1);
@@ -844,8 +981,8 @@ export class ConsoleCommands {
         return [];
       // <ref>.Cast <spell> <target>: as Spell.Cast (player.cast WerewolfChange player).
       case 'cast':
-        // TODO(M13): the casting source (left, right, voice, instant) the console names.
-        if (text(2) !== '') return [NOT_SUPPORTED];
+        // The casting source (left, right, voice, instant) only picks the node the spell leaves
+        // from. TODO(M13): the launch node by the source (the world launches from the caster's own).
         await runtime.magic.cast(num(0), target, num(1));
         return [];
 
@@ -920,18 +1057,396 @@ export class ConsoleCommands {
           return [];
         }
         return this.#pick(args[0]);
-      case 'getselectedref':
-        return this.#selected === undefined
-          ? ['No Reference Selected']
-          : [
-              `GetSelectedRef: ${await referenceName(runtime, this.#selected)} (${hex(this.#selected)})`,
-            ];
       case 'clearconsole':
         context.clear?.();
         return [];
+
+      // --- Scripts and quests ------------------------------------------------------------------
+      case 'showglobalvars':
+        return this.#globals();
+      case 'showvars':
+        return this.#variables(target);
+      case 'showquestvars':
+        return this.#questVariables(num(0));
+      case 'showquestaliases':
+        return this.#aliases(num(0));
+      // setpqv <quest> <property> <value>, setpv <property> <value>: a script property set.
+      case 'setpapyrusquestvar':
+        await this.#setProperty(new ObjectHandle(num(0), 'quest'), text(1), text(2));
+        return [];
+      case 'setpapyrusvar':
+        await this.#setProperty(new ObjectHandle(target, 'objectreference'), text(0), text(1));
+        return [];
+      case 'startallquests':
+        await this.#everyQuest(async (quest) => {
+          await this.#native('quest.start', quest.formId);
+        });
+        return ['All Quests Enabled.'];
+      case 'completeallqueststages':
+        await this.#everyQuest(async (quest) => {
+          for (const stage of quest.stages)
+            await runtime.quests.setStage(quest.formId, stage.index);
+        });
+        return ['All Quest Stages Completed.'];
+      // ssq [quest]: the quest whose aliases the console's references may name.
+      case 'setconsolescopequest': {
+        this.#scope = typeof args[0] === 'number' ? args[0] : undefined;
+        if (this.#scope === undefined) return ['Console Scope Quest >> EMPTY'];
+        const record = await runtime.forms.record(this.#scope);
+        return [`Console Scope Quest >> ${record?.editorId ?? ''} (${hex(this.#scope)})`];
+      }
+      case 'showquesttargets':
+        return this.#questTargetLines();
+
+      // --- Saves, menus and settings -------------------------------------------------------------
+      case 'savegame':
+        await context.saveGame?.(text(0));
+        return [];
+      case 'loadgame':
+        if (context.loadGame && !(await context.loadGame(text(0)))) return [NOT_SUPPORTED];
+        return [];
+      case 'showmenu':
+      case 'hidemenu':
+        context.showMenu?.(text(0), name === 'showmenu');
+        return [];
+      case 'getinisetting': {
+        const value = context.iniSetting?.(text(0));
+        return [
+          `INISetting ${text(0)} >> ${value === undefined ? 'NOT FOUND' : iniValue(text(0), value)}`,
+        ];
+      }
+      case 'setinisetting': {
+        const value = parseConsoleNumber(text(1));
+        if (value === undefined || !context.setIniSetting?.(text(0), value))
+          return [`INISetting ${text(0)} >> NOT FOUND`];
+        return [];
+      }
+      // SetUFOCamSpeedMult <speed>: the free camera's fFreeCameraTranslationSpeed set to it, the
+      // units it moves an update (observed in the original: the command sets that setting).
+      case 'setufocamspeedmult':
+        context.setIniSetting?.('fFreeCameraTranslationSpeed:Camera', num(0, 1));
+        return [];
+      // SetRace <race>: the player's race (as Actor.SetRace).
+      case 'setrace': {
+        const race = await this.#form(text(0), ['RACE']);
+        if (race === undefined) return this.#notFound(text(0), call.info.params[0] ?? RACE_PARAM);
+        await this.#native('actor.setrace', PLAYER_REF, [this.#formValue(race)]);
+        return [];
+      }
       default:
-        return [NOT_SUPPORTED];
+        return this.#generic(call, target);
     }
+  }
+
+  /**
+   * A command no case above runs: one whose action returns at once does nothing (observed in the
+   * original); a script function with a condition function prints that function's value for the
+   * reference, as the game's actions of those functions do ("GetIsID >> 1.00").
+   */
+  async #generic(call: Invocation, target: number): Promise<string[]> {
+    const { info, args } = call;
+    if (info.returnsAtOnce) return [];
+    if (info.name === 'GetSelf') return [referenceLine(info.name, target)];
+    const viaNative = NATIVE_FUNCTIONS[info.name.toLowerCase()];
+    if (viaNative) return this.#viaNative(info, viaNative, args, target);
+    const math = mathFunction(info.name, args);
+    if (math !== undefined) return [`${info.name} >> ${fixed(math)}`];
+    if (info.condition === undefined || info.noAction) return [NOT_SUPPORTED];
+    const value = await conditionFunctionValue(
+      this.#context.runtime,
+      consoleCondition(info, args),
+      this.#context.runtime.referenceHandle(target),
+    );
+    if (value === NOT_VALUED) return [NOT_SUPPORTED];
+    const axis = info.params.findIndex((param) => param.type.kind === 'axis');
+    const axisValue = axis < 0 ? undefined : args[axis];
+    return [conditionLine(info.name, value ?? 0, typeof axisValue === 'number' ? axisValue : 0)];
+  }
+
+  /** A script function a Papyrus native does (src/shell/console-script-functions.ts). */
+  async #viaNative(
+    info: ConsoleCommandInfo,
+    spec: NativeFunction,
+    args: readonly Arg[],
+    target: number,
+  ): Promise<string[]> {
+    const value = (argument: NativeArgument): Value => {
+      if ('self' in argument) return this.#ref(target);
+      if ('fixed' in argument) return argument.fixed;
+      if ('form' in argument) {
+        const raw = args[argument.form];
+        return this.#formValue(typeof raw === 'number' ? raw : undefined);
+      }
+      if ('reference' in argument) {
+        const raw = args[argument.reference];
+        return this.#ref(typeof raw === 'number' ? raw : undefined);
+      }
+      if ('text' in argument) {
+        const raw = args[argument.text];
+        return typeof raw === 'string' ? raw : '';
+      }
+      if ('number' in argument) {
+        const raw = args[argument.number];
+        return typeof raw === 'number' ? raw : (argument.fallback ?? 0);
+      }
+      const raw = args[argument.bool];
+      return typeof raw === 'number' ? raw !== 0 : (argument.fallback ?? false);
+    };
+    const on = spec.on ?? 'reference';
+    let self: number | undefined;
+    if (on === 'reference') self = target;
+    else if (on !== 'none') {
+      const raw = args[on.form];
+      self = typeof raw === 'number' ? raw : undefined;
+    }
+    const result = await this.#native(spec.native, self, spec.args.map(value));
+    if (spec.printsReference) {
+      const formId = result instanceof ObjectHandle ? result.formId : undefined;
+      return [referenceLine(info.name, formId)];
+    }
+    if (!spec.prints) return [];
+    const number = typeof result === 'boolean' ? (result ? 1 : 0) : Number(result ?? 0);
+    return [conditionLine(info.name, number)];
+  }
+
+  // --- Scripts and quests ----------------------------------------------------------------------
+
+  /** The reference an alias of the scope quest (ssq) holds, by the alias's name. */
+  async #scopeAlias(name: string): Promise<number | undefined> {
+    if (this.#scope === undefined) return undefined;
+    const runtime = this.#context.runtime;
+    const record = await runtime.forms.quest(this.#scope);
+    const alias = record?.aliases.find(
+      (entry) => !entry.location && entry.name.toLowerCase() === name.toLowerCase(),
+    );
+    if (!alias) return undefined;
+    return runtime.state.quests.get(this.#scope)?.aliases.get(alias.id);
+  }
+
+  /**
+   * sglv: every global and its value (a float's with four decimals, a long's whole, a short's
+   * as 16 bits: observed in the original), in the load order.
+   */
+  async #globals(): Promise<string[]> {
+    const lines = ['--- Global Variables -----------------------------'];
+    const globals: { formId: number; editorId: string; type: 'f' | 'l' | 's' }[] = [];
+    await this.#context.db.scan(
+      ['GLOB'],
+      () => true,
+      (record) => {
+        if (!record.editorId || record.deleted) return;
+        const code = record.fields.first('FNAM')?.[0];
+        // FNAM: f(loat), l(ong) or s(hort); another prints nothing.
+        const type = code === 0x66 ? 'f' : code === 0x6c ? 'l' : code === 0x73 ? 's' : undefined;
+        if (type) globals.push({ formId: record.formId, editorId: record.editorId, type });
+      },
+    );
+    for (const global of globals) {
+      const value = await this.#native('globalvariable.getvalue', global.formId);
+      const number = typeof value === 'number' ? value : 0;
+      lines.push(globalLine(global.editorId, global.type, number));
+    }
+    return lines;
+  }
+
+  /**
+   * sv: what runs on a reference: its update registrations, each of its scripts with their
+   * variables (src/shell/console-papyrus.ts), then the same for each alias holding it (observed
+   * in the original). TODO(M13): the original then lists an actor's active magic effects'
+   * scripts ("--- Papyrus - Active magic effect <n>"); not built.
+   */
+  async #variables(reference: number): Promise<string[]> {
+    const runtime = this.#context.runtime;
+    const lines = [
+      PAPYRUS_HEADER,
+      ...(await this.#objectLines(new ObjectHandle(reference, 'form'))),
+    ];
+    for (const { quest, alias } of runtime.aliasesHolding(reference)) {
+      const record = await runtime.forms.quest(quest);
+      const name = record?.aliases.find((entry) => entry.id === alias)?.name ?? '';
+      const questName = (await runtime.forms.record(quest))?.editorId ?? '';
+      lines.push(`--- Papyrus - Alias ${name} on Quest ${questName} (${hex8(quest)})`);
+      lines.push(...(await this.#objectLines(new ObjectHandle(quest, 'form', alias))));
+    }
+    return lines;
+  }
+
+  /**
+   * sqv: a quest's registrations and scripts as sv's, its aliases as ShowQuestAliases', then its
+   * state (observed in the original): Waiting For Stage while its start waits to run;
+   * "Waiting For Promotion" (the original's references being made persistent) never, as every
+   * reference here can be held.
+   */
+  async #questVariables(quest: number): Promise<string[]> {
+    const runtime = this.#context.runtime;
+    const record = await runtime.forms.quest(quest);
+    if (!record) return [];
+    const state = runtime.state.quests.get(quest);
+    return [
+      PAPYRUS_HEADER,
+      ...(await this.#objectLines(new ObjectHandle(quest, 'quest'))),
+      ...(await this.#aliases(quest)),
+      ...questStateLines({
+        enabled: state?.running === true,
+        waitingForStage: runtime.quests.starting.has(quest),
+        waitingForPromotion: false,
+        stage: state?.stage ?? 0,
+        priority: record.priority,
+      }),
+    ];
+  }
+
+  /** An object's update registrations and scripts with their variables. */
+  async #objectLines(handle: ObjectHandle): Promise<string[]> {
+    const runtime = this.#context.runtime;
+    const scripts = await runtime.vm.scriptVariables(handle);
+    const texts = await this.#handleTexts(scripts.flatMap((script) => script.variables));
+    return [
+      ...registrationLines(
+        runtime.updateInterval(handle, false),
+        runtime.updateInterval(handle, true),
+      ),
+      ...scriptsLines(scripts, (value) => texts.get(value.key) ?? ` (${hex8(value.formId)})`),
+    ];
+  }
+
+  /**
+   * How each object the variables hold is told: an alias as "alias <name> on quest <quest>
+   * (<id>)" (observed in the original); a form by its editor id and id, a reference by its id
+   * alone (TODO(M13): as the game's Papyrus logs write them, not confirmed in the original).
+   */
+  async #handleTexts(
+    variables: readonly { readonly value: Value }[],
+  ): Promise<Map<string, string>> {
+    const runtime = this.#context.runtime;
+    const texts = new Map<string, string>();
+    const visit = async (value: Value): Promise<void> => {
+      if (value instanceof PapyrusArray) {
+        for (const item of value.items) await visit(item);
+        return;
+      }
+      if (!(value instanceof ObjectHandle) || texts.has(value.key)) return;
+      const record = await runtime.forms.record(value.formId);
+      const editorId = record?.editorId ?? '';
+      if (value.alias >= 0) {
+        const quest = await runtime.forms.quest(value.formId);
+        const name = quest?.aliases.find((entry) => entry.id === value.alias)?.name ?? '';
+        texts.set(value.key, `alias ${name} on quest ${editorId} (${hex8(value.formId)})`);
+        return;
+      }
+      const reference = record !== undefined && REFERENCE_TYPES.has(record.type);
+      texts.set(value.key, `${reference ? '' : editorId} (${hex8(value.formId)})`);
+    };
+    for (const variable of variables) await visit(variable.value);
+    return texts;
+  }
+
+  /**
+   * ShowQuestAliases: how many aliases the quest has, then each, a reference alias as
+   * "REF '<alias>'-> '<reference>' (<id>)" and a location alias as "LOC ...", or "-> NONE"
+   * while empty (observed in the original). TODO(M13): the name the original gives a reference
+   * or location there (its form's editor-id call) is not confirmed: the reference's name and
+   * the location's editor id here.
+   */
+  async #aliases(quest: number): Promise<string[]> {
+    const runtime = this.#context.runtime;
+    const record = await runtime.forms.quest(quest);
+    if (!record) return [];
+    const fills = runtime.state.quests.get(quest)?.aliases;
+    const editorId = (await runtime.forms.record(quest))?.editorId ?? '';
+    const lines = [
+      `- ${String(record.aliases.length)} Aliases for quest '${editorId}' (${hex8(quest)})-`,
+    ];
+    for (const alias of record.aliases) {
+      const kind = alias.location ? 'LOC' : 'REF';
+      const filled = fills?.get(alias.id);
+      if (filled === undefined) {
+        lines.push(`${kind} '${alias.name}'-> NONE`);
+        continue;
+      }
+      const name = alias.location
+        ? ((await runtime.forms.record(filled))?.editorId ?? '')
+        : await referenceName(runtime, filled);
+      lines.push(`${kind} '${alias.name}'-> '${name}' (${hex8(filled)})`);
+    }
+    return lines;
+  }
+
+  /** setpqv, setpv: a property set to a number, a bool, None or a form named. */
+  async #setProperty(target: ObjectHandle, property: string, text: string): Promise<void> {
+    const lower = text.toLowerCase();
+    let value: Value;
+    const number = parseConsoleNumber(text);
+    if (lower === 'true' || lower === 'false') value = lower === 'true';
+    else if (lower === 'none') value = null;
+    else if (number !== undefined && !/^[0-9a-f]{8}$/i.test(text)) value = number;
+    else {
+      const reference = await this.#reference(text);
+      const formId = reference ?? (await this.#form(text, []));
+      value =
+        reference !== undefined
+          ? this.#ref(reference)
+          : formId !== undefined
+            ? this.#formValue(formId)
+            : text;
+    }
+    await this.#context.runtime.vm.setProperty(target, property, value);
+  }
+
+  /** Runs work on every quest of the load order. */
+  async #everyQuest(work: (quest: QuestRecord) => Promise<void>): Promise<void> {
+    const runtime = this.#context.runtime;
+    const quests: number[] = [];
+    await this.#context.db.scan(
+      ['QUST'],
+      () => true,
+      (record) => {
+        if (!record.deleted) quests.push(record.formId);
+      },
+    );
+    for (const formId of quests) {
+      const quest = await runtime.forms.quest(formId);
+      if (quest) await work(quest);
+    }
+  }
+
+  /**
+   * sqt: for each quest with targets, "Current quest: <quest>", how many, then each target's
+   * reference and the load door toward it (observed in the original). TODO(M13): the original
+   * also names the container carrying a target ("(carrying ...)"), not tracked here; which of
+   * its words a target without a door gets ("Same cell/exterior" or "UNREACHABLE") is mapped
+   * here to the same space and no route found; the reference's name as in ShowQuestAliases.
+   */
+  async #questTargetLines(): Promise<string[]> {
+    const runtime = this.#context.runtime;
+    const byQuest = new Map<number, QuestTargetEntry[]>();
+    for (const target of (await this.#context.questTargets?.()) ?? []) {
+      const list = byQuest.get(target.quest) ?? [];
+      list.push(target);
+      byQuest.set(target.quest, list);
+    }
+    const lines: string[] = [];
+    for (const [quest, targets] of byQuest) {
+      lines.push(`Current quest: ${(await runtime.forms.record(quest))?.editorId ?? ''}`);
+      lines.push(`${String(targets.length)} current targets`);
+      let index = 1;
+      for (const target of targets) {
+        const name = await referenceName(runtime, target.reference);
+        const way = await this.#context.questTargetDoor?.(target);
+        const door =
+          way === undefined
+            ? ''
+            : way === 'same'
+              ? 'Same cell/exterior'
+              : way === 'unreachable'
+                ? 'UNREACHABLE'
+                : `${await referenceName(runtime, way)} (${hex8(way)})`;
+        lines.push(
+          `Target ${String(index++)}:  Reference: ${name} (${hex8(target.reference)}), load door: ${door}`,
+        );
+      }
+    }
+    return lines;
   }
 
   /** showinventory: each item it holds with its count, name and form id. */
@@ -1132,11 +1647,8 @@ export class ConsoleCommands {
         for (const info of CONSOLE_COMMANDS) {
           if (info.console !== consoleOnly) continue;
           if (!has(info.help) && !has(info.name) && !has(info.short)) continue;
-          lines.push(
-            info.short
-              ? `${info.name} (${info.short}) -> ${info.help}`
-              : `${info.name} -> ${info.help}`,
-          );
+          const named = info.short ? `${info.name} (${info.short})` : info.name;
+          lines.push(info.help === '' ? named : `${named} -> ${info.help}`);
         }
       }
     }

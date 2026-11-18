@@ -6,6 +6,7 @@
 // player (MQ101: the cart to Helgen) and the world there has loaded.
 // In the game the HUD (hud-controller.ts) and the game's menus (game-menus.ts).
 
+import { menuMovie } from '../ui/menu-movies.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { Vec3 } from '../render/math.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -53,8 +54,11 @@ import { cellPlacement, exteriorCells } from './cell-placement.ts';
 import { ConsoleMenu, isConsoleKey, type ConsoleRunner } from './console-menu.ts';
 import { ConsoleCommands, parseConsoleLine } from './console-commands.ts';
 import { Compass, questTargets } from './compass.ts';
+import { toggleGameFreeCamera } from './free-camera.ts';
+import { questTargetDoor } from './quest-door.ts';
 import { MenuHost, type Menu } from '../ui/menu-host.ts';
-import { MenuName } from '../ui/menu-stack.ts';
+import { CUSTOM_MENU, MenuName } from '../ui/menu-stack.ts';
+import { CustomMenu } from './custom-menu.ts';
 import { floatingMarker } from './hud-elements.ts';
 import type { GameSession } from './game-session.ts';
 import { voiceAt, type Speaker } from './actors.ts';
@@ -106,6 +110,30 @@ function mainMenuProperties(hasSaves: boolean): unknown[] {
 /** The game's menu depths (higher over lower). */
 /** The console's depth: over every other menu. */
 const CONSOLE_DEPTH = 12;
+
+/** The menus the console's ShowMenu opens, by their stack names, as GameMenus names them. */
+const CONSOLE_MENUS: Readonly<Record<string, string>> = {
+  inventorymenu: 'Inventory',
+  magicmenu: 'Magic',
+  'journal menu': 'Journal',
+  tweenmenu: 'Tween',
+  favoritesmenu: 'Favorites',
+  'sleep/wait menu': 'Wait',
+  statsmenu: 'Skills',
+  mapmenu: 'Map',
+};
+
+/** Their names on the menu stack. */
+const CONSOLE_MENU_STACK: Readonly<Record<string, string>> = {
+  Inventory: 'InventoryMenu',
+  Magic: 'MagicMenu',
+  Journal: 'Journal Menu',
+  Tween: 'TweenMenu',
+  Favorites: 'FavoritesMenu',
+  Wait: 'Sleep/Wait Menu',
+  Skills: 'StatsMenu',
+  Map: 'MapMenu',
+};
 /** Ownership read for the activation prompt is read again after this long (ms). */
 const OWNERSHIP_MS = 5000;
 
@@ -329,6 +357,12 @@ export class PlayMode {
     );
     // The menus' navigation keys as the player's bindings say (W, A, S, D as the arrows).
     this.#host.menuKeys = () => menuKeys(this.#playerData?.controls);
+    // Scripts reach into an open menu's movie by the menu's name (SKSE's UI script).
+    session.menuMovies = (name) => {
+      if (name.toLowerCase() === CUSTOM_MENU.toLowerCase()) return this.#customMenu.movie;
+      const movie = menuMovie(name);
+      return movie === undefined ? undefined : this.#host.openMovie(movie);
+    };
     // The menus' button hints as the player's bindings say: with a gamepad in use its own, by
     // the names its device reads (interface\controls\pc\gamepad.txt), sent again as the device
     // in use changes.
@@ -355,7 +389,16 @@ export class PlayMode {
       long: ini.number('Interface', 'fMenuKeyRepeatLong'),
       short: ini.number('Interface', 'fMenuKeyRepeatShort'),
     };
-    this.#console = new ConsoleMenu(this.#host, terminal, ini);
+    this.#console = new ConsoleMenu(this.#host, terminal, ini, session.textInput);
+    // SKSE's custom menu, as scripts open it (UI.OpenCustomMenu).
+    this.#customMenu = new CustomMenu(
+      this.#host,
+      session.menuStack,
+      terminal,
+      () => this.#enterMenuMode(),
+      () => inputPlatform() !== Platform.pcGamepad,
+    );
+    session.customMenu = this.#customMenu;
     this.#fader = new FaderMenu(this.#host, terminal, () => session.loading);
     this.#titles = new TitleSequence(
       this.#host,
@@ -1083,6 +1126,7 @@ export class PlayMode {
 
   /** The console (~): over the game and its menus, in menu mode while open. */
   readonly #console: ConsoleMenu;
+  readonly #customMenu: CustomMenu<Menu>;
   #commands: { readonly runtime: ScriptRuntime; readonly commands: ConsoleCommands } | undefined;
 
   readonly #consoleKey = (event: KeyboardEvent): void => {
@@ -1093,6 +1137,7 @@ export class PlayMode {
     // Not while a place loads.
     if (this.#session.loading) return;
     event.preventDefault();
+    // The console holds text input itself while it shows (src/shell/console-menu.ts).
     const leave = this.#enterMenuMode();
     this.#console
       .open(
@@ -1186,12 +1231,10 @@ export class PlayMode {
             player.noClip = !player.noClip;
             return !player.noClip;
           },
+          // The game's free camera moves by the game's settings (src/shell/free-camera.ts).
           toggleFreeCamera: () => {
             const play = this.#world.player()?.play;
-            if (!play) return false;
-            const free = play.freeCamera;
-            play.setFreeCamera(!free);
-            return !free;
+            return play ? toggleGameFreeCamera(play, session.ini) : false;
           },
           toggleGrass: () => {
             this.#renderer.showGrass = !this.#renderer.showGrass;
@@ -1212,6 +1255,13 @@ export class PlayMode {
           },
           gameSettings: () => session.settings(),
           questTargets: () => questTargets(runtime),
+          // The load door toward a target in another space, as the compass finds it.
+          questTargetDoor: (target) =>
+            questTargetDoor(
+              (reference) => runtime.placement(reference),
+              () => session.routeMap(),
+              target,
+            ),
           pick: (x, y, aspect) => this.#world.player()?.play.pickAt(x, y, aspect),
           forceWeather: (weather, override) => {
             session.sky.forceWeather(weather, override);
@@ -1229,6 +1279,30 @@ export class PlayMode {
           },
           controlsChanged: () => runtime.world.controlsChanged?.(),
           quit: () => this.onQuit?.(),
+          saveGame: async (name) => {
+            await this.#saves.save('save', name === '' ? undefined : name);
+          },
+          loadGame: (name) => this.#startLoad(name),
+          // ShowMenu / HideMenu <menu>: a menu of the stack by its name ("InventoryMenu").
+          showMenu: (name, shown) => {
+            const menus = this.#menus;
+            const own = CONSOLE_MENUS[name.toLowerCase()];
+            if (!menus || own === undefined) return false;
+            if (shown) menus.openMenu(own);
+            else if (session.menuStack.isOpen(CONSOLE_MENU_STACK[own] ?? name)) menus.close();
+            return true;
+          },
+          iniSetting: (name) => {
+            const [key = '', section = ''] = name.split(':');
+            return session.ini.lookup(section, key);
+          },
+          // The running value, as SetINISetting changes it (SaveIniFiles would write it).
+          setIniSetting: (name, value) => {
+            const [key = '', section = ''] = name.split(':');
+            if (session.ini.lookup(section, key) === undefined) return false;
+            session.preferences.set(`${section}:${key}`, value);
+            return true;
+          },
         }),
       };
     }
@@ -1426,8 +1500,8 @@ export class PlayMode {
   }
 
   /**
-   * A loading screen whose conditions hold (run on the player): those with conditions first
-   * (inferred: a new game always shows its own, ChargenLoadScreen), else one at random.
+   * A loading screen whose conditions hold (run on the player): those with conditions first,
+   * else one at random (pickLoadingScreen).
    */
   async #pickLoadingScreen(runtime: ScriptRuntime): Promise<LoadingScreen | undefined> {
     this.#loadingScreens ??= this.#session.db.then(async (db) => {
@@ -1445,9 +1519,10 @@ export class PlayMode {
       if (screen.conditions.length === 0) continue;
       if (await runtime.conditionsHold(screen.conditions, player)) holding.add(screen);
     }
-    return holding.size > 0
-      ? pickLoadingScreen([...holding], () => true)
-      : pickLoadingScreen(screens, (screen) => screen.conditions.length === 0);
+    return pickLoadingScreen(
+      screens,
+      (screen) => screen.conditions.length === 0 || holding.has(screen),
+    );
   }
 
   /** The loading menu, its text the loading screen's. */
@@ -1500,6 +1575,7 @@ export class PlayMode {
     document.removeEventListener('keydown', this.#consoleKey);
     document.removeEventListener('keydown', this.#saveKeys);
     this.#console.close();
+    this.#customMenu.close();
     this.#dialogue?.close();
     this.#dialogue = undefined;
     this.#menus?.close();

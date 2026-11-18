@@ -686,6 +686,16 @@ export class MenuHost {
     this.#syncCursor();
   }
 
+  /** The open menu of a movie ("inventorymenu.swf"), the latest opened if several are. */
+  openMovie(movie: string): Menu | undefined {
+    const lower = movie.toLowerCase();
+    let found: Menu | undefined;
+    for (const menu of this.#menus.values()) {
+      if (!menu.closed && menu.movie.toLowerCase() === lower) found = menu;
+    }
+    return found;
+  }
+
   /**
    * The game's cursor shows while a menu that uses it is open (cursormenu.swf at the top, the
    * system's cursor hidden over the menus); it follows the mouse.

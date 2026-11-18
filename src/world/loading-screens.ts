@@ -56,15 +56,18 @@ export function parseLoadingScreen(record: GameRecord): LoadingScreen {
 }
 
 /**
- * The loading screen to show: one at random among those whose conditions hold (the engine
- * picks among the matching ones), `holds` judging them.
+ * The loading screen to show (observed in the original): of the screens whose conditions hold
+ * (`holds`; a screen without conditions always does) and that have a model to show, one at
+ * random among those with conditions, or, when none of those holds, among them all.
  */
 export function pickLoadingScreen(
   screens: readonly LoadingScreen[],
   holds: (screen: LoadingScreen) => boolean,
   random: () => number = Math.random,
 ): LoadingScreen | undefined {
-  const matching = screens.filter((screen) => holds(screen));
-  if (matching.length === 0) return undefined;
-  return matching[Math.min(matching.length - 1, Math.floor(random() * matching.length))];
+  const shown = screens.filter((screen) => screen.model !== undefined && holds(screen));
+  const conditioned = shown.filter((screen) => screen.conditions.length > 0);
+  const from = conditioned.length > 0 ? conditioned : shown;
+  if (from.length === 0) return undefined;
+  return from[Math.min(from.length - 1, Math.floor(random() * from.length))];
 }

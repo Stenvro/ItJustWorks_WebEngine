@@ -1715,7 +1715,8 @@ export class MagicEngine {
         break;
       // Werewolf and Vampire Lord (WerewolfChangeEffect, DLC1VampireChangeEffect; their
       // associated item the beast race): on the player the beast form starts as the effect
-      // takes hold, before its scripts start. From the data: WerewolfChangeEffectScript's
+      // takes hold, before its scripts start (observed in the original: the two effects' start
+      // sets the flag Game.SetBeastForm sets and Mauls reads). From the data: WerewolfChangeEffectScript's
       // first-change branch turns it off again (SetBeastForm false) before anything of the
       // scripts' own has turned it on. The change itself is the scripts' (src/gameplay/
       // beast-forms.ts).

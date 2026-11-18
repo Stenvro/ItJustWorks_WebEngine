@@ -43,6 +43,20 @@ export interface SavedInstance {
   readonly vars: readonly (readonly [string, readonly (readonly [string, Value])[]])[];
 }
 
+/**
+ * One script on an object as the console's sv and sqv show it: the script's name and state as
+ * written, and every variable of it and its parents with its declared name, type and value.
+ */
+export interface ScriptVariables {
+  readonly script: string;
+  readonly state: string;
+  readonly variables: readonly {
+    readonly name: string;
+    readonly type: string;
+    readonly value: Value;
+  }[];
+}
+
 /** What a thread runs: an event sent to one script instance, or an engine's call. */
 export interface ThreadOrigin {
   readonly kind: 'event' | 'call';
@@ -553,6 +567,30 @@ export class PapyrusVm {
       }
     }
     return saved;
+  }
+
+  /** The scripts attached to an object now, with their variables (the console's sv, sqv). */
+  async scriptVariables(target: ObjectHandle): Promise<ScriptVariables[]> {
+    const pending = this.#attached.get(target.key);
+    if (!pending) return [];
+    return (await pending).map((instance) => {
+      const chain = chainOf(instance.script);
+      const variables: { name: string; type: string; value: Value }[] = [];
+      for (const level of chain.toReversed()) {
+        const vars = instance.vars.get(level.name);
+        for (const variable of level.object.variables) {
+          const value = vars?.get(variable.name.toLowerCase());
+          variables.push({ name: variable.name, type: variable.type, value: value ?? null });
+        }
+      }
+      // The state as a script declares it (the VM keeps it lowercase).
+      const state =
+        chain
+          .flatMap((level) => level.object.states)
+          .find((declared) => declared.name.toLowerCase() === instance.state)?.name ??
+        instance.state;
+      return { script: instance.script.displayName, state, variables };
+    });
   }
 
   /**

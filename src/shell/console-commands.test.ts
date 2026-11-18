@@ -6,7 +6,9 @@ import {
   type ConsoleContext,
 } from './console-commands.ts';
 import { parseAxis, parseConsoleLine, parseConsoleNumber, parseFormId } from './console-parse.ts';
-import { consoleCommand } from './console-table.ts';
+import { conditionLine } from './console-script-functions.ts';
+import { CONSOLE_COMMANDS, consoleCommand } from './console-table.ts';
+import { ObjectHandle, PapyrusArray } from '../scripting/values.ts';
 
 /** Record types by form id, as the fake forms answer. */
 const TYPES = new Map([
@@ -16,19 +18,20 @@ const TYPES = new Map([
   [0x1234, 'REFR'],
 ]);
 
-const fakeContext = (extra: Record<string, unknown>, runtime: Record<string, unknown> = {}) =>
-  ({
+const fakeContext = (extra: Record<string, unknown>, runtime: Record<string, unknown> = {}) => {
+  // The runtime given is the one the commands change (the cases read it back); forms and state
+  // it brings stay its own.
+  runtime.forms ??= {
+    record: (formId: number) =>
+      Promise.resolve(TYPES.has(formId) ? { type: TYPES.get(formId) } : undefined),
+  };
+  runtime.state ??= { created: new Map(), actors: new Map() };
+  return {
     db: { scan: () => Promise.resolve() },
     ...extra,
-    // The runtime given is the one the commands change (the cases read it back).
-    runtime: Object.assign(runtime, {
-      forms: {
-        record: (formId: number) =>
-          Promise.resolve(TYPES.has(formId) ? { type: TYPES.get(formId) } : undefined),
-      },
-      state: { created: new Map(), actors: new Map() },
-    }),
-  }) as unknown as ConsoleContext;
+    runtime,
+  } as unknown as ConsoleContext;
+};
 
 describe('ConsoleCommands', () => {
   it('opens the race menu with showracemenu', async () => {
@@ -225,9 +228,438 @@ describe('ConsoleCommands perks and spells', () => {
 
   it('casts a spell from a reference at a target as Spell.Cast does', async () => {
     const { commands, calls } = setup();
-    expect(await commands.run('player.cast 12fcd 1a2b')).toEqual([]);
-    expect(await commands.run('player.cast 12fcd, player')).toEqual([]);
+    // The game's table marks the source as needed, its "(Optional)" name notwithstanding.
+    expect(await commands.run('player.cast 12fcd 1a2b')).toEqual([
+      'Missing parameter Source (Optional).',
+      'Compiled script not saved!',
+    ]);
+    expect(await commands.run('player.cast 12fcd 1a2b right')).toEqual([]);
+    expect(await commands.run('player.cast 12fcd, player, voice')).toEqual([]);
     expect(calls).toEqual(['cast 12fcd 14 1a2b', 'cast 12fcd 14 14']);
+  });
+});
+
+describe('the game command table', () => {
+  it('holds every console command and script function of the game', () => {
+    expect(CONSOLE_COMMANDS.filter((info) => info.console)).toHaveLength(342);
+    expect(CONSOLE_COMMANDS.filter((info) => !info.console)).toHaveLength(737);
+    // A script function's place among them is its condition function index.
+    expect(consoleCommand('GetIsID')).toMatchObject({ condition: 72, reference: true });
+    expect(consoleCommand('GetWantBlocking')?.condition).toBe(0);
+    expect(consoleCommand('pc1st')?.name).toBe('IsPC1stPerson');
+    expect(consoleCommand('GetIsID')?.params[0]).toMatchObject({ name: 'ObjectID', code: 21 });
+  });
+
+  it('accepts a command whose action returns at once and does nothing', async () => {
+    const commands = new ConsoleCommands(fakeContext({}));
+    expect(consoleCommand('tnm')?.returnsAtOnce).toBe(true);
+    expect(await commands.run('ToggleNavMesh')).toEqual([]);
+    expect(await commands.run('player.IsUndead')).toEqual([]);
+  });
+
+  it("prints a script function's condition value for the reference", async () => {
+    const runtime = {
+      inMenuMode: true,
+      world: {},
+      referenceHandle: (formId: number) => new ObjectHandle(formId, 'objectreference'),
+      reference: (handle: ObjectHandle) => handle.formId,
+    };
+    const commands = new ConsoleCommands(fakeContext({}, runtime));
+    expect(await commands.run('MenuMode')).toEqual(['MenuMode >> 1.00']);
+    runtime.inMenuMode = false;
+    expect(await commands.run('menumode 0')).toEqual(['MenuMode >> 0.00']);
+    // A reference function needs a reference.
+    expect(await commands.run('GetDisabled')).toEqual(['No Reference Selected']);
+  });
+
+  /** A runtime whose natives record their calls. */
+  const nativeSetup = (result: unknown = null, extra: Record<string, unknown> = {}) => {
+    const calls: string[] = [];
+    const show = (value: unknown): string =>
+      value instanceof ObjectHandle ? value.formId.toString(16) : String(value);
+    const runtime = {
+      referenceHandle: (formId: number) => new ObjectHandle(formId, 'objectreference'),
+      formHandle: (formId: number) => new ObjectHandle(formId, 'form'),
+      native:
+        (script: string, fn: string) =>
+        (call: { self: ObjectHandle | null; args: readonly unknown[] }) => {
+          calls.push(`${script}.${fn} ${show(call.self)} ${call.args.map(show).join(' ')}`.trim());
+          return result;
+        },
+      ...extra,
+    };
+    return { calls, commands: new ConsoleCommands(fakeContext({}, runtime)) };
+  };
+
+  it('does a script function through the native the scripts call', async () => {
+    const { calls, commands } = nativeSetup();
+    expect(await commands.run('player.StartCombat 1a2b')).toEqual([]);
+    expect(await commands.run('player.SetGhost 1')).toEqual([]);
+    expect(await commands.run('1a2b.DamageAV health 10')).toEqual([]);
+    expect(calls).toEqual([
+      'actor.startcombat 14 1a2b',
+      'actor.setghost 14 true',
+      'actor.damageactorvalue 1a2b health 10',
+    ]);
+  });
+
+  it('prints the reference a script function gives back, and the math functions', async () => {
+    const { commands } = nativeSetup(new ObjectHandle(0x1234, 'objectreference'));
+    expect(await commands.run('player.GetCombatTarget')).toEqual(['GetCombatTarget >> (00001234)']);
+    expect(await commands.run('1a2b.GetSelf')).toEqual(['GetSelf >> (00001a2b)']);
+    expect(await commands.run('Sqrt 16')).toEqual(['Sqrt >> 4.00']);
+    expect(await commands.run('Sin 30')).toEqual(['Sin >> 0.50']);
+    expect(await commands.run('Sin 0.5 1')).toEqual(['Sin >> 30.00']);
+  });
+
+  it('prints a condition value in the words the game uses for it', () => {
+    expect(conditionLine('IsWeaponMagicOut', 1)).toBe('Is Weapon/Magic Out >> 1.00');
+    expect(conditionLine('GetDisabled', 1)).toBe('GetDisabled >> 1');
+    expect(conditionLine('GetRelativeAngle', 12.5, 2)).toBe('GetRelAng: Z >> 12.50');
+    expect(conditionLine('GetIsID', 0)).toBe('GetIsID >> 0.00');
+  });
+
+  it('reads and sets INI settings, saves and loads by name', async () => {
+    const ini = new Map([['fJumpHeightMin:Movement', 76]]);
+    const saved: string[] = [];
+    const commands = new ConsoleCommands(
+      fakeContext({
+        iniSetting: (name: string) => ini.get(name),
+        setIniSetting: (name: string, value: number) => {
+          if (!ini.has(name)) return false;
+          ini.set(name, value);
+          return true;
+        },
+        saveGame: (name: string) => {
+          saved.push(`save ${name}`);
+          return Promise.resolve();
+        },
+        loadGame: (name: string) => {
+          saved.push(`load ${name}`);
+          return Promise.resolve(true);
+        },
+      }),
+    );
+    expect(await commands.run('GetINI fJumpHeightMin:Movement')).toEqual([
+      'INISetting fJumpHeightMin:Movement >> 76.00',
+    ]);
+    expect(await commands.run('SetINI fJumpHeightMin:Movement 200')).toEqual([]);
+    expect(ini.get('fJumpHeightMin:Movement')).toBe(200);
+    expect(await commands.run('GetINI fNothing:General')).toEqual([
+      'INISetting fNothing:General >> NOT FOUND',
+    ]);
+    expect(await commands.run('save Before')).toEqual([]);
+    expect(await commands.run('load Before')).toEqual([]);
+    expect(saved).toEqual(['save Before', 'load Before']);
+  });
+
+  it("shows a reference's registrations, scripts and aliases in the original's lines (sv)", async () => {
+    const quest = 0x3372b;
+    const runtime = {
+      forms: {
+        record: (formId: number) =>
+          Promise.resolve(formId === quest ? { type: 'QUST', editorId: 'MQ101' } : undefined),
+        quest: (formId: number) =>
+          Promise.resolve(
+            formId === quest
+              ? { aliases: [{ id: 2, name: 'Hadvar', location: false }], priority: 50 }
+              : undefined,
+          ),
+      },
+      vm: {
+        scriptVariables: (handle: ObjectHandle) =>
+          Promise.resolve(
+            handle.formId === 0x14 && handle.alias < 0
+              ? [
+                  {
+                    script: 'PlayerScript',
+                    state: 'Waiting',
+                    variables: [
+                      { name: 'Ratio', type: 'float', value: 0.5 },
+                      { name: 'Count', type: 'Int', value: 3 },
+                      { name: 'Names', type: 'string[]', value: new PapyrusArray(['a', 'b']) },
+                      { name: 'Nothing', type: 'int[]', value: null },
+                      {
+                        name: '::Guard_var',
+                        type: 'ReferenceAlias',
+                        value: new ObjectHandle(quest, 'referencealias', 2),
+                      },
+                      { name: 'Done', type: 'Bool', value: true },
+                    ],
+                  },
+                ]
+              : [],
+          ),
+      },
+      updateInterval: (handle: ObjectHandle, gameTime: boolean) =>
+        handle.formId === 0x14 && !gameTime ? 5 : undefined,
+      aliasesHolding: () => [{ quest, alias: 2 }],
+    };
+    const commands = new ConsoleCommands(fakeContext({}, runtime));
+    expect(await commands.run('player.sv')).toEqual([
+      '--- Papyrus ---------------------------------',
+      '\tRegistered for update every 5.00 seconds',
+      'PlayerScript:',
+      '\tScript state = "Waiting"',
+      '\t::Guard_var = [ReferenceAlias <alias Hadvar on quest MQ101 (0003372B)>]',
+      '\tCount = 3',
+      '\tDone = True',
+      '\tNames[] = ["a", "b"]',
+      '\tNothing[] = []',
+      '\tRatio = 0.500000',
+      '--- Papyrus - Alias Hadvar on Quest MQ101 (0003372B)',
+      'No papyrus scripts attached',
+    ]);
+  });
+
+  it("sets the free camera's translation speed setting with sucsm", async () => {
+    const ini = new Map([['fFreeCameraTranslationSpeed:Camera', 20]]);
+    const commands = new ConsoleCommands(
+      fakeContext({
+        setIniSetting: (name: string, value: number) => {
+          if (!ini.has(name)) return false;
+          ini.set(name, value);
+          return true;
+        },
+      }),
+    );
+    expect(await commands.run('sucsm 5')).toEqual([]);
+    expect(ini.get('fFreeCameraTranslationSpeed:Camera')).toBe(5);
+  });
+
+  it('names a quest alias as a reference once the scope quest is set', async () => {
+    const quest = 0x3372b;
+    TYPES.set(quest, 'QUST');
+    const { calls, commands } = nativeSetup(null, {
+      forms: {
+        record: (formId: number) =>
+          Promise.resolve(
+            formId === quest
+              ? { type: 'QUST', editorId: 'MQ101' }
+              : TYPES.has(formId)
+                ? { type: TYPES.get(formId) }
+                : undefined,
+          ),
+        quest: () => Promise.resolve({ aliases: [{ id: 3, name: 'Hadvar', location: false }] }),
+      },
+      state: {
+        created: new Map(),
+        actors: new Map(),
+        quests: new Map([[quest, { aliases: new Map([[3, 0x1a2b]]) }]]),
+      },
+    });
+    expect(await commands.run('Hadvar.SetGhost 1')).toEqual([
+      "Unknown referenced object 'Hadvar'.",
+    ]);
+    expect(await commands.run('ssq 3372b')).toEqual(['Console Scope Quest >> MQ101 (0003372B)']);
+    expect(await commands.run('Hadvar.SetGhost 1')).toEqual([]);
+    expect(calls).toEqual(['actor.setghost 1a2b true']);
+    expect(await commands.run('ssq')).toEqual(['Console Scope Quest >> EMPTY']);
+    TYPES.delete(quest);
+  });
+});
+
+describe("the console's quest and global lines", () => {
+  const MQ101 = 0x3372b;
+  const MQ102 = 0x3372c;
+  const HADVAR = 0x1a2b;
+  const RALOF = 0x1a2c;
+  const DOOR = 0x5555;
+  const KEEP = 0x5000;
+
+  /** Two quests: MQ101's aliases Hadvar (filled), Ralof (empty) and the location Keep. */
+  const questRuntime = (extra: Record<string, unknown> = {}) => ({
+    forms: {
+      record: (formId: number) =>
+        Promise.resolve(
+          formId === MQ101
+            ? { type: 'QUST', editorId: 'MQ101' }
+            : formId === MQ102
+              ? { type: 'QUST', editorId: 'MQ102' }
+              : formId === KEEP
+                ? { type: 'LCTN', editorId: 'HelgenKeepLocation' }
+                : undefined,
+        ),
+      quest: (formId: number) =>
+        Promise.resolve(
+          formId === MQ101
+            ? {
+                priority: 70,
+                aliases: [
+                  { id: 0, name: 'Hadvar', location: false },
+                  { id: 1, name: 'Ralof', location: false },
+                  { id: 2, name: 'Keep', location: true },
+                ],
+              }
+            : undefined,
+        ),
+    },
+    state: {
+      created: new Map(),
+      actors: new Map(),
+      references: new Map([
+        [HADVAR, { displayName: 'Hadvar' }],
+        [RALOF, { displayName: 'Ralof' }],
+        [DOOR, { displayName: 'Helgen Keep Door' }],
+      ]),
+      quests: new Map([
+        [
+          MQ101,
+          {
+            running: true,
+            stage: 10,
+            aliases: new Map([
+              [0, HADVAR],
+              [2, KEEP],
+            ]),
+          },
+        ],
+      ]),
+    },
+    aliasDisplayName: () => undefined,
+    quests: { starting: new Set<number>() },
+    vm: { scriptVariables: () => Promise.resolve([]) },
+    updateInterval: () => undefined,
+    ...extra,
+  });
+
+  it("prints a quest's aliases in the original's lines (ShowQuestAliases)", async () => {
+    const commands = new ConsoleCommands(fakeContext({}, questRuntime()));
+    expect(await commands.run('ShowQuestAliases 3372b')).toEqual([
+      "- 3 Aliases for quest 'MQ101' (0003372B)-",
+      "REF 'Hadvar'-> 'Hadvar' (00001A2B)",
+      "REF 'Ralof'-> NONE",
+      "LOC 'Keep'-> 'HelgenKeepLocation' (00005000)",
+    ]);
+  });
+
+  it("prints a quest's scripts, aliases and state in that order (sqv)", async () => {
+    const runtime = questRuntime({
+      vm: {
+        scriptVariables: (handle: ObjectHandle) =>
+          Promise.resolve(
+            handle.formId === MQ101 && handle.type === 'quest'
+              ? [
+                  {
+                    script: 'MQ101QuestScript',
+                    state: '',
+                    variables: [{ name: 'Count', type: 'Int', value: 3 }],
+                  },
+                ]
+              : [],
+          ),
+      },
+      updateInterval: (handle: ObjectHandle, gameTime: boolean) =>
+        handle.formId === MQ101 && gameTime ? 1 : undefined,
+    });
+    const commands = new ConsoleCommands(fakeContext({}, runtime));
+    const aliases = [
+      "- 3 Aliases for quest 'MQ101' (0003372B)-",
+      "REF 'Hadvar'-> 'Hadvar' (00001A2B)",
+      "REF 'Ralof'-> NONE",
+      "LOC 'Keep'-> 'HelgenKeepLocation' (00005000)",
+    ];
+    expect(await commands.run('sqv 3372b')).toEqual([
+      '--- Papyrus ---------------------------------',
+      '\tRegistered for game-time update every 1.00 hours',
+      'MQ101QuestScript:',
+      '\tScript state = ""',
+      '\tCount = 3',
+      ...aliases,
+      '--- Quest state -----------------------------',
+      'Enabled?\t\t\tYes',
+      'State:\t\t\tRunning',
+      'Current stage:\t10',
+      'Priority:\t\t70',
+    ]);
+    // A quest whose start waits to run is Waiting For Stage.
+    runtime.quests.starting.add(MQ101);
+    expect((await commands.run('sqv 3372b')).at(-3)).toBe('State:\t\t\tWaiting For Stage');
+  });
+
+  it("prints each quest's targets and the load door toward each (sqt)", async () => {
+    const asked: number[] = [];
+    const commands = new ConsoleCommands(
+      fakeContext(
+        {
+          questTargets: () =>
+            Promise.resolve([
+              { quest: MQ101, reference: HADVAR },
+              { quest: MQ102, reference: DOOR },
+              { quest: MQ101, reference: RALOF },
+            ]),
+          questTargetDoor: (target: { reference: number }) => {
+            asked.push(target.reference);
+            return Promise.resolve(
+              target.reference === HADVAR
+                ? DOOR
+                : target.reference === RALOF
+                  ? 'same'
+                  : 'unreachable',
+            );
+          },
+        },
+        questRuntime(),
+      ),
+    );
+    expect(await commands.run('sqt')).toEqual([
+      'Current quest: MQ101',
+      '2 current targets',
+      'Target 1:  Reference: Hadvar (00001A2B), load door: Helgen Keep Door (00005555)',
+      'Target 2:  Reference: Ralof (00001A2C), load door: Same cell/exterior',
+      'Current quest: MQ102',
+      '1 current targets',
+      'Target 1:  Reference: Helgen Keep Door (00005555), load door: UNREACHABLE',
+    ]);
+    expect(asked).toEqual([HADVAR, RALOF, DOOR]);
+  });
+
+  it('prints every float, long and short global, skipping any other type (sglv)', async () => {
+    const record = (formId: number, editorId: string, type: string, deleted = false) => ({
+      formId,
+      editorId,
+      deleted,
+      fields: {
+        first: (name: string) => (name === 'FNAM' ? new TextEncoder().encode(type) : undefined),
+      },
+    });
+    const records = [
+      record(0x38, 'GameHour', 'f'),
+      record(0x39, 'GameDaysPassed', 'l'),
+      record(0x3a, 'Wrapped', 's'),
+      record(0x3b, 'Unknown', 'x'),
+      record(0x3c, 'Gone', 'f', true),
+    ];
+    const values = new Map([
+      [0x38, 8.5],
+      [0x39, 3],
+      [0x3a, 40000],
+      [0x3b, 1],
+      [0x3c, 1],
+    ]);
+    const commands = new ConsoleCommands(
+      fakeContext(
+        {
+          db: {
+            scan: (types: string[], _accept: unknown, visit: (r: unknown) => void) => {
+              if (types.includes('GLOB')) for (const r of records) visit(r);
+              return Promise.resolve();
+            },
+          },
+        },
+        {
+          formHandle: (formId: number) => new ObjectHandle(formId, 'form'),
+          native: () => (call: { self: ObjectHandle | null }) =>
+            values.get(call.self?.formId ?? 0) ?? 0,
+        },
+      ),
+    );
+    expect(await commands.run('sglv')).toEqual([
+      '--- Global Variables -----------------------------',
+      'GameHour = 8.5000',
+      'GameDaysPassed = 3',
+      'Wrapped = -25536',
+    ]);
   });
 });
 

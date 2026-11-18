@@ -1511,6 +1511,9 @@ export class WorldViewer {
         });
       },
     });
+    // The free camera starts as the viewers' own; Play's tfc gives it the game's rule while on
+    // (src/shell/free-camera.ts).
+    this.#camera.game = undefined;
     // bBorderRegionsEnabled: the worldspace's border regions stop the player.
     if (playerData.ini.number('General', 'bBorderRegionsEnabled') !== 0) {
       const [border, settings] = await Promise.all([

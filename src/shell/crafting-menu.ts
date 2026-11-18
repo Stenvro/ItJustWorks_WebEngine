@@ -31,6 +31,7 @@ import {
 import type { GameSession } from './game-session.ts';
 import { Item3D } from './item-3d.ts';
 import type { Terminal } from './terminal.ts';
+import { editItemName, endItemRename, type TextInputCount } from '../ui/text-input.ts';
 
 export type { CraftingHost } from './crafting-models.ts';
 
@@ -186,7 +187,7 @@ export class CraftingMenu {
           return true;
         }
         if (event.code === 'KeyF') {
-          if (model.aux?.(viewOf(opened))) submenu = 'rename';
+          if (model.aux?.(viewOf(opened, session.textInput))) submenu = 'rename';
           return true;
         }
         return false;
@@ -204,19 +205,19 @@ export class CraftingMenu {
         ChooseItem: (opened, args) => {
           const index = typeof args[1] === 'number' ? args[1] : selected;
           const entry = index === undefined ? undefined : entries[index];
-          if (entry) act(opened, () => model.choose(entry, viewOf(opened)));
+          if (entry) act(opened, () => model.choose(entry, viewOf(opened, session.textInput)));
         },
         // Single-panel only (no such panel in SE's movie): as ChooseItem.
         CraftSelectedItem: (opened, args) => {
           const index = typeof args[1] === 'number' ? args[1] : selected;
           const entry = index === undefined ? undefined : entries[index];
-          if (entry) act(opened, () => model.choose(entry, viewOf(opened)));
+          if (entry) act(opened, () => model.choose(entry, viewOf(opened, session.textInput)));
         },
         CraftButtonPress: (opened) => {
           craft(opened);
         },
         AuxButtonPress: (opened) => {
-          if (model.aux?.(viewOf(opened))) submenu = 'rename';
+          if (model.aux?.(viewOf(opened, session.textInput))) submenu = 'rename';
         },
         CanFadeItemInfo: (opened, args) => {
           opened.respond(args[0], !model.canCraft());
@@ -241,7 +242,7 @@ export class CraftingMenu {
         },
         EndItemRename: (opened, args) => {
           submenu = undefined;
-          model.rename?.(args[1] === true && typeof args[2] === 'string' ? args[2] : undefined);
+          endItemRename(session.textInput, (name) => model.rename?.(name), args);
           showSelected(opened).catch(log);
         },
         StartMouseRotation: () => {
@@ -293,14 +294,18 @@ async function skillBar(menu: Menu, runtime: ScriptRuntime, bench: Workbench): P
   );
 }
 
-/** The movie's parts a choice opens: the card's slider (ShowSlider), the name field (EditItemName). */
-function viewOf(menu: Menu): CraftingView {
+/**
+ * The movie's parts a choice opens: the card's slider (ShowSlider), the name field
+ * (EditItemName, which allows text input until the movie's EndItemRename: observed in the
+ * original).
+ */
+function viewOf(menu: Menu, textInput: TextInputCount): CraftingView {
   return {
     slider: (max, min, value, step) => {
       menu.invoke(`${MENU}.ShowSlider`, max, min, value, step);
     },
     rename: (name, maxLength) => {
-      menu.invoke(`${MENU}.EditItemName`, name, maxLength);
+      editItemName(menu, textInput, name, maxLength);
     },
   };
 }

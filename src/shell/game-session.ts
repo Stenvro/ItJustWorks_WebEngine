@@ -92,7 +92,8 @@ import { loadCellData, type CellActor, type CellData } from '../world/cell-loade
 import { cellBufferSizes, CellStore } from '../world/cell-buffer.ts';
 import { ScriptLibrary } from '../scripting/script-library.ts';
 import { PapyrusScheduler } from '../scripting/scheduler.ts';
-import { ScriptRuntime } from '../scripting/runtime/runtime.ts';
+import { ScriptRuntime, type MenuMovie } from '../scripting/runtime/runtime.ts';
+import { TextInputCount } from '../ui/text-input.ts';
 import { ScriptWorld } from './script-world.ts';
 import { TimeFlow } from './time-flow.ts';
 import { ScreenModifiers } from './screen-modifiers.ts';
@@ -403,6 +404,12 @@ export class GameSession {
    * saving asks them.
    */
   readonly menuStack = new MenuStack();
+  /** An open menu's movie by the menu's name (SKSE's UI script: Play's menu host answers). */
+  menuMovies: ((name: string) => MenuMovie | undefined) | undefined;
+  /** SKSE's custom menu (Play's: src/shell/custom-menu.ts). */
+  customMenu: { open(path: string): void; close(): void } | undefined;
+  /** The control map's count of what allows text input (UI.IsTextInputEnabled). */
+  readonly textInput = new TextInputCount();
   /**
    * The image-space modifiers on the screen (scripts', the menus', low health's), laid over
    * the viewers' imagespace each frame.
@@ -1450,6 +1457,13 @@ export class GameSession {
     if (!runtime) return;
     runtime.inMenuMode = this.menuMode;
     runtime.menuOpen ??= (name) => this.menuStack.isOpen(name);
+    runtime.menuMovie ??= (name) =>
+      this.menuStack.isOpen(name) ? this.menuMovies?.(name) : undefined;
+    runtime.customMenu ??= {
+      open: (path) => this.customMenu?.open(path),
+      close: () => this.customMenu?.close(),
+    };
+    runtime.textInputCount ??= () => this.textInput.count;
     if (this.loading) {
       // While a load runs, the post-render queue's work still goes on, 0.5 ms each update
       // (src/scripting/latent-queues.ts): a script moving the player waits on it. Observed in
