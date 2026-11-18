@@ -317,7 +317,10 @@ export interface CombatAiHost {
 export interface StartCombatOptions {
   /** A loaded save's fight keeps the confidence modifier it drew. */
   readonly modifier?: number | undefined;
-  /** A script's StartCombat: the actor keeps its target (the Fixed selector). */
+  /**
+   * The engine's own fixed target (the Fixed selector: combat-ai.ts fixedTarget): the actor
+   * keeps it whatever the scores. Not Papyrus StartCombat's.
+   */
   readonly fixed?: boolean | undefined;
 }
 
@@ -891,10 +894,12 @@ export class ActorCombatAi {
   }
 
   /**
-   * StartCombat: the actor fights the target (whatever its reaction). Only a script's (`fixed`:
-   * Papyrus StartCombat) puts the Fixed selector on its target (combat-ai.ts fixedTarget); the
-   * engine's own fights (a summons taking up its commander's, guards answering a crime, a
-   * follower's attack command, a package's, a save's) choose by the standard selector.
+   * StartCombat: the actor fights the target (whatever its reaction). `fixed` puts the Fixed
+   * selector on its target (combat-ai.ts fixedTarget), as the engine does for the target the
+   * player's mount is set on and a flier's Flying Attack; Papyrus StartCombat, a summons taking
+   * up its commander's fight, guards answering a crime, a follower's attack command, a package's
+   * fight choose by the standard selector (observed in the original). A save's fight keeps a
+   * fixed target it had.
    */
   startCombat(actor: number, target: number, options: StartCombatOptions = {}): void {
     if (actor === target || actor === PLAYER_REF) return;
@@ -1405,12 +1410,15 @@ export class ActorCombatAi {
     // at once when its target is gone.
     const kept = candidates.some((candidate) => candidate.reference === mind.target);
     let target = mind.target;
-    // A script's target (StartCombat) is kept while it is there: the Fixed selector's. Dead or
-    // gone, the selector goes; not yet known to its side, the standard one chooses meanwhile.
-    if (mind.fixedTarget !== undefined && !this.#groupWorld.present(mind.fixedTarget)) {
-      mind.fixedTarget = undefined;
+    // A fixed target (the Fixed selector's) is kept while it is there and its group's target;
+    // dead, gone or given up by its group, the selector is done.
+    if (mind.fixedTarget !== undefined) {
+      mind.fixedTarget = fixedTarget(mind.fixedTarget, {
+        present: this.#groupWorld.present(mind.fixedTarget),
+        ofGroup: this.#groups.target(mind.reference, mind.fixedTarget) !== undefined,
+      });
     }
-    const fixed = fixedTarget(candidates, mind.fixedTarget);
+    const fixed = mind.fixedTarget;
     if (!kept || fixed !== undefined || this.#clock >= mind.nextSelect) {
       mind.nextSelect = this.#clock + this.#settings.selectTargetUpdateTime;
       target = fixed ?? selectTarget(candidates, mind.target);

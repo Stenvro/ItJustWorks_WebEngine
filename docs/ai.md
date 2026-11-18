@@ -3418,15 +3418,19 @@ engine's ([Combat movement](#combat-movement)).
   alerted), gets off its horse (one on a mount that fights ridden stays on: "Horses and
   followers" below), its detection reaction or override
   package ends, and its package's way stops.
-- **A script's target** (StartCombat): the controller holds its target selectors in a list, the
-  standard one first (both seen as classes and in saves: CombatTargetSelectorStandard, Fixed);
-  StartCombat puts a fixed one for its target on top, and while that target is one of its
-  candidates it is kept whatever the scores; while it is not (not yet known, given up by its
-  group) the standard selector chooses, and once it is dead or gone the fixed one goes
-  (`fixedTarget`; inferred, TODO(M13)). Only Papyrus StartCombat puts it there: the engine's own
-  fights (a summons taking up its commander's, guards answering a crime, a follower's attack
-  command, a package's, the horse's target lock) choose by the standard one. A save keeps the
-  fixed target with the fight (SavedFight.fixed).
+- **A fixed target** (observed in the original): the controller holds its target selectors in a
+  list, the standard one first (CombatTargetSelectorStandard, Fixed), and the top one chooses. A
+  fixed one names its target whatever the scores, lost or not, and is done once that target is
+  dead, disabled or deleted, or no longer one of its group's targets (`fixedTarget`). The engine
+  makes one in two places only: for the target the player's mount is set on while they ride it,
+  and in a flier's Flying Attack. Papyrus StartCombat makes none: it adds the target to the
+  actor's group and makes it its current target, and from then on the standard selector chooses
+  (the current target's 100 counting for it); so do a summons taking up its commander's fight,
+  guards answering a crime, a follower's attack command and a package's fight. A save keeps a
+  fixed target with the fight (SavedFight.fixed). The flight stage's Flying Attack holds its
+  victim through its grab (src/shell/actor-flight.ts) rather than by a selector. TODO(M13): the
+  player's lock on a target from a dragon's back is not built, so nothing puts a fixed target on
+  in play yet (the `fixed` option of startCombat is there for it).
 - **Targets** (`selectTarget`, observed in the original: the standard selector): among those
   its group knows and has not lost, and its current target if known, the highest sum wins; a
   group's sole target needs none; with none known, the one known most recently. The sum: its own

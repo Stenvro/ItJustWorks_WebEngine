@@ -670,21 +670,21 @@ export function selectTarget(
 }
 
 /**
- * The Fixed target selector (CombatTargetSelectorFixed: a target and no timer of its own, as a
- * save keeps it): a combat controller holds its selectors in a list, the standard one first; a
- * script's StartCombat puts a fixed one for its target on top. The top selector chooses: the
- * fixed target is kept whatever the scores while it is one of the actor's candidates (its side
- * knows of it and has not given it up); while it is not, the standard one chooses, and once the
- * target is dead or gone the fixed selector goes (the shell's part). Returns the fixed target
- * while it holds (undefined: the standard selector's turn). Inferred, TODO(M13): the original's selectors were seen as classes and in
- * saves only, not followed to their use.
+ * The Fixed target selector (CombatTargetSelectorFixed, observed in the original): a combat
+ * controller holds its selectors in a list, the standard one first, and the top one chooses. A
+ * fixed one names its target whatever the scores, and is done (it leaves the list) once that
+ * target is dead, disabled or deleted, or no longer one of its combat group's targets (given up,
+ * lost or not). The engine puts one on for the target the player's mount is set on while they
+ * ride it, and for a flier's Flying Attack; Papyrus StartCombat does not (its fight chooses by the
+ * standard selector, the target its current one). Returns the fixed target while it holds
+ * (undefined: done, the standard selector's turn).
  */
 export function fixedTarget(
-  candidates: readonly Pick<TargetCandidate, 'reference'>[],
   fixed: number | undefined,
+  target: { readonly present: boolean; readonly ofGroup: boolean },
 ): number | undefined {
-  if (fixed === undefined) return undefined;
-  return candidates.some((candidate) => candidate.reference === fixed) ? fixed : undefined;
+  if (fixed === undefined || !target.present || !target.ofGroup) return undefined;
+  return fixed;
 }
 
 /** Target selection's weights and its distance's reach (observed in the original). */
