@@ -1445,6 +1445,25 @@ with nothing to draw). The ragdoll's
 head bodies (a dying actor's, a corpse placed in its cell) stay out of collision. The piece
 names no reference (the crosshair finds nothing on it).
 
+**Helgen's block in the browser.** A playtest of the opening in the browser (at about 15 frames a
+second) saw the first prisoner glide to the block, his head land beside his body, and the player
+on the block unable to look up to Alduin, while the simulation passed. The browser differed in
+its frame times (long, uneven frames), in its render-driven graph updates (graphs behind the
+camera or far from it updated less often and ahead of the clock, the chop clips read late) and
+in the first-person view while looking was off. Each now has its rule (a walk to furniture is a
+walk: [ai.md](ai.md#furniture-and-idle-markers); the blow's moment on the clock and the graphs
+kept in step: above and "Graphs that go together in step"; the view on the camera node:
+"The player", `Player.#followCameraNode`), and the simulation copies the browser's frames and
+late reads (`tests/sim-opening-ride.int.test.ts`). Checked in the browser on a new game with the
+processor slowed three times (frames of 0.12 to 0.15 s from the roll call to Alduin's arrival):
+the first prisoner walks to the block in his walk blends (MT_WalkForward at Speed 80, 80 to 100
+units a second); the blow fell 0.145 s before its update's end and 7 ms after the pose shown
+before it; his head came to rest 5.5 units from the basket's middle and 8.6 above its floor; on
+the block the view rose with the camera node to 27 degrees up, and Alduin perched on the tower
+15 degrees from its middle. The player cannot turn the view there: the opening's fragments
+switch looking off from the walk to the block until the player gets up (stage 160), and the
+camera switch from the cart on, so the scene is seen in first person.
+
 **Persistence.** A dismembered corpse stays so: as its 3D is loaded again the engine compares
 what it wears with what the limb's record says it wore and dresses it again if they differ,
 then cuts again without the flight (the head drops from the neck, pushed away from the body's
