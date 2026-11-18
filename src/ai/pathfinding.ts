@@ -1035,28 +1035,56 @@ const STRAIGHT_STEP = 16;
  * How far the navmeshes let an actor go straight from `from` towards `to` (units, horizontal):
  * the line and the two lines its radius to either side, sampled every 16 units, stay on the
  * navmeshes up to there (the engine's straight combat paths, CombatPathRequestStraightPath: a
- * maneuver's goal the navmesh does not reach is no goal). Off the navmeshes (none loaded under
- * its start) the whole way counts.
+ * maneuver's goal the navmesh does not reach is no goal).
+ *
+ * A start off the navmeshes with one near (an actor pushed a little past the edge, against
+ * rubble the navmesh is cut round) is no clear line: the actor's place on them is their nearest
+ * point (as a travel begins there), so the line must come back onto them about as soon as that
+ * point lies, and from where it does it is measured as any other; one that runs on off them (along
+ * the edge, or away from it) reaches nowhere. Only with no navmesh within 512 units of the start
+ * (none loaded there) does the whole way count. Inferred, TODO(M13): how the engine's straight
+ * combat path takes an actor that is off its navmesh.
  */
 export function straightReach(set: NavmeshSet, from: Vec3, to: Vec3, radius: number): number {
   const dx = to[0] - from[0];
   const dy = to[1] - from[1];
   const length = Math.hypot(dx, dy);
-  if (length < 1e-6 || !set.locate(from)) return length;
+  if (length < 1e-6) return length;
+  // Off the navmeshes: how far along the line it must be on them again (undefined: it is on).
+  let backBy: number | undefined;
+  if (!set.locate(from)) {
+    const nearest = set.nearest?.(from, STRAIGHT_OFF_REACH);
+    if (!nearest) return length;
+    backBy = Math.hypot(nearest[0] - from[0], nearest[1] - from[1]) + radius + STRAIGHT_STEP;
+  }
   const ux = dx / length;
   const uy = dy / length;
   // Across the way: (uy, −ux) to the right.
   const offsets = radius > 0 ? [0, radius, -radius] : [0];
+  // Where the line came onto the navmeshes (a start off them: its sides follow a radius later).
+  let onFrom = backBy === undefined ? 0 : undefined;
   for (let along = STRAIGHT_STEP; along < length + STRAIGHT_STEP; along += STRAIGHT_STEP) {
     const at = Math.min(along, length);
     const z = from[2] + ((to[2] - from[2]) * at) / length;
-    for (const offset of offsets) {
-      const point: Vec3 = [from[0] + ux * at + uy * offset, from[1] + uy * at - ux * offset, z];
-      if (!set.locate(point)) return Math.max(0, at - STRAIGHT_STEP);
+    const point = (offset: number): Vec3 => [
+      from[0] + ux * at + uy * offset,
+      from[1] + uy * at - ux * offset,
+      z,
+    ];
+    if (onFrom === undefined) {
+      if (set.locate(point(0))) onFrom = at;
+      else if (backBy !== undefined && at >= backBy) return 0;
+      continue;
+    }
+    for (const offset of backBy === undefined || at - onFrom >= radius ? offsets : [0]) {
+      if (!set.locate(point(offset))) return Math.max(0, at - STRAIGHT_STEP);
     }
   }
-  return length;
+  return onFrom === undefined ? 0 : length;
 }
+
+/** A straight line from off the navmeshes is held to them within this of its start (units). */
+const STRAIGHT_OFF_REACH = 512;
 
 /** The directions (degrees off straight ahead) a summon's blocked way is tried in, in turn. */
 const SUMMON_SEARCH_TURNS = [45, -45, 90, -90, 135, -135, 180];
