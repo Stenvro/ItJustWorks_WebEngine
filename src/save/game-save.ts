@@ -10,7 +10,7 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { RuntimeSave } from '../scripting/runtime/runtime-save.ts';
 import { readSave, SAVE_VERSION, writeSave, type SaveHeader } from './save-codec.ts';
-import { drawCharacterId } from './character-id.ts';
+import { drawCharacterId, moddedLoadOrder } from './character-id.ts';
 import type { SavedHazard } from '../scripting/runtime/hazard-engine.ts';
 import type { SavedCreatedObject } from '../scripting/runtime/crafting-engine.ts';
 import type { WorldSave } from './world-save.ts';
@@ -107,6 +107,7 @@ export async function saveGame(
     number: request.number,
     playerName: runtime.state.playerName ?? 'Prisoner',
     characterId: runtime.state.characterId,
+    modded: moddedLoadOrder(runtime.forms.db.plugins.map((plugin) => plugin.entry)),
     playerLevel: runtime.state.actors.get(PLAYER_REF)?.level ?? 1,
     location: await locationName(runtime, player),
     gameDays: runtime.state.gameDaysPassed,

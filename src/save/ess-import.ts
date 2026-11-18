@@ -104,7 +104,7 @@ import { cellKey } from '../world/worldspace.ts';
 import type { GameSave } from './game-save.ts';
 import type { SavedCreatedObject } from '../scripting/runtime/crafting-engine.ts';
 import { SAVE_VERSION, type SaveHeader } from './save-codec.ts';
-import { characterIdOfEssName, drawCharacterId } from './character-id.ts';
+import { characterIdOfEssName, drawCharacterId, moddedOfEssName } from './character-id.ts';
 import type {
   SavedActor,
   SavedAnimObject,
@@ -2550,6 +2550,9 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     number: request.number,
     playerName: state.playerName ?? ess.header.playerName,
     characterId: state.characterId,
+    // Made with mods as its file name says (a save of no such name: none known).
+    ...(request.fileName !== undefined &&
+      moddedOfEssName(request.fileName) === true && { modded: true }),
     playerLevel: ess.header.playerLevel,
     location: ess.header.location,
     gameDays: state.gameDaysPassed,

@@ -5,6 +5,8 @@
 // one entry per character, named as its saves name the player. Naming the player in the race
 // menu keeps the id while the name is the one the id goes by (or the player was never named);
 // another name draws a new id, so a new character's saves are listed apart from the old one's.
+// The file name's digit after the id says whether the save was made with mods, and the Load
+// list keeps a character's saves with mods apart from those without.
 // Platform-independent.
 
 import type { SaveHeader } from './save-codec.ts';
@@ -41,12 +43,28 @@ export function characterIdOfEssName(fileName: string): number | undefined {
   return match?.[1] === undefined ? undefined : Number.parseInt(match[1], 16);
 }
 
+/** Whether an original save's file name says it was made with mods (undefined: no such name). */
+export function moddedOfEssName(fileName: string): boolean | undefined {
+  const match = /^[^_]+_[0-9A-Fa-f]{8}_([01])_/.exec(fileName);
+  return match?.[1] === undefined ? undefined : match[1] === '1';
+}
+
 /**
- * The key the Load list groups a save under: its character id, or for a save made before the
- * id was kept, the player's name.
+ * Whether a game runs with mods: a plugin of plugins.txt in its load order (the game's own
+ * masters and Skyrim.ccc's Creations are not mods). TODO(M13): inferred which plugins count;
+ * the original's rule for its digit is not confirmed.
  */
-export function characterKey(header: Pick<SaveHeader, 'characterId' | 'playerName'>): string {
-  return header.characterId !== undefined
-    ? `id:${header.characterId.toString(16)}`
-    : `name:${header.playerName}`;
+export function moddedLoadOrder(plugins: readonly { readonly source: string }[]): boolean {
+  return plugins.some((plugin) => plugin.source === 'plugins.txt');
+}
+
+/**
+ * The key the Load list groups a save under: its character id and whether it was made with
+ * mods, or for a save made before the id was kept, the player's name.
+ */
+export function characterKey(
+  header: Pick<SaveHeader, 'characterId' | 'playerName' | 'modded'>,
+): string {
+  if (header.characterId === undefined) return `name:${header.playerName}`;
+  return `id:${header.characterId.toString(16)}${header.modded === true ? ':modded' : ''}`;
 }

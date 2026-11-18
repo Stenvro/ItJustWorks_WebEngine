@@ -17,7 +17,7 @@ import { questTargets } from './compass.ts';
 import type { Terminal } from './terminal.ts';
 import { settingsHandlers } from './journal-settings.ts';
 import { controlsHandlers } from './journal-controls.ts';
-import { characterKey } from '../save/character-id.ts';
+import { characterKey, moddedLoadOrder } from '../save/character-id.ts';
 import {
   DEFAULT_PLAYER_NAME,
   IMPORT_ESS_TEXT,
@@ -102,9 +102,12 @@ export class JournalMenu {
       playTime: (header) => session.scriptsReady?.gameTimeString(header.gameDays) ?? '',
       // A game runs while the journal is open: its player's saves.
       character: () => {
-        const state = session.scriptsReady?.state;
+        const runtime = session.scriptsReady;
+        const state = runtime?.state;
         return characterKey({
           characterId: state?.characterId,
+          modded:
+            runtime && moddedLoadOrder(runtime.forms.db.plugins.map((plugin) => plugin.entry)),
           playerName: state?.playerName ?? DEFAULT_PLAYER_NAME,
         });
       },

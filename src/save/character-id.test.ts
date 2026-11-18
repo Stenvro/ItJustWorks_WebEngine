@@ -3,6 +3,8 @@ import {
   characterIdOfEssName,
   characterKey,
   drawCharacterId,
+  moddedLoadOrder,
+  moddedOfEssName,
   namedCharacterId,
 } from './character-id.ts';
 
@@ -30,5 +32,18 @@ describe("a save's character", () => {
   it('groups saves made before the id by the player name', () => {
     expect(characterKey({ playerName: 'Lydia' })).toBe('name:Lydia');
     expect(characterKey({ playerName: 'Lydia', characterId: 0xab })).toBe('id:ab');
+  });
+
+  it("keeps a character's saves made with mods apart, as the file name says", () => {
+    expect(moddedOfEssName('Save1_51FF9A07_1_507269736F6E6572_Tamriel_000005_1_1.ess')).toBe(true);
+    expect(moddedOfEssName('Save1_51FF9A07_0_507269736F6E6572_Tamriel_000005_1_1.ess')).toBe(false);
+    expect(moddedOfEssName('Quicksave.ess')).toBeUndefined();
+    expect(characterKey({ playerName: 'Lydia', characterId: 0xab, modded: true })).toBe(
+      'id:ab:modded',
+    );
+    expect(characterKey({ playerName: 'Lydia', characterId: 0xab, modded: false })).toBe('id:ab');
+    // Mods are the plugins of plugins.txt; the game's masters and Creations are not.
+    expect(moddedLoadOrder([{ source: 'implicit' }, { source: 'Skyrim.ccc' }])).toBe(false);
+    expect(moddedLoadOrder([{ source: 'implicit' }, { source: 'plugins.txt' }])).toBe(true);
   });
 });

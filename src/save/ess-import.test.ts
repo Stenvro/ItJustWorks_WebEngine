@@ -954,6 +954,15 @@ describe('the global data tables of controls, references and sky cells', () => {
     expect(state.crime.offLimits.has(BREEZEHOME)).toBe(true);
     expect(state.nextCreated).toBe(POTION + 1);
     expect(imported.header.characterId).toBe(0x51ff9a07);
+    expect(imported.header.modded).toBeUndefined();
+    const modded = importEss(readEss(bytes), world, {
+      name: 'T',
+      number: 1,
+      now: 0,
+      fileName: 'Save1_51FF9A07_1_447261676F6E626F726E_Whiterun_000005_20261030080455_1_1.ess',
+    });
+    // Made with mods: listed apart from the character's saves without.
+    expect(modded.header.modded).toBe(true);
     expect(imported.skipped.join('\n')).not.toMatch(/CELL|created objects/);
   });
 });
