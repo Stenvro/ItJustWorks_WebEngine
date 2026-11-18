@@ -176,16 +176,40 @@ export class SoundInstance {
     return typeof place === 'function' ? place() : place;
   }
 
-  /** Follows its place and applies the distance curve for the listener at `listener`. */
+  /** The distance and the place last applied (update leaves out what did not change). */
+  #appliedDistance = Number.NaN;
+  readonly #appliedPosition: [number, number, number] = [Number.NaN, Number.NaN, Number.NaN];
+
+  /**
+   * Follows its place and applies the distance curve for the listener at `listener`. What it
+   * sets depends on the distance and the place alone, so a sound whose distance and place did
+   * not change sets nothing: the same target again continues the same curve (scheduling the
+   * parameters of every playing sound each frame cost more than a millisecond of a frame).
+   */
   update(listener: Vec3): void {
     const position = this.position;
     if (!position) return;
     const time = this.#engine.context.currentTime;
+    const panner = this.#panner;
+    const placed = this.#appliedPosition;
+    if (
+      panner &&
+      (placed[0] !== position[0] || placed[1] !== position[1] || placed[2] !== position[2])
+    ) {
+      placed[0] = position[0];
+      placed[1] = position[1];
+      placed[2] = position[2];
+      panner.positionX.setValueAtTime(position[0], time);
+      panner.positionY.setValueAtTime(position[1], time);
+      panner.positionZ.setValueAtTime(position[2], time);
+    }
     const distance = Math.hypot(
       position[0] - listener[0],
       position[1] - listener[1],
       position[2] - listener[2],
     );
+    if (distance === this.#appliedDistance) return;
+    this.#appliedDistance = distance;
     const gain = this.model?.attenuatesWithDistance
       ? distanceGain(this.model.attenuation, distance)
       : 1;
@@ -205,11 +229,6 @@ export class SoundInstance {
       if (this.#reverbSend) set(this.#reverbSend.gain, this.#reverbShare * reverbLevel(normalized));
     }
     this.#placed = true;
-    if (this.#panner) {
-      this.#panner.positionX.setValueAtTime(position[0], time);
-      this.#panner.positionY.setValueAtTime(position[1], time);
-      this.#panner.positionZ.setValueAtTime(position[2], time);
-    }
   }
 
   /**

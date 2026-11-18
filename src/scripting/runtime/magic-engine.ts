@@ -388,8 +388,10 @@ export class MagicEngine {
 
   effectsOn(target: number): [string, ActiveEffectState][] {
     const found: [string, ActiveEffectState][] = [];
-    for (const entry of this.#runtime.state.activeEffects) {
-      if (entry[1].target === target && !this.#ending.has(entry[0])) found.push(entry);
+    const on = this.#runtime.state.activeEffects.on(target);
+    if (!on) return found;
+    for (const entry of on) {
+      if (!this.#ending.has(entry[0])) found.push(entry);
     }
     return found;
   }

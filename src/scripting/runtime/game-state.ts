@@ -12,6 +12,7 @@ import type { DismemberedLimb } from '../../gameplay/combat/dismemberment.ts';
 import { emptyLoadout, type Loadout } from '../../gameplay/equipment.ts';
 import type { CreatedForm } from '../../world/created-forms.ts';
 import type { StoryEventData } from './story-manager.ts';
+import { ActiveEffectMap } from './active-effects.ts';
 
 export type Vec3 = [number, number, number];
 
@@ -553,7 +554,7 @@ export class GameState {
   /** Entries scripts added to leveled lists (LeveledItem.AddForm, ...), by list. */
   readonly leveledAdditions = new Map<number, { level: number; formId: number; count: number }[]>();
   /** Magic effects on actors (ActiveMagicEffect scripts): by handle key. */
-  readonly activeEffects = new Map<string, ActiveEffectState>();
+  readonly activeEffects = new ActiveEffectMap<ActiveEffectState>();
   /**
    * The joints scripts made (Game.AddHavokBallAndSocketConstraint): made again as their references
    * load (ScriptRuntime.cellAttached), until RemoveHavokConstraints.

@@ -170,6 +170,10 @@ export class DestructionLooks {
         this.#load(runtime, entry);
       }
       const look = entry.look;
+      // Shown as the cell shows it, its collision its own: nothing of it to bring up to date
+      // (most of a cell's references: asking each whether it is enabled was a millisecond of
+      // a Helgen frame).
+      if (!look && !entry.hiding && !entry.touched) continue;
       const enabled = entry.enabled();
       if (look) {
         entry.visibility.hidden = true;

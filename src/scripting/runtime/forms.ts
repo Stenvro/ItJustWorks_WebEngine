@@ -337,8 +337,19 @@ export class FormIndex {
   /** The forms in a form list (FLST), as global form ids. */
   async formList(formId: number): Promise<number[]> {
     const record = await this.record(formId);
-    return record?.fields.all('LNAM').map((data) => record.formIdAt(data)) ?? [];
+    if (!record) return [];
+    // Read once per record (conditions and the AI ask for the same lists every frame: reading
+    // a list of hundreds each time was 4 % of a Whiterun frame). A copy: callers may change it.
+    let entries = this.#formLists.get(record);
+    if (!entries) {
+      entries = record.fields.all('LNAM').map((data) => record.formIdAt(data));
+      this.#formLists.set(record, entries);
+    }
+    return [...entries];
   }
+
+  /** The form lists' entries, by the record read (a record read again is read again). */
+  readonly #formLists = new WeakMap<GameRecord, readonly number[]>();
 
   /** The placed reference (ACHR) of a unique actor (an NPC_ placed once); the player's. */
   async uniqueReference(npc: number): Promise<number | undefined> {
