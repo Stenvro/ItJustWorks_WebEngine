@@ -11,7 +11,7 @@
 //   sim.close();
 
 import { afterAll } from 'vitest';
-import { findPath } from '../../src/ai/pathfinding.ts';
+import { findPath, type PathOptions } from '../../src/ai/pathfinding.ts';
 import { WeaponState } from '../../src/gameplay/combat/combat-state.ts';
 import { Layer } from '../../src/physics/collision-layers.ts';
 import { readGameSave, restoreAmbience, saveGame } from '../../src/save/game-save.ts';
@@ -107,6 +107,11 @@ const HELD_CORNER_REACH = 24;
 const PATH_GOAL_REACH = 256;
 /** A door the player is held up by is within this of their feet (across). */
 const DOOR_REACH = 160;
+/**
+ * The way's triangles this near a door locked to the player, where they met it, are closed to
+ * them (units): as an actor's to a door shut to it (actor-movers.ts DOOR_BLOCKED).
+ */
+const LOCKED_DOOR_BLOCKED = 64;
 /** How far the player steps aside round someone standing in their way (doubling each time). */
 const SIDESTEP = 48;
 /**
@@ -249,6 +254,12 @@ export class Sim {
   #conversation: { readonly speaker: number; choices: TopicChoice[] } | undefined;
   /** The dialogue menus answered so far (index into the menu records). */
   #menusSeen = 0;
+  /**
+   * Doors the player met locked to them in their way (no key for them; the navmesh marks only
+   * load doors, so a way runs on through other doors), and where: their ways go round these while
+   * they stay locked, as a player who met a locked door takes another way.
+   */
+  readonly #lockedDoors = new Map<number, Vec3>();
 
   constructor(world: SimWorld, vfs: Vfs, db: RecordDatabase) {
     openSims.add(this);
@@ -503,6 +514,45 @@ export class Sim {
     }
   }
 
+  /** Whether a door is locked to the player now: locked, and no key for it in their hands. */
+  async #lockedToPlayer(door: number): Promise<boolean> {
+    const lock = await this.runtime.lock(door);
+    if (!lock.locked) return false;
+    return lock.key === undefined || (await this.runtime.itemCount(PLAYER_REF, lock.key)) <= 0;
+  }
+
+  /** The player's way options: round the doors they met locked to them, while they still are. */
+  async #wayOptions(): Promise<PathOptions> {
+    const blocked: { readonly at: Vec3; readonly radius: number }[] = [];
+    for (const [door, at] of this.#lockedDoors) {
+      if (await this.#lockedToPlayer(door)) blocked.push({ at, radius: LOCKED_DOOR_BLOCKED });
+      else this.#lockedDoors.delete(door);
+    }
+    return blocked.length > 0 ? { ...WAY, blocked } : WAY;
+  }
+
+  /**
+   * Held up on a way: a door in their way (ahead of them, towards the way's next point) that is
+   * locked to them is kept with where they met it (their ways go round it). True if one was.
+   */
+  async #lockedInWay(feet: Vec3, toward: readonly number[]): Promise<boolean> {
+    const character = this.world.player.character;
+    const direction: Vec3 = [(toward[0] ?? 0) - feet[0], (toward[1] ?? 0) - feet[1], 0];
+    const hit = character.physics.raycast(
+      [feet[0], feet[1], feet[2] + WAY_HEIGHT],
+      direction,
+      WAY_REACH,
+      Layer.charController,
+      character.collider,
+    );
+    const door = hit?.owner?.kind === 'object' ? hit.owner.reference : 0;
+    if (!hit || door === 0 || this.#lockedDoors.has(door)) return false;
+    const placed = this.world.placedObjects().find((entry) => entry.object.reference === door);
+    if (placed?.object.baseType !== 'DOOR' || !(await this.#lockedToPlayer(door))) return false;
+    this.#lockedDoors.set(door, [hit.point[0], hit.point[1], feet[2]]);
+    return true;
+  }
+
   /** One way over the navmeshes loaded now ('short': it ended short of the point). */
   async #walkLeg(target: Vec3, seconds: number, reach: number): Promise<boolean | 'short'> {
     const navmeshes = this.world.navmeshes;
@@ -513,7 +563,8 @@ export class Sim {
     // Off the navmesh (a floor it leaves out), the way starts where it is nearest.
     const feet = this.world.player.feet;
     const from = navmeshes.locate(feet) ? feet : navmeshes.nearest?.(feet, PATH_GOAL_REACH);
-    const path = from && findPath(navmeshes, from, goal, WAY);
+    let way = await this.#wayOptions();
+    const path = from && findPath(navmeshes, from, goal, way);
     if (!path) return false;
     const until = this.time + seconds;
     // Blockers whose activate parent was pulled in this walk (not pulled shut again).
@@ -556,7 +607,7 @@ export class Sim {
         ) {
           const here: Vec3 = [x1, y1, z1];
           const start = navmeshes.locate(here) ? here : navmeshes.nearest?.(here, PATH_GOAL_REACH);
-          const again = start && findPath(navmeshes, start, goal, WAY);
+          const again = start && findPath(navmeshes, start, goal, way);
           if (again) {
             fellTo = z1;
             origin = start;
@@ -580,6 +631,19 @@ export class Sim {
           return true;
         }
         if (await this.#openDoorNear([x1, y1], goal, lined)) continue;
+        // A door in the way locked to them (no key): the way round it, from here.
+        if (await this.#lockedInWay([x1, y1, z1], point)) {
+          way = await this.#wayOptions();
+          const here: Vec3 = [x1, y1, z1];
+          const start = navmeshes.locate(here) ? here : navmeshes.nearest?.(here, PATH_GOAL_REACH);
+          const again = start && findPath(navmeshes, start, goal, way);
+          if (!again) return false;
+          origin = start;
+          points = again.points.slice(start === here ? 1 : 0);
+          complete = again.complete;
+          index = -1;
+          break;
+        }
         if (await this.#clearWay([x1, y1, z1], point, pulled)) continue;
         if (!jumped && point[2] > z1 + JUMP_OUT && !navmeshes.locate([x1, y1, z1])) {
           jumped = true;
@@ -595,7 +659,7 @@ export class Sim {
           searched = true;
           const here: Vec3 = [x1, y1, z1];
           const start = navmeshes.locate(here) ? here : navmeshes.nearest?.(here, PATH_GOAL_REACH);
-          const again = start && findPath(navmeshes, start, goal, WAY);
+          const again = start && findPath(navmeshes, start, goal, way);
           if (again) {
             points = again.points.slice(start === here ? 1 : 0);
             complete = again.complete;
@@ -723,6 +787,8 @@ export class Sim {
         if (!opened || away < opened.away) opened = found;
       } else if (!closed || away < closed.away) closed = found;
     }
+    // One locked to them is not opened by trying it (#lockedInWay: the way goes round it).
+    if (closed && (await this.#lockedToPlayer(closed.reference))) closed = undefined;
     const chosen = closed ?? opened;
     if (!chosen) return false;
     const { reference: door, world } = chosen;
