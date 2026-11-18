@@ -240,5 +240,20 @@ describe.skipIf(!hasGamedata())('exteriors on the local game data', () => {
     const data = await loadCellData(db, cell ?? 0);
     const trigger = data.primitives.find((primitive) => primitive.reference === 0x00084058);
     expect(trigger).toMatchObject({ shape: 'box', layer: 12 });
+    expect(trigger?.activator).toBeUndefined();
+  }, 30_000);
+
+  it('loads a model-less activator as its volume, activated as an activator', async () => {
+    // Dimhollow Crypt's coffin activator (DLC1VQ01PuzzleCoffinActivator): no model, a box on
+    // L_NONCOLLIDABLE (XTRI 15), which the crosshair's pick (L_ITEMPICKER) meets.
+    const reference = 0x0200f7f4;
+    const cell = db.cellOfReference(reference);
+    expect(cell).toBeDefined();
+    const data = await loadCellData(db, cell ?? 0);
+    expect(data.objects.some((object) => object.reference === reference)).toBe(false);
+    const volume = data.primitives.find((primitive) => primitive.reference === reference);
+    expect(volume).toMatchObject({ shape: 'box', layer: 15 });
+    expect(volume?.activator).toMatchObject({ reference, baseType: 'ACTI', model: '' });
+    expect(volume?.activator?.name).not.toBe('');
   }, 30_000);
 });

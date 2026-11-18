@@ -269,6 +269,11 @@ export interface CellPrimitive {
   readonly world: Mat4;
   /** XTRI, else the collision box layer. */
   readonly layer: number;
+  /**
+   * The activator a model-less activator's volume is (its `model` empty): the player activates
+   * it where the crosshair's pick meets the volume, as any activator.
+   */
+  readonly activator?: CellObject;
 }
 
 /**
@@ -891,10 +896,40 @@ export async function loadCellData(
     // A trigger: an activator placed with a primitive (XPRM), its volume on L_TRIGGER (XTRI
     // aside), whose scripts hear who enters and leaves it (defaultSetStageTRIG: MQ101's carts
     // set stage 20 at Helgen's gate). Without a model it is nothing else.
+    // One without a model is activated through its volume all the same: the crosshair's pick
+    // (L_ITEMPICKER) meets its layer (Dimhollow's coffin activator, L_NONCOLLIDABLE), and the
+    // player activates it as any activator (its name and RNAM for the prompt, VNAM's sound).
     if (base.type === 'ACTI' && record.fields.has('XPRM')) {
+      const modelless = !base.fields.has('MODL');
       const primitive = primitiveOf(record, referenceMatrix(ref), TRIGGER_LAYER);
-      if (primitive) primitives.push(primitive);
-      if (!base.fields.has('MODL')) continue;
+      const name = base.text('FULL') ?? '';
+      if (primitive) {
+        const activateText = base.text('RNAM');
+        // An unnamed one (a trigger box) the crosshair offers nothing for.
+        primitives.push(
+          modelless && name !== ''
+            ? {
+                ...primitive,
+                activator: {
+                  reference: ref.formId,
+                  base: ref.base,
+                  baseType: base.type,
+                  editorId: base.editorId ?? '',
+                  name,
+                  model: '',
+                  world: referenceMatrix(ref),
+                  water: undefined,
+                  ...(((record.fields.first('XAPD')?.[0] ?? 0) & 1) !== 0 && {
+                    parentActivateOnly: true,
+                  }),
+                  ...objectSoundsOf(base),
+                  ...(activateText && { activateText }),
+                },
+              }
+            : primitive,
+        );
+      }
+      if (modelless) continue;
     }
     // Rooms, portals and occluders cull what is drawn; they stay markers too.
     addCullingMarker(culling, record, base.formId, referenceMatrix(ref), ref.scale);

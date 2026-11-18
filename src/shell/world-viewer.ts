@@ -1125,7 +1125,14 @@ export class WorldViewer {
     const created = this.#created?.get(reference);
     for (const cell of created ? [] : this.#cells.values()) {
       const object = cell.objects.get(reference);
-      if (!object) continue;
+      if (!object) {
+        // A model-less activator, by its volume (CellPrimitive.activator), while enabled.
+        const volume = cell.data?.primitives.find((each) => each.reference === reference);
+        if (volume?.activator && cell.isEnabled(reference)) {
+          return this.#objectActivation(volume.activator, undefined, activator);
+        }
+        continue;
+      }
       const instance = cell.placed.find((placed) => placed.object === object)?.instance;
       return this.#objectActivation(object, instance, activator);
     }

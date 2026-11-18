@@ -9,5 +9,11 @@
     "lib": ["ES2024", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
     "types": ["node", "vite/client", "@webgpu/types"]
   },
-  "include": ["tests/helpers/sim.ts", "tests/sim-*.ts", "tests/conformance", "tools/sim-*.ts"]
+  "include": [
+    "tests/helpers/sim.ts",
+    "tests/helpers/sim-*.ts",
+    "tests/sim-*.ts",
+    "tests/conformance",
+    "tools/sim-*.ts"
+  ]
 }

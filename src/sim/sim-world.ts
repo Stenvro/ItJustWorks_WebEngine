@@ -1648,6 +1648,18 @@ export class SimWorld {
     };
   }
 
+  /**
+   * A model-less activator of a loaded cell, enabled, by its volume (CellPrimitive.activator):
+   * the crosshair's pick meets the volume as it meets a model's collision.
+   */
+  #volumeActivator(reference: number): CellObject | undefined {
+    for (const cell of this.#cells.values()) {
+      const primitive = cell.data.primitives.find((each) => each.reference === reference);
+      if (primitive?.activator) return cell.isEnabled(reference) ? primitive.activator : undefined;
+    }
+    return undefined;
+  }
+
   #defaultActivation(reference: number, activator?: number): Activatable | undefined {
     const created = this.#created.get(reference);
     const placed = created ? undefined : this.placed(reference);
@@ -1657,7 +1669,8 @@ export class SimWorld {
       created?.object ??
       [...this.#cells.values()]
         .map((cell) => cell.data.objects.find((candidate) => candidate.reference === reference))
-        .find((candidate) => candidate !== undefined);
+        .find((candidate) => candidate !== undefined) ??
+      this.#volumeActivator(reference);
     if (!object) return undefined;
     const instance = placed?.instance ?? created?.instance;
     const target = objectActivation(
