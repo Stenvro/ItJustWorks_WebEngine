@@ -165,6 +165,10 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 - [x] Hotkeys and favorites, inventory weight and value (src/gameplay/hotkeys.ts, inventory.ts).
 - [x] Shouts: words learned and unlocked, cooldowns (src/gameplay/magic/shouts.ts).
 - [x] Waiting, sleeping and fast travel's time (src/gameplay/waiting.ts, fast-travel.ts).
+- [ ] Fast travel's way from a city's own worldspace (WhiterunWorld and the like) measured across
+      its parent's map (fastTravelDistance: before, no hours passed, and an actor sent ahead, C01's
+      Farkas to Dustman's Cairn, was never there). Inferred from the shared coordinates; the way
+      from an interior (none so far) is open. TODO(M13).
 - [x] Beast forms' perk trees (src/gameplay/beast-perk-trees.ts).
 - [x] NPCs' improved items: the load order gives none (no COED item condition above 1 in any
       leveled list, NPC or container); COED's condition is not read (mods only).

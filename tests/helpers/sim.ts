@@ -311,7 +311,7 @@ export class Sim {
       else if (place.cell !== undefined) await this.world.openInterior(place.cell, arrival);
     };
     // Play's journey (src/shell/fast-travel-journey.ts): the hours, the sky, the arrival told.
-    if (passTime) await fastTravelJourney(session, at, fastTravelWay(session, at), enter);
+    if (passTime) await fastTravelJourney(session, at, await fastTravelWay(session, at), enter);
     else await enter(at);
     await this.world.settle();
   }

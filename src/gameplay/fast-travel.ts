@@ -63,3 +63,30 @@ export function fastTravelHours(
   if (!(distance > 0) || !(speed > 0)) return 0;
   return (distance / speed) * (timeScale / 3600);
 }
+
+/** Where a fast travel starts or ends: a worldspace (none: an interior) and a point in it. */
+export interface FastTravelEnd {
+  readonly world: number | undefined;
+  readonly position: readonly number[];
+}
+
+/**
+ * How far a fast travel goes (game units): across the map the two places share. A city's own
+ * worldspace (WhiterunWorld, SolitudeWorld) shows its parent's map and stands at the parent's
+ * coordinates, so the way from the city to a place of Tamriel is measured across Tamriel's map
+ * (`mapWorldOf`: the worldspace whose map a worldspace shows: its parent where it uses the
+ * parent's map). Without a shared map (an interior, another land) the way is none.
+ * TODO(M13): inferred from the shared coordinates; the original's own measure is not confirmed,
+ * nor how it measures the way from an interior.
+ */
+export function fastTravelDistance(
+  from: FastTravelEnd,
+  to: FastTravelEnd,
+  mapWorldOf: (world: number) => number,
+): number {
+  if (from.world === undefined || to.world === undefined) return 0;
+  if (mapWorldOf(from.world) !== mapWorldOf(to.world)) return 0;
+  const dx = (to.position[0] ?? 0) - (from.position[0] ?? 0);
+  const dy = (to.position[1] ?? 0) - (from.position[1] ?? 0);
+  return Math.hypot(dx, dy);
+}

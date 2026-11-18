@@ -3,17 +3,28 @@
 // the caller enters a place: behind a loading screen, or headless), and the arrival is told
 // with the hours it took (TESFastTravelEndEvent: OnPlayerFastTravelEnd).
 
-import { fastTravelHours } from '../gameplay/fast-travel.ts';
+import { fastTravelDistance, fastTravelHours } from '../gameplay/fast-travel.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
 import type { GameSession } from './game-session.ts';
 
-/** How far the player goes to a place: across the worldspace they are in, else none. */
-export function fastTravelWay(session: GameSession, at: Placement): number {
+/**
+ * How far the player goes to a place: across the map the place they are in and it share (a
+ * city's worldspace shows its parent's: fastTravelDistance), else none.
+ */
+export async function fastTravelWay(session: GameSession, at: Placement): Promise<number> {
   const from = session.scriptWorld.livePlacement(PLAYER_REF);
-  return from?.world !== undefined && from.world === at.world
-    ? Math.hypot(at.position[0] - from.position[0], at.position[1] - from.position[1])
-    : 0;
+  if (from?.world === undefined || at.world === undefined) return 0;
+  const worlds = new Map<number, number>();
+  for (const world of new Set([from.world, at.world])) {
+    const space = await session.worldspace(world).catch(() => undefined);
+    worlds.set(world, space?.mapWorld.formId ?? world);
+  }
+  return fastTravelDistance(
+    { world: from.world, position: from.position },
+    { world: at.world, position: at.position },
+    (world) => worlds.get(world) ?? world,
+  );
 }
 
 /** The journey to a place `way` units off; `enter` takes the player there. Its hours. */
