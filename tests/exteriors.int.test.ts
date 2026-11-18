@@ -256,4 +256,20 @@ describe.skipIf(!hasGamedata())('exteriors on the local game data', () => {
     expect(volume?.activator).toMatchObject({ reference, baseType: 'ACTI', model: '' });
     expect(volume?.activator?.name).not.toBe('');
   }, 30_000);
+
+  it('loads a named model-less activator the pick does not meet as a trigger only', async () => {
+    // A player home's bookshelf: PlayerBookShelfTrigger is a named model-less activator on
+    // L_TRIGGER (no XTRI), which L_ITEMPICKER does not meet: entering it is all it hears. Its
+    // PlayerBookShelfClickTrigger beside it, on L_NONCOLLIDABLE, is the one the player clicks.
+    const reference = 0x00102a6d;
+    const cell = db.cellOfReference(reference);
+    expect(cell).toBeDefined();
+    const data = await loadCellData(db, cell ?? 0);
+    const volume = data.primitives.find((primitive) => primitive.reference === reference);
+    expect(volume).toMatchObject({ shape: 'box', layer: 12 });
+    expect(volume?.activator).toBeUndefined();
+    const click = data.primitives.find((primitive) => primitive.reference === 0x00102a6e);
+    expect(click).toMatchObject({ layer: 15 });
+    expect(click?.activator).toMatchObject({ reference: 0x00102a6e, model: '' });
+  }, 30_000);
 });

@@ -44,6 +44,7 @@ import {
   type CellRooms,
 } from './cell-rooms.ts';
 import type { GameRecord, RecordDatabase } from './record-db.ts';
+import { Layer, readCollisionMatrix, type CollisionMatrix } from '../physics/collision-layers.ts';
 
 export interface CellObject {
   readonly reference: number;
@@ -328,6 +329,17 @@ export function ragdollOf(
 function objectRagdollOf(record: Pick<GameRecord, 'fields'>): Pick<CellObject, 'ragdoll'> {
   const ragdoll = parseRagdollData(record.fields);
   return ragdoll ? { ragdoll } : {};
+}
+
+const pickMatrices = new WeakMap<RecordDatabase, Promise<CollisionMatrix>>();
+/** The load order's collision matrix, read once per database (every COLL record). */
+function pickMatrix(db: RecordDatabase): Promise<CollisionMatrix> {
+  let matrix = pickMatrices.get(db);
+  if (!matrix) {
+    matrix = readCollisionMatrix(db);
+    pickMatrices.set(db, matrix);
+  }
+  return matrix;
 }
 
 /** The engine's collision primitive marker (STAT). */
@@ -896,18 +908,26 @@ export async function loadCellData(
     // A trigger: an activator placed with a primitive (XPRM), its volume on L_TRIGGER (XTRI
     // aside), whose scripts hear who enters and leaves it (defaultSetStageTRIG: MQ101's carts
     // set stage 20 at Helgen's gate). Without a model it is nothing else.
-    // One without a model is activated through its volume all the same: the crosshair's pick
-    // (L_ITEMPICKER) meets its layer (Dimhollow's coffin activator, L_NONCOLLIDABLE), and the
-    // player activates it as any activator (its name and RNAM for the prompt, VNAM's sound).
+    // One without a model whose volume is on a layer the crosshair's pick (L_ITEMPICKER) meets
+    // in the load order's collision matrix is activated through that volume as any activator
+    // (its name and RNAM for the prompt, VNAM's sound): Dimhollow's coffin activator, the
+    // bookshelves' click triggers and the mannequins' activate triggers are all on
+    // L_NONCOLLIDABLE. A volume the pick does not meet (L_TRIGGER: the bookshelves' own
+    // enter triggers, scene triggers) is only a trigger.
     if (base.type === 'ACTI' && record.fields.has('XPRM')) {
       const modelless = !base.fields.has('MODL');
       const primitive = primitiveOf(record, referenceMatrix(ref), TRIGGER_LAYER);
       const name = base.text('FULL') ?? '';
       if (primitive) {
         const activateText = base.text('RNAM');
-        // An unnamed one (a trigger box) the crosshair offers nothing for.
+        // TODO(M13): inferred, not confirmed in the original: that an unnamed one is never
+        // activated by the player even where the pick meets it (the crosshair names nothing,
+        // so we offer nothing; every pickable model-less activator in the vanilla data is
+        // named, so no vanilla case tells the two apart).
         primitives.push(
-          modelless && name !== ''
+          modelless &&
+            name !== '' &&
+            (await pickMatrix(db)).collides(Layer.itemPicker, primitive.layer)
             ? {
                 ...primitive,
                 activator: {
