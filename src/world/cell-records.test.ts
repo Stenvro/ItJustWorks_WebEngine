@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Fields } from '../formats/esm/fields.ts';
 import { RecordFlag } from '../formats/esm/record.ts';
-import { enabledAtGameStart, parseCell } from './cell-records.ts';
+import { baseModelPath, enabledAtGameStart, hasModelKind, parseCell } from './cell-records.ts';
 import { GameRecord, type Plugin, type RecordDatabase } from './record-db.ts';
 
 /** Form ids are stored as they are (one plugin). */
@@ -50,6 +50,31 @@ describe('references enabled at the start of a new game', () => {
     expect(await enabledAtGameStart(all, 1)).toBe(false);
     expect(await enabledAtGameStart(all, 2)).toBe(false);
     expect(await enabledAtGameStart(all, 3)).toBe(false);
+  });
+});
+
+describe("a base object's world model", () => {
+  const zstring = (text: string): Uint8Array => new TextEncoder().encode(`${text}\0`);
+  const base = (type: string, model?: string): GameRecord =>
+    new GameRecord(
+      db,
+      plugin,
+      type,
+      1,
+      0,
+      new Fields(model === undefined ? [] : [{ type: 'MODL', data: zstring(model) }]),
+    );
+
+  it("is a placed hazard's model (a campfire's flames)", () => {
+    expect(baseModelPath(base('HAZD', 'Effects\\FXFire01New.nif'))).toBe(
+      'meshes\\effects\\fxfire01new.nif',
+    );
+  });
+
+  it('is none for an activator without MODL, a kind that has models', () => {
+    expect(baseModelPath(base('ACTI'))).toBeUndefined();
+    expect(hasModelKind(base('ACTI'))).toBe(true);
+    expect(hasModelKind(base('SPEL'))).toBe(false);
   });
 });
 
