@@ -1255,6 +1255,29 @@ const say: ProcedureRunner = async (run) => {
  * (ForceGreetFromSitting), and their ForceGreet's own places are "near the player, 5000".
  * TODO(M13): whether the procedure itself ever walks closer (nothing in the data asks it to).
  */
+/**
+ * A force greet's conversation: the procedure (and so its package, and a scene's package action
+ * on it) is done once the conversation its greeting opened has ended, so the lines chosen in it
+ * still find its package current (MQ106DelphineIntroTopic's greeting asks
+ * GetIsCurrentPackage(MQ106DelphineIntroGreet)). A conversation that has not begun within
+ * GREET_BEGIN_SECONDS of the greeting (the greeting said where the actor stands, no menu) ends
+ * it then. TODO(M13): inferred from the data (the lines' conditions and the scenes waiting on
+ * the force greets), not confirmed in the original.
+ */
+async function inConversation(run: ProcedureRun): Promise<void> {
+  const conversing = run.body.conversing?.bind(run.body);
+  if (!conversing) return;
+  for (let waited = 0; !conversing(); waited += CONVERSATION_POLL) {
+    if (run.stopped() || waited >= GREET_BEGIN_SECONDS) return;
+    await run.wait(CONVERSATION_POLL);
+  }
+  while (!run.stopped() && conversing()) await run.wait(CONVERSATION_POLL);
+}
+
+/** How long a greeting's conversation is waited for to begin, and looked at (seconds; ours). */
+const GREET_BEGIN_SECONDS = 3;
+const CONVERSATION_POLL = 0.25;
+
 const forceGreet: ProcedureRunner = async (run) => {
   const topic = run.inputs.topic(0);
   const waitAt = await placeIn(run, 1);
@@ -1265,7 +1288,10 @@ const forceGreet: ProcedureRunner = async (run) => {
     const reach = Math.max(trigger?.radius ?? 0, atPlace(run));
     const inside = player && (!trigger || horizontal(player.position, trigger.position) <= reach);
     if (player && inside) {
-      if (run.body.greet(typeof topic === 'number' ? topic : undefined)) return 'success';
+      if (run.body.greet(typeof topic === 'number' ? topic : undefined)) {
+        await inConversation(run);
+        return 'success';
+      }
       await run.wait(settingsOf(run).forceGreetingTimer);
       continue;
     }

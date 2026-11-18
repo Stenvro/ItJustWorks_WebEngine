@@ -353,6 +353,8 @@ export interface PackageBody {
   meal?(eating: boolean): void;
   /** Talks to the player (ForceGreet): the conversation opens, with a topic's line first. */
   greet(topic: number | undefined): boolean;
+  /** Whether it is in conversation with the player now (the one its greeting opened). */
+  conversing?(): boolean;
   /** Whether it stands still on its own (not on its way, not in furniture, not turning). */
   standing(): boolean;
   /**

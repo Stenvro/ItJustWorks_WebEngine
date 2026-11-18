@@ -951,6 +951,7 @@ export class ActorAi {
         menus.talk(staged.placed, topic);
         return true;
       },
+      conversing: () => this.#session.scriptsReady?.dialogueSpeaker === staged.reference,
     };
   }
 
