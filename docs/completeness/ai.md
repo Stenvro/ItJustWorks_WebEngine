@@ -229,10 +229,13 @@ the readers ask for by name.
       wider, else the lower form id; one not on its way is avoided by all, one down by none); only
       the advanced races steer (velocity obstacles of the two radii) and report their way blocked
       by actors, which fails the path short of its goal; a node is dropped as its actor sets off
-      (observed in the original, 2026-11-18; src/ai/avoidance.ts, tested there and in
-      tests/conformance/ai/procedures.test.ts).
+      (observed in the original, 2026-11-18; src/ai/avoidance.ts, tested there, in
+      tests/conformance/ai/procedures.test.ts and in the movers by
+      tests/conformance/ai/actors-in-the-way.test.ts).
 - [ ] Avoidance: how the velocity obstacles choose the velocity (ours: foresee the first met and
-      keep right); the time held up (ours: under 16 units a second with one ranked above near).
+      keep right); the time held up (ours: under 16 units a second with one ranked above in its
+      way, ahead within reach); what short of its goal means (ours: beyond its arrival radius and
+      its radius; not short, its way is done; inferred).
 - [x] The static avoider's node: one radius ahead, the actor's radius wide (observed; its trigger,
       the window against fAcceptableErrorRatio, is ours: the path follower's stuck test).
 - [x] Detection: sight, sound, light, line of sight, stealth, detection states (detection.ts).

@@ -29,7 +29,11 @@ export const IDLE_AVOIDANCE_KEY: AvoidanceKey = [0xffffffff, 0xffffffff];
 /** The key of one dead, dying or down. */
 export const DOWN_AVOIDANCE_KEY: AvoidanceKey = [0, 0];
 
-/** Faster than this along its path (units a second), an actor is on its way for its key. */
+/**
+ * Faster than this along its path (units a second), an actor is on its way for its key (observed
+ * in the original). TODO(M13): which speed the original measures (ours, actor-movers.ts: the one
+ * it asks along its path) was not identified.
+ */
 const ON_ITS_WAY_SPEED = 5;
 
 /** An actor's avoidance key (AvoidanceKey). */
@@ -239,10 +243,15 @@ export function layAvoidNode(
  * ActorCollidewithActor line, the infos' IsSmallBump 0 ones: "Excuse me.", "Mind the way."), once
  * a travel, and given one more fMaxTimeBlockedByActors to step aside. Inferred, TODO(M13): the
  * line and that wait for the player (the engine's Avoid Player package is the player's swings'
- * and shots').
+ * and shots'). Not short of its goal, its path is not failed: its way is done (`done`; inferred,
+ * TODO(M13): what the original then does, and how near counts, were not identified).
  */
 export function blockedByActor(input: {
-  /** Seconds it has been held up (hardly moving with one ranked above it near). */
+  /**
+   * Seconds it has been held up: hardly moving with one ranked above it in its way. TODO(M13):
+   * this measure is ours (the movers': under 16 units a second with avoidance's blocker set);
+   * the original takes it from its movement controller, which was not read.
+   */
   readonly blockedFor: number;
   /** fMaxTimeBlockedByActors. */
   readonly most: number;
@@ -252,10 +261,13 @@ export function blockedByActor(input: {
   readonly askedPlayer: boolean;
   /** Its race uses the advanced avoidance (RACE DATA Flags 2). */
   readonly advanced: boolean;
-}): 'wait' | 'ask' | 'fail' {
+  /** It is still short of its goal (undefined: it is). */
+  readonly shortOfGoal?: boolean;
+}): 'wait' | 'ask' | 'fail' | 'done' {
   if (input.blockedFor <= input.most) return 'wait';
   if (input.playerStanding && !input.askedPlayer) return 'ask';
-  return input.advanced ? 'fail' : 'wait';
+  if (!input.advanced) return 'wait';
+  return input.shortOfGoal === false ? 'done' : 'fail';
 }
 
 /**

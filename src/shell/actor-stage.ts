@@ -511,6 +511,8 @@ export class ActorStage {
         this.flight.holds(actor) ||
         this.knockdowns.holds(actor) ||
         this.combat.paired(actor),
+      // Bleeding out (an essential actor down): last in the avoidance, no one goes round it.
+      down: (actor) => this.combat.saveDown(actor)?.bleedout !== undefined,
       // The player walked into an actor: it flinches by where they came from (ActionBumpedInto's
       // idles by GetLastBumpDirection) and says its ActorCollidewithActor line.
       stopIdle: (actor) => {

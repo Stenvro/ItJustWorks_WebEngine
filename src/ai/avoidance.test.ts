@@ -225,6 +225,16 @@ describe('blocked by actors (observed in the original)', () => {
     expect(blockedByActor(player)).toBe('ask');
     expect(blockedByActor({ ...player, askedPlayer: true })).toBe('fail');
   });
+
+  it('fails only short of its goal: there its way is done (inferred)', () => {
+    expect(blockedByActor({ ...held, advanced: true, shortOfGoal: true })).toBe('fail');
+    expect(blockedByActor({ ...held, advanced: true, shortOfGoal: false })).toBe('done');
+    // Still within fMaxTimeBlockedByActors, or without the advanced avoidance: it waits.
+    expect(blockedByActor({ ...held, blockedFor: 1, advanced: true, shortOfGoal: false })).toBe(
+      'wait',
+    );
+    expect(blockedByActor({ ...held, advanced: false, shortOfGoal: false })).toBe('wait');
+  });
 });
 
 describe("the static avoider's node (observed in the original)", () => {

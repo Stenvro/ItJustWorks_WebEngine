@@ -32,8 +32,6 @@ import {
   layAvoidNode,
   staticAvoidNode,
   avoidanceKey,
-  IDLE_AVOIDANCE_KEY as IDLE_KEY,
-  ranksAbove,
   type AvoidanceKey,
   type AvoidedNeighbour,
   type AvoidanceSettings,
@@ -310,6 +308,8 @@ export interface ActorMoversOptions {
   readonly obstacles?: NavmeshObstacleField;
   /** Whether something else holds an actor now (furniture): it has no controller meanwhile. */
   readonly held?: (actor: number) => boolean;
+  /** Whether an actor is down (an essential actor's bleedout): no one avoids it. */
+  readonly down?: (actor: number) => boolean;
   /** The middle-high process's turns: walkers beyond the high process walk on theirs. */
   readonly slicer?: ProcessSlicer;
   /** Whether an actor's attack under way turns it to its target (ATKD Rotating Attack). */
@@ -545,7 +545,11 @@ const BUMP_SPEED = 40;
 const ASIDE_REACH = 48;
 /** An actor going round others takes itself to go at least this fast (a walk, units/s). */
 const AVOID_SPEED = 80;
-/** An actor going slower than this with another in its way is kept from going on (units/s). */
+/**
+ * An actor going slower than this with one ranked above it in its way (avoidance.ts avoidance's
+ * blocker: ahead, within reach in the next moment) is held up (units/s). TODO(M13): ours; the
+ * original measures being held up by its movement controller, which was not read.
+ */
 const BLOCKED_SPEED = 16;
 /** A door this far ahead of an actor's shape is opened as it comes (units). */
 const DOOR_LOOKAHEAD = 96;
@@ -841,6 +845,16 @@ export class ActorMovers {
     const travel = this.#travels.get(reference);
     if (!travel) return undefined;
     return travel.follower ? travel.follower.ahead : [travel.destination];
+  }
+
+  /**
+   * The avoid nodes an actor's searches on its travel go round now: the one on the last actor in
+   * its way (`of`: that actor), and the static avoider's where it was held (none: no travel).
+   */
+  avoidNodesOf(reference: number): readonly (AvoidNode & { readonly of?: number | undefined })[] {
+    const travel = this.#travels.get(reference);
+    if (!travel) return [];
+    return travel.blockedBy ? [travel.blockedBy, ...travel.held] : [...travel.held];
   }
 
   /** What is left of this frame's path search nodes (SEARCH_NODES_PER_FRAME). */
@@ -1212,7 +1226,9 @@ export class ActorMovers {
       if (key === undefined) continue;
       seen.add(key);
       const before = travel.neighbours.get(key);
-      const { lay, clear, state } = layAvoidNode(before, other, mover.character.shape.radius, way, {
+      // Its width: twice its radius (the node goes on one within half of it of its way).
+      const width = 2 * mover.character.shape.radius;
+      const { lay, clear, state } = layAvoidNode(before, other, width, way, {
         advanced,
         step,
         refresh,
@@ -1242,7 +1258,6 @@ export class ActorMovers {
   #blockedByActors(
     mover: Mover,
     blocker: (Neighbour & { readonly mover: Mover | undefined }) | undefined,
-    held: boolean,
     advanced: boolean,
     step: number,
     most: number,
@@ -1255,20 +1270,30 @@ export class ActorMovers {
       travel.blockedFor = 0;
       return;
     }
-    const stuck = held && Math.hypot(...mover.velocity) < BLOCKED_SPEED;
-    travel.blockedFor = stuck ? travel.blockedFor + step : 0;
-    if (!stuck) return;
+    // Held up: one ranked above it in its way (ahead, within reach: the one it goes round), and it
+    // hardly moves. One near but not in its way (behind, beside: the player following it) does
+    // not hold it up. TODO(M13): this measure is ours (BLOCKED_SPEED).
+    if (!blocker || Math.hypot(...mover.velocity) >= BLOCKED_SPEED) {
+      travel.blockedFor = 0;
+      return;
+    }
+    travel.blockedFor += step;
     const response = blockedByActor({
       blockedFor: travel.blockedFor,
       most,
       playerStanding:
-        blocker !== undefined &&
-        blocker.mover === undefined &&
-        Math.hypot(...blocker.velocity) < BLOCKED_SPEED,
+        blocker.mover === undefined && Math.hypot(...blocker.velocity) < BLOCKED_SPEED,
       askedPlayer: travel.askedPlayer,
       advanced,
+      shortOfGoal: this.#shortOfGoal(mover, travel),
     });
     if (response === 'wait') return;
+    // Not short of its goal: as near as those in its way let it come, its way is done.
+    if (response === 'done') {
+      travel.blockedFor = 0;
+      travel.done(true);
+      return;
+    }
     travel.blockedFor = 0;
     if (response === 'ask') {
       travel.askedPlayer = true;
@@ -1286,6 +1311,18 @@ export class ActorMovers {
       'info',
     );
     this.#giveUp(reference, travel);
+  }
+
+  /**
+   * Whether an actor held up by actors is short of its goal (then its path fails; else its way is
+   * done). TODO(M13): inferred; observed in the original is only that the path follower drops a
+   * path blocked by actors while the actor is short of its goal. Ours: farther from it (seen from
+   * above) than its arrival radius and its own radius, the most one standing on the goal leaves.
+   */
+  #shortOfGoal(mover: Mover, travel: Travel): boolean {
+    const [x, y] = mover.character.feet;
+    const [gx, gy] = travel.destination;
+    return Math.hypot(gx - x, gy - y) > travel.arrive + mover.character.shape.radius;
   }
 
   /**
@@ -2824,15 +2861,7 @@ export class ActorMovers {
         // Only the advanced avoidance steers round those near (avoidance.ts; observed in the
         // original); the others keep their way, and their nodes take them round.
         if (self.advanced) request = { ...wanted, direction: passing.direction };
-        const held = near.some((other) => ranksAbove(other.key ?? IDLE_KEY, self.key));
-        this.#blockedByActors(
-          mover,
-          passing.blocker,
-          held,
-          self.advanced,
-          step,
-          avoiding.maxTimeBlocked,
-        );
+        this.#blockedByActors(mover, passing.blocker, self.advanced, step, avoiding.maxTimeBlocked);
       }
       const surface = this.#atWater(mover, step);
       const types = this.#types(mover);
@@ -2963,15 +2992,16 @@ export class ActorMovers {
 
   /**
    * An actor's avoidance key (avoidance.ts avoidanceKey): on its way while it has a travel and a
-   * way to go (the speed it asks along its path taken as its speed: one held up stays on its way),
-   * down when dead.
+   * way to go, down when dead or dying, or bleeding out (options.down). TODO(M13): inferred, the
+   * speed it asks along its path taken as its speed (at least AVOID_SPEED), so that one held up
+   * stays on its way; the original's own measure of its speed for the key was not identified.
    */
   #avoidanceKey(mover: Mover): AvoidanceKey {
     const reference = mover.staged.reference;
     const direction = this.#requests.get(reference)?.direction;
     const going = direction !== undefined && Math.hypot(direction[0], direction[1]) > 1e-6;
     return avoidanceKey({
-      down: mover.staged.dead,
+      down: mover.staged.dead || this.#options.down?.(reference) === true,
       travelling: going && this.#travels.has(reference),
       speed: going ? Math.max(Math.hypot(...mover.velocity), AVOID_SPEED) : 0,
       radius: mover.character.shape.radius,

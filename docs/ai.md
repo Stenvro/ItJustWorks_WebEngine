@@ -315,26 +315,38 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   head-on both keeping right, turning just as far as passing needs (at most 1.2 radians). The
   player riding (a horse, a cart) is carried and no one to go round: their own horse went round
   them every step, its way wavering left and right under its rider.
-  Kept from going on (slower than 16 units a second) with one ranked above it near for longer
-  than fMaxTimeBlockedByActors (1 s), its way is blocked by actors (observed in the original,
-  2026-11-18): with the advanced avoidance its path manager asks the path follower, which, short
-  of its goal, drops the path, and the path fails (MovementMessagePathFailed): a path failure as
-  any other (logged "is blocked by actors"; the travel ends, its package asks for a new one,
-  three in a row near one place warp it: Warped, below). Without the advanced avoidance it never
-  reports that; its nodes take it round. The player standing in its way is first asked to move
-  (its ActorCollidewithActor line, once a travel; inferred) and given another
-  fMaxTimeBlockedByActors. TODO(M13): the turn is ours: how the velocity obstacles (below) choose
-  the velocity was not read; the time held up is ours (the original's is its controller's own
-  measure), and a condition on what is left of its way (half its width) was not identified.
+  Held up for longer than fMaxTimeBlockedByActors (1 s), its way is blocked by actors (observed
+  in the original, 2026-11-18): with the advanced avoidance its path manager asks the path
+  follower, which, short of its goal, drops the path, and the path fails
+  (MovementMessagePathFailed): a path failure as any other (logged "is blocked by actors"; the
+  travel ends, its package asks for a new one, three in a row near one place warp it: Warped,
+  below). Without the advanced avoidance it never reports that; its nodes take it round. The
+  player standing in its way is first asked to move (its ActorCollidewithActor line, once a
+  travel; inferred) and given another fMaxTimeBlockedByActors.
+  Held up is ours (TODO(M13): the original takes it from its movement controller, not read):
+  slower than 16 units a second with one ranked above it in its way, the one it goes round
+  (ahead, within reach in the next moment). One merely near does not hold it up: the player
+  following it, a standing NPC beside or behind it (an earlier round counted any ranked one
+  within its avoidance radius, which failed the path of anyone slow near the player: a path
+  start's turn, a wait at a door, and Hadvar wedged at Helgen's rubble with the player behind
+  him, whose path failed before the static avoider's node was laid).
+  Not short of its goal (within its arrival radius and its own radius of it: one standing on the
+  goal keeps it that far off), its way is done instead of failed (inferred, TODO(M13): what the
+  original then does and how near counts, half its width, were not identified).
+  TODO(M13): the turn is ours: how the velocity obstacles (below) choose the velocity was not
+  read. Tested in tests/conformance/ai/actors-in-the-way.test.ts (Korvanjund01's hall: a slow
+  walker meeting another head-on fails its path; with the player behind it, it arrives; one
+  standing on its goal ends its way done).
 - **Whom it avoids** (observed in the original, 2026-11-18; `avoidanceKey`, src/ai/avoidance.ts):
   each actor has a key in the engine's avoidance manager and avoids (steers round, is blocked
   by) only those whose key is greater. One on its way (following a path, faster than 5 units a
   second) has its radius in whole units, then its form id: of two on their way the narrower
   avoids the wider, of two as wide the lower form id the higher, and the other keeps its way
   (their bodies push). One not on its way (standing, the player) has the greatest key: all go
-  round it, it round no one. One dead, dying or down has the least: no one goes round it. Ours
-  takes the speed it asks along its path as its speed (one held up stays on its way); down is
-  dead (TODO(M13): an essential actor's bleedout is not told to the movers).
+  round it, it round no one. One dead, dying or down has the least: no one goes round it (down:
+  bleeding out, told to the movers by the combat's state). Ours takes the speed it asks along
+  its path as its speed (one held up stays on its way; TODO(M13): the original's measure of the
+  speed for its key was not identified).
 - **Its avoid nodes on those near** (observed in the original; `layAvoidNode`, src/ai/avoidance.ts):
   it keeps a record of each it looks at, whether it moves (more than 5 units a second) and how old
   the record is. A node goes on one whose middle lies within half the actor's width and its own
@@ -342,7 +354,9 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   avoidance that is looked at only as the other comes to stand; without it, also whenever the other
   starts or stops and at least every fMaxTimeSizeAvoidNode (1 s), so those moving get nodes too.
   With the advanced avoidance one with a node that sets off has it taken away and the way is
-  searched again without it (observed; `clear`).
+  searched again without it (observed; `clear`). The actor's width is twice its radius (an
+  earlier round passed its radius as its width, so a node went only on one within half its
+  radius and the other's of the way; tested in actors-in-the-way.test.ts).
   Ours leaves the player to the line above. TODO(M13): the order of that line and the node.
 - **Round one standing in its way** (observed in the original): the path request the engine
   makes then lays an avoid node on each actor it records near the way, where it stands, its
