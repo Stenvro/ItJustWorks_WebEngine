@@ -38,6 +38,7 @@ import {
 } from '../../../src/gameplay/combat/damage.ts';
 import {
   bashStagger,
+  blockCounts,
   blockedStagger,
   hitStagger,
   staggerMagnitude,
@@ -426,6 +427,11 @@ describe('staggers (formula, observed in the original)', () => {
     // The damage blocked has no part in it: no such input; fStaggerBlockAttackBase and
     // fStaggerBlockAttackMult are not read.
     expect(Object.keys(settings)).not.toContain('staggerBlockAttackBase');
+  });
+  it('a paralysed blocker’s block counts for nothing  [original]', () => {
+    expect(blockCounts(true, false)).toBe(true);
+    expect(blockCounts(true, true)).toBe(false);
+    expect(blockCounts(false, false)).toBe(false);
   });
   it('fStaggerMaxDuration (3 s): a stagger holds at most this  [settings]', () => {
     expect(settings.staggerMaxDuration).toBe(ENGINE.fStaggerMaxDuration);

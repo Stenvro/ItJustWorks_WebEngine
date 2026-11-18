@@ -90,36 +90,74 @@ export function spellCameraRide(
   }
 }
 
-/**
- * The damage a spell's loosing is predicted to deal (CastingEngine.predictedDamage gives a
- * concentration spell's for a second): a concentration spell's spray carries its interval's
- * share, so the spray that kills is the one predicted to (inferred, TODO(M13): the original's
- * prediction for a concentration spell is not read); any other cast its whole.
- */
-export function spellLoosedDamage(perCast: number, seconds: number | undefined): number {
-  return seconds === undefined ? perCast : perCast * Math.max(0, seconds);
+/** What a cast is predicted to take from a target's health (CastingEngine.killPrediction). */
+export interface SpellKillPrediction {
+  /** At once: its detrimental Health effects' magnitudes, through what the target keeps. */
+  readonly immediate: number;
+  /** Over time: those with a duration, magnitude × seconds. */
+  readonly overTime: number;
+  /** The longest of those durations (seconds). */
+  readonly longest: number;
 }
 
-/** One the self spell's area reaches: how far from the caster, its predicted kill. */
+/**
+ * Whether a cast kills, and in how long (observed in the original): the target's Ward Power,
+ * when it has any, comes off both sums; it kills at once when what it takes at once reaches its
+ * health, else after the longest duration when what it takes over time does; else not.
+ */
+export function spellKill(
+  prediction: SpellKillPrediction,
+  health: number,
+  wardPower = 0,
+): { readonly kills: boolean; readonly seconds: number } {
+  const ward = wardPower > 0 ? wardPower : 0;
+  if (health - (prediction.immediate - ward) <= 0) return { kills: true, seconds: 0 };
+  if (health - (prediction.overTime - ward) <= 0)
+    return { kills: true, seconds: prediction.longest };
+  return { kills: false, seconds: 0 };
+}
+
+/**
+ * An aimed spell's kill camera (observed in the original): the cast must kill at once, a fire
+ * and forget missile's and a concentration spell's alike (a concentration spell by its whole
+ * magnitude, a second's); a kill over time plays none.
+ */
+export function aimedSpellKills(
+  prediction: SpellKillPrediction,
+  health: number,
+  wardPower = 0,
+): boolean {
+  const kill = spellKill(prediction, health, wardPower);
+  return kill.kills && kill.seconds <= 0;
+}
+
+/** One fighting the player, as a self spell's kill camera weighs it. */
 export interface SelfAreaCandidate {
   readonly reference: number;
+  /** Its distance from the caster. */
   readonly distance: number;
-  /** The damage of the effects whose area reaches it (predictedDamage of those). */
-  readonly damage: number;
-  readonly health: number;
-  readonly essential: boolean;
+  /** Whether the cast kills it (spellKill, its area's effects by its distance). */
+  readonly kills: boolean;
 }
 
+/** The farthest a self spell's kill camera looks for its target (units). */
+const SELF_AREA_REACH = 2500;
+
 /**
- * A self spell's kill (the magic kill camera's SelfCastTest paths: its cameras circle the
- * caster): of those its area reaches, the nearest it is predicted to kill, not essential.
- * Inferred, TODO(M13): the original's choice of the self cast's target is not read.
+ * A self spell's kill (observed in the original; the kill cameras' SelfCastTest paths circle the
+ * caster): a fire and forget self spell with an area, weighed against every actor fighting the
+ * player. Each must be predicted to die (unless [VATS] bVATSAllowNoKill), else there is none;
+ * the target is the nearest of them within 2500 units. Undefined: no kill camera. TODO(M13):
+ * with none that near the original looks once more by another way, not followed; ours plays none.
  */
-export function selfAreaKill(candidates: readonly SelfAreaCandidate[]): number | undefined {
+export function selfAreaKill(
+  candidates: readonly SelfAreaCandidate[],
+  allowNoKill = false,
+): number | undefined {
   let best: SelfAreaCandidate | undefined;
   for (const candidate of candidates) {
-    if (candidate.essential || !spellPredictedKill(candidate.damage, candidate.health)) continue;
-    if (!best || candidate.distance < best.distance) best = candidate;
+    if (!candidate.kills && !allowNoKill) return undefined;
+    if (candidate.distance < (best?.distance ?? SELF_AREA_REACH)) best = candidate;
   }
   return best?.reference;
 }

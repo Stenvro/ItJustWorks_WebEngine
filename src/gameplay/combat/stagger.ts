@@ -96,6 +96,14 @@ export function weaponStaggerRating(weaponType: number, settings: CombatSettings
   }
 }
 
+/**
+ * Whether an actor's block counts against a hit (observed in the original): it blocks and is not
+ * paralysed; a paralysed blocker's block takes neither damage nor stagger off.
+ */
+export function blockCounts(blocking: boolean, paralyzed: boolean): boolean {
+  return blocking && !paralyzed;
+}
+
 /** What decides the stagger of a hit on one blocking. */
 export interface BlockedStaggerInput {
   /** The hit's stagger (hitStagger, or a bash's). */
@@ -116,7 +124,7 @@ export interface BlockedStaggerInput {
  * A hit with no stagger (a plain attack: its attack stagger 0) stays without. It holds for one
  * who blocks whichever way it faces: the facing only decides the damage blocked. The damage
  * blocked has no part in it; fStaggerBlockAttackBase and fStaggerBlockAttackMult are not read.
- * TODO(M13): the original also skips this for an actor with one flag set, unnamed so far.
+ * A paralysed blocker holds nothing off (blockCounts).
  */
 export function blockedStagger(input: BlockedStaggerInput, settings: CombatSettings): number {
   if (input.hit <= 0) return input.hit;

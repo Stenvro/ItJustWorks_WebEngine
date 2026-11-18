@@ -19,6 +19,7 @@ import {
   readCombatAiSettings,
   selectTarget,
   shouldFlee,
+  magicHealthDamage,
   strengthDamage,
   strengthRatio,
   threatRatio,
@@ -294,17 +295,53 @@ describe('combat AI: fleeing and yielding', () => {
 });
 
 describe('the damage strength weighs', () => {
-  it("is a weapon's blow, or a creature's unarmed damage by its strongest attack", () => {
-    // WolfRace: unarmed damage 5, its lunges and power bites ×1.5 (ATKD).
-    const wolf = [
-      { damageMult: 1, bash: false },
-      { damageMult: 1.5, bash: false },
-    ];
-    expect(strengthDamage(5, false, wolf)).toBe(7.5);
-    expect(actorStrength(40, strengthDamage(5, false, wolf))).toBe(300);
-    // A bash is no blow of its; an armed actor's is its weapon's.
-    expect(strengthDamage(4, false, [{ damageMult: 3, bash: true }])).toBe(4);
-    expect(strengthDamage(7, true, wolf)).toBe(7);
+  // Observed in the original: what the hands hold added up, else the fists (the unarmed damage at
+  // the fists' speed, a melee weapon's dps mult); a spell by its hostile detrimental health
+  // magnitudes, fire and forget over its charge time and a second.
+  const melee = settings.dpsMeleeSpeedMult;
+  it('is what the hands hold added up, each a second', () => {
+    const sword = { kind: 'weapon', damage: 8, speed: 1, bow: false } as const;
+    const dagger = { kind: 'weapon', damage: 4, speed: 1.3, bow: false } as const;
+    expect(strengthDamage([sword], 5, settings)).toBeCloseTo(8 * melee);
+    expect(strengthDamage([sword, dagger], 5, settings)).toBeCloseTo((8 + 4 * 1.3) * melee);
+    const bow = { kind: 'weapon', damage: 20, speed: 1, bow: true } as const;
+    expect(strengthDamage([bow], 5, settings)).toBeCloseTo(20 * settings.dpsBowSpeedMult);
+  });
+
+  it("is a creature's unarmed damage at the fists' speed, no attack's mult", () => {
+    // WolfRace: unarmed damage 5 (its power bites' ×1.5 do not count).
+    expect(strengthDamage([], 5, settings)).toBeCloseTo(5 * melee);
+    expect(actorStrength(40, strengthDamage([], 5, settings))).toBeCloseTo(200 * melee);
+  });
+
+  it("weighs a spell by its effects' health damage, fire and forget over its charge time", () => {
+    const fireDamage = {
+      magnitude: 25,
+      flags: 0x5,
+      actorValue: 24,
+      secondActorValue: -1,
+      secondValueWeight: 0,
+      conditioned: false,
+    };
+    expect(magicHealthDamage([fireDamage])).toBe(25);
+    // Not detrimental, with conditions, no magnitude, or another value: nothing.
+    expect(magicHealthDamage([{ ...fireDamage, flags: 0x1 }])).toBe(0);
+    expect(magicHealthDamage([{ ...fireDamage, conditioned: true }])).toBe(0);
+    expect(magicHealthDamage([{ ...fireDamage, flags: 0x405 }])).toBe(0);
+    expect(magicHealthDamage([{ ...fireDamage, actorValue: 26 }])).toBe(0);
+    // A second value of Health by its weight (an absorb's).
+    expect(
+      magicHealthDamage([
+        { ...fireDamage, actorValue: 26, secondActorValue: 24, secondValueWeight: 0.5 },
+      ]),
+    ).toBe(12.5);
+    const firebolt = { kind: 'magic', health: 25, fireAndForget: true, chargeTime: 0.5 } as const;
+    expect(strengthDamage([firebolt], 5, settings)).toBeCloseTo(25 / 1.5);
+    const flames = { kind: 'magic', health: 8, fireAndForget: false, chargeTime: 0 } as const;
+    expect(strengthDamage([flames], 5, settings)).toBe(8);
+    // A healing spell deals none: the fists then.
+    const heal = { kind: 'magic', health: 0, fireAndForget: false, chargeTime: 0 } as const;
+    expect(strengthDamage([heal], 5, settings)).toBeCloseTo(5 * melee);
   });
 });
 

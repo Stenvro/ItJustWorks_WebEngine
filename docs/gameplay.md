@@ -1183,8 +1183,11 @@ fVATSSafetyMaxTimeRanged (6 s).
 
 The magic kill camera (observed in the original; `spellLoosed` in `src/shell/actor-combat.ts`, from
 `src/shell/actor-casting.ts`): the same way for a spell the player looses whose projectile flies at
-one it is predicted to kill (each hostile effect on Health, its magnitude by its seconds through
-what the target keeps: `CastingEngine.predictedDamage`), the camera riding the projectile, with the
+one it is predicted to kill at once (`CastingEngine.killPrediction`, `spellKill`: of its
+detrimental effects on Health whose own conditions hold, each magnitude through what the target
+keeps, a dual cast's by fMagicDualCastingEffectivenessBase where its power affects them; the
+target's Ward Power off; what it would take over time by the effects' durations makes a kill
+later, which plays no camera for an aimed cast), the camera riding the projectile, with the
 casting type and delivery in GetVATSValue and its action magic. What plays for a beam, a flame,
 a cone or a self spell is the kill cameras' tree's own choice, by GetVATSValue's projectile type
 (18), delivery (19) and casting type (20) (read from the data: `node tools/idle-info.ts
@@ -1197,13 +1200,14 @@ self caster; the close cameras take the rest, flames included (`spellCameraRide`
 src/gameplay/combat/ranged-kill-camera.ts). So: a missile's or lobber's camera rides it (none
 in the air: none), a flame's rides its spray (MagicProjectiles.flying with its sprays), a
 beam's rides nothing (it reaches at once; a shot at the projectile is measured from the
-attacker). A concentration spell's spray is predicted by its interval's share of the spell's
-second, so the spray that kills is the one predicted to (`spellLoosedDamage`; inferred,
-TODO(M13)). A self spell with an area (Fire Storm) loosed is the kill of the nearest actor its
-area reaches whom the effects reaching that far are predicted to kill, not essential
-(`selfAreaKill`, CastingEngine.predictedDamage with the distance; inferred, TODO(M13): the
-original's choice of a self cast's target is not read); a self spell without an area (a cloak, a
-heal) has none. Tests: src/gameplay/combat/ranged-kill-camera.test.ts,
+attacker). Observed in the original: a concentration spell's spray is predicted by the spell's
+whole magnitude (a second's), as any cast (`aimedSpellKills`). A fire and forget self spell with
+an area (Fire Storm) is weighed against every actor fighting the player (any number of them; at
+least one): each must be predicted to die by the effects whose area (feet × fMagicUnitsPerFoot)
+reaches it, over time counting too (unless [VATS] bVATSAllowNoKill), and the kill is the nearest
+of them within 2500 units (`selfAreaKill`; TODO(M13): with none that near the original looks once
+more another way, not followed: none plays); a self spell without an area (a cloak, a heal) has
+none. Tests: src/gameplay/combat/ranged-kill-camera.test.ts,
 tests/magic-kill-camera.int.test.ts.
 
 ## Crime and factions

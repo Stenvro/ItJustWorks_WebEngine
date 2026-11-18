@@ -2607,6 +2607,8 @@ meanwhile.
   fBlockWeaponScaling × the attacker's weapon damage × skill / 100; × fBlockPowerAttackMult
   against a power attack; then the blocker's perks (Mod Percent Blocked: Shield Wall, Fortify
   Block); at most fPlayerMaxResistance percent (85), for every blocker, not the player alone.
+  A paralysed blocker's block counts for nothing, neither the damage nor the stagger it would
+  hold off (observed in the original: `blockCounts`).
   The blocker's Shield Perks actor value adds to a shield's skill term there; no plugin effect
   sets it (TODO(M13): read it once one does). fBlockMax (0.7), fBlockSkillMult (2) and
   fBlockAmountWeaponMult (1) are registered by the original and never read: an earlier game's
@@ -2640,16 +2642,17 @@ meanwhile.
   target's character controller away from the attacker (from the hit's point without one) by
   (the whole physical damage × fKnockbackDamageMult + fKnockbackDamageBase) × (fKnockbackAgilBase
   - fKnockbackAgilMult × 50) game units (the 50 an earlier game's Agility at its middle;
-    vanilla: (damage × 5 + 50) × 0.6), at most fKnockbackForceMax (128), spread over
-    fKnockbackTime (0.3 s): the controller moves at force / time units a second besides its own
-    movement, unless a stronger push already moves it. A hit that names its own push (a trap's
+    vanilla: (damage × 5 + 50) × 0.6), at most fKnockbackForceMax (128), given over
+    fKnockbackTime (0.3 s): the controller moves at force units a second besides its own
+    movement at first, the speed falling evenly to nothing as the time runs out (force × time / 2
+    units in all), unless a stronger push already moves it. The damage is the physical damage
+    the hit carries: its damage before the target's armour, resistance and block, in whole
+    points. A hit that names its own push (a trap's
     ProcessTrapHit pushback: `trapPushback`, away from the trap along the ground, the trap's
     pushback at most fKnockbackForceMax over fKnockbackTime; the actor is not knocked down) uses
     it instead of the formula. No push on an actor in a kill move,
     of a race that is Not Pushable (RACE DATA 0x400), or from a projectile (arrows, bolts).
-    Inferred: the push is held for the whole time (TODO(M13): whether the controller lets it
-    fade); the damage is the hit's physical damage after armour (TODO(M13): which stage of the
-    hit's damage the engine reads). fConcussionTimer (40) is registered by the original and never
+    fConcussionTimer (40) is registered by the original and never
     read (an earlier game's concussion: inert).
     The Stagger effect (MGEF archetype 33: Unrelenting Force's 0.75, 1.25, 1.5; the Incinerate
     and Ice Spike perks' push 0.25; the giants' and atronachs' area slams) staggers by its
@@ -3543,8 +3546,9 @@ engine's ([Combat movement](#combat-movement)).
   Disable Combat Boundary, is no candidate ([Combat] bEncounterZoneTargetRestrict: `zonesAllow`),
   and the player's teammates pass children over.
 - **The odds**: every fCombatThreatRatioUpdateTime (5 s) its side's strength against its enemies'
-  (each `actorStrength`: damage per second × health / (1 − its own armour's reduction, at most
-  0.99)); its fleeing allies count nothing, itself always. They stand at 100 unweighed for a
+  (each `actorStrength`: damage per second × health / (1 − its own armour's share, at most 0.99,
+  fMaxArmorRating not holding it); the damage is what its hands hold added up, else its fists:
+  docs/audio.md, "Music"); its fleeing allies count nothing, itself always. They stand at 100 unweighed for a
   frenzied actor (Aggression 3) or one not engaged for 120 s (`oddsWeighed`; TODO(M13): what
   engages it is read here as a blow given or taken). The combat music and daresHelp weigh the same
   strength.
@@ -3552,10 +3556,27 @@ engine's ([Combat movement](#combat-movement)).
   its target, and any enemy it detects in combat, becomes the group's; the group keeps what
   its members know of its targets ([Combat detection](#combat-detection)): a target the group
   has not lost counts as detected for each member, at the place the group knows; it counts for
-  the style's group offensive mult and GetCombatGroupMemberCount; one dying, another says
-  AllyKilled. As two or more of a group come to attack one target, the group's longest member
-  that does not flee calls its strategy (GroupStrategy, once each time; inferred, TODO(M13):
-  nothing in the original was found to say it, and vanilla's GroupStrategy topics hold no line).
+  the style's group offensive mult and GetCombatGroupMemberCount; one dying in a group of two
+  or more, its living member nearest where it fell (not the player) says AllyKilled (observed in
+  the original).
+- **Combat dialogue** (`src/ai/combat-dialogue.ts`; observed in the original): every combat line
+  goes through one gate. [Combat] bDisableCombatDialogue silences them. A subtype's timer must
+  have run out: more than its span, drawn in fCombatDialogue{stem}{Min, Max}ElapsedTime as its
+  last line was said, has passed; Attack, PowerAttack, Bash and Block share the Attack timer,
+  Taunt, Bleedout and Flee each have their own (each actor's, in its combat state), AllyKilled
+  and AvoidThreat are its combat group's (one member's line holds the others back); Hit, Death
+  and GroupStrategy have none. The sound listener (where the camera hears) must be within the
+  subtype's fCombatDialogue*DistanceMult × the attenuation max distance of the 3D dialogue
+  output model (DOBJ DOP2: SOMDialogue3DDefault, 3000; none, no limit), measured in 3D from the
+  speaker. Then an info of the subtype is looked for; only when one is said does its timer
+  start. A blow calls the struck one's Hit line when it takes more than
+  fCombatSpeakHitThreshold of its health, a smaller one by fCombatSpeakHitChance;
+  fCombatSpeakAttackChance, fCombatSpeakPowerAttackChance and fCombatSpeakTauntChance are
+  registered and never read (attack lines come by their timer, taunts by the controller's taunt
+  timer). No path of the engine's that says a combat line asks for GroupStrategy, so no one says
+  it (vanilla's GroupStrategy topics hold no line either). Who says what: an attack's line as
+  the attack starts (PowerAttack for a power attack, Bash for a bash), Bleedout as one starts
+  bleeding out, Flee, Taunt by the taunt timer, Hit as above, AllyKilled as above.
 - **What it fights with** (`chooseEquipment`, weighed continuously, every update, once what it
   took up has been kept its kind's fCombatInventoryMinEquipTime: a weapon 5 s, magic and a shout
   3 s, a staff 5 s, its fists 0 s (`nextEquipWeighing`); what it carries and its spells are read

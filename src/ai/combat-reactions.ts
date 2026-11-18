@@ -64,9 +64,10 @@ export interface ReactionFacts extends FactionFacts {
 /**
  * Whether an actor fighting the player (or fleeing them) counts as a threat to them: not one
  * of a Non-Hostile race (RACE DATA Flags 2; 13 races: the deer, elk, foxes, goats, cows,
- * chickens, hares, the pets). Such an animal keeps no one from waiting or fast travelling,
- * plays no combat music and shows as no enemy on the compass. TODO(M13): the plain reading of
- * the flag's name; what else the engine gates by it is not documented.
+ * chickens, hares, the pets). Such an animal keeps no one from waiting or fast travelling and
+ * shows as no enemy on the compass (the combat music does not ask it: observed in the original,
+ * src/audio/combat-music.ts). TODO(M13): the plain reading of the flag's name; what else the
+ * engine gates by it is not documented.
  */
 export function threatensPlayer(raceFlags2: number): boolean {
   return (raceFlags2 & RaceFlag2.nonHostile) === 0;

@@ -80,6 +80,7 @@ import {
   type ProjectileRecord,
 } from '../../world/projectile-data.ts';
 import { CastType, parseShout, type ShoutRecord } from '../../world/spell-records.ts';
+import type { SpellKillPrediction } from '../../gameplay/combat/ranged-kill-camera.ts';
 import { PLAYER_REF } from './forms.ts';
 import type { ActorCastingState, Vec3 } from './game-state.ts';
 import type { ScriptRuntime } from './runtime.ts';
@@ -1821,33 +1822,62 @@ export class CastingEngine {
   }
 
   /**
-   * The health a cast of an item would take from a target (the magic kill camera's prediction):
-   * each hostile effect on Health, its magnitude by its seconds (a concentration spell's a
-   * second's) through what the target keeps of it. `areaDistance`: only the effects whose area
-   * reaches that far (a self spell's area round its caster, as area() reaches: an effect with No
-   * Area reaches none).
+   * What a cast of an item would take from a target's health (the magic kill camera's
+   * prediction, observed in the original; spellKill decides by it): of its detrimental effects
+   * on Health whose own conditions hold (the target their subject, the caster their target),
+   * each adds its magnitude through what the target keeps of it at once (`immediate`), and one
+   * with a duration its magnitude × its seconds to `overTime`, the longest of those `longest`. A
+   * dual cast's magnitudes and durations (by Power Affects Magnitude / Duration) take
+   * fMagicDualCastingEffectivenessBase. `areaDistance` (a self spell's area round its caster):
+   * an effect with an area counts only for a target within its area × fMagicUnitsPerFoot.
    */
-  async predictedDamage(
+  async killPrediction(
     actor: number,
     item: MagicItemRecord,
     target: number,
-    areaDistance?: number,
-  ): Promise<number> {
+    options: { readonly areaDistance?: number; readonly dual?: boolean } = {},
+  ): Promise<SpellKillPrediction> {
     const runtime = this.#runtime;
-    let damage = 0;
-    for (const [index, entry] of item.effects.entries()) {
+    const number = async (name: string, fallback: number): Promise<number> => {
+      const value = await runtime.gameSetting(name);
+      return typeof value === 'number' ? value : fallback;
+    };
+    const dual =
+      options.dual === true &&
+      item.type === 'SPEL' &&
+      (item.flags & MagicSpellFlag.noDualCastModification) === 0;
+    const power = dual ? await number('fMagicDualCastingEffectivenessBase', 2.2) : 1;
+    const unitsPerFoot = await number('fMagicUnitsPerFoot', 22);
+    let immediate = 0;
+    let overTime = 0;
+    let longest = 0;
+    for (const entry of item.effects) {
       const effect = await runtime.magic.effect(entry.effect);
-      if (!effect || (effect.flags & EffectFlag.hostile) === 0) continue;
+      if (!effect || (effect.flags & EffectFlag.detrimental) === 0) continue;
       if (effect.actorValue !== HEALTH) continue;
-      if (areaDistance !== undefined) {
-        const area = (effect.flags & EffectFlag.noArea) !== 0 ? 0 : entry.area * UNITS_PER_FOOT;
-        if (!(area > 0) || areaDistance > area) continue;
+      if (
+        effect.conditions.length > 0 &&
+        !(await runtime.conditionsHold(effect.conditions, runtime.actorHandle(target), undefined, {
+          target: runtime.actorHandle(actor),
+        }))
+      )
+        continue;
+      let magnitude = (effect.flags & EffectFlag.noMagnitude) !== 0 ? 0 : entry.magnitude;
+      const area = (effect.flags & EffectFlag.noArea) !== 0 ? 0 : entry.area;
+      if (options.areaDistance !== undefined && area >= 1) {
+        if (options.areaDistance > area * unitsPerFoot) magnitude = 0;
       }
-      const seconds = item.castType === CastType.concentration ? 1 : Math.max(1, entry.duration);
-      const keeps = await runtime.magic.foresee(item, index, target, actor);
-      damage += Math.max(0, entry.magnitude) * seconds * keeps;
+      let seconds = (effect.flags & EffectFlag.noDuration) !== 0 ? 0 : entry.duration;
+      if ((effect.flags & EffectFlag.powerAffectsDuration) !== 0) seconds *= power;
+      if ((effect.flags & EffectFlag.powerAffectsMagnitude) !== 0) magnitude *= power;
+      const keeps = await runtime.magic.resistedShare(item, effect, target);
+      immediate += magnitude * keeps;
+      if (seconds > 0) {
+        longest = Math.max(longest, seconds);
+        overTime += seconds * magnitude * keeps;
+      }
     }
-    return damage;
+    return { immediate, overTime, longest };
   }
 
   /** Whether the AI waits yet to cast an item again (its effects' MGEF AI Delay Time). */

@@ -268,24 +268,32 @@ or not, and the last lightning flash.
 `music.ts` decides what plays, `music-output.ts` plays it. Music types are in play: the
 location's and those game events add (combat: the default object BTMS, MUSCombat, or
 MUSCombatBoss against an actor with the location reference type Boss, as `combat-music.ts`
-decides, observed in the original: weighed every fCombatMusicUpdateTime; a fight against
-the player starts it when the player's strength over the strength of its fighters the player
-detects is below fCombatMusicPlayerTargetedThreatRatio (Skyrim.esm 1, the engine's own 2), a
-fight not against the player when one of its fighters is within
-fCombatMusicNearCombatInnerRadius, the player detects one of them and their strength passes the
-player's × fCombatMusicPlayerNearStrengthMult; playing, a fight against the player or within
-fCombatMusicNearCombatOuterRadius keeps it, the odds not weighed again; it ends
-fCombatMusicStopTime after the last fight with its finale; a fight not against the player
-counts only once it is even: each combat group decides it once, fCombatMusicGroupThreatRatioTimer
-(1 s) after it forms, its targets' strength over its own between fCombatMusicGroupThreatRatioMin
-and Max (0.5 and 2, exclusive), so guards cutting down a mudcrab start nothing
-(fCombatMusicPlayerCombatStrengthCap is never read). The fighters against the player are
-weighed together (the targets of the player's own group); each combat group fighting near the
-player is weighed apart, its own evenness and its own strength against the player's, so two
-small fights near the player do not add up to one worth music (inferred from the per-group
-settings, TODO(M13): a check of the group the engine makes before the odds is not identified). Strength (the engine's, also its
-GetThreatRatio's): damage × health / (1 − the armour's reduction, at most 0.99), so a lone
-wolf does not start it for a new player but a pack does; `src/shell/actor-combat.ts` feeds it; its
+decides, observed in the original: the combat groups are weighed every
+fCombatMusicUpdateTime; a group that searches, has no target or whose members all flee is passed
+over. A group with the player among its targets, not lost to it, starts the music on its own when
+the player's strength over the strength of its members the player detects is below
+fCombatMusicPlayerTargetedThreatRatio (Skyrim.esm 1, the engine's own 2); two such groups are
+not added up. A group fighting near the player (not against them) counts only once it is even:
+each combat group decides it once, fCombatMusicGroupThreatRatioTimer (1 s) after it forms, the
+time running only while it does not search, its own strength (members not fleeing) over its
+targets' between fCombatMusicGroupThreatRatioMin and Max (0.5 and 2, exclusive), so guards
+cutting down a mudcrab start nothing; the even groups with a member within
+fCombatMusicNearCombatInnerRadius add up their strength, and the music starts once the player
+detects a member of one of them and the sum passes the player's ×
+fCombatMusicPlayerNearStrengthMult. Playing, a group against the player keeps it, as does an even
+one with a member within fCombatMusicNearCombatOuterRadius (both radii strict); the odds are not
+weighed again; it ends fCombatMusicStopTime after the last fight with its finale
+(fCombatMusicPlayerCombatStrengthCap is never read). Strength (the engine's, also its
+GetThreatRatio's): damage a second × health / (1 − the armour's share, its rating ×
+fArmorScalingFactor percent and its pieces', at most 0.99: fMaxArmorRating does not hold it). The
+damage: what its hands hold added up, a weapon its blow (a bow's shot with its arrow) × its speed
+× fCombatDPSMeleeSpeedMult (fCombatDPSBowSpeedMult for a bow or crossbow), a spell, scroll or
+staff its hostile and detrimental effects' magnitudes on Health (an effect with conditions of its
+own counts nothing; a second value of Health by its weight), a fire and forget one over its charge
+time and a second; with nothing that deals damage, its fists (its unarmed damage at the fists'
+speed). The engine keeps the more of that and its combat inventory's first item's (TODO(M13):
+that list's order was not read, ours leaves it out). So a lone wolf does not start it for a new
+player but a pack does; `src/shell/actor-combat.ts` feeds it; its
 conditions' GetCombatTargetHasKeyword asking the player's foes, the boss music against dragons;
 discoveries, quest moments
 and the rest through Papyrus MusicType.Add / Remove, from the script runtime). The location's is the cell's XCMO; else its location's (LCTN NAM1, or the nearest parent

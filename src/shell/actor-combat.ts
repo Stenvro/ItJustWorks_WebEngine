@@ -18,7 +18,7 @@
 // assistance, target choice, the combat style's movement and attacks, fleeing, searching): it
 // sets each fighter's target and asks for its draws, attacks, blocks and releases here.
 
-import { strengthDamage } from '../ai/combat-ai.ts';
+import { magicHealthDamage, type StrengthItem } from '../ai/combat-ai.ts';
 import { threatensPlayer } from '../ai/combat-reactions.ts';
 import { RaceAiFlag, parseNpcCombat, parseRaceCombat } from '../ai/race-combat-records.ts';
 import {
@@ -32,7 +32,7 @@ import { atMark, partnerMark } from '../animation/paired-clips.ts';
 import type { AnimationBinding } from '../formats/hkx/animation.ts';
 import type { GraphEvent } from '../animation/graph-events.ts';
 import type { ActorGraphSource } from './actor-graph-events.ts';
-import { ActorValue } from '../world/actor-values.ts';
+import { ActorValue, actorValueIndex } from '../world/actor-values.ts';
 import { BodyPartType, parseBodyPartData, type BodyPart } from '../world/body-part-data.ts';
 import { DefaultObjectUse } from '../world/default-objects.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -41,8 +41,9 @@ import {
   CombatMusic,
   readCombatMusicSettings,
   type CombatMusicChoice,
+  type CombatMusicGroup,
   type CombatMusicInput,
-  type CombatMusicThreat,
+  type CombatMusicMember,
 } from '../audio/combat-music.ts';
 import { WeaponIdleSounds, type WeaponIdle } from './weapon-idle-sounds.ts';
 import type { ActorCombatState, ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -132,8 +133,8 @@ import {
   rangedKillCameraPlays,
   selfAreaKill,
   spellCameraRide,
-  spellLoosedDamage,
-  spellPredictedKill,
+  aimedSpellKills,
+  spellKill,
   type SelfAreaCandidate,
 } from '../gameplay/combat/ranged-kill-camera.ts';
 import { flightKind } from '../gameplay/magic/projectile-flight.ts';
@@ -151,6 +152,7 @@ import { ProjectileFlag } from '../world/projectile-data.ts';
 import type { AimTarget, ProjectileAim, ShotKind } from './projectile-aim.ts';
 import {
   bashStagger,
+  blockCounts,
   blockedStagger,
   hitStagger,
   recoilOf,
@@ -193,6 +195,7 @@ import type { PlayerAvatar } from './player-avatar.ts';
 import type { CombatBridge } from './script-world.ts';
 import type { Terminal } from './terminal.ts';
 import { Delivery, type MagicItemRecord } from '../world/magic-records.ts';
+import { CastType } from '../world/spell-records.ts';
 import { KillmoveCamera, type KillmoveSubjects } from './killmove-camera.ts';
 import { PlayerCombat, type CastingButtons } from './player-combat.ts';
 import type { ActorTalk } from './actor-talk.ts';
@@ -466,8 +469,9 @@ export interface Practice {
 /** What a fighter's hands hold, for combat. */
 interface Gear {
   readonly right: WeaponStats;
-  /** The damage its strength weighs (strengthDamage: its weapon's, or its best unarmed blow). */
-  readonly strengthDamage: number;
+  /** What its hands hold, as its strength weighs them (strengthDamage), and its unarmed damage. */
+  readonly strengthItems: readonly StrengthItem[];
+  readonly strengthUnarmed: number;
   readonly left: WeaponStats;
   readonly rightRecord: WeaponCombat | undefined;
   readonly leftRecord: WeaponCombat | undefined;
@@ -516,7 +520,8 @@ export interface ActorCombatOptions {
   readonly playerBody?: () => BodyHolder | undefined;
   /** The player's character controller: a hit's push back moves it (knockback.ts). */
   readonly playerCharacter?: () =>
-    { knockBack(velocity: readonly [number, number], seconds: number): void } | undefined;
+    | { knockBack(velocity: readonly [number, number], seconds: number, fades?: boolean): void }
+    | undefined;
   /**
    * The player began (true) or ended (false) bleeding out (src/shell/player-death.ts): their
    * controls stop and the bleedout camera looks at them meanwhile.
@@ -1098,7 +1103,7 @@ export class ActorCombat implements CombatBridge {
     if (fighter.target === source) fighter.target = undefined;
     if (fighter.player) this.#options.playerBleedout?.(true);
     void this.#act(fighter, 'ActionBleedoutStart');
-    this.#bark(fighter.reference, 'BleedOut', source);
+    if (!fighter.player) this.#brain.line(fighter.reference, 'Bleedout', 'BleedOut', source);
     // The hub tells it (TESEnterBleedoutEvent: OnEnterBleedout), as the engine does when an
     // actor's life state turns to bleeding out (observed in the original; the player's too).
     this.#options.session.scriptsReady?.events.emit('enterBleedout', { actor });
@@ -1280,7 +1285,8 @@ export class ActorCombat implements CombatBridge {
     // Attacking ends its invisibility (the magic system); its combat line (an NPC's).
     runtime.magic.acted(reference);
     if (!fighter.player) {
-      this.#bark(reference, kind.bash ? 'Bash' : kind.power ? 'PowerAttack' : 'Attack', target);
+      const line = kind.bash ? 'Bash' : kind.power ? 'PowerAttack' : 'Attack';
+      this.#brain.line(reference, line, line, target);
     }
     // A paired killmove: the one it is done to plays its part.
     if (lower.startsWith(PAIRED_PREFIX) && target !== undefined) this.#pair(fighter, target, event);
@@ -1816,6 +1822,52 @@ export class ActorCombat implements CombatBridge {
     }
   }
 
+  /**
+   * What one hand holds as strength weighs it (combat-ai.ts itemStrength): a weapon (a bow's or
+   * crossbow's shot with its ammunition), a staff by its enchantment, a spell or scroll; nothing
+   * for an empty hand, a shield or a torch.
+   */
+  async #strengthItem(
+    stats: WeaponStats,
+    spell: number | undefined,
+    runtime: ScriptRuntime,
+  ): Promise<StrengthItem | undefined> {
+    let magic: number | undefined = spell;
+    if (stats.weapon !== undefined) {
+      if (stats.weaponType !== WeaponType.staff) {
+        const bow = stats.weaponType === WeaponType.bow || stats.weaponType === WeaponType.crossbow;
+        return {
+          kind: 'weapon',
+          damage: bow ? stats.shotDamage : stats.damage,
+          speed: stats.speed,
+          bow,
+        };
+      }
+      magic = (await runtime.equipment.item(stats.weapon))?.enchantment;
+    }
+    const item = magic === undefined ? undefined : await runtime.magic.item(magic);
+    if (!item) return undefined;
+    const effects = await Promise.all(
+      item.effects.map(async (effect) => {
+        const record = await runtime.magic.effect(effect.effect);
+        return {
+          magnitude: effect.magnitude,
+          flags: record?.flags ?? 0,
+          actorValue: record?.actorValue ?? -1,
+          secondActorValue: record?.secondActorValue ?? -1,
+          secondValueWeight: record?.secondValueWeight ?? 0,
+          conditioned: (record?.conditions.length ?? 0) > 0,
+        };
+      }),
+    );
+    return {
+      kind: 'magic',
+      health: magicHealthDamage(effects),
+      fireAndForget: item.castType === CastType.fireAndForget,
+      chargeTime: item.chargeTime,
+    };
+  }
+
   async #readGear(fighter: Fighter, runtime: ScriptRuntime): Promise<Gear> {
     const reference = fighter.reference;
     const equipment = runtime.equipment;
@@ -1864,16 +1916,18 @@ export class ActorCombat implements CombatBridge {
     };
     const [rightSpell, leftSpell] = await Promise.all([spell(loadout.right), spell(loadout.left)]);
     const attacks = new AttackSet(raceAttacks, own);
+    const strengthItems = (
+      await Promise.all([
+        this.#strengthItem(right, rightSpell ? loadout.right : undefined, runtime),
+        this.#strengthItem(left, leftSpell ? loadout.left : undefined, runtime),
+      ])
+    ).filter((item) => item !== undefined);
     return {
       right,
-      strengthDamage: strengthDamage(
-        right.damage,
-        right.weapon !== undefined,
-        [...attacks.all()].map((attack) => ({
-          damageMult: attack.damageMult,
-          bash: attackEventKind(attack.event, attack)?.bash === true,
-        })),
-      ),
+      strengthItems,
+      // Its unarmed damage (a hand without a weapon: weaponStats gives it).
+      strengthUnarmed:
+        right.weapon === undefined ? right.damage : left.weapon === undefined ? left.damage : 0,
       left,
       rightRecord,
       leftRecord,
@@ -2887,13 +2941,14 @@ export class ActorCombat implements CombatBridge {
     if (attacker.player && targetRef !== PLAYER_REF)
       void this.#playerStrike(runtime, targetRef, stats, critical > 0, sneak ? sneakMult : 0);
     // The block: the target blocks and faces the blow (fCombatHitConeAngle). Observed in the
-    // original: a shot is blocked too, by a shield or a weapon, not by bare hands.
+    // original: a shot is blocked too, by a shield or a weapon, not by bare hands; a paralysed
+    // blocker's block counts for nothing (neither the damage nor the stagger it holds off).
     const targetFeet = this.#feet(target) ?? hit.point;
     const attackerFeet = this.#feet(attacker) ?? hit.point;
     const targetGear = target.gear;
     const shielded = targetGear?.shield !== undefined;
     const blocks =
-      target.state.blocking &&
+      blockCounts(target.state.blocking, runtime.magic.aiState(targetRef).paralyzed) &&
       (!hit.shot || shielded || targetGear?.right.weapon !== undefined) &&
       blockCovers(targetFeet, this.#heading(target), attackerFeet, settings.combatHitConeAngle);
     // An arrow at a raised shield may glance off (Mod Shield Deflect Arrow Chance, percent:
@@ -3009,7 +3064,10 @@ export class ActorCombat implements CombatBridge {
           },
           settings,
         );
-    const staggerValue = target.state.blocking
+    const staggerValue = blockCounts(
+      target.state.blocking,
+      runtime.magic.aiState(targetRef).paralyzed,
+    )
       ? blockedStagger(
           {
             hit: unblockedStagger,
@@ -3028,7 +3086,7 @@ export class ActorCombat implements CombatBridge {
     // armour, and the stagger).
     if (blocks) {
       void this.#act(target, 'ActionBlockHit');
-      this.#bark(targetRef, 'Block', attackerRef);
+      if (!target.player) this.#brain.line(targetRef, 'Block', 'Block', attackerRef);
       const recoil = hit.shot ? 'none' : recoilOf(hit, 'block');
       if (recoil !== 'none') {
         attacker.state.recoiling = true;
@@ -3069,12 +3127,12 @@ export class ActorCombat implements CombatBridge {
         const push = knockbackVelocity(
           attackerFeet,
           targetFeet,
-          knockbackForce(result.physical, settings),
+          knockbackForce(result.beforeArmor, settings),
           settings.knockbackTime,
         );
         if (push) {
           const flat = [push.velocity[0], push.velocity[1]] as const;
-          if (target.player) this.#options.playerCharacter?.()?.knockBack(flat, push.seconds);
+          if (target.player) this.#options.playerCharacter?.()?.knockBack(flat, push.seconds, true);
           else this.#options.movers.knockBack(targetRef, flat, push.seconds);
         }
       }
@@ -3208,6 +3266,8 @@ export class ActorCombat implements CombatBridge {
     const dealt = target.state.killMove
       ? result.total * this.#settings.killMoveDamageMult
       : result.total;
+    // The blow's share of its health as it lands (its Hit line's rule: hitCallsLine).
+    const before = (await runtime.actors.value(targetRef, ActorValue.health)).current;
     await runtime.actors.damage(targetRef, ActorValue.health, dealt, attackerRef);
     const died = await runtime.actors.isDead(targetRef);
     // A critical hit's spell (CRDT), unless it is only a killing blow's.
@@ -3224,7 +3284,7 @@ export class ActorCombat implements CombatBridge {
       if (target.state.paired === undefined) this.#deathPush(target, dealt, hit);
       if (weapon !== undefined && !hit.bash) await this.#siphonSoul(attackerRef, targetRef, weapon);
     } else if (!target.player) {
-      this.#bark(targetRef, 'Hit', attackerRef);
+      this.#brain.line(targetRef, 'Hit', 'Hit', attackerRef, before > 0 ? dealt / before : 1);
       // A ragdoll its graph drives yields to the blow where it landed ([RagdollAnim]
       // bRagdollFeedback).
       this.#options.bodies.feedback(targetRef, hit.direction, hit.point);
@@ -3325,16 +3385,6 @@ export class ActorCombat implements CombatBridge {
     ]);
     const item = spell === undefined ? undefined : await runtime.magic.item(spell);
     if (item) await runtime.magic.apply(item, owner, { caster: owner });
-  }
-
-  /** A combat line (src/shell/actor-talk.ts bark): an actor's, by its topic subtype. */
-  #bark(actor: number, subtype: string, target?: number, interrupt = false): void {
-    if (actor === PLAYER_REF) return;
-    const talk = this.#options.talk?.();
-    if (!talk) return;
-    talk.bark(actor, subtype, target ?? PLAYER_REF, { interrupt }).catch((error: unknown) => {
-      this.#warn(`a combat line: ${describe(error)}`);
-    });
   }
 
   /**
@@ -4011,10 +4061,11 @@ export class ActorCombat implements CombatBridge {
    * the player looses that is predicted to kill, the casting type, delivery and projectile type
    * in GetVATSValue; the kill cameras' tree chooses by them what plays (spellCameraRide). An
    * aimed spell's kill is the one its projectile flies at: a missile's or lobber's camera rides
-   * it, a flame's its spray, a beam's (reaching at once) nothing; a concentration spell's spray
-   * is predicted by its interval's share (`seconds`: spellLoosedDamage). A self spell's kill is
-   * the nearest its area reaches and is predicted to kill (selfAreaKill; the SelfCastTest
-   * paths' cameras circle the caster).
+   * it, a flame's its spray, a beam's (reaching at once) nothing. Observed in the original: an
+   * aimed cast must kill at once (aimedSpellKills: a concentration spell by its whole magnitude,
+   * a kill over time plays none); a self spell's kill is weighed against everyone fighting the
+   * player (selfAreaKill; the SelfCastTest paths' cameras circle the caster). `dual`: it was
+   * dual cast.
    */
   spellLoosed(
     actor: number,
@@ -4026,14 +4077,14 @@ export class ActorCombat implements CombatBridge {
       readonly at: Vec3;
       readonly caster: number;
     }>,
-    seconds?: number,
+    dual = false,
   ): void {
     const fighter = this.#fighters.get(actor);
     if (!fighter?.player) return;
     const camera =
       item.delivery === Delivery.self
-        ? this.#selfKillCamera(fighter, item)
-        : this.#magicKillCamera(fighter, item, from, aim, flying, seconds);
+        ? this.#selfKillCamera(fighter, item, dual)
+        : this.#magicKillCamera(fighter, item, from, aim, flying, dual);
     camera.catch((error: unknown) => {
       this.#warn(`a spell's kill camera: ${describe(error)}`);
     });
@@ -4049,7 +4100,7 @@ export class ActorCombat implements CombatBridge {
       readonly at: Vec3;
       readonly caster: number;
     }>,
-    seconds: number | undefined,
+    dual: boolean,
   ): Promise<void> {
     const runtime = this.#options.session.scriptsReady;
     if (!runtime || !this.#shotCameraMay(fighter)) return;
@@ -4075,14 +4126,12 @@ export class ActorCombat implements CombatBridge {
       gravity: WORLD_GRAVITY * fired.gravity,
     });
     if (!victim || victim.state.life === LifeState.dead) return;
-    const health = await runtime.actors.value(victim.reference, ActorValue.health);
-    const damage = spellLoosedDamage(
-      await runtime.casting.predictedDamage(fighter.reference, item, victim.reference),
-      seconds,
-    );
     const fatal =
-      spellPredictedKill(damage, health.current) &&
-      !(await runtime.actors.isEssential(victim.reference));
+      aimedSpellKills(
+        await runtime.casting.killPrediction(fighter.reference, item, victim.reference, { dual }),
+        (await runtime.actors.value(victim.reference, ActorValue.health)).current,
+        await this.#wardPower(victim.reference, runtime),
+      ) && !(await runtime.actors.isEssential(victim.reference));
     const heading = Math.atan2(aim[0], aim[1]);
     await this.#shotCamera(fighter, victim, fatal, {
       projectile: () => {
@@ -4099,34 +4148,39 @@ export class ActorCombat implements CombatBridge {
    * nearest actor its area reaches whom the effects reaching that far are predicted to kill
    * (selfAreaKill; inferred, TODO(M13)). A self spell without an area (a cloak, a heal) has none.
    */
-  async #selfKillCamera(fighter: Fighter, item: MagicItemRecord): Promise<void> {
+  async #selfKillCamera(fighter: Fighter, item: MagicItemRecord, dual: boolean): Promise<void> {
     const runtime = this.#options.session.scriptsReady;
-    if (!runtime || !item.effects.some((entry) => entry.area > 0)) return;
-    if (!this.#shotCameraMay(fighter)) return;
+    // A fire and forget self spell with an area (a cloak, a heal: none).
+    if (!runtime || item.castType !== CastType.fireAndForget) return;
+    if (!item.effects.some((entry) => entry.area > 0)) return;
+    if (!this.#shotCameraMay(fighter, true)) return;
     const feet = this.#feet(fighter);
     if (!feet) return;
     const candidates: SelfAreaCandidate[] = [];
-    for (const other of this.#fighters.values()) {
-      if (other === fighter || other.state.life === LifeState.dead) continue;
-      const at = this.#feet(other);
+    for (const reference of this.enemiesOfPlayer()) {
+      const other = this.#fighters.get(reference);
+      const at = other && this.#feet(other);
       if (!at) continue;
       const distance = Math.hypot(at[0] - feet[0], at[1] - feet[1], at[2] - feet[2]);
-      const damage = await runtime.casting.predictedDamage(
-        fighter.reference,
-        item,
-        other.reference,
-        distance,
+      const prediction = await runtime.casting.killPrediction(fighter.reference, item, reference, {
+        areaDistance: distance,
+        dual,
+      });
+      const kill = spellKill(
+        prediction,
+        (await runtime.actors.value(reference, ActorValue.health)).current,
+        await this.#wardPower(reference, runtime),
       );
-      if (!(damage > 0)) continue;
       candidates.push({
-        reference: other.reference,
+        reference,
         distance,
-        damage,
-        health: (await runtime.actors.value(other.reference, ActorValue.health)).current,
-        essential: await runtime.actors.isEssential(other.reference),
+        kills: kill.kills && !(await runtime.actors.isEssential(reference)),
       });
     }
-    const kill = selfAreaKill(candidates);
+    const kill = selfAreaKill(
+      candidates,
+      this.#options.session.ini.number('VATS', 'bVATSAllowNoKill') !== 0,
+    );
     const victim = kill === undefined ? undefined : this.#fighters.get(kill);
     if (!victim) return;
     await this.#shotCamera(fighter, victim, true, {
@@ -4134,17 +4188,26 @@ export class ActorCombat implements CombatBridge {
     });
   }
 
-  /** Whether a shot's or spell's kill camera may begin at all: [VATS], a mount, its enemies. */
-  #shotCameraMay(fighter: Fighter): boolean {
+  /**
+   * Whether a shot's or spell's kill camera may begin at all: [VATS], a mount, its enemies (at
+   * most one unless [VATS] bVATSMultipleCombatants; a self spell's, observed in the original:
+   * at least one, any number, as it weighs them all).
+   */
+  #shotCameraMay(fighter: Fighter, selfArea = false): boolean {
     const session = this.#options.session;
     const runtime = session.scriptsReady;
     if (!this.#play || !runtime || this.#camera) return false;
     if (session.ini.number('VATS', 'bVATSDisable') !== 0) return false;
     if (runtime.world.mountOf?.(fighter.reference) !== undefined) return false;
-    return (
-      this.enemiesOfPlayer().length <= 1 ||
-      session.ini.number('VATS', 'bVATSMultipleCombatants') !== 0
-    );
+    const multiple = session.ini.number('VATS', 'bVATSMultipleCombatants') !== 0;
+    const enemies = this.enemiesOfPlayer().length;
+    return selfArea ? enemies > 0 || multiple : enemies <= 1 || multiple;
+  }
+
+  /** An actor's Ward Power (a ward held up takes it off a spell's predicted damage). */
+  async #wardPower(reference: number, runtime: ScriptRuntime): Promise<number> {
+    const index = actorValueIndex('WardPower');
+    return index === undefined ? 0 : (await runtime.actors.value(reference, index)).current;
   }
 
   /** A shot's or spell's kill camera on its victim, by its prediction, odds and clear way. */
@@ -4341,7 +4404,8 @@ export class ActorCombat implements CombatBridge {
           twoHanded ||
           (gear.right.weapon !== undefined && gear.left.weapon === undefined),
         damage: gear.right.damage,
-        strengthDamage: gear.strengthDamage,
+        strengthItems: gear.strengthItems,
+        strengthUnarmed: gear.strengthUnarmed,
         shotDamage: gear.right.shotDamage,
         range: gear.projectile?.range ?? 0,
         canBash,
@@ -4997,49 +5061,49 @@ export class ActorCombat implements CombatBridge {
   }
 
   /**
-   * The fights combat music weighs (src/audio/combat-music.ts): every live actor in combat
-   * hostile to the player, against the player and their combat group; the fights not against
-   * the player by their own combat groups, each weighed apart.
+   * The combat groups combat music weighs (src/audio/combat-music.ts): each with its living
+   * members (the player left out), whether the player is one of its targets and lost to it,
+   * whether it searches, and its targets' strength (the living, each once).
    */
   #musicInput(runtime: ScriptRuntime): CombatMusicInput {
     const feet = this.#play?.player.feet;
-    const threats: CombatMusicThreat[] = [];
-    // What each group not against the player fights (each target once): its fight's odds.
-    const nearTargets = new Map<number, Set<number>>();
     const senses = this.#options.senses?.();
-    for (const fighter of this.#fighters.values()) {
-      if (fighter.player || fighter.state.life !== LifeState.alive) continue;
-      if (!threatensPlayer(fighter.gear?.raceFlags2 ?? 0)) continue;
-      const reference = fighter.reference;
-      const targetsPlayer = fighter.target === PLAYER_REF;
-      const group = this.#brain.groupId(reference) ?? 0;
-      if (!targetsPlayer) {
-        if (this.#brain.combatState(reference) !== 1) continue;
-        if (!this.#brain.hostile(reference, PLAYER_REF)) continue;
-        if (fighter.target !== undefined) {
-          const targets = nearTargets.get(group) ?? new Set<number>();
-          targets.add(fighter.target);
-          nearTargets.set(group, targets);
-        }
+    const alive = (reference: number): Fighter | undefined => {
+      const fighter = this.#fighters.get(reference);
+      return fighter && fighter.state.life !== LifeState.dead ? fighter : undefined;
+    };
+    const groups: CombatMusicGroup[] = [];
+    for (const group of this.#brain.combatGroups()) {
+      const members: CombatMusicMember[] = [];
+      for (const reference of group.members) {
+        const fighter = reference === PLAYER_REF ? undefined : alive(reference);
+        if (!fighter) continue;
+        const at = this.#feet(fighter);
+        members.push({
+          distance:
+            feet && at ? Math.hypot(at[0] - feet[0], at[1] - feet[1], at[2] - feet[2]) : Infinity,
+          strength: this.#brain.strength(reference),
+          detected: senses ? senses.detects(PLAYER_REF, reference) : true,
+          boss: this.#boss(reference, runtime),
+          fleeing: this.#brain.fleeing(reference),
+        });
       }
-      const at = this.#feet(fighter);
-      threats.push({
-        targetsPlayer,
-        distance:
-          feet && at ? Math.hypot(at[0] - feet[0], at[1] - feet[1], at[2] - feet[2]) : Infinity,
-        strength: this.#brain.strength(reference),
-        detected: senses ? senses.detects(PLAYER_REF, reference) : true,
-        boss: this.#boss(reference, runtime),
-        group,
+      let targetStrength = 0;
+      for (const target of group.targets.keys()) {
+        if (target === PLAYER_REF || alive(target)) targetStrength += this.#brain.strength(target);
+      }
+      const player = group.targets.get(PLAYER_REF);
+      groups.push({
+        id: group.id,
+        members,
+        targetsPlayer: player !== undefined,
+        playerLost: player?.lost === true,
+        searching: group.searching,
+        targets: group.targets.size,
+        targetStrength,
       });
     }
-    const groupTargets = new Map<number, number>();
-    for (const [group, targets] of nearTargets) {
-      let strength = 0;
-      for (const target of targets) strength += this.#brain.strength(target);
-      groupTargets.set(group, strength);
-    }
-    return { threats, player: this.#brain.strength(PLAYER_REF), groupTargets };
+    return { groups, player: this.#brain.strength(PLAYER_REF) };
   }
 
   /** Whether a reference is a boss (location reference type DOBJ LRTB); false until read. */
@@ -5308,7 +5372,11 @@ export class ActorCombat implements CombatBridge {
    * TODO(M13): inferred (a weapon the death drops is the one held); to be observed in the
    * original, with the moment it lets go of them (ours: as its death begins).
    */
-  /** Its Death line, at once as it dies (the DIAL subtype, by its distance gate). */
+  /**
+   * Its Death line, at once as it dies (the DIAL subtype, by its distance gate). TODO(M13): the
+   * original's combat-line paths followed so far do not ask for Death or Block lines (they may
+   * come another way); ours says them as they happen.
+   */
   deathLine(reference: number): void {
     if (reference !== PLAYER_REF) this.#brain.line(reference, 'Death', 'Death');
   }
@@ -5439,7 +5507,7 @@ export class ActorCombat implements CombatBridge {
     if (caster === PLAYER_REF && victim !== PLAYER_REF) this.#struck(victim);
     if (victim === PLAYER_REF) this.#hurtPlayer(painful, caster);
     else if (painful && this.#fighters.get(victim)?.state.life === LifeState.alive) {
-      this.#bark(victim, 'Hit', caster);
+      this.#brain.line(victim, 'Hit', 'Hit', caster);
     }
     // A hostile spell that hurts the player rumbles the controller (fRumblePain*:
     // controller-rumble.ts; a Painless one does not).
@@ -5494,7 +5562,7 @@ export class ActorCombat implements CombatBridge {
     );
     if (!push) return;
     const flat = [push.velocity[0], push.velocity[1]] as const;
-    if (fighter.player) this.#options.playerCharacter?.()?.knockBack(flat, push.seconds);
+    if (fighter.player) this.#options.playerCharacter?.()?.knockBack(flat, push.seconds, true);
     else this.#options.movers.knockBack(reference, flat, push.seconds);
   }
 

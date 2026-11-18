@@ -612,23 +612,87 @@ export interface TargetCandidate {
   readonly sinceKnown?: number;
 }
 
+/** What a hand holds, as strength weighs it. */
+export type StrengthItem =
+  | {
+      readonly kind: 'weapon';
+      /** Its blow (the equip system's weapon damage). */
+      readonly damage: number;
+      readonly speed: number;
+      /** A bow or crossbow. */
+      readonly bow: boolean;
+    }
+  | {
+      /** A spell, scroll, or a staff's enchantment. */
+      readonly kind: 'magic';
+      /** The health its effects take (magicHealthDamage). */
+      readonly health: number;
+      /** Cast fire and forget (else concentration, constant). */
+      readonly fireAndForget: boolean;
+      readonly chargeTime: number;
+    };
+
+/** One effect of a magic item, as strength weighs it. */
+export interface StrengthEffect {
+  readonly magnitude: number;
+  /** Its MGEF's flags (hostile 0x1, detrimental 0x4, no magnitude 0x400). */
+  readonly flags: number;
+  readonly actorValue: number;
+  readonly secondActorValue: number;
+  readonly secondValueWeight: number;
+  /** Its MGEF has conditions of its own. */
+  readonly conditioned: boolean;
+}
+
+/** The Health actor value's index. */
+const HEALTH = 24;
+
 /**
- * The damage actorStrength weighs for an actor: its weapon's blow; without a weapon (a wolf's
- * teeth, a bear's claws, fists) its race's unarmed damage times the damage mult of the
- * strongest of its attack data's blows (ATKD; bashes left out), as those attacks deal it. The
- * engine (observed in the original) adds up the damage of what its hands hold, else takes its unarmed
- * damage, and keeps the more of that and its combat inventory's best; TODO(M13): the per-item
- * damage it adds (the function was not followed further).
+ * The health a magic item's effects take, as strength weighs it (observed in the original): of
+ * its effects both hostile and detrimental, each whose actor value is Health adds its magnitude
+ * (none for one with No Magnitude), and each whose second actor value is Health adds its
+ * magnitude × the second value's weight. Its own conditions are asked of no one, so an effect
+ * with conditions counts nothing (a condition with nothing to run on fails).
+ */
+export function magicHealthDamage(effects: readonly StrengthEffect[]): number {
+  let sum = 0;
+  for (const effect of effects) {
+    if ((effect.flags & 0x5) !== 0x5 || effect.conditioned) continue;
+    const magnitude = (effect.flags & 0x400) !== 0 ? 0 : effect.magnitude;
+    if (effect.actorValue === HEALTH) sum += magnitude;
+    if (effect.secondActorValue === HEALTH) sum += magnitude * effect.secondValueWeight;
+  }
+  return sum;
+}
+
+/**
+ * What one held item adds to an actor's strength (observed in the original): a weapon its damage
+ * a second (attackDps: its blow × its speed × fCombatDPSMeleeSpeedMult or, a bow's or crossbow's,
+ * fCombatDPSBowSpeedMult); a spell, scroll or staff its effects' health damage, a fire and forget
+ * one's over its charge time and a second.
+ */
+export function itemStrength(item: StrengthItem, settings: CombatAiSettings): number {
+  if (item.kind === 'weapon') return attackDps(item.damage, item.speed, item.bow, settings);
+  if (item.health <= 0) return 0;
+  return item.fireAndForget ? item.health / (item.chargeTime + 1) : item.health;
+}
+
+/**
+ * The damage actorStrength weighs for an actor (observed in the original): what its hands hold,
+ * added up (itemStrength); with nothing that deals damage there, its fists' (its unarmed damage ×
+ * the fists' speed, a melee weapon's). TODO(M13): the engine keeps the more of that and its
+ * combat inventory's first item's; that list's order was not read, so ours leaves it out.
  */
 export function strengthDamage(
-  blow: number,
-  armed: boolean,
-  attacks: Iterable<{ readonly damageMult: number; readonly bash: boolean }>,
+  hands: readonly StrengthItem[],
+  unarmed: number,
+  settings: CombatAiSettings,
+  fistsSpeed = 1,
 ): number {
-  if (armed) return blow;
-  let mult = 1;
-  for (const attack of attacks) if (!attack.bash) mult = Math.max(mult, attack.damageMult);
-  return blow * mult;
+  let sum = 0;
+  for (const item of hands) sum += itemStrength(item, settings);
+  if (sum > 0) return sum;
+  return attackDps(unarmed, fistsSpeed, false, settings);
 }
 
 /** The most of a blow an actor's armour takes in actorStrength (the engine's cap there). */
@@ -636,8 +700,9 @@ const STRENGTH_REDUCTION_CAP = 0.99;
 
 /**
  * How strong an actor is in a fight (observed in the original: the measure the fight's odds, the
- * combat music's and GetThreatRatio weigh): the damage it deals a second (attackDps) × its health
- * now / (1 − its armour's damage reduction, at most 0.99), so armour counts as more health.
+ * combat music's and GetThreatRatio weigh): the damage it deals a second (strengthDamage) × its
+ * health now / (1 − its armour's share: its rating × fArmorScalingFactor percent and its pieces',
+ * held at 0.99 alone, not at fMaxArmorRating), so armour counts as more health.
  */
 export function actorStrength(health: number, damage: number, reduction = 0): number {
   const kept = 1 - Math.min(STRENGTH_REDUCTION_CAP, Math.max(0, reduction));

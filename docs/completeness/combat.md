@@ -162,6 +162,16 @@ holds off: combat-ai.ts yields, yieldOver), torches in a fight (combat-tactics.t
 torchInFight; fCombatInventoryTorchEquipRange and MinEquipTimeTorch, fTorchLightLevel*), the
 Flee package's safety (procedure-runs.ts fleeSafe: fFleeIsSafeTimer beyond fFleeDoneDistance*).
 
+Round 6 (2026-11-18) read combat dialogue's gate from the original (docs/ai.md, "Combat
+dialogue"): its range is the 3D dialogue output model's max distance from the sound listener; the
+attack lines share one timer, AllyKilled and AvoidThreat are timed per group, a timer starts only
+on a line said; a Hit line for a blow above fCombatSpeakHitThreshold, else by its chance; the
+attack and taunt chances are never read; no one says GroupStrategy (the inferred rule above is
+gone); AllyKilled is said by the dead's nearest group member. It read too: the combat music's
+weighing per combat group and strength's damage (docs/audio.md, "Music"); the knockback's fade
+and the damage it weighs; a paralysed blocker's block counting for nothing; the magic kill
+camera's prediction (docs/gameplay.md, "The kill camera").
+
 Round 7 (2026-11-18) read these from the original (docs/ai.md "Combat detection", "Targets",
 "A fixed target", "The odds", "Fleeing", "The combat behaviour tree"):
 
@@ -368,8 +378,9 @@ and 290 built-in ones the readers ask for by name.
 
 ## Next biggest
 
-1. The knockback's fading (held for fKnockbackTime here) and which stage of a hit's damage it
-   reads; the timed bash's reaction (TODO(M13), docs/ai.md "Staggers").
+1. The timed bash's reaction (TODO(M13), docs/ai.md "Staggers"). (Done 2026-11-18, observed in
+   the original: the knockback fades evenly over fKnockbackTime from force units a second, by
+   the hit's damage before armour.)
 2. The rates' unit (acceleration, deceleration) and what the advanced avoidance adds.
 3. The cases left in the conformance list (round 5, above).
 4. A clip with several hit frames (the dual power attack's) strikes its target once an attack

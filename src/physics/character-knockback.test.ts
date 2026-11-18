@@ -66,6 +66,19 @@ describe("a hit's push back on a character (knockBack)", () => {
     expect(character.feet[0] - from).toBeLessThan(65);
   });
 
+  it("lets a hit's push fade evenly over its time  [original]", () => {
+    const { physics, character } = standing();
+    const from = character.feet[0];
+    // 200 units a second at first, falling to nothing over 0.3 s: 30 units in all.
+    character.knockBack([200, 0], 0.3, true);
+    for (let i = 0; i < 30; i++) {
+      character.step(STEP);
+      physics.step(STEP);
+    }
+    expect(character.feet[0] - from).toBeGreaterThan(27);
+    expect(character.feet[0] - from).toBeLessThan(33);
+  });
+
   it('keeps a stronger push it already has', () => {
     const { physics, character } = standing();
     const from = character.feet[0];

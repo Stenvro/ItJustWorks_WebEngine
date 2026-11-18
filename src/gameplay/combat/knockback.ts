@@ -5,8 +5,10 @@
 //   force = (whole physical damage × fKnockbackDamageMult + fKnockbackDamageBase)
 //           × (fKnockbackAgilBase + fKnockbackAgilMult × 50),  at most fKnockbackForceMax
 //
-// game units, spread over fKnockbackTime seconds (the controller moves force / time units a
-// second, unless a stronger push already moves it). The 50 is an earlier game's Agility, held
+// (the physical damage the hit carries: its damage before the target's armour, resistance and
+// block, cut to whole points), given the controller over fKnockbackTime seconds: it moves at force units a second at first, the speed
+// falling evenly to nothing as the time runs out (so force × time / 2 units in all), unless a
+// stronger push already moves it. The 50 is an earlier game's Agility, held
 // at its middle. A hit that names its own push (a trap's ProcessTrapHit pushback) uses that
 // instead of the formula. No push for an actor in a kill move, of a race that is Not Pushable,
 // or from a projectile's hit (arrows and bolts). Platform-independent.
@@ -70,9 +72,10 @@ export function trapPushback(
 }
 
 /**
- * The controller's push: `force` units along the way from `from` to `to` over `seconds`,
- * as a velocity (game units a second) and how long it lasts. TODO(M13): whether the engine's
- * controller holds that speed for the whole time or lets it fade is not known; held here.
+ * The controller's push along the way from `from` to `to` (observed in the original): its first
+ * velocity, `force` game units a second, and how long it lasts; the controller lets the speed
+ * fall evenly to nothing over that time (src/physics/character.ts knockBack with fades), so the
+ * push carries it force × seconds / 2 units.
  */
 export function knockbackVelocity(
   from: readonly [number, number, number],
@@ -85,7 +88,7 @@ export function knockbackVelocity(
   const dz = to[2] - from[2];
   const length = Math.hypot(dx, dy, dz);
   if (force <= 0 || length < 1e-6 || seconds <= 0) return undefined;
-  const speed = force / seconds;
+  const speed = force;
   return {
     velocity: [(dx / length) * speed, (dy / length) * speed, (dz / length) * speed],
     seconds,

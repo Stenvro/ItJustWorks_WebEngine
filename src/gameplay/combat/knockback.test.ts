@@ -33,26 +33,24 @@ describe('knockback (observed in the original)', () => {
     expect(knockbackApplies({ ...hit, projectile: true })).toBe(false);
   });
 
-  it('moves it away from the attacker, the force over fKnockbackTime', () => {
+  it('moves it away from the attacker at the force a second, fading over fKnockbackTime  [original]', () => {
     const push = knockbackVelocity([0, 0, 0], [100, 0, 0], 60, vanilla.knockbackTime);
     expect(push?.seconds).toBeCloseTo(0.3);
-    expect(push?.velocity[0]).toBeCloseTo(200);
+    expect(push?.velocity[0]).toBeCloseTo(60);
     expect(push?.velocity[1]).toBeCloseTo(0);
     expect(knockbackVelocity([0, 0, 0], [0, 0, 0], 60, 0.3)).toBeUndefined();
   });
 
   it("pushes a trap's victim's controller by the trap's own pushback, away from the trap", () => {
     const free = { inKillMove: false, notPushable: false };
-    // A swinging log 40 units of pushback from the west, a little above: 40 / 0.3 s east.
+    // A swinging log 40 units of pushback from the west, a little above: 40 a second east at first.
     const push = trapPushback([-100, 0, 80], [0, 0, 0], 40, free, vanilla);
     expect(push?.seconds).toBeCloseTo(0.3);
-    expect(push?.velocity[0]).toBeCloseTo(40 / 0.3);
+    expect(push?.velocity[0]).toBeCloseTo(40);
     expect(push?.velocity[1]).toBeCloseTo(0);
     expect(push?.velocity[2]).toBeCloseTo(0);
     // At most fKnockbackForceMax, as a hit's.
-    expect(trapPushback([0, -10, 0], [0, 0, 0], 1000, free, vanilla)?.velocity[1]).toBeCloseTo(
-      128 / 0.3,
-    );
+    expect(trapPushback([0, -10, 0], [0, 0, 0], 1000, free, vanilla)?.velocity[1]).toBeCloseTo(128);
     // None in a kill move, nor for a Not Pushable race, nor without a pushback.
     expect(trapPushback([-100, 0, 0], [0, 0, 0], 40, { ...free, inKillMove: true }, vanilla)).toBe(
       undefined,
