@@ -142,6 +142,33 @@ export function withinMineRadius(mine: Vec3, feet: Vec3, proximity: number): boo
   return length([feet[0] - mine[0], feet[1] - mine[1], feet[2] - mine[2]]) < proximity;
 }
 
+/** An actor within a mine's reach, as the mine weighs it (mayTriggerMine). */
+export interface MineCandidate {
+  /** It is the one who placed the mine. */
+  readonly shooter: boolean;
+  readonly dead: boolean;
+  /** A member of the faction that owns a mine placed by no actor (its launcher's owner). */
+  readonly inOwnerFaction: boolean;
+  /** How the mine's placer regards it (an actor's mine; undefined: placed by no actor). */
+  readonly shooterRegard: 'hostile' | 'neutral' | 'ally' | 'friend' | undefined;
+  /** Its commander (a summon's summoner, a commanded actor's) is the mine's placer. */
+  readonly commandedByShooter: boolean;
+}
+
+/**
+ * Whether an actor within a mine's reach may set it off (observed in the original): not its
+ * placer (unless iProjectileMineShooterCanTrigger is above 0; Skyrim.esm 0), not dead, not a
+ * member of the faction owning a mine no actor placed, not one its placer regards as an ally or
+ * friend, and not one its placer commands. The player is weighed so as well, before their
+ * Calculate Mine Explode Chance.
+ */
+export function mayTriggerMine(candidate: MineCandidate, shooterCanTrigger = 0): boolean {
+  if (candidate.shooter && shooterCanTrigger <= 0) return false;
+  if (candidate.dead || candidate.inOwnerFaction) return false;
+  if (candidate.shooterRegard === 'ally' || candidate.shooterRegard === 'friend') return false;
+  return !candidate.commandedByShooter;
+}
+
 /**
  * Whether the player near a mine sets it off (observed in the original): the engine asks the
  * player's Calculate Mine Explode Chance (from 100, the mine's projectile its item tab; no

@@ -34,6 +34,7 @@ import {
   launchFlight,
   LOBBER_DEFAULTS,
   MAX_PLAYER_RUNES,
+  mayTriggerMine,
   mineBlinkInterval,
   mineBursts,
   MINE_LIGHT_NODE,
@@ -181,10 +182,20 @@ interface Flying {
   /** A set-off mine: the seconds to its next blink, and its ##LightOn node's parts shown or not. */
   mineBlink?: number;
   mineLight?: InstanceVisibility;
+  /** A mine: who near it may set it off, as last weighed (#mayTrigger), and when. */
+  mineVetted?: Map<number, MineVet>;
   minePassed?: boolean;
   mineAsking?: boolean;
   /** A loaded save's state of its model's graph, put back as its model loads. */
   savedGraph?: SavedGraph | undefined;
+}
+
+/** Whether an actor may set a mine off, as last weighed (MagicProjectiles #mayTrigger). */
+interface MineVet {
+  may: boolean;
+  /** The projectiles' clock at the answer. */
+  at: number;
+  asking: boolean;
 }
 
 /** How far a ray steps past a caster's own bodies it starts inside (units, tries). */
@@ -1569,9 +1580,8 @@ export class MagicProjectiles {
    * as an actor other than its caster comes within its proximity; a mine (observed in the
    * original) fMinesDelayMin after it was set off: by an actor other than its caster standing
    * within its proximity (projectile-flight.ts withinMineRadius), or by the player as their
-   * Calculate Mine Explode Chance comes up (mineBursts), whom a failed roll lets pass it for good.
-   * TODO(M13): who else the original lets pass a mine (its check of the actor against the mine) is
-   * not read: here only its caster.
+   * Calculate Mine Explode Chance comes up (mineBursts), whom a failed roll lets pass it for good;
+   * either only as the mine's check lets them (#mayTrigger).
    */
   #near(flying: Flying, at: Vec3, seconds: number): boolean {
     if (!isMine(flying.projectile)) {
@@ -1598,8 +1608,8 @@ export class MagicProjectiles {
     };
     let player = false;
     for (const target of this.#options.targets()) {
-      if (target.reference === flying.delivered.caster) continue;
       if (!withinMineRadius(at, target.shape.feet, reach)) continue;
+      if (!this.#mayTrigger(flying, target.reference)) continue;
       if (target.reference !== PLAYER_REF) {
         setOff();
         return false;
@@ -1621,6 +1631,56 @@ export class MagicProjectiles {
         else flying.minePassed = true;
       });
     return false;
+  }
+
+  /**
+   * Whether an actor within a mine's reach may set it off (projectile-flight.ts mayTriggerMine,
+   * observed in the original), as last weighed: each actor is weighed again a second after its
+   * last answer; until the first comes, it does not. Without the scripts' runtime only its placer
+   * is kept off. TODO(M13): two of the actor's own states the original also checks are not read,
+   * and a mine no actor placed is owned as its launcher is (ours: projectiles have no ownership
+   * of their own).
+   */
+  #mayTrigger(flying: Flying, reference: number): boolean {
+    const shooter = flying.delivered.caster;
+    const canTrigger = this.#settings?.number('iProjectileMineShooterCanTrigger') ?? 0;
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime)
+      return mayTriggerMine(
+        {
+          shooter: reference === shooter,
+          dead: false,
+          inOwnerFaction: false,
+          shooterRegard: undefined,
+          commandedByShooter: false,
+        },
+        canTrigger,
+      );
+    const vetted = (flying.mineVetted ??= new Map<number, MineVet>());
+    const known = vetted.get(reference);
+    if (!known?.asking && (known === undefined || this.#clock - known.at >= 1)) {
+      vetted.set(reference, { may: known?.may ?? false, at: known?.at ?? -Infinity, asking: true });
+      void (async () => {
+        const placedByActor = await runtime.actors.isActor(shooter);
+        const owner = placedByActor ? undefined : (await runtime.owner(shooter)).faction;
+        return mayTriggerMine(
+          {
+            shooter: reference === shooter,
+            dead: await runtime.actors.isDead(reference),
+            inOwnerFaction:
+              owner !== undefined && (await runtime.actors.factionRank(reference, owner)) >= 0,
+            shooterRegard: placedByActor
+              ? await runtime.crime.reaction(shooter, reference)
+              : undefined,
+            commandedByShooter: placedByActor && runtime.magic.commander(reference) === shooter,
+          },
+          canTrigger,
+        );
+      })()
+        .catch(() => false)
+        .then((may) => vetted.set(reference, { may, at: this.#clock, asking: false }));
+    }
+    return known?.may ?? false;
   }
 
   /**

@@ -19,6 +19,7 @@ import type { MagicItemRecord } from '../../../src/world/magic-records.ts';
 import {
   isMine,
   MAX_PLAYER_RUNES,
+  mayTriggerMine,
   mineBlinkInterval,
   mineBursts,
   runesGivingWay,
@@ -136,6 +137,9 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
       /** The rune's countdown sound, and where its plays are told. */
       readonly countdownSound?: number;
       readonly played?: number[];
+      /** How the mine's placer regards the walker, and whom the walker obeys. */
+      readonly regard?: 'hostile' | 'neutral' | 'ally' | 'friend';
+      readonly commander?: number;
     },
   ): Promise<number[]> {
     const SPELL = 0x2001;
@@ -172,7 +176,14 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
     } satisfies ProjectileRecord;
     const item = { formId: SPELL, effects: [], delivery: 4 };
     const runtime = {
-      magic: { item: () => Promise.resolve(item) },
+      magic: { item: () => Promise.resolve(item), commander: () => mine?.commander },
+      actors: {
+        isActor: () => Promise.resolve(true),
+        isDead: () => Promise.resolve(false),
+        factionRank: () => Promise.resolve(-1),
+      },
+      crime: { reaction: () => Promise.resolve(mine?.regard ?? 'neutral') },
+      owner: () => Promise.resolve({ actor: undefined, faction: undefined }),
       casting: {
         projectile: () => Promise.resolve(RUNE),
         cost: () => Promise.resolve(0),
@@ -288,6 +299,47 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
     expect(await placed(1, { chance: 0, xs: [100], walker: 0x1234 })).toEqual([]);
   });
 
+  it('lets no ally of its placer, nor one its placer commands, set a mine off (original)', async () => {
+    const off = { chance: 100, xs: [100], walker: 0x1234, frames: 4 };
+    expect(await placed(1, { ...off, regard: 'hostile' })).toEqual([]);
+    expect(await placed(1, { ...off, regard: 'ally' })).toEqual([100]);
+    expect(await placed(1, { ...off, regard: 'friend' })).toEqual([100]);
+    expect(await placed(1, { ...off, commander: 0x5555 })).toEqual([100]);
+    expect(await placed(1, { ...off, commander: 0x6666 })).toEqual([]);
+    // The player is weighed so too, before their roll.
+    expect(await placed(1, { chance: 100, xs: [100], frames: 4, regard: 'ally' })).toEqual([100]);
+    expect(
+      mayTriggerMine({
+        shooter: true,
+        dead: false,
+        inOwnerFaction: false,
+        shooterRegard: undefined,
+        commandedByShooter: false,
+      }),
+    ).toBe(false);
+    expect(
+      mayTriggerMine(
+        {
+          shooter: true,
+          dead: false,
+          inOwnerFaction: false,
+          shooterRegard: undefined,
+          commandedByShooter: false,
+        },
+        1,
+      ),
+    ).toBe(true);
+    expect(
+      mayTriggerMine({
+        shooter: false,
+        dead: false,
+        inOwnerFaction: true,
+        shooterRegard: undefined,
+        commandedByShooter: false,
+      }),
+    ).toBe(false);
+  });
+
   it('blinks a set-off mine to its burst, its countdown sound at each blink (original)', async () => {
     // fMinesBlinkMax 2, Slow 0.25, Fast 0.1: within 2 s of the burst the next blink comes after
     // (left / 2) × (0.25 − 0.1) + 0.1 seconds; further away after 0.25.
@@ -295,13 +347,13 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
     expect(mineBlinkInterval(2)).toBeCloseTo(0.25);
     expect(mineBlinkInterval(1)).toBeCloseTo(0.175);
     expect(mineBlinkInterval(0)).toBeCloseTo(0.1);
-    // Set off in the first 0.03 s frame (fMinesDelayMin 0.1 to go): it blinks in the next at
-    // once, then waits 0.105 s, and bursts before blinking again.
+    // Weighed in the first 0.03 s frame, set off in the second (fMinesDelayMin 0.1 to go): it
+    // blinks in the next at once, then waits 0.105 s, and bursts before blinking again.
     const played: number[] = [];
     const left = await placed(1, {
       chance: 100,
       xs: [100],
-      frames: 5,
+      frames: 6,
       step: 0.03,
       countdownSound: 0x4001,
       played,
@@ -310,7 +362,7 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
     expect(played).toEqual([0x4001]);
     // Without a countdown sound it is silent.
     const quiet: number[] = [];
-    await placed(1, { chance: 100, xs: [100], frames: 5, step: 0.03, played: quiet });
+    await placed(1, { chance: 100, xs: [100], frames: 6, step: 0.03, played: quiet });
     expect(quiet).toEqual([]);
   });
 });
