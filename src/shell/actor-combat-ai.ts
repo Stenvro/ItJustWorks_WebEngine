@@ -122,6 +122,9 @@ import {
   coverRange,
   fallbackPlace,
   fleeRunStatus,
+  HIDE_CHECK_INTERVAL,
+  HIDE_FIRST_CHECK,
+  HIDE_TIME_LIMIT,
   hideEnd,
   hideFails,
   pickFleeDoor,
@@ -684,8 +687,7 @@ const ATTACK_LOCATION_ARRIVE = 32;
 const ALLY_LINES = 4;
 /** fCombatCoverSecondaryThreatLastSeenTime: its other enemies seen this lately count. */
 const COVER_SECONDARY_THREAT_SECONDS = 5;
-/** A hide and a fallback weigh again this often (observed in the original). */
-const HIDE_CHECK_SECONDS = 0.5;
+/** A fallback weighs again this often (observed in the original). */
 const FALLBACK_RECHECK_SECONDS = 0.5;
 /** Fallback To Ranged backs off only turned to its target within this (60°). */
 const FALLBACK_FACING = Math.PI / 3;
@@ -3402,13 +3404,20 @@ export class ActorCombatAi {
     const now = this.#clock;
     if (mind.hideSince === undefined) {
       mind.hideSince = now;
-      mind.nextHideCheck = now;
+      mind.nextHideCheck = now + HIDE_FIRST_CHECK;
       this.#options.movers.sneak(mind.reference, true);
+    }
+    // Its own time over, unfound, the hide is done (the Hide Selector succeeds without Boost
+    // Confidence: it flees on).
+    if (now - mind.hideSince > HIDE_TIME_LIMIT) {
+      mind.hideSince = undefined;
+      this.#options.movers.sneak(mind.reference, false);
+      return 'success';
     }
     this.#stopRun(mind);
     this.#options.movers.request(mind.reference, this.#standing(headingTo(f.there, f.feet)));
     if (now < mind.nextHideCheck) return 'running';
-    mind.nextHideCheck = now + HIDE_CHECK_SECONDS;
+    mind.nextHideCheck = now + HIDE_CHECK_INTERVAL;
     const anticipate = this.#movement.anticipateTime;
     const target = this.#options.movers.motion(f.target.reference)?.velocity ?? [0, 0, 0];
     const ahead: Vec3 = [
@@ -3418,14 +3427,11 @@ export class ActorCombatAi {
     ];
     const senses = this.#options.senses?.();
     const sees = senses?.sees(mind.reference, f.there) ?? false;
-    // Its enemy's eyes: the way it faces against the way to the hider, and the line between.
+    // Its enemy's look: the way it faces against the way to the hider.
     const enemy = f.target.feet;
-    const watched = senses &&
-      enemy && {
-        offAngle: turnBetween(f.target.heading, headingTo(enemy, f.feet)),
-        halfCone: (senses.settings.viewCone * Math.PI) / 360,
-        clear: senses.sees(f.target.reference, f.feet),
-      };
+    const watched = enemy && {
+      offAngle: turnBetween(f.target.heading, headingTo(enemy, f.feet)),
+    };
     if (
       !hideFails(
         {

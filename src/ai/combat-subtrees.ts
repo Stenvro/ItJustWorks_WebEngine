@@ -518,29 +518,40 @@ export interface HideCheck {
   readonly engagedSince: boolean;
   /**
    * How its enemy looks at it: the angle between the enemy's facing and the way to it
-   * (radians), half the enemy's view cone (radians), and whether nothing stands between the
-   * enemy's eyes and it. Without it, the view cone is not weighed.
+   * (radians). Without it, the enemy's look is not weighed.
    */
-  readonly watched?:
-    { readonly offAngle: number; readonly halfCone: number; readonly clear: boolean } | undefined;
+  readonly watched?: { readonly offAngle: number } | undefined;
 }
 
 /**
- * How far an enemy looking at a hider finds it (the view cone check of a hide): out to
- * fCombatHideCheckViewConeDistanceMax straight ahead, falling to fCombatHideCheckViewConeDistanceMin
- * at the cone's edge; 0 outside the cone or with something between them. Inferred from the
- * settings' names, TODO(M13): the original's scale between the two.
+ * The Hide behaviour's own times (observed in the original): it is done, unfound, after
+ * HIDE_TIME_LIMIT seconds (10000: in play, never), weighs its end first a second after it began
+ * and then each half second (hideFails).
+ */
+export const HIDE_TIME_LIMIT = 10000;
+export const HIDE_FIRST_CHECK = 1;
+export const HIDE_CHECK_INTERVAL = 0.5;
+
+/** The hide's look check's cone: within this of its enemy's facing (radians; 30°). */
+const HIDE_VIEW_CONE = Math.PI / 6;
+
+/**
+ * How far an enemy looking at a hider finds it (observed in the original: the combat state's
+ * check of its target looking at it, the only reader of the two settings): within 30° of the
+ * enemy's facing, out to fCombatHideCheckViewConeDistanceMax straight ahead, falling evenly to
+ * fCombatHideCheckViewConeDistanceMin at 30°, past their radii; 0 outside those 30°. No line
+ * of sight is asked, and only a hider beyond fCombatRangedDistance counts as found so (nearer
+ * the failed-target distances end a hide: hideFails).
  */
 export function hideSpottedDistance(
   watched: NonNullable<HideCheck['watched']>,
   settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
 ): number {
-  if (!watched.clear || watched.halfCone <= 0) return 0;
   const off = Math.abs(watched.offAngle);
-  if (off > watched.halfCone) return 0;
-  const min = settings.hideCheckViewConeDistanceMin;
+  if (!(off < HIDE_VIEW_CONE)) return 0;
   const max = settings.hideCheckViewConeDistanceMax;
-  return min + (max - min) * (1 - off / watched.halfCone);
+  const min = settings.hideCheckViewConeDistanceMin;
+  return max + (min - max) * (off / HIDE_VIEW_CONE);
 }
 
 /**
@@ -557,7 +568,9 @@ export function hideFails(
     ? check.distanceAhead < check.radii + settings.hideFailedTargetLosDistance
     : check.distance < check.radii + settings.hideFailedTargetDistance;
   const spotted =
-    check.watched !== undefined && check.distance < hideSpottedDistance(check.watched, settings);
+    check.watched !== undefined &&
+    check.distance > settings.rangedDistance &&
+    check.distance < check.radii + hideSpottedDistance(check.watched, settings);
   return near || check.engagedSince || spotted;
 }
 

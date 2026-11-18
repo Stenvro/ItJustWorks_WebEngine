@@ -3228,17 +3228,22 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   no fight of the game left is forced on the one loaded. To cover hidden from its enemy (Find Hide Cover: cover at least
   its crouched height, no ledge) at least fCombatFleeCoverMinDistance from it within
   fCombatFleeCoverSearchRadius, where it hides (Hide Parallel: Track Target, Turn Around, the Hide
-  Selector with Boost Confidence last): down, its back to the enemy, weighing each half second:
-  the enemy within fCombatHideFailedTargetDistance of it out of sight, or in sight
+  Selector with Boost Confidence last): down, its back to the enemy, weighing a second after it
+  began and then each half second (observed in the original): the enemy within
+  fCombatHideFailedTargetDistance of it out of sight, or in sight
   fCombatHideFailedTargetLOSDistance fCombatAnticipateTime ahead, or a blow since it began ends the
   hide, and Boost Confidence turns it to fight. Down, it sneaks: its enemies' detection weighs it
   as sneaking, and an enemy group that loses it searches for it. Its enemy looking its way finds it
-  too: within its view cone (fDetectionViewCone) with nothing between, out to
-  fCombatHideCheckViewConeDistanceMax straight ahead, falling to fCombatHideCheckViewConeDistanceMin
-  at the cone's edge (`hideSpottedDistance`; inferred from the settings' names, TODO(M13): the
-  original's scale between the two). TODO(M13): the Hide behaviour's own time limit (ours: the hide
-  lasts until it is found, or until its fight ends as its group gives up an enemy it lost, after
-  fCombatDetectionFleeingLostRemoveTime while all of it flees).
+  too (observed in the original: the only reader of the two settings): beyond
+  fCombatRangedDistance, within 30° of the enemy's facing, out to
+  fCombatHideCheckViewConeDistanceMax straight ahead past their radii, falling evenly to
+  fCombatHideCheckViewConeDistanceMin at 30°; no line of sight is asked (`hideSpottedDistance`).
+  TODO(M13): that check also holds a hider found within a second of its last engagement and
+  under a blackboard flag, and runs only under a condition on its combat inventory's ranges that
+  was not identified (ours weighs it always). The Hide behaviour's own time limit is 10000 s:
+  unfound, it is done then and the Hide Selector succeeds without Boost Confidence (it flees on);
+  in play the hide lasts until it is found, or until its fight ends as its group gives up an
+  enemy it lost, after fCombatDetectionFleeingLostRemoveTime while all of it flees.
   A run to a door or to cover that ends short of it (no way there, its way taken from it) fails
   its node, and the selector goes on to its next entry (`fleeRunStatus`): only one that got to
   its cover hides, only one at its door goes through. A coward's hide that is found fails too,
