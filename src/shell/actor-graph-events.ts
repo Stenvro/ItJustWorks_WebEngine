@@ -187,7 +187,31 @@ export class ActorGraphEvents {
   player(avatar: PlayerAvatar, events: readonly GraphEvent[], firstPerson: boolean): void {
     const skeleton = firstPerson ? avatar.firstPerson : avatar.body;
     if (!skeleton) return;
+    this.#playerInFirstPerson = avatar.inFirstPerson;
     this.dispatch.dispatch({ reference: PLAYER_REF, player: true, firstPerson, skeleton }, events);
+  }
+
+  /** The player's view as their graphs' events last came. */
+  #playerInFirstPerson = false;
+  /** The player's events the scripts last heard: by name, when and from which graph. */
+  readonly #playerHeard = new Map<string, { readonly at: number; readonly firstPerson: boolean }>();
+
+  /**
+   * Whether the scripts hear an event of one of the player's graphs: the body's always, the
+   * first-person arms' in first person too, an event both raise in the same frame once. The
+   * Dragonborn's boat ride (DLC2DialogueRRQuestScript's FirstTimeTravel) forces first person,
+   * plays IdleDLC02BoatRide, whose clip only the first-person graph has, and waits for the
+   * BoatRideFadeOut it raises; heard only from the body, the ride never ended. TODO(M13):
+   * inferred: which of the player's graphs the engine hands the scripts' events from.
+   */
+  #playerHears(name: string, firstPerson: boolean): boolean {
+    if (firstPerson && !this.#playerInFirstPerson) return false;
+    const at = this.#options.session.scriptsReady?.state.realTime ?? 0;
+    const key = name.toLowerCase();
+    const last = this.#playerHeard.get(key);
+    if (last?.at === at && last.firstPerson !== firstPerson) return false;
+    this.#playerHeard.set(key, { at, firstPerson });
+    return true;
   }
 
   // --- The handlers, in one place ----------------------------------------------------------------
@@ -202,9 +226,17 @@ export class ActorGraphEvents {
     // reference's own event sink in the engine).
     d.listen((source, events) => {
       if (!source.player) this.#sounds.get(source.skeleton)?.(events);
-      if (!source.firstPerson) {
+      if (source.firstPerson) {
         const runtime = this.#options.session.scriptsReady;
-        for (const event of events) runtime?.animationEvent(source.reference, event.text);
+        for (const event of events) {
+          if (this.#playerHears(event.name, true)) runtime?.animationEvent(PLAYER_REF, event.text);
+        }
+      } else {
+        const runtime = this.#options.session.scriptsReady;
+        for (const event of events) {
+          if (!source.player || this.#playerHears(event.name, false))
+            runtime?.animationEvent(source.reference, event.text);
+        }
         // The furniture it uses follows it. Observed in the original: as an actor comes to
         // want to sit or sleep in furniture, the furniture's animation graph manager joins the
         // actor's sub-managers (the list AddDependentAnimatedObjectReference adds to); inferred
