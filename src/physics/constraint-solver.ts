@@ -128,6 +128,20 @@ export interface SolverJoint {
    * further past the cone, as Havok's limit takes out the speed into it (solveJoints).
    */
   coneGives?: boolean;
+  /**
+   * The joint's own limits that give and that it lies past now (PhysicsWorld.#giveLimits): the
+   * axis of the first body's frame (0: a hinge's axle or a ragdoll's twist axis, 1: the plane
+   * axis, 2: the third) and the side (1: past the upper limit, the joint's angle about the axis
+   * growing further past it; −1: the lower). As with a cone that gives, the solver takes out
+   * the speed the bodies have further past it and its spring brings it back (solveJoints).
+   */
+  limitStops?: readonly LimitStop[];
+}
+
+/** A limit a joint lies past (SolverJoint.limitStops). */
+export interface LimitStop {
+  readonly index: 0 | 1 | 2;
+  readonly side: 1 | -1;
 }
 
 // --- Vectors ------------------------------------------------------------------------------------
@@ -338,7 +352,7 @@ export function solveJoints(
   settings: SolverSettings = SOLVER_DEFAULTS,
 ): void {
   const taken = [...joints].filter(solved);
-  if (taken.some((joint) => joint.coneGives === true)) {
+  if (taken.some((joint) => joint.coneGives === true || (joint.limitStops?.length ?? 0) > 0)) {
     solvePass(taken, step, gravity, 0, settings, true);
   }
   solvePass(taken, step, gravity, gravityShare(substeps), settings, false);
@@ -369,7 +383,8 @@ function solvePass(
   for (const joint of joints) {
     const { a: bodyA, b: bodyB, constraint: c } = joint;
     const gives = joint.coneGives === true && c.cone !== undefined;
-    if (stops && !gives) continue;
+    const limitStops = joint.limitStops ?? [];
+    if (stops && !gives && limitStops.length === 0) continue;
     const qa = bodyA.rotation();
     const qb = bodyB.rotation();
     // How far the second twist axis lies past the cone, and the axis the two turn about.
@@ -381,7 +396,7 @@ function solvePass(
       excess = Math.acos(Math.max(-1, Math.min(1, dot(ta, tb)))) - Math.abs(c.cone);
       if (excess > 0) across = unit(cross(ta, tb));
     }
-    if (stops && !across) continue;
+    if (stops && !(gives && across) && limitStops.length === 0) continue;
     const a = stateOf(bodyA);
     const b = stateOf(bodyB);
     const rows: Row[] = [];
@@ -398,7 +413,17 @@ function solvePass(
     };
     if (stops) {
       // A cone that gives: no speed further past it.
-      row(across, -Infinity, 0);
+      if (gives) row(across, -Infinity, 0);
+      // Its own limits that give: no speed further past them.
+      if (limitStops.length > 0) {
+        const first = rotate(qa, c.a.axes[0]);
+        const second = rotate(qa, c.a.axes[1]);
+        for (const { index, side } of limitStops) {
+          const n = index === 0 ? first : index === 1 ? second : unit(cross(first, second));
+          if (side > 0) row(n, -Infinity, 0);
+          else row(n, 0, Infinity);
+        }
+      }
     } else {
       const motor = joint.motor;
       if (motor && motor.maxForce > 0 && step > 0) {

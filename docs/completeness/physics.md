@@ -18,7 +18,7 @@ settings reader or named in the code. A field with one value in every mesh that 
 the physics counts as done with that reason. The mechanics are kept by hand below, against
 docs/physics.md. The count after an item is how many blocks (records) use it.
 
-## Count (2026-11-12, round 11)
+## Count (2026-11-18, round 12)
 
 | Part                          | Items | Done | Open |
 | ----------------------------- | ----: | ---: | ---: |
@@ -31,8 +31,8 @@ docs/physics.md. The count after an item is how many blocks (records) use it.
 | Explosions (EXPL)             |    16 |   16 |    0 |
 | Material types, impact data   |    17 |   17 |    0 |
 | Game settings (GMST)          |    45 |   45 |    0 |
-| Mechanics (by hand)           |    36 |   33 |    3 |
-| Total                         |   378 |  375 |    3 |
+| Mechanics (by hand)           |    37 |   34 |    3 |
+| Total                         |   379 |  376 |    3 |
 
 Round 1 wrote the sweep and this list, and fixed deactivation: Havok deactivates a simulation
 island as a whole, ours put a body to sleep on its own while something still moved on it (a
@@ -157,6 +157,19 @@ still short of where their load lies straight across the cone: they now slide th
 see docs/physics.md, "A limit's give"); that this
 tip without it no longer reaches the 48, 51 and 50 of the earlier rounds was not looked into.
 
+Round 12 (375 to 376, one item added): why fewer ragdolls came to rest. Bisected with
+`node tools/ragdoll-info.ts --still`: 51 of 52 at rest within 20 s before Rapier's own sleeping
+was held to Havok's deactivation, 35 after it (Rapier had put slow limbs to sleep while they
+still moved; by the distance rule alone, a limb that sags or slides along its limit by a little
+more than 0.02 units a second never rested). Havok's rarer deactivation check (four times the
+reach, its own reference) is built (inferred how often it runs: PhysicsWorld.#deactivate,
+RARE_SCALE), and a limit that gives now takes out the speed into it as the cone did (the
+spring gave a swing back, and the two spiders kept a leg swinging off their limits:
+SolverJoint.limitStops). 50 pushed, 50 still and 51 lifted of 52 at rest within 20 s, against
+40, 43 and 42 at the start of the round and 48, 51 and 50 before; all 52 let go still within
+40 s (tests/conformance/physics/deactivation.test.ts, "the rarer check";
+src/physics/physics-world.test.ts, "stop a body that swings into a limited hinge's limit").
+
 ## Meshes
 
 - [x] Block types (26 of 26): bhkCollisionObject 13689, bhkRigidBody 11334,
@@ -253,7 +266,10 @@ tip without it no longer reaches the 48, 51 and 50 of the earlier rounds was not
 - [x] Placed collision: every object, the landscape, collision primitives; streamed in.
 - [x] Friction and restitution combined as Havok's square root of the product.
 - [x] Settling (the warm start), waiting bodies, statics that do not settle, hung objects.
-- [x] Deactivation: the distance rule, by island (round 1), solver deactivation.
+- [x] Deactivation: the distance rule, by island (round 1), solver deactivation; Havok's rarer
+      check within four times the reach (round 12; TODO(M13): how often it runs, inferred).
+- [x] A limit that gives takes out the speed into it, its spring brings the joint back
+      (SolverJoint.limitStops; round 12).
 - [ ] Solver deactivation's relative-speed threshold per class (docs/physics.md). Stays: the
       values are read, how Havok measures the relative speed is not (in its linked solver, no
       names to find it by). Tried in round 9 against each moving body a slow one is joined to or

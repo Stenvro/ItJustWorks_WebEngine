@@ -898,10 +898,17 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   limit comes to rest on it. The stiffness goes by the step squared and by how the two bodies
   lie, so it is measured again every step and the motor set where it changed by more than 2 %
   (in Slow Time, at half the step, a limit is four times as stiff; measured once as the
-  spring came on, it stayed the full step's). Rapier's own limit stands 0.02 radians past
-  where the joint is, so what swings into the limit is stopped there (Havok's limit takes the
-  speed into it out) and what presses on it moves it on a step at a time until the spring
-  holds the load; it follows the joint only once it has moved half of that. A joint far past
+  spring came on, it stayed the full step's). Havok's limit takes the speed into it out: while
+  a joint lies past one of its own limits (a hinge's, a ragdoll's twist or plane), the
+  constraint solver takes out the speed its bodies have further past it, as it does for the
+  cone (below; `SolverJoint.limitStops`), and the spring brings it back. Before, only Rapier's
+  own limit stopped it, 0.02 radians on, and the spring gave back what the swing had pressed
+  into it: a weight let go level fell onto a hinge's limit and bounced on it (0.016 radians up
+  and down a second on; within 0.002 with the stop), and the Dwemer spider and the large
+  frostbite spider kept a leg swinging off its limits for good. Rapier's own limit stands
+  0.02 radians past where the joint is, so what presses on the limit moves it on a step at a
+  time until the spring holds the load; it follows the joint only once it has moved half of
+  that. A joint far past
   its limit (more than 0.05 radians: a dying actor's animated pose let go) comes back by tau
   of its excess a step at most. A limit of one angle (the Dwemer spider's) stays Rapier's own.
   A ragdoll joint has three such limits: its twist's, its plane's (the swing toward its plane
@@ -1217,8 +1224,20 @@ world info keeps Havok's 0.02 Havok units; from it Havok derives, per deactivati
 frequent check within that distance and a turn of twice it, and a rarer one within four times
 it and a turn of eight times it) of where it last moved, however it trembles there, and a
 system of bodies inactive for a second as a whole goes to sleep (`PhysicsWorld.#deactivate`,
-checked every quarter second, within 0.02 units and 0.05 radians; TODO(M13): how often Havok
-runs its two checks and for how many frames a body must pass them are not read). Before that,
+checked every quarter second, within 0.02 units and 0.05 radians). The rarer check keeps a
+reference of its own, within 0.08 units and 0.2 radians, checked every fourth time (every
+second), and a body that stays within it for 4 s is inactive too: a limb that sags or slides
+along its limit by less than that, back and forth or slowing down, leaves the frequent check's
+reach again and again but is at rest by the rarer one (TODO(M13): inferred, how often Havok
+runs its two checks and for how many frames a body must pass them are not read; here the
+rarer one runs four times as seldom and asks four times as long, as its reach is four times
+the frequent one's). Without it, from the time Rapier's own sleeping was held to the rule
+(below) the race skeletons' ragdolls dropped on a floor came to rest within 20 s 35 of 52
+times let go still (51 before), and 43 with the cone's give; with it and the limits' stop
+(`SolverJoint.limitStops`, "A limit's give") 50 pushed, 50 still and 51 lifted of 52, all 52
+let go still within 40 s (`node tools/ragdoll-info.ts`, which also prints how fast each
+ragdoll still creeps and turns over its last second; the Dwemer spider and the large frostbite
+spider swing a leg on its nearly frictionless hinges, 0.01 N·m, for 23 and 29 s). Before that,
 Havok's solver slows a slow body down (solver deactivation, above). Rapier sleeps bodies by their
 speed alone, so a ragdoll whose limbs shook against a slope or a rock never slept (the Helgen
 skeleton flipped its vertical speed 12–31 times a second for half a minute), and a body sliding

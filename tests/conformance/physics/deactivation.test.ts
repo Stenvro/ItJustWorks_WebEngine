@@ -164,6 +164,45 @@ describe('deactivation by place, not by speed (Havok’s rule)', () => {
     expect(sleptAt ?? 0).toBeLessThanOrEqual(1.5);
   });
 
+  // Havok's rarer check: within four times the reference distance (and turn), checked a quarter
+  // as often and asked for four times as long (inferred: TODO(M13) in physics-world.ts). A body
+  // swaying 0.07 Havok units to and fro (a limb sagging and coming back on its joint's limit)
+  // leaves the frequent check's 0.02 units again and again, and stayed awake for good: of the
+  // race skeletons' ragdolls dropped on a floor and let go still, 43 of 52 came to rest within
+  // 20 s, 50 with it (`node tools/ragdoll-info.ts --still`).
+  it('puts a body swaying within four times the distance to sleep by the rarer check', () => {
+    const physics = new PhysicsWorld(new CollisionMatrix([]), GRAVITY);
+    const placed = physics.addObject(loose(5), IDENTITY, { reference: 1, kind: 'object' }, false);
+    const body = placed.bodies[0]?.body;
+    if (!body) throw new Error('no body');
+    physics.release(body);
+    body.setGravityScale(0, true);
+    // To and fro along x, twice a second: 0.07 Havok units from end to end (past the frequent
+    // check's reach from anywhere along it, within the rarer one's from everywhere).
+    const sway = (amplitude: number): number | undefined => {
+      body.setTranslation({ x: 0, y: 0, z: 0 }, true);
+      body.wakeUp();
+      for (let i = 0; i < 10 * 60; i++) {
+        const t = i / 60;
+        if (!body.isSleeping()) {
+          const speed = amplitude * Math.PI * 2 * 2 * Math.cos(Math.PI * 2 * 2 * t);
+          body.setLinvel({ x: speed, y: 0, z: 0 }, false);
+        }
+        physics.step(1 / 60);
+        if (body.isSleeping()) return (i + 1) / 60;
+      }
+      return undefined;
+    };
+    const swaying = sway(0.035);
+    // 0.2 units end to end: past the rarer check's reach too, it stays awake.
+    const wider = sway(0.1);
+    physics.free();
+    expect(swaying).toBeDefined();
+    expect(swaying ?? 0).toBeGreaterThanOrEqual(4);
+    expect(swaying ?? 0).toBeLessThanOrEqual(6);
+    expect(wider).toBeUndefined();
+  });
+
   it('places a body that does not settle ("Don’t Havok Settle") asleep, and it stays so', () => {
     const physics = new PhysicsWorld(new CollisionMatrix([]), GRAVITY);
     const placed = physics.addObject(loose(5), IDENTITY, { reference: 1, kind: 'object' }, false);

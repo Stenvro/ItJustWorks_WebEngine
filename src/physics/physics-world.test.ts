@@ -599,6 +599,69 @@ describe('physics constraints', () => {
     physics.free();
   });
 
+  // Havok's limit takes out the speed into it (SolverJoint.limitStops): a weight let go level,
+  // 60 units out from its hinge, falls 1 rad onto the limit and comes to rest on it at once
+  // (within 0.002 rad from a quarter second on). The limit's spring (#giveLimits) gave back
+  // what the swing pressed into it: the weight kept bouncing on the limit (0.016 rad up and
+  // down over that second), and of the race skeletons' ragdolls the Dwemer spider and the large
+  // frostbite spider kept a leg swinging off its limits for good (at rest within 23 and 29 s
+  // with the stop; `node tools/ragdoll-info.ts spider --still --seconds 40`).
+  it("stop a body that swings into a limited hinge's limit there, as Havok's limit does", () => {
+    const bracket = body(box([-5, -5, -5], [5, 5, 5]));
+    const at = new Float32Array(IDENTITY);
+    at[13] = 60;
+    const weight: CollisionBody = {
+      ...body(box([-10, -10, -10], [10, 10, 10])),
+      node: 'Weight',
+      transform: at,
+      motion: 'dynamic',
+      layer: Layer.clutter,
+      mass: 10,
+      inertia: [1, 1, 1],
+    };
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const placed = physics.addObject(
+      {
+        bodies: [bracket, weight],
+        constraints: [
+          {
+            bodyA: 1,
+            bodyB: 0,
+            data: {
+              type: 'limited-hinge',
+              a: frame([0, -60, 0]),
+              b: frame([0, 0, 0]),
+              minAngle: -1,
+              maxAngle: 0.4,
+              maxFriction: 0,
+              motor: { type: 'none' },
+            },
+          },
+        ],
+        skipped: [],
+      },
+      IDENTITY,
+      { reference: 1, kind: 'object' },
+      false,
+    );
+    for (const { body: held } of placed.bodies) physics.release(held);
+    const falling = placed.bodies[1]?.body;
+    const angle = (): number => {
+      const t = falling?.translation();
+      return Math.atan2(-(t?.z ?? 0), t?.y ?? 1);
+    };
+    // It meets the limit (1 rad down, the files' angles mirrored) half a second after it is let
+    // go; how far it moves up and down on it from a quarter second after that, for a second.
+    const angles: number[] = [];
+    for (let i = 0; i < 105; i++) {
+      physics.step(1 / 60);
+      if (i >= 44) angles.push(angle());
+    }
+    physics.free();
+    expect(Math.min(...angles)).toBeGreaterThan(0.99);
+    expect(Math.max(...angles) - Math.min(...angles)).toBeLessThan(0.004);
+  });
+
   // Havok's solver leaves a limit as stiff as its iterations make it (constraint-solver.ts,
   // limitGive): a 10 kg weight held out level, 60 units from its hinge, presses on the limit
   // 0.1 rad down with 10 × 9.81 × 60 / 69.99 ≈ 84 N·m; between a fixed bracket and an inertia
@@ -1480,7 +1543,9 @@ describe('deactivation', () => {
         maxAngularVelocity: 30,
       });
     // A crate's floor, and on it something that keeps moving (a head rocking in it): the board
-    // stays where it lies while the rocker moves back and forth on it.
+    // stays where it lies while the rocker moves back and forth on it, 0.2 Havok units from end
+    // to end (past the reach of Havok's rarer check, 0.08 units from where it was: within it,
+    // the rocker would be at rest by that check, PhysicsWorld.#deactivate).
     const board = physics.addObject(dynamic([-30, -30, 0], [30, 30, 2], 20), IDENTITY, {
       reference: 2,
       kind: 'object',
@@ -1496,7 +1561,7 @@ describe('deactivation', () => {
     let sign = 1;
     for (let i = 0; i < 240; i++) {
       physics.step(1 / 60, () => {
-        if (i % 30 === 0) sign = -sign;
+        if (i % 60 === 0) sign = -sign;
         moving.setLinvel({ x: 0.2 * sign, y: 0, z: moving.linvel().z }, true);
       });
       // Put to sleep under the moving body, the board would drop its contacts with the ground
