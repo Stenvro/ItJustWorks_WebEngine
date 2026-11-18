@@ -1598,7 +1598,8 @@ export class ActorMovers {
 
   /** A hit's push back on an actor's controller (src/gameplay/combat/knockback.ts). */
   knockBack(reference: number, velocity: readonly [number, number], seconds: number): void {
-    this.#movers.get(reference)?.character.knockBack(velocity, seconds);
+    // A hit's or trap's push fades over its time (observed in the original).
+    this.#movers.get(reference)?.character.knockBack(velocity, seconds, true);
   }
 
   /** Seconds each actor has sprinted that its stamina has not paid for yet. */

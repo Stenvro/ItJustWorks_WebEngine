@@ -536,7 +536,14 @@ export class CharacterBody {
   /** What it left a moving body with: it keeps it in the air (game units a second). */
   #leftWith: [number, number] = [0, 0];
   /** A hit's push back (knockBack): its speed (game units per second) and the seconds left. */
-  #knock: { readonly velocity: readonly [number, number]; left: number } | undefined;
+  #knock:
+    | {
+        readonly velocity: readonly [number, number];
+        left: number;
+        readonly total: number;
+        readonly fades: boolean;
+      }
+    | undefined;
   /** The simulated bodies it pushed in this step's moves (#push: once a step each). */
   readonly #pushedBodies = new Set<number>();
   /** The mass it pushes back with against moving bodies (kg; pushedSpeed) and characters. */
@@ -1395,21 +1402,28 @@ export class CharacterBody {
   }
 
   /**
-   * A hit's push back (src/gameplay/combat/knockback.ts): it moves at `velocity` (game units a
-   * second; the ground's plane) besides its own for `seconds`, unless a stronger push moves it
-   * already (observed in the original).
+   * A push (src/gameplay/combat/knockback.ts): it moves at `velocity` (game units a second; the
+   * ground's plane) besides its own for `seconds`, unless a stronger push moves it already
+   * (observed in the original). `fades` (a hit's or trap's push, observed in the original): the
+   * speed falls evenly from `velocity` to nothing over the time; otherwise it is held.
    */
-  knockBack(velocity: readonly [number, number], seconds: number): void {
+  knockBack(velocity: readonly [number, number], seconds: number, fades = false): void {
     const now = this.#knock;
     if (now && now.left > 0 && Math.hypot(...now.velocity) >= Math.hypot(...velocity)) return;
-    this.#knock = { velocity: [velocity[0], velocity[1]], left: seconds };
+    this.#knock = { velocity: [velocity[0], velocity[1]], left: seconds, total: seconds, fades };
   }
 
-  /** The push back moving it this step, and the time it has left after it. */
+  /** The push back moving it this step (its mean over the step), and the time it has left. */
   #knocked(seconds: number): readonly [number, number] {
     const knock = this.#knock;
     if (!knock) return [0, 0];
-    const share = Math.min(1, knock.left / Math.max(seconds, 1e-6));
+    const step = Math.max(seconds, 1e-6);
+    const before = knock.left;
+    const after = Math.max(0, before - step);
+    // The share of its first speed it moves at over the step, on average.
+    const share = knock.fades
+      ? (before * before - after * after) / (2 * knock.total * step)
+      : Math.min(1, before / step);
     knock.left -= seconds;
     if (knock.left <= 0) this.#knock = undefined;
     return [knock.velocity[0] * share, knock.velocity[1] * share];

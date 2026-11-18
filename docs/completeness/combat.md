@@ -316,8 +316,9 @@ and 290 built-in ones the readers ask for by name.
 
 ## Next biggest
 
-1. The knockback's fading (held for fKnockbackTime here) and which stage of a hit's damage it
-   reads; the timed bash's reaction (TODO(M13), docs/ai.md "Staggers").
+1. The timed bash's reaction (TODO(M13), docs/ai.md "Staggers"). (Done 2026-11-18, observed in
+   the original: the knockback fades evenly over fKnockbackTime from force units a second, by
+   the hit's damage before armour.)
 2. The rates' unit (acceleration, deceleration) and what the advanced avoidance adds.
 3. The cases left in the conformance list (round 5, above).
 4. A clip with several hit frames (the dual power attack's) strikes its target once an attack

@@ -519,7 +519,8 @@ export interface ActorCombatOptions {
   readonly playerBody?: () => BodyHolder | undefined;
   /** The player's character controller: a hit's push back moves it (knockback.ts). */
   readonly playerCharacter?: () =>
-    { knockBack(velocity: readonly [number, number], seconds: number): void } | undefined;
+    | { knockBack(velocity: readonly [number, number], seconds: number, fades?: boolean): void }
+    | undefined;
   /**
    * The player began (true) or ended (false) bleeding out (src/shell/player-death.ts): their
    * controls stop and the bleedout camera looks at them meanwhile.
@@ -3108,12 +3109,12 @@ export class ActorCombat implements CombatBridge {
         const push = knockbackVelocity(
           attackerFeet,
           targetFeet,
-          knockbackForce(result.physical, settings),
+          knockbackForce(result.beforeArmor, settings),
           settings.knockbackTime,
         );
         if (push) {
           const flat = [push.velocity[0], push.velocity[1]] as const;
-          if (target.player) this.#options.playerCharacter?.()?.knockBack(flat, push.seconds);
+          if (target.player) this.#options.playerCharacter?.()?.knockBack(flat, push.seconds, true);
           else this.#options.movers.knockBack(targetRef, flat, push.seconds);
         }
       }
@@ -5503,7 +5504,7 @@ export class ActorCombat implements CombatBridge {
     );
     if (!push) return;
     const flat = [push.velocity[0], push.velocity[1]] as const;
-    if (fighter.player) this.#options.playerCharacter?.()?.knockBack(flat, push.seconds);
+    if (fighter.player) this.#options.playerCharacter?.()?.knockBack(flat, push.seconds, true);
     else this.#options.movers.knockBack(reference, flat, push.seconds);
   }
 

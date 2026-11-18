@@ -2566,16 +2566,17 @@ meanwhile.
   target's character controller away from the attacker (from the hit's point without one) by
   (the whole physical damage × fKnockbackDamageMult + fKnockbackDamageBase) × (fKnockbackAgilBase
   - fKnockbackAgilMult × 50) game units (the 50 an earlier game's Agility at its middle;
-    vanilla: (damage × 5 + 50) × 0.6), at most fKnockbackForceMax (128), spread over
-    fKnockbackTime (0.3 s): the controller moves at force / time units a second besides its own
-    movement, unless a stronger push already moves it. A hit that names its own push (a trap's
+    vanilla: (damage × 5 + 50) × 0.6), at most fKnockbackForceMax (128), given over
+    fKnockbackTime (0.3 s): the controller moves at force units a second besides its own
+    movement at first, the speed falling evenly to nothing as the time runs out (force × time / 2
+    units in all), unless a stronger push already moves it. The damage is the physical damage
+    the hit carries: its damage before the target's armour, resistance and block, in whole
+    points. A hit that names its own push (a trap's
     ProcessTrapHit pushback: `trapPushback`, away from the trap along the ground, the trap's
     pushback at most fKnockbackForceMax over fKnockbackTime; the actor is not knocked down) uses
     it instead of the formula. No push on an actor in a kill move,
     of a race that is Not Pushable (RACE DATA 0x400), or from a projectile (arrows, bolts).
-    Inferred: the push is held for the whole time (TODO(M13): whether the controller lets it
-    fade); the damage is the hit's physical damage after armour (TODO(M13): which stage of the
-    hit's damage the engine reads). fConcussionTimer (40) is registered by the original and never
+    fConcussionTimer (40) is registered by the original and never
     read (an earlier game's concussion: inert).
     The Stagger effect (MGEF archetype 33: Unrelenting Force's 0.75, 1.25, 1.5; the Incinerate
     and Ice Spike perks' push 0.25; the giants' and atronachs' area slams) staggers by its
