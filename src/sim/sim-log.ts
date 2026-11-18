@@ -242,6 +242,12 @@ export class SimLog {
   clock: () => number = () => 0;
   /** The buttons message boxes answer with, in order (then the first button). */
   readonly answers: number[] = [];
+  /**
+   * Told as a conversation's menu opens (its record: the speaker, its opening topic):
+   * the dialogue menu picks the line it opens with at that moment (src/shell/dialogue-menu.ts),
+   * and so does the simulation's conversation (tests/helpers/sim.ts).
+   */
+  onTalk: ((record: Extract<SimRecord, { readonly kind: 'menu' }>) => void) | undefined;
 
   /** Every record of a kind. */
   of<K extends SimRecordKind>(kind: K): Extract<SimRecord, { readonly kind: K }>[] {
@@ -371,13 +377,15 @@ export class SimLog {
     },
     userEvent: () => undefined,
     talk: (speaker: PlacedActor, opening?: number) => {
-      this.#push({
+      const record: Extract<SimRecord, { readonly kind: 'menu' }> = {
         kind: 'menu',
         at: this.clock(),
         menu: 'Dialogue Menu',
         reference: speaker.actor.reference,
         ...(opening !== undefined && { opening }),
-      });
+      };
+      this.#push(record);
+      this.onTalk?.(record);
     },
     container: (reference, closed) => {
       this.#push({ kind: 'menu', at: this.clock(), menu: 'ContainerMenu', reference });
