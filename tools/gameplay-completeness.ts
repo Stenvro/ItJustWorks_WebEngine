@@ -160,7 +160,7 @@ const EXPLAINED: ReadonlyMap<string, string> = new Map([
     (name) =>
       [
         `Perk entry points|${name}`,
-        "an earlier game's entry point the original asks nowhere (observed in the original: no call of it was found); a mod's entry on it changes nothing there either",
+        "an earlier game's entry point the original asks nowhere (observed in the original: none of the calls of its entry point handler names it); a mod's entry on it changes nothing there either",
       ] as const,
   ),
   [

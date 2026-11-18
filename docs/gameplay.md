@@ -1036,11 +1036,21 @@ same aim; what differs is where they leave from and, for an NPC, what it aims at
   (its feet) is within its proximity (in an exterior times fMineExteriorRadiusMult, 1), or by the
   player as their Calculate Mine Explode Chance (from 100, the mine's projectile its item tab)
   comes up on a roll of 0..99; a failed roll lets the player pass that mine for good. It bursts
-  fMinesDelayMin (0.1 s) after (projectile-flight.ts withinMineRadius, mineBursts). TODO(M13):
-  the original's own check of the actor against the mine is not read (ours passes only its
-  caster); a mine model's ##LightOn node blinks in the original (every fMinesBlinkSlow, faster
-  to fMinesBlinkFast within fMinesBlinkMax of its burst): no vanilla rune model has one, ours
-  does not blink it yet.
+  fMinesDelayMin (the engine's 0.1 s, Skyrim.esm 0.2) after (projectile-flight.ts
+  withinMineRadius, mineBursts). Either only as the mine's check of the actor lets them
+  (observed in the original; mayTriggerMine): not its placer (unless
+  iProjectileMineShooterCanTrigger is above 0; Skyrim.esm 0), not dead, not a member of the
+  faction owning a mine no actor placed, not one its placer regards as an ally or friend, and not
+  one its placer commands (a summon, a commanded thrall). TODO(M13): two more of the actor's own
+  states the original checks are not read, and a mine no actor placed is owned as its launcher
+  is (ours: projectiles have no ownership of their own). From being set off to its burst a mine blinks (observed in the original): each time
+  its blink's seconds run out its model's ##LightOn node is shown or hidden again and its
+  projectile's countdown sound plays; the next blink comes after fMinesBlinkSlow (0.25 s) with
+  more than fMinesBlinkMax (2 s) to go, else after (time left / fMinesBlinkMax) × (Slow −
+  fMinesBlinkFast) + Fast (0.1 s) (projectile-flight.ts mineBlinkInterval, magic-projectiles.ts
+  #blink: the node's shapes drawn apart). No vanilla rune model has the node nor any vanilla
+  mine projectile a countdown sound. TODO(M13): that the first blink comes at once as it is set
+  off is inferred.
   An actor it meets in flight sets it off. A lobber's age (observed in the original, asked at
   each of its updates): the most it lives is its PROJ's Lifetime; where that is zero,
   fGrenadeAgeMax, or for a mine (Alt. Trigger with an explosion proximity above zero)
@@ -1711,11 +1721,35 @@ spell and target the tabs: the second actor value's weight), Mod Max Placeable M
 player's, of iMaxPlayerRunes: Skyrim.esm 1; the player's oldest rune at rest gives way to the
 next, TODO(M13): inferred, UESP "Skyrim:Rune") and Get Should Attack (the other actor the
 owner, the would-be attacker its tab; TODO(M13): where the engine asks it is not read, here a 0
-keeps the other off the attacker's targets). The engine also asks Calculate Mine Explode
-Chance (the player, from 100), Adjust Limb Damage and Mod Addiction Chance (the potion usage
-monitor past fAddictionUsageMonitorThreshold, 25): TODO(M13), not run yet; no call was found
-for Mod Addiction Duration, Mod Positive Chem Duration, Mod Player Reputation, Mod Lockpick
-Level Allowed and Set Progression Picking.
+keeps the other off the attacker's targets). The engine also asks (observed in the original):
+
+- **Calculate Mine Explode Chance**: the player's, from 100, the mine's projectile its tab, as
+  they come within a mine's reach (see "Delivery": a failed roll passes that mine for good).
+- **Adjust Limb Damage**: the target's, its tabs the attacker and the hit's weapon (the unarmed
+  weapon, WEAP 0x1F4, where the hit has none), as an explosion's hit takes the condition of the
+  actor's body parts. An explosion keeps at most two parts of each actor it meets: with two kept,
+  a body no nearer than the nearer of them is passed over and a nearer one takes that one's place.
+  Each kept part with an actor value (BPND's signed byte; -1 on every vanilla part, so only mods'
+  parts) loses the hit's damage over the target's base Health times the part's health share,
+  times 100, as the perks leave it (`casting-engine.ts` explode, `dismemberment.ts`
+  keepLimbReached, explosionLimbs). TODO(M13): which of the actor's bodies a burst meets and in
+  what order (ours: each part whose node lies within its radius, in the body part data's order),
+  and the weapon an explosion of a weapon's ammunition passes (ours: the unarmed one).
+- **Mod Addiction Chance**: the drinker's, as a potion-type item is applied to an actor, after
+  its effects took hold. A potion with no addiction or a chance of 0 gives none and asks nothing.
+  A potion carrying the engine's Usage Monitor Effect (form 0x14B: a script effect flagged
+  Recover, fire and forget on self, that the engine makes itself where no plugin defines that
+  form) takes its chance from that potion's monitors running on the drinker: their magnitudes
+  summed, at or below fAddictionUsageMonitorThreshold (the engine's 25, Skyrim.esm 70) no
+  addiction, above it the excess as a percentage. The chance (a share) goes through the perks
+  and is rolled against 0-99; taken, the potion's monitors on the drinker end and the drinker
+  gets the addiction. The original then asks for an image-space modifier on the player newly
+  addicted by a fixed form that in Skyrim.esm is a placed reference, so nothing shows
+  (`addiction.ts`, `magic-engine.ts` consumed). No vanilla potion has an addiction.
+
+The engine asks Mod Addiction Duration, Mod Positive Chem Duration, Mod Player Reputation, Mod
+Lockpick Level Allowed and Set Progression Picking nowhere (observed in the original: none of
+the calls of its entry point handler names them); a mod's entry on them does nothing there.
 
 ### Records
 
@@ -1868,11 +1902,12 @@ HasBeenEaten, IsPoison.
   percent (the Left or Right Mobility Condition; no plugin sets them, and nothing vanilla reads
   those values; TODO(M13): inferred from the names). TODO(M13): difficulty.
 
-No vanilla perk uses and no system asks Calculate Mine Explode Chance,
-Adjust Limb Damage, Get Should Attack, Mod Addiction Chance / Duration, Mod Positive Chem
-Duration, Mod Max Placeable Mines, the Telekinesis ones, Mod Secondary Value Weight, Mod Player
-Reputation, Ignore Running During Detection, Ignore Broken Lock, Mod Lockpick Level Allowed and
-Set Progression Picking (Fallout's; TODO(M13) should a mod use them).
+The entry points no vanilla perk uses (Calculate Mine Explode Chance, Adjust Limb Damage, Get
+Should Attack, Mod Addiction Chance, Mod Max Placeable Mines, the Telekinesis ones, Mod Secondary
+Value Weight, Ignore Running During Detection, Ignore Broken Lock) are asked where the engine asks
+them, for mods: see "Perks" above, which also names the five the original asks nowhere (Mod
+Addiction Duration, Mod Positive Chem Duration, Mod Player Reputation, Mod Lockpick Level Allowed,
+Set Progression Picking).
 
 ## Beast forms
 

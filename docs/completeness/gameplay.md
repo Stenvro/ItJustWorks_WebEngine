@@ -139,13 +139,17 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 Round 5 (2026-11-18) built the entry points the original asks that no vanilla perk uses:
 Calculate Mine Explode Chance (observed in the original: asked of the player alone as they come
 within a mine's proximity, from 100, a failed roll passing that mine for good; other actors set
-it off without one: projectile-flight.ts mineBursts, magic-projectiles.ts), Adjust Limb Damage (the target's perks on
-a hit's limb damage, the attacker and its weapon their tabs: dismemberment.ts adjustedLimbDamage)
-and Mod Addiction Chance (a potion's addiction chance through the drinker's perks:
-magic-engine.ts consumed); where the engine asks the last two is inferred (TODO(M13)). The five entry
-points no call of was found for in the original (Mod Addiction Duration, Mod Positive Chem
-Duration, Mod Player Reputation, Mod Lockpick Level Allowed, Set Progression Picking) are
-explained as asked nowhere. The workbench type None is named where the menus are chosen (no
+it off without one: projectile-flight.ts mineBursts, magic-projectiles.ts), Adjust Limb Damage
+(observed in the original: the target's perks on an explosion's limb damage to the at most two
+body parts it kept of the actor, the attacker and the unarmed weapon their tabs, taken from each
+part's actor value: casting-engine.ts explode, dismemberment.ts explosionLimbs; no vanilla part
+has an actor value) and Mod Addiction Chance (observed in the original: the drinker's perks on a
+potion's addiction chance, none asked at a chance of 0, a potion carrying the engine's Usage
+Monitor Effect taking its chance from its monitors past fAddictionUsageMonitorThreshold:
+addiction.ts, magic-engine.ts consumed). The five entry points the original asks nowhere (Mod
+Addiction Duration, Mod Positive Chem Duration, Mod Player Reputation, Mod Lockpick Level
+Allowed, Set Progression Picking; observed: none of the calls of its entry point handler names
+them) are explained so. The workbench type None is named where the menus are chosen (no
 menu), and Enchant Visuals was already read (enchantment-glow.ts).
 
 ## Next biggest open items
@@ -193,14 +197,14 @@ menu), and Enchant Visuals was already read (enchantment-glow.ts).
 
 - [x] calculateWeaponDamage (12), calculateMyCriticalHitChance (14), calculateMyCriticalHitDamage (8), modRecoveredHealth (0), modEnemyCriticalHitChance (0), modRecoverArrowChance (2), modBashingDamage (2), modPowerAttackStamina (4), modPowerAttackDamage (2), modIncomingStagger (2), modTargetStagger (1), modIncomingDamage (23), modTargetDamageResistance (7), modPercentBlocked (8), modShieldDeflectArrowChance (1), setSweepAttack (1), applyCombatHitSpell (58), applyBashingSpell (5), setBooleanGraphVariable (3), applyWeaponSwingSpell (1), modSoulPctCapturedToWeapon (1): src/shell/actor-combat.ts
 - [x] calculateMineExplodeChance (0), modMaxPlaceableMines (0): src/shell/magic-projectiles.ts (observed in the original: the player's chance as they come within a mine's proximity; the player's iMaxPlayerRunes)
-- [x] adjustLimbDamage (0): src/gameplay/combat/dismemberment.ts (asked by the original; the target's perks on the hit's limb damage, inferred where)
+- [x] adjustLimbDamage (0): src/gameplay/combat/dismemberment.ts (observed in the original: the target's perks on an explosion's limb damage to the body parts it kept, asked by src/scripting/runtime/casting-engine.ts explode)
 - [x] adjustBookSkillPoints (1): src/shell/book-reading.ts
 - [x] getShouldAttack (0): src/shell/actor-combat-ai.ts (asked by the original; where, inferred: the other actor off its targets)
 - [x] modBuyPrices (15), activate (19), modSellPrices (15), filterActivation (13), setActivateLabel (3), allowMountActor (1): src/scripting/runtime/perk-engine.ts
 - [x] addLeveledListOnDeath (0): src/scripting/runtime/actor-engine.ts
 - [x] getMaxCarryWeight (0): src/scripting/runtime/equipment-engine.ts
 - [x] modAddictionChance (0), modSpellMagnitude (61), modSpellDuration (17), modSecondaryValueWeight (0), modIncomingSpellMagnitude (8), modIncomingSpellDuration (0), applyReanimateSpell (2), modCommandedActorLimit (4), modPlayerMagicSlowdown (1), modPoisonDoseCount (1): src/scripting/runtime/magic-engine.ts
-- [x] modAddictionDuration (0), modPositiveChemDuration (0), modPlayerReputation (0), modLockpickLevelAllowed (0), setProgressionPicking (0): an earlier game's entry point the original asks nowhere (observed in the original: no call of it was found); a mod's entry on it changes nothing there either
+- [x] modAddictionDuration (0), modPositiveChemDuration (0), modPlayerReputation (0), modLockpickLevelAllowed (0), setProgressionPicking (0): an earlier game's entry point the original asks nowhere (observed in the original: none of the calls of its entry point handler names it); a mod's entry on it changes nothing there either
 - [x] ignoreRunningDuringDetection (0), modDetectionLight (1), modDetectionMovement (1), modDetectionSneakSkill (10), applySneakingSpell (2): src/shell/actor-senses.ts
 - [x] ignoreBrokenLock (0): src/scripting/runtime/natives/reference.ts
 - [x] modSneakAttackMult (4): src/scripting/runtime/stat-events.ts
