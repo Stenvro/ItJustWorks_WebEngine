@@ -25,8 +25,8 @@ against docs/ai.md and the conformance suites (tests/conformance/ai/).
 | Idle markers, furniture |    25 |   24 |    1 |
 | Navmeshes (data)        |    12 |   11 |    1 |
 | Game settings           |   190 |  190 |    0 |
-| Mechanics (by hand)     |    39 |   27 |   12 |
-| Total                   |   471 |  457 |   14 |
+| Mechanics (by hand)     |    40 |   29 |   11 |
+| Total                   |   472 |  459 |   13 |
 
 Round 1 wrote the sweep and this list; Can Pickup Items (RACE DATA) became read: only a race that
 can pick up items runs the combat tree's Acquire Weapon.
@@ -209,7 +209,10 @@ the readers ask for by name.
 - [x] Sandbox: the delay on arrival: at its activity the next package and procedure evaluations
       wait at least fSandBoxDelayEvalSeconds (observed; tests/conformance/ai/sandbox.test.ts).
       Inferred: the field the engine caps it by, taken as the stay, which is longer in vanilla.
-- [ ] Sandbox: the places the engine gives no radius: open (near itself and near its start: done).
+- [x] Sandbox: the places the engine gives no radius (observed): In Cell always (632 packages),
+      any place named with radius 0 (155 near a chair, bed or marker), an activator with none
+      taking half its bounds' smallest side; each searched fSandBoxSearchRadius round
+      (tests/conformance/ai/sandbox.test.ts). Inferred: the In Cell place's point.
 - [x] fSandBoxExtraDialogueRange: observed to size only the second place of the engine's In Game
       Dialogue package (the first's radius plus it); ours holds two actors talking in their scene
       (talk.ts inGameDialoguePlaces, src/shell/actor-talk.ts): one drawn beyond the second place
@@ -285,7 +288,9 @@ the readers ask for by name.
 - [x] Asking the player who stands in the way to move (avoidance.ts blockedByActor, the movers'
       rule: after fMaxTimeBlockedByActors, once a travel, its ActorCollidewithActor line; the line
       and the wait inferred; tests/conformance/ai/procedures.test.ts).
-- [x] Engine packages: get up, avoid player, steal warning, movement blocked (engine-packages.ts).
+- [x] Engine packages: get up, avoid player, steal warning, movement blocked (engine-packages.ts);
+      the Do Nothing package the player's bite gives its target (observed; an NPC's gives none:
+      src/scripting/runtime/engine-events.test.ts).
 - [x] Wear Sleep Outfit: Asbjorn in his bed's package (tests/conformance/ai/procedures.test.ts).
 - [x] Head tracking (head-tracking.ts): no favourites (the player asked first, else the first it may
       look at), who may be looked at (distance, 100 units, 120° or the one it has, two in
@@ -300,8 +305,16 @@ the readers ask for by name.
       the next look).
 - [x] Furniture use: entry, exit, idle markers (actor-furniture.ts).
 - [x] Process levels and their budget (process-levels.ts).
-- [ ] Process levels: the high-process distance ours; actors away keep a schedule (ours). Not read
-      in this round: no setting names either.
+- [x] Process levels follow the actor's cell, no distance (observed): attached with 3D high,
+      loaded middle-high, else middle-low or low; every actor of the loaded area is in the high
+      process. The budget is one deadline the lists share in order, the middle-high list from
+      its cursor to its end at most, the clock read every tenth actor, the low processes taking
+      what is left (iLowProcessingMilliseconds never read). The middle-low cells: those behind
+      the loaded area's load doors (observed). tests/conformance/ai/process-levels-budget.test.ts.
+- [ ] Actors away: the low process's own movement (its pace, where it is between doors) was not
+      followed; ours walks the route at its walk speed and is in a space at each door. Ours: the
+      player's location lists (temporary actors of unloaded cells), a worldspace behind a door
+      taken whole (the original marks one cell), the character controllers' reach.
 
 ## Next biggest
 

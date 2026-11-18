@@ -24,7 +24,7 @@ cell next door may be its floor). Observed in the original: an actor is simulate
 collision that is in place. So its fall onto whatever is under it (its controller's) is not
 taken near a cell the view does not hold at all (beyond the loaded area): there only the
 position check sets it down, within fCheckPositionFallDistance (72) under it, else it keeps
-the height it has, as one beyond the high process walks on its navmesh. Alvor's place on his
+the height it has, as one beyond the controllers' reach walks on its navmesh. Alvor's place on his
 smithy's floor (z −82) lies in the cell south-west of the one the smithy is placed in; with the
 player coming from Helgen that cell is the loaded grid's edge, and the stage dropped him through
 the missing floor to the slope 142 units below, where no navmesh is (his walks failed, and he
@@ -44,20 +44,26 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   ([physics.md](physics.md#the-character-controller)): its shape from its skeleton's collision
   bound "BBX" scaled by its race's height and its own scale, set where it stands once its
   ground is in place (and out of what it stands in, as the player's). Nearer than one exterior
-  cell (4096 units) it is in the engine's high process; beyond 1.25 times that it loses its
-  controller. Beyond it, in the loaded area, it is in the middle-high process: its AI runs and
-  it walks its paths without a controller, kept on the navmesh (its height there), its graph
+  cell (4096 units) it has its controller; beyond 1.25 times that it loses it (the
+  controllers' reach is ours: `CONTROLLER_DISTANCE`, TODO(M13)). Beyond it, in the loaded area,
+  its AI runs as near the player and it walks its paths without a controller, kept on the navmesh (its height there), its graph
   driven as a controlled one's; coming near it gets its controller where it stands (on the
   floor just under or over its feet). What its graph was told goes on from one to the other: a
-  deer that fled past the high process at a run is told it stopped as it stops (before, its
+  deer that fled past the controllers' reach at a run is told it stopped as it stops (before, its
   graph ran on the spot for minutes, never told). Held there by an animation-driven idle while
   its AI sends it away, its idle is stopped as a moved actor's is (ActionIdleStop, again each
   second): a chicken lying down otherwise gave up every walk its sandbox sent it on. Held so, its
   clips' root motion moves and turns it, as a controlled one's (a deer's canned flee turn
   carries it on). The levels (CommonLibSSE `ProcessLists`: high, middle-high, middle-low, low)
-  are decided in `src/ai/process-levels.ts`, and the middle-high actors walk on their turns of
-  the budget ([The AI's game settings](#the-ais-game-settings)); TODO(M13): the engine's own
-  distance rule is not a setting. The controllers are in the world the
+  are decided in `src/ai/process-levels.ts` by the actor's cell, observed in the original:
+  with its 3D loaded it is in the high process while its cell is attached (the loaded area:
+  the interior, or the uGridsToLoad cells round the player), in the middle-high while its cell
+  is loading or loaded but not attached; without 3D, or its cell not loaded, it is in the
+  middle-low process where its cell is loaded or marked for it (below, [Actors
+  away](#actors-away)), else in the low. No distance from the player is in it: every actor of
+  the loaded area is in the high process, its senses tested and testing
+  ([Detection](#detection)), a fighter, counted for the complex scene. Middle-high actors take
+  their turns of the budget ([The AI's game settings](#the-ais-game-settings)). The controllers are in the world the
   player moves in: the player bumps into actors and they into each other. The crosshair's pick
   (L_ITEMPICKER) meets an actor's controller, its BIPED bodies keyframed to its pose
   (`src/shell/actor-bodies.ts`) or a dead one's ragdoll and takes that actor (`talkTargets`,
@@ -133,7 +139,7 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   force flag the graph's bForceIdleStop names); TODO(M13): when exactly it does so for a path
   is not observed in the original yet. As the graph lets go (bAnimationDriven back to 0) while it
   still goes its way it is told again (moveStart; turnLeft / turnRight turning), as the engine
-  performs the movement action again when it stops an idle. Beyond the high process (no
+  performs the movement action again when it stops an idle. Beyond the controllers' reach (no
   controller) an actor held so does not go its way either: it glided (a chicken sitting in its
   idle while it went on).
 - **Trigger volumes** see actors with controllers: OnTriggerEnter and OnTriggerLeave with the
@@ -841,10 +847,14 @@ had ended falls out again). One at a time (TODO(M13): which may replace which).
   the feeding idle plays on the target (IdleVampireFeed, IdleCannibalFeed); the package runs as
   long as the feeding lasts and ends with it (the feeder's NPCVampireFeedEnd, observed in the
   original to end the feeding procedure; else six seconds), its own package then chosen again.
-  Every vanilla caller feeds the player (the feeding perks, DA11VerulusScript), who runs no
-  packages while not AI-driven: they feed without one. Inferred, TODO(M13): the procedures' own
-  steps (no walk to the target: the perks offer the feed within activation reach) and the
-  player's created packages outside AI drive.
+  Every vanilla caller feeds the player (the feeding perks, DA11VerulusScript). Observed in the
+  original: the player's bite makes the player a Vampire Feed package too (must complete, on the
+  target) and gives the target a created **Do Nothing** package (must complete) so it holds still
+  while it is fed on; an NPC's bite gives its target none (`doNothingWhile`: ours lasts as long
+  as the feeding, and may run in a bed, where a sleeper is bitten: inferred). Ours runs the
+  player's packages only while AI-driven, so the player not AI-driven feeds without its own.
+  Inferred, TODO(M13): the procedures' own steps (no walk to the target: the perks offer the
+  feed within activation reach) and the player's own created package outside AI drive.
 - **Surface** (`surfaceTo`: a swimmer under water rises to the surface; its start observed in the
   original): an NPC with its head under water (at least 0.875 of it submerged) that does
   not breathe water (WaterBreathing) uses up its breath, fActorSwimBreathBase (10) +
@@ -1071,10 +1081,16 @@ Actors use furniture as the engine's furniture handling does, as far as the data
     point of energy below 100, in real seconds, and picked at random.
   - TODO(M13): the counts' first values (1 here); a sleep window whose end is before its start
     (taken as the next day's 1:00); its scan again every fMin..fMaxSandboxRescanSeconds (3–6
-    real seconds: ours scans as each activity ends); fSandBoxSearchRadius (6000) for a place the
-    engine gets no radius for (ours keeps the place's radius, at least 100);
-    fSandBoxExtraDialogueRange, observed to size only the second place of the engine's In Game
+    real seconds: ours scans as each activity ends); fSandBoxExtraDialogueRange, observed to size only the second place of the engine's In Game
     Dialogue package (the first's radius plus this): see "Conversations between actors".
+  - **Where it searches** (observed in the original): round its place, as far as the package
+    location's own radius. An In Cell place has none (632 vanilla Sandboxes), whatever its
+    radius field says; an activator named with none takes half the smallest side of its bounds;
+    every place with none (In Cell, a chair, bed or marker named with radius 0: 155 vanilla
+    Sandboxes; near its editor location, itself or its start with 0) is searched
+    fSandBoxSearchRadius (6000) round. Inferred, TODO(M13): the In Cell place's point (ours:
+    where the actor stands in the cell, else the cell's middle; the original takes a point the
+    cell holds).
   - As it reaches its activity (in its seat or bed, on its marker) its next package and procedure
     evaluations wait at least fSandBoxDelayEvalSeconds (observed in the original; capped by a field
     of its state, inferred to be the stay).
@@ -1490,7 +1506,7 @@ cell's draws and collision) once the cart is tethered; the headless simulation d
 165 simulated seconds at the horses' walk). Before, the simulation kept its carts: they stood
 where they were placed with the player and the prisoners on them while the horses walked off
 alone, turned back to their first patrol point about 5,100 units from the player (where they
-leave the high process, `LEAVE_HIGH_DISTANCE`; TODO(M13): whether a package left so begins
+lose their controllers, `LEAVE_CONTROLLER_DISTANCE`; TODO(M13): whether a package left so begins
 again in the original), and MQ101 never left stage 15.
 
 **SetMotionType** reaches a cart its horse pulls (its collision is the vehicles' once its cell
@@ -1519,10 +1535,14 @@ with its cart in it, through which the cart, keyframed then, passed).
 ## Actors away
 
 Actors that are not in the loaded area keep their schedules (the middle-low and low processes,
-`src/shell/actors-away.ts`; the levels: `src/ai/process-levels.ts`). Their schedules are asked
-for the actors of the player's space and of the spaces one load door from it (the middle-low
+`src/shell/actors-away.ts`; the levels: `src/ai/process-levels.ts`). Observed in the original: a
+load door whose 3D loads marks the cell on its other side for the middle-low process (and
+unmarks it as it unloads), so the cells behind the loaded area's load doors are the middle-low
+process's, not those behind every door of a worldspace. Their schedules are asked for the actors
+of the player's space and of the spaces behind the loaded area's load doors (the middle-low
 process: those placed there, an interior's actors, a worldspace's persistent ones, and those the
-game state has there) and for the load order's persistent actors wherever they are (the low
+game state has there; ours in form: a worldspace behind a door is taken whole, where the
+original marks the one cell the door leads into) and for the load order's persistent actors wherever they are (the low
 process: ACHR records in a cell's persistent children, 2,411 in the vanilla load order, 1,653 of
 them living and enabled at the start), each where its package has it now (the placement above,
 from its packages, factions, race and sex, read once). Actors that are not persistent exist only
@@ -1612,8 +1632,10 @@ location's lists.
   steps out of her house's door and walks to her stall at the market; set to 10:00 she stands
   there at once. TODO(M13): the engine's own rule for who keeps a schedule while away (ours:
   the persistent references, and those near the player) and its pace are not documented.
-- A run works in slices: after iLowProcessingMilliseconds (2 ms) of asking it lets the browser
-  draw a frame before it goes on (`PapyrusScheduler.giveWay`), and the plugins' actors of each
+- A run works in slices: after what the frame's process lists' budget left once the middle-high
+  list had its turns (observed in the original: the low processes share that one deadline, after
+  the middle-high and middle-low lists; iLowProcessingMilliseconds is registered and never read)
+  it lets the browser draw a frame before it goes on (`PapyrusScheduler.giveWay`), and the plugins' actors of each
   cell asked about are found once (a worldspace's persistent cell has tens of thousands of
   references: looking through them took 200 ms each run). A run over the whole world's
   persistent actors takes about 80 ms of work.
@@ -1637,21 +1659,20 @@ from the original game's behaviour only (in our words):
   lists' update fProcessListsUpdateTimeMax ms (5) at fProcessListsUpdateHighFrameRate (30) frames
   a second or more, fProcessListsUpdateTimeMin (0.5) below fProcessListsUpdateLowFrameRate (10),
   (Min + Max) × rate / (Low + High) between ([General] INI settings). The high process runs
-  every frame outside it; the middle-high actors (the loaded area beyond the high process) take
-  turns round-robin from where the last frame's stopped (CommonLibSSE `ProcessLists` keeps a
-  cursor per list), as many as their measured cost (an estimate per actor, updated by each
-  turn) fits in the budget, at least one a frame. A turn runs the packages and the walk with
-  all the time owed since the actor's last. An actor in combat, a scene, dialogue or asked-for
-  head tracking stays in the high process, as far as the loaded area reaches: its senses test
-  and it is tested ([Detection](#detection)), and it is a fighter, wherever it is (its
-  controller is still only near the player). Found in MQ104: its dragon, a scene actor
-  circling the Western Watchtower 7,500 units off, was neither seen nor saw, and never fought.
+  every frame outside it. The budget is one deadline the lists share in order (observed in the
+  original): the middle-high list from where its last frame stopped (CommonLibSSE
+  `ProcessLists` keeps a cursor per list), the clock read after every tenth actor it updated,
+  until the deadline passes or the list ends (it never goes round twice in a frame: the next
+  starts it from its first actor); then the middle-low list the same way; then the low list
+  with what is left. Each actor updated runs all the time since its own last update. Ours: the
+  turns are chosen as the frame begins by each actor's measured cost (an estimate per actor,
+  updated by each turn), ten at a time; the actors away work in what the middle-high turns
+  left. Every actor of the loaded area is in the high process (its level follows its cell:
+  above): found in MQ104, its dragon circling the Western Watchtower 7,500 units off, beyond a
+  distance-made high process, was neither seen nor saw, and never fought.
   At Whiterun's busiest cell (tools/sim-speed.ts
-  --budget: 5 high, 40 middle-high) a round of all forty costs 0.15 ms of the 5, so each has its
-  turn every frame and the step time is the same as without (about 10–11 ms either way, run to
-  run); the budget bounds the frame where many more actors are beyond the high process (a
-  battle, a crowded city with a heavy AI). TODO(M13): how the engine
-  shares the budget between its lists.
+  --budget, before the levels followed the cells: 5 high, 40 middle-high) a round of all forty
+  cost 0.15 ms of the 5; all of them are in the high process now, as in the original.
 - **Where an actor is at a place:** within the place's radius, at least
   fAIMarkerDestinationRadius at a marker (XMarker, XMarkerHeading; Skyrim.esm 50),
   fAIFurnitureDestinationRadius at furniture (Skyrim.esm 150), fAIDistanceRadiusMinLocation
@@ -1703,7 +1724,7 @@ from the original game's behaviour only (in our words):
   across-the-place point is taken only where a path reaches it (up to 8 tried at once, else it
   waits a moment). Before, any point of the circle was taken unchecked, inside houses and
   behind the garden fences, and the first walk went anywhere within it (QA: a Riverwood chicken
-  beyond the high process stood 26 s 687 units short of its point, in every run; with this and
+  beyond the controllers' reach stood 26 s 687 units short of its point, in every run; with this and
   the walkers' idles stopped, above in "Movement", none).
 - **Follow:** its radii without its own are fFollowSlowdownZoneWidth (150) and
   fFollowMatchSpeedZoneWidth (128), the smaller the minimum. Its speed is matched to the

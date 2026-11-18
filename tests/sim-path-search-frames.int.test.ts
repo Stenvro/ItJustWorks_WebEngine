@@ -11,7 +11,7 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { findPath, pathSearchStats } from '../src/ai/pathfinding.ts';
-import { LEAVE_HIGH_DISTANCE } from '../src/ai/process-levels.ts';
+import { LEAVE_CONTROLLER_DISTANCE } from '../src/shell/actor-movers.ts';
 import type { ActorMovers, SearchPacing } from '../src/shell/actor-movers.ts';
 import { navmeshTriangle } from '../src/world/navmesh.ts';
 import { hasGamedata, openSim, PLAYER_REF, SIM_STEP, type Sim } from './helpers/sim.ts';
@@ -32,8 +32,8 @@ const HOLD: SearchPacing = { frame: SHARE, reserve: SHARE, first: SHARE };
 const SLOW: SearchPacing = { frame: 2 * SHARE, reserve: SHARE, first: SHARE };
 /** Searches end at once. */
 const FREE: SearchPacing = { frame: 1e9, reserve: 0, first: 1e9 };
-/** Beyond this from the player an actor walks without a controller (LEAVE_HIGH_DISTANCE). */
-const WALKER_AWAY = LEAVE_HIGH_DISTANCE + 500;
+/** Beyond this from the player an actor walks without a controller (LEAVE_CONTROLLER_DISTANCE). */
+const WALKER_AWAY = LEAVE_CONTROLLER_DISTANCE + 500;
 
 describe.skipIf(!hasGamedata())('path searches over frames (headless simulation)', () => {
   let sim: Sim;

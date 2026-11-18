@@ -215,7 +215,7 @@ export interface ScriptView {
   /** A created package in front of an actor's own (ScriptWorld.putCreatedPackage). */
   putCreatedPackage?(
     reference: number,
-    kind: FeedingPackage,
+    kind: FeedingPackage | 'doNothing',
     runner: EngineRunner,
     target: number | undefined,
   ): boolean;
@@ -766,7 +766,7 @@ export class ScriptWorld implements WorldBridge {
   /** A created package put on the actor by the view whose AI runs it (false: none does). */
   putCreatedPackage(
     actor: number,
-    kind: FeedingPackage,
+    kind: FeedingPackage | 'doNothing',
     runner: EngineRunner,
     target: number | undefined,
   ): boolean {

@@ -14,7 +14,7 @@ import {
   SandboxPlan,
   type SandboxCandidate,
 } from './sandbox.ts';
-import { TargetType } from './package-records.ts';
+import { LocationType, TargetType } from './package-records.ts';
 import { ObjectType } from './object-types.ts';
 import { ORBIT_PROCEDURE } from './flight.ts';
 import type {
@@ -718,14 +718,18 @@ const sandboxing: ProcedureRunner = async (run) => {
   // least its Min Wander Distance (fAIWanderDefaultMinDist without one).
   const energy = Math.min(100, Math.max(0, numberIn(run, 8) ?? (await energyOf(run))));
   const least = numberIn(run, 10) ?? settings.wanderDefaultMinDist;
-  // Its place's radius, at least fAIDistanceRadiusMinLocation (a sit package's chair, radius 0).
-  // A place that is no reference and has no radius (near itself, near its start, radius 0) is
-  // searched fSandBoxSearchRadius round (observed in the original: the scan takes it for a radius of 0).
-  // TODO(M13): which places the engine gives no radius beyond these.
-  const radius =
-    place.radius <= 0 && place.reference === undefined
-      ? settings.sandboxSearchRadius
-      : Math.max(place.radius, atPlace(run));
+  // Its place's radius (observed in the original): the package location's own; an In Cell place
+  // has none (632 vanilla Sandboxes), whatever its radius field says; an activator reference
+  // with none takes half the smallest side of its bounds. A place with none (In Cell, and any
+  // other of radius 0: a chair or a marker named with no radius, near its editor location,
+  // itself or its start) is searched fSandBoxSearchRadius round.
+  const location = run.inputs.location(0);
+  let own = location?.type === LocationType.inCell ? 0 : place.radius;
+  if (own <= 0 && place.reference !== undefined) {
+    const bounds = await run.mind.activatorBounds?.(place.reference);
+    if (bounds) own = Math.trunc(Math.min(...bounds) / 2);
+  }
+  const radius = own > 0 ? own : settings.sandboxSearchRadius;
   const plan = new SandboxPlan();
   const random = (): number => run.random();
   // Where it is now (the spot it uses) and what it does there.

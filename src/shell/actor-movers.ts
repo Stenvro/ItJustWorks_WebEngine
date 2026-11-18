@@ -36,12 +36,7 @@ import {
   type Neighbour,
 } from '../ai/avoidance.ts';
 import { PathFollower, type DoorPassage } from '../ai/path-follower.ts';
-import {
-  HIGH_PROCESS_DISTANCE,
-  LEAVE_HIGH_DISTANCE,
-  ProcessLevel,
-  type ProcessSlicer,
-} from '../ai/process-levels.ts';
+import { ProcessLevel, type ProcessSlicer } from '../ai/process-levels.ts';
 import {
   findPath,
   PathSearch,
@@ -135,10 +130,15 @@ export interface MoverWorld {
 }
 
 /**
- * Actors nearer the player than HIGH_PROCESS_DISTANCE are in the high process: their controller
- * moves them; they leave it beyond LEAVE_HIGH_DISTANCE (src/ai/process-levels.ts).
+ * Actors nearer the player than this get a character controller, which moves them (units: one
+ * exterior cell); farther off in the loaded area they walk their paths without one, kept on the
+ * navmesh. Their process level is not this: every actor of the loaded area is in the high
+ * process (src/ai/process-levels.ts). TODO(M13): ours; whether the engine gives every actor of
+ * an attached cell its controller was not read.
  */
-export { HIGH_PROCESS_DISTANCE };
+export const CONTROLLER_DISTANCE = 4096;
+/** An actor with a controller loses it beyond this (units: no churn at the edge). */
+export const LEAVE_CONTROLLER_DISTANCE = CONTROLLER_DISTANCE * 1.25;
 /** A tilting race probes the ground under its ends again once it moved this far (game units), */
 const TILT_AGAIN = 4;
 /** A heading changed by more than this in a step was set (a script, a warp): drawn at once. */
@@ -1948,19 +1948,22 @@ export class ActorMovers {
         ? Math.hypot(staged.position[0] - focus[0], staged.position[1] - focus[1])
         : 0;
       const held = this.#options.held?.(reference) === true;
-      const near = distance < (mover || held ? LEAVE_HIGH_DISTANCE : HIGH_PROCESS_DISTANCE);
-      // Combat, a scene, dialogue or asked-for head tracking keep it in the high process
-      // wherever it is in the loaded area (the stage's levels): its senses work and it is
-      // sensed there (MQ104's dragon circling the watchtower 7,500 units off in its scene).
-      const kept = this.#options.slicer?.level(reference) === ProcessLevel.high;
-      if ((near || kept) && this.#lives(staged)) this.#high.add(reference);
+      const near = distance < (mover || held ? LEAVE_CONTROLLER_DISTANCE : CONTROLLER_DISTANCE);
+      // The stage's levels: every actor of the loaded area is in the high process, however far
+      // from the player (its senses work and it is sensed: MQ104's dragon circling the
+      // watchtower 7,500 units off). Without levels (no stage), those near the player.
+      const slicer = this.#options.slicer;
+      const high =
+        slicer?.level(reference) === undefined
+          ? near
+          : slicer.level(reference) === ProcessLevel.high;
+      if (high && this.#lives(staged)) this.#high.add(reference);
       // Beyond it, held by what carries or seats it: its AI goes on (a rider's moves its horse,
       // a walker: MQ101's Tullius rides on to the tower after the player's cart drew away).
       else if (held && this.#lives(staged)) this.#heldAway.add(reference);
-      // Beyond the high process: it walks without a controller (not with its AI disabled).
+      // Beyond the controllers' reach: it walks without a controller (not with its AI disabled).
       if (!near && !mover && this.#moves(staged) && !this.aiDisabled(reference)) {
-        // On its turn of the middle-high process, with the time it was owed.
-        const slicer = this.#options.slicer;
+        // On its turn of its process (the middle-high's are budgeted), with the time it was owed.
         if (!slicer) this.#walk(staged, seconds);
         else
           slicer.turn('walk', reference, seconds, (owed) => {
@@ -2563,10 +2566,10 @@ export class ActorMovers {
   }
 
   /**
-   * Whether an actor is in the high process (CommonLibSSE's ProcessLists): near the player
-   * (HIGH_PROCESS_DISTANCE) or kept there (combat, a scene, dialogue, head tracking), alive,
-   * shown, of a race that walks. Its AI runs; near the player it has a controller unless
-   * furniture holds it.
+   * Whether an actor is in the high process (CommonLibSSE's ProcessLists): of the loaded area
+   * (the stage's levels; without them, near the player), alive, shown, of a race that walks.
+   * Its AI runs; near the player (CONTROLLER_DISTANCE) it has a controller unless furniture
+   * holds it.
    */
   inHighProcess(reference: number): boolean {
     return this.#high.has(reference);

@@ -191,6 +191,12 @@ export interface PackageMind {
   /** An idle marker's idles and place (undefined: no idle marker). */
   idleMarker(reference: number): Promise<IdleMarkerPlace | undefined>;
   /**
+   * The size of a reference's bounds (its base's OBND at its scale) if its base is an
+   * activator, else undefined: a sandbox at an activator with no radius takes half its smallest
+   * side for one.
+   */
+  activatorBounds?(reference: number): Promise<Vec3 | undefined>;
+  /**
    * The references a criterion names by object or object type (Find's search criteria, the
    * food an actor eats) within a place, nearest to the actor first; with `steal`, also those
    * it may not use.
@@ -495,7 +501,8 @@ export type ProcedureRunner = (run: ProcedureRun) => Promise<ProcedureResult>;
 /**
  * The engine's own packages, those no record holds (CommonLibSSE PACKAGE_TYPE: kAvoidPlayer,
  * kReactToDestroyedObject, kStealWarning, kPickPocketWarning, kGetUpFromChairBed, kSurface,
- * kMovementBlocked, kAlarm, kFlee, kVampireFeed, kCannibal; a summon's following of its commander:
+ * kMovementBlocked, kAlarm, kFlee, kVampireFeed, kCannibal, kDoNothing; a summon's following of its
+ * commander:
  * followCommander): the engine creates one and puts it in front of the actor's own package
  * (Actor::PutCreatedPackage); as it ends, the actor's packages are chosen again.
  */
@@ -509,6 +516,7 @@ export type EnginePackage =
   | 'movementBlocked'
   | 'vampireFeed'
   | 'cannibal'
+  | 'doNothing'
   | 'followCommander'
   | 'alarm'
   | 'flee';

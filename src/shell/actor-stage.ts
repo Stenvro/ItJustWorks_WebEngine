@@ -674,6 +674,7 @@ export class ActorStage {
       terminal: options.terminal,
       loaded: (place) => this.#loaded(place),
       staged: (actor) => this.#actors.has(actor),
+      budgetLeft: () => this.process.left,
       doors: this.doors,
       // The low process: a travel's place reached completes its package (a scene's package
       // action whose actor went through a door, Haming into his house, is done then), unless
@@ -2980,28 +2981,14 @@ export class ActorStage {
    * those beyond the high process within this frame's budget.
    */
   #levelActors(frame: number): void {
-    const focus = this.#options.focus?.();
     const session = this.#options.session;
-    const runtime = session.scriptsReady;
-    const looks = session.scriptWorld.lookTargets;
     const levels = new Map<number, ProcessLevel>();
+    // The stage's actors are those of the loaded area's cells (attached): the high process,
+    // however far from the player (observed in the original: the level follows the cell's state,
+    // not a distance). One disabled has no 3D: the middle-low process.
     for (const staged of this.#actors.values()) {
-      const reference = staged.reference;
-      const distance = focus
-        ? Math.hypot(staged.position[0] - focus[0], staged.position[1] - focus[1])
-        : 0;
-      const kept =
-        this.combat.engaged(reference) ||
-        runtime?.dialogueSpeaker === reference ||
-        runtime?.scenes.sceneOf(reference) !== undefined ||
-        looks.target(reference) !== undefined;
-      const level = processLevel({
-        loaded: true,
-        distance,
-        wasHigh: this.movers.inHighProcess(reference),
-        kept,
-      });
-      levels.set(reference, level);
+      const level = processLevel({ cell: 'attached', shown: !staged.visibility.hidden });
+      levels.set(staged.reference, level);
     }
     this.process.begin(levels, frame > 0 ? processListsBudget(frame, aiSettingsOf(session)) : 0);
     // A complex scene steps the physics in its complex mode (PhysicsWorld.complex). Counted as

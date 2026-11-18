@@ -5,7 +5,7 @@
 // Platform-independent. Notes: docs/scripting.md ("Actors").
 
 import { hostileTo } from '../../../ai/combat-ai.ts';
-import { feedOn, type Feeding } from '../../../ai/engine-packages.ts';
+import { doNothingWhile, feedOn, type Feeding } from '../../../ai/engine-packages.ts';
 import { keepOffsetOf } from '../../../ai/movement-overrides.ts';
 import { NpcFlag } from '../../../world/actor-records.ts';
 import { ActorValue } from '../../../world/actor-values.ts';
@@ -686,7 +686,8 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   // IdleCannibalFeed); a crime where it is seen (crime-engine.ts vampireFeed). The vampire's
   // scripts hear OnVampireFeed. A feeder that runs no AI here (the player while not AI-driven:
   // every vanilla caller feeds the player) feeds at once. TODO(M13): the original's player runs
-  // created packages too; ours runs the player's packages only while AI-driven.
+  // its created Vampire Feed package (observed) even while not AI-driven; ours runs the player's
+  // packages only while AI-driven.
   const feed = (actor: number, target: number, kind: 'vampire' | 'cannibal'): void => {
     const feeding: Feeding = {
       begin: () => {
@@ -696,6 +697,16 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
           kind === 'vampire' ? IDLE_VAMPIRE_FEED : IDLE_CANNIBAL_FEED,
           target,
         );
+        // The player's bite gives the one fed on a Do Nothing package while it lasts (observed
+        // in the original; an NPC's gives none, and a corpse eaten runs no packages).
+        if (actor === PLAYER_REF && kind === 'vampire') {
+          world.putCreatedPackage?.(
+            target,
+            'doNothing',
+            doNothingWhile(() => feeding.feeding()),
+            undefined,
+          );
+        }
       },
       feeding: () => {
         const now = state.actors.get(actor)?.feeding;
