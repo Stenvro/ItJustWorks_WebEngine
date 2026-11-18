@@ -13,17 +13,17 @@ item with where it is read); docs/completeness/ai.md says when an item counts as
 mechanics part is kept by hand against docs/ai.md ("Combat", "Combat AI", "Flying") and the
 conformance suites (tests/conformance/combat/).
 
-## Count (2026-11-04, round 5)
+## Count (2026-11-18, round 7; the sweep's parts as it counts them now)
 
 | Part                     | Items | Done | Open |
 | ------------------------ | ----: | ---: | ---: |
 | Combat style (CSTY)      |    35 |   35 |    0 |
 | Attack data (ATKD, ATKE) |    16 |   16 |    0 |
 | Race combat (DATA, ATKR) |    15 |   15 |    0 |
-| Behaviour tree actions   |    63 |   63 |    0 |
-| Game settings            |   410 |  410 |    0 |
-| Mechanics (by hand)      |    24 |   24 |    0 |
-| Total                    |   563 |  563 |    0 |
+| Behaviour tree actions   |    66 |   66 |    0 |
+| Game settings            |   459 |  459 |    0 |
+| Mechanics (by hand)      |    25 |   25 |    0 |
+| Total                    |   616 |  616 |    0 |
 
 Round 1 wrote the sweep and this list, and built down:
 
@@ -151,12 +151,36 @@ Round 5 (2026-11-04) read the mechanics left from the original (docs/ai.md "Use 
 Round 5 (2026-11-09) took the last of the conformance list's open cases, each with an inferred
 rule (TODO(M13)) where the original's was not found: GroupStrategy (the group's leader calls it as
 two or more of the group come to attack one target: combat-groups.ts #strategies), the Fixed
-target selector (StartCombat's target is kept while it is there: combat-ai.ts fixedTarget), an
+target selector (read in round 7: not StartCombat's; combat-ai.ts fixedTarget), an
 NPC's kill move (a killing strike on its group's last target goes for its Special Attack first:
 combat-tactics.ts killMoveFirst), an actor's own yield rule (once a fight, over as the player
 holds off: combat-ai.ts yields, yieldOver), torches in a fight (combat-tactics.ts darkForTorch,
 torchInFight; fCombatInventoryTorchEquipRange and MinEquipTimeTorch, fTorchLightLevel*), the
 Flee package's safety (procedure-runs.ts fleeSafe: fFleeIsSafeTimer beyond fFleeDoneDistance*).
+
+Round 7 (2026-11-18) read these from the original (docs/ai.md "Combat detection", "Targets",
+"A fixed target", "The odds", "Fleeing", "The combat behaviour tree"):
+
+- The confidence roll: drawn as the fight's combat state is made, added to the level (boosts
+  counted) for the three middle levels in the flee check, its only use.
+- Detection priority: a combat group answers its members' tests of its targets with a priority
+  (its own combat target 4, the player as that 5; the player or the member holding the group's
+  level 3; 2 beyond fCombatDetectionLowPriorityDistance, 1 beyond VeryLowPriorityDistance), and
+  the pair's next test follows 2, 1.5, 1, 0.5 or 0.25 s later (combat-groups.ts
+  detectionPriority, detection-states.ts detectionTestDelay). The combat tree's inn fight now
+  weighs its wolves' levels each 0.5 s and detects them within seconds whatever the rounds' dice.
+- Target selection's 100 is for a line of sight in the last detection test, not for hearing; the
+  Fixed selector is made only for the target the player's mount is set on and in a flier's Flying
+  Attack, never by Papyrus StartCombat, and holds while its group has its target.
+- The hide: its enemy's look finds it beyond fCombatRangedDistance within 30° of the enemy's
+  facing, 4096 straight on to 1024 at 30°, no line of sight asked; the Hide behaviour's own time
+  is 10000 s, weighed first after 1 s, then each 0.5 s.
+- Low Combat's blow is a hit put on its target without a swing (ActorCombat.lowBlow).
+- Find Lateral Attack Location (facing within 60°, within range, one side then the other, 64
+  then every 128), Find Attack Location (its way kept off the target's radius plus 384; one
+  line-of-fire test per bearing and height key, attackPlaceKey), Find Ally Attack Location (an
+  ally 256 .. 4096 from the shooter, within its range of the target, the way ending the radii
+  and 64 from it).
 
 ## Combat style (CSTY)
 
@@ -273,8 +297,9 @@ and 290 built-in ones the readers ask for by name.
 - [x] Find Attack Location: the Ranged Movement's subtree (Find Lateral Attack Location, Find
       Attack Location, Find Ally Attack Location, Set Failed Timestamp, observed in the original),
       run while the line of fire is blocked, by the fCombatFind*AttackLocation* settings
-      (combat-subtrees.ts, behaviour-tree.test.ts, ranged.test.ts). TODO(M13): the settings' use
-      is inferred from their names (docs/ai.md, "The combat behaviour tree").
+      (combat-subtrees.ts, behaviour-tree.test.ts, ranged.test.ts); the three leaves' use of
+      the settings observed in round 7. TODO(M13): when the subtree runs (ours: a blocked line)
+      and what reads its failed timestamp (docs/ai.md, "The combat behaviour tree").
 - [x] The cover: no score; the first edge that holds as the way search reaches it (round 5).
       TODO(M13): the reservation slots along an edge, an obstacle's move.
 - [x] Magic in combat: casters by purpose, dual casting, concentration, potions.
@@ -297,8 +322,11 @@ and 290 built-in ones the readers ask for by name.
 - [x] The dragons' fight: the Flight subtree, perches, breath, landing (flight.ts,
       actor-flight.ts).
 - [x] Flee: the strength ratio, to an ally, through a door, to cover; yield and surrender.
-- [x] Flee past a load door; the hide after Flee To Cover (round 5). TODO(M13): how long a hide
-      lasts when nothing ends it (the Hide behaviour's own time was not read: ours until then).
+- [x] Flee past a load door; the hide after Flee To Cover (round 5); the Hide behaviour's own
+      time (10000 s) and checks, its enemy's look (round 7). TODO(M13): the flight on past the
+      door is an inferred rule (fled-through-doors.ts).
+- [x] Detection in a fight: each member tests its group's targets by the group's priority, its
+      combat target every 0.5 s (round 7; combat-groups.test.ts, behaviour-tree.test.ts).
 - [x] Kill moves and the kill cameras (kill-moves.test.ts, kill-camera-shots.test.ts).
 - [x] The magic kill camera (round 5).
 - [x] Sneak attacks by the player and by NPCs (sneaking, undetected: actor-combat.ts).

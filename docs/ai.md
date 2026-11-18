@@ -3585,7 +3585,10 @@ engine's ([Combat movement](#combat-movement)).
 - **Fleeing** (`shouldFlee`, observed in the original): with its odds below the flee ratio of its
   confidence level (fConfidenceCowardly 1000, Cautious 0.375, Average 0.15, Brave 0.0375,
   Foolhardy 0, interpolated between two levels); the fight's roll
-  (fCombatConfidenceModifierMin .. Max, drawn once) moves the level only for the three in between.
+  (fCombatConfidenceModifierMin .. Max) is drawn once, as the fight's combat state is made with
+  its controller, and is added to the level (its boosts counted) only for the three in between,
+  before the ratio is interpolated; the odds must be strictly below it (observed in the original:
+  the roll's only use is this check).
   A child always, or with Fear or Turn Undead on it; Rally and frenzy keep it in the fight.
   Nowhere left to go, Boost Confidence raises its level by one for the rest of the fight, below
   foolhardy and from a level whose ratio is under 100 (never a coward's, which fights cornered a
