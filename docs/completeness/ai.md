@@ -214,7 +214,9 @@ the readers ask for by name.
       Dialogue package (the first's radius plus it); ours holds two actors talking in their scene
       (talk.ts inGameDialoguePlaces, src/shell/actor-talk.ts): one drawn beyond the second place
       walks back within the first (inferred; tests/conformance/ai/sandbox.test.ts).
-- [x] Paths: navmesh A\*, edge links, ledges, doors on the way, routes through load doors.
+- [x] Paths: navmesh A\*, edge links, ledges, doors on the way, routes through load doors; a
+      straight line from a start just off the navmeshes is held to those that come back onto
+      them (pathfinding.ts straightReach; 2026-11-18, inferred, TODO(M13)).
 - [x] Navmesh obstacles: the ground under one cut out of each triangle by the rule's footprint and
       height band, its free parts stay open; a moving body's cut (5 units, 5°, the update delta)
       (navmesh-obstacles.ts; tests/conformance/ai/movement-paths.test.ts, a real hall's triangles).

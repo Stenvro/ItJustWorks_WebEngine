@@ -147,6 +147,10 @@ Round 5 (2026-11-04) read the mechanics left from the original (docs/ai.md "Use 
   after 120 s unengaged (oddsWeighed); combat music and daresHelp weigh damage per second;
   left-hand attacks have their own attack data (the actor's melee options keep them apart);
   Fallback To Ranged backs to fCombatRangedDistance (fallbackPlace).
+- Check Unreachable Target asks of a target it does not chase whether a navmesh point lies within
+  its reach of it (combat-subtrees.ts beyondNavmeshReach; 2026-11-18, inferred, TODO(M13)): a
+  fighter with a bow on the edge of Helgen Keep's fallen hall falls back and shoots instead of
+  standing (tests/conformance/combat/behaviour-tree.test.ts).
 
 Round 5 (2026-11-09) took the last of the conformance list's open cases, each with an inferred
 rule (TODO(M13)) where the original's was not found: GroupStrategy (the group's leader calls it as
