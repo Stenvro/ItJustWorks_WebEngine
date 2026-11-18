@@ -3199,16 +3199,16 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   cut where it leaves the navmeshes it reaches, and on it the places
   fCombatFindLateralAttackLocationIntervalMin (64) out, then every
   fCombatFindLateralAttackLocationIntervalMax (128), each within its range of the target
-  (); Find Attack Location a way search over the navmeshes out to
+  (`lateralAttackPlaces`); Find Attack Location a way search over the navmeshes out to
   fCombatFindAttackLocationDistance (1024) whose way keeps out of the target's radius plus
   fCombatFindAttackLocationAvoidTargetRadius (384) round it, its goal the first place within its
   range with a clear line of fire; the places are keyed by the target's bearing from them in
   whole steps of fCombatFindAttackLocationKeyAngle (5°) and its height in steps of
-  fCombatFindAttackLocationKeyHeight (128), one line-of-fire test a key (,
-  ; ours tries at most 24 keys, a budget); Ally to a member of its group with a
+  fCombatFindAttackLocationKeyHeight (128), one line-of-fire test a key (`attackLocationPlaces`,
+  `attackPlaceKey`; ours tries at most 24 keys, a budget); Ally to a member of its group with a
   line of sight to the target that stands fCombatFindAllyAttackLocationDistanceMin .. Max (256 .. 4096) from the shooter and within its range of the target, its way ending the two radii and
   fCombatFindAllyAttackLocationAllyRadius (64) from that ally, the nearest first
-  (). The first place with a clear line it runs to; none, Set Failed Timestamp
+  (`allyAttackPlaces`). The first place with a clear line it runs to; none, Set Failed Timestamp
   notes the failure, and the subtree fails so the strafing below it runs. TODO(M13), inferred:
   when the search runs (ours: a blocked line of fire) and what reads the failed timestamp (ours:
   it does not look again while its target stays in the key's steps it had, as seen from the
