@@ -231,14 +231,23 @@ describe('sandbox: a sandboxing actor’s activities in game time', () => {
 /** A Sandbox package with these Bool inputs (slot → value), at a place, Energy 50. */
 function sandboxer(
   bools: Readonly<Record<number, boolean>>,
-  place: { position: [number, number, number]; radius: number; reference?: number },
+  place: {
+    position: [number, number, number];
+    radius: number;
+    reference?: number;
+    /** Its PLDT location type (default Near Self, 12). */
+    type?: number;
+  },
   options: Parameters<typeof packageActor>[2] = {},
 ) {
   const inputs: PackageInput[] = [
     {
       id: 0,
       type: 'Location',
-      value: { kind: 'location', location: { type: 12, form: 0, radius: place.radius } },
+      value: {
+        kind: 'location',
+        location: { type: place.type ?? 12, form: 0, radius: place.radius },
+      },
     },
     { id: 8, type: 'Float', value: { kind: 'float', value: 50 } },
   ];
@@ -293,6 +302,51 @@ describe('sandbox: scans, radius and the chair it sits on', () => {
     );
     await tick(actor, 1);
     expect(radii[0]).toBe(6000);
+  });
+
+  /** The radius the first scan of a sandbox at a place takes. */
+  const scanRadius = async (
+    place: Parameters<typeof sandboxer>[1],
+    bounds?: [number, number, number],
+  ): Promise<number | undefined> => {
+    const radii: number[] = [];
+    const { actor } = sandboxer({ 6: false }, place, {
+      mind: {
+        around: (_center, radius) => {
+          radii.push(radius);
+          return Promise.resolve([]);
+        },
+        ...(bounds && { activatorBounds: () => Promise.resolve(bounds) }),
+      },
+    });
+    await tick(actor, 1);
+    return radii[0];
+  };
+
+  it('searches fSandBoxSearchRadius round an In Cell place, which the engine gives no radius (632 packages)', async () => {
+    // Our In Cell place's radius (src/shell/actor-ai.ts) is for being there, not for the scan.
+    expect(await scanRadius({ position: [0, 0, 0], radius: 1024, type: 1 })).toBe(6000);
+  });
+
+  it('searches fSandBoxSearchRadius round a reference named with no radius (155 packages: chairs, beds, markers)', async () => {
+    expect(await scanRadius({ position: [0, 0, 0], radius: 0, reference: 0x200, type: 0 })).toBe(
+      6000,
+    );
+  });
+
+  it('takes half the smallest side of an activator’s bounds where it is named with no radius', async () => {
+    expect(
+      await scanRadius(
+        { position: [0, 0, 0], radius: 0, reference: 0x200, type: 0 },
+        [400, 300, 201],
+      ),
+    ).toBe(100);
+  });
+
+  it('scans its place’s own radius where it has one', async () => {
+    expect(await scanRadius({ position: [0, 0, 0], radius: 40, reference: 0x200, type: 0 })).toBe(
+      40,
+    );
   });
 
   it('eats at the chair it sits on without getting up', async () => {

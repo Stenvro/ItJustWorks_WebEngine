@@ -1424,6 +1424,12 @@ export class ActorAi {
         if (record?.type !== 'IDLM' || !at) return undefined;
         return { ...parseIdleMarker(record), reference, ...at };
       },
+      activatorBounds: async (reference) => {
+        const scripts = runtime();
+        const base = await scripts?.baseOf(reference);
+        const record = base === undefined ? undefined : await scripts?.forms.record(base);
+        return record?.type === 'ACTI' ? scripts?.bounds(reference) : undefined;
+      },
       running: (reference) =>
         this.#session.scriptsReady?.world.motion?.(reference)?.running === true,
       motion: (reference) => this.#session.scriptsReady?.world.motion?.(reference),
