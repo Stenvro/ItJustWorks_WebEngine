@@ -291,6 +291,16 @@ describe('attack data', () => {
     });
     expect(attackEventKind('blockStart', undefined)).toBeUndefined();
   });
+
+  // Found 2026-11-18: the idle tree's BashFail (a bash out of the block with no stamina left)
+  // was taken for a bash by its name: its graph only plays the bash intro and goes back to the
+  // block (raising bashRelease, never bashStop), so the attack stood for good. Hadvar, blocking in
+  // Helgen Keep's storeroom with his stamina spent, never moved again: an attacker chooses no
+  // movement of its own.
+  it('takes the refused bash for no attack', () => {
+    expect(attackEventKind('BashFail', undefined)).toBeUndefined();
+    expect(attackEventKind('bashStart', undefined)?.bash).toBe(true);
+  });
 });
 
 describe('arrows in flight', () => {
