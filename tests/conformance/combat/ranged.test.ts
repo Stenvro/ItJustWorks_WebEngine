@@ -23,6 +23,7 @@ import {
   attackLocationKey,
   attackLocationKeyHolds,
   attackLocationPlaces,
+  attackPlaceKey,
   COMBAT_SUBTREE_DEFAULTS,
   firstClearPlace,
   lateralAttackPlaces,
@@ -270,7 +271,13 @@ describe('the line of fire and Find Attack Location', () => {
     expect(places).toHaveLength(8);
   });
 
-  it('Find Attack Location: over the navmeshes within 1024, off the target, within range', () => {
+  it('Find Attack Location: over the navmeshes within 1024, off the target, within range  [original]', () => {
+    // The key: 3° and 100 units off the target's line are one; 6° or 130 units are another.
+    const t: P = [0, 1000, 0];
+    expect(attackPlaceKey(t, [0, 0, 0])).toBe(attackPlaceKey(t, [-52, 0, 0]));
+    expect(attackPlaceKey(t, [0, 0, 0])).not.toBe(attackPlaceKey(t, [-106, 0, 0]));
+    expect(attackPlaceKey(t, [0, 0, -100])).toBe(attackPlaceKey(t, [0, 0, 0]));
+    expect(attackPlaceKey(t, [0, 0, -130])).not.toBe(attackPlaceKey(t, [0, 0, 0]));
     const set = navmeshes(grid(1, 0, 30));
     const feet: P = [1500, 300, 0];
     const target: P = [1500, 1300, 0];
@@ -283,12 +290,10 @@ describe('the line of fire and Find Attack Location', () => {
       expect(flat(place, target)).toBeGreaterThanOrEqual(S.findAttackLocationAvoidTargetRadius);
       expect(flat(place, target)).toBeLessThanOrEqual(range);
     }
-    // Spread: none within fCombatFindLateralAttackLocationIntervalMin of another.
-    for (const [i, a] of places.entries()) {
-      for (const b of places.slice(i + 1)) {
-        expect(flat(a, b)).toBeGreaterThanOrEqual(S.findLateralAttackLocationIntervalMin);
-      }
-    }
+    // One a key: the target's bearing from it in 5° steps and its height in 128-unit steps
+    // (fCombatFindAttackLocationKeyAngle, KeyHeight): no two places share one.
+    const keys = places.map((place) => attackPlaceKey(target, place));
+    expect(new Set(keys).size).toBe(keys.length);
     // The first clear one is taken: here, with a wall west of x = 1700, the first east of it.
     const clear = firstClearPlace(places, (place) => place[0] > 1700);
     expect(clear?.[0]).toBeGreaterThan(1700);

@@ -1099,9 +1099,9 @@ export function lateralAttackPlaces(
  * fCombatFindAttackLocationDistance, in the order the way search reaches them, its way kept out of
  * the target's radius plus fCombatFindAttackLocationAvoidTargetRadius round it, none beyond
  * `range` (its weapon's maximum) of it; the first with a clear line is taken (the shell's part).
- * Ours tries at most ATTACK_PLACES_MAX places, each at least
- * fCombatFindLateralAttackLocationIntervalMin from those before (a budget for the line-of-fire
- * rays: the original tries each place its search reaches).
+ * A place whose key (attackPlaceKey) was tried already is not tried again: it shares that one's
+ * answer. Ours tries at most ATTACK_PLACES_MAX keys (a budget for the line-of-fire rays: the
+ * original's search goes on to its distance).
  */
 export function attackLocationPlaces(
   set: NavmeshSet,
@@ -1112,7 +1112,7 @@ export function attackLocationPlaces(
   targetRadius = 0,
 ): Vec3[] {
   const places: Vec3[] = [];
-  const spacing = settings.findLateralAttackLocationIntervalMin;
+  const tried = new Set<number>();
   const avoid = {
     center: target,
     radius: targetRadius + settings.findAttackLocationAvoidTargetRadius,
@@ -1120,12 +1120,36 @@ export function attackLocationPlaces(
   for (const visit of reachable(set, feet, settings.findAttackLocationDistance, avoid) ?? []) {
     const at = visit.middle;
     if (flat(at, target) > range) continue;
-    if (flat(at, feet) < spacing) continue;
-    if (places.some((place) => flat(place, at) < spacing)) continue;
+    // One line-of-fire test a key: a place in the bearing and height steps of one tried shares
+    // its answer (the original keeps the answers by key).
+    const key = attackPlaceKey(target, at, settings);
+    if (tried.has(key)) continue;
+    tried.add(key);
     places.push(at);
     if (places.length >= ATTACK_PLACES_MAX) break;
   }
   return places;
+}
+
+/**
+ * The key of a place in Find Attack Location's way search (observed in the original): the
+ * target's bearing from the place in whole steps of fCombatFindAttackLocationKeyAngle (5°) and
+ * its height above it in whole steps of fCombatFindAttackLocationKeyHeight (128), each cut
+ * towards zero. Places of one key share one line-of-fire test.
+ */
+export function attackPlaceKey(
+  target: Vec3,
+  place: Vec3,
+  settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+): number {
+  const x = target[0] - place[0];
+  const y = target[1] - place[1];
+  // The bearing as the engine takes it: from +y, clockwise, in [−90°, 270°).
+  const bearing =
+    y === 0 ? (x > 0 ? Math.PI / 2 : (3 * Math.PI) / 2) : Math.atan(x / y) + (y < 0 ? Math.PI : 0);
+  const angle = Math.trunc((-bearing * 180) / Math.PI / settings.findAttackLocationKeyAngle);
+  const height = Math.trunc((target[2] - place[2]) / settings.findAttackLocationKeyHeight);
+  return height - angle * 0x10000;
 }
 
 /** An ally with a clear line to the shooter's target (Find Ally Attack Location). */
@@ -1208,8 +1232,10 @@ export function attackLocationKey(feet: Vec3, target: Vec3): AttackLocationKey {
  * A failed search stands while its target, seen from the shooter, stays within
  * fCombatFindAttackLocationKeyAngle of the bearing and fCombatFindAttackLocationKeyHeight of the
  * height it had then: from there no place was found, so it is not looked for again until either
- * moved (by the shooter's strafing or the target's way). TODO(M13): the key's use is inferred
- * from the settings' names.
+ * moved (by the shooter's strafing or the target's way). Inferred, TODO(M13): the original notes
+ * the failure's time on the blackboard (FindAttackLocationFailedTimeStamp); the condition that
+ * reads it was not found, so this gate takes the key's steps (whose observed use is
+ * attackPlaceKey's) as its measure of "moved".
  */
 export function attackLocationKeyHolds(
   failed: AttackLocationKey,

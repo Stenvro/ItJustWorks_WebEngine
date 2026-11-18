@@ -3193,21 +3193,26 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   shooter's line of fire is blocked (each 0.25 s, both ends at three quarters of the actors'
   heights: an actor it must not hit, else the world: a ray on the line-of-sight layer that
   passes every actor's bodies, so neither its target's foes nor an ally whose place it asks from
-  block it); Lateral
-  offers places square to its line to the target, each fCombatFindLateralAttackLocationIntervalMin
-  .. Max (64 .. 128, at random) past the last, out to fCombatFindLateralAttackLocationDistance
-  (512) either side, nearest first, only where its way reaches over the navmeshes; Find Attack
-  Location the navmesh places its way search reaches within fCombatFindAttackLocationDistance
-  (1024), none within fCombatFindAttackLocationAvoidTargetRadius (384) of the target nor beyond
-  its weapon's range (at most 24, spaced 64 apart); Ally the places beside a member of its group
-  whose own line is clear and who stands fCombatFindAllyAttackLocationDistanceMin .. Max (256 .. 4096) from the target, fCombatFindAllyAttackLocationAllyRadius (64) past its body. The first
-  place with a clear line it runs to; none, the failed search is noted with where its target
-  stood, and it does not look again while the target stays within
-  fCombatFindAttackLocationKeyAngle (5°) of that bearing and fCombatFindAttackLocationKeyHeight
-  (128) of that height, as seen from the shooter (it strafes meanwhile). TODO(M13): the settings
-  are the engine's, their use is inferred from their names: when the search runs (ours: a
-  blocked line), the places' order and spacing, the key, and that the failed search fails the
-  subtree so the strafing below it runs.
+  block it). Each leaf observed in the original: Lateral, only for a shooter facing its target
+  within 60° and within its weapon's maximum range of it, one side square to its line first at
+  an even roll, then the other: its way out to fCombatFindLateralAttackLocationDistance (512),
+  cut where it leaves the navmeshes it reaches, and on it the places
+  fCombatFindLateralAttackLocationIntervalMin (64) out, then every
+  fCombatFindLateralAttackLocationIntervalMax (128), each within its range of the target
+  (); Find Attack Location a way search over the navmeshes out to
+  fCombatFindAttackLocationDistance (1024) whose way keeps out of the target's radius plus
+  fCombatFindAttackLocationAvoidTargetRadius (384) round it, its goal the first place within its
+  range with a clear line of fire; the places are keyed by the target's bearing from them in
+  whole steps of fCombatFindAttackLocationKeyAngle (5°) and its height in steps of
+  fCombatFindAttackLocationKeyHeight (128), one line-of-fire test a key (,
+  ; ours tries at most 24 keys, a budget); Ally to a member of its group with a
+  line of sight to the target that stands fCombatFindAllyAttackLocationDistanceMin .. Max (256 .. 4096) from the shooter and within its range of the target, its way ending the two radii and
+  fCombatFindAllyAttackLocationAllyRadius (64) from that ally, the nearest first
+  (). The first place with a clear line it runs to; none, Set Failed Timestamp
+  notes the failure, and the subtree fails so the strafing below it runs. TODO(M13), inferred:
+  when the search runs (ours: a blocked line of fire) and what reads the failed timestamp (ours:
+  it does not look again while its target stays in the key's steps it had, as seen from the
+  shooter; it strafes meanwhile).
 - **Flee** (Flee Context: Start Flee; the Flee Selector's Flee To Ally, Flee Through Door, Flee
   To Cover, Flee, Unrestricted Flee, Boost Confidence; then Hide): through a door (observed in
   the original) by fCombatFleeUseDoorChance (0.33), with a race that opens doors, not within
