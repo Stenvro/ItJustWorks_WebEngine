@@ -49,6 +49,7 @@ import {
 import type { CellObject } from '../world/cell-loader.ts';
 import type { PlacedActor } from './actors.ts';
 import type { GameSession } from './game-session.ts';
+import { enterFloor } from './marker-ground.ts';
 import type { Terminal } from './terminal.ts';
 
 /**
@@ -136,8 +137,10 @@ export interface ActorFurnitureOptions {
   /** A specific idle (playIdle: a package's, a script's, a line's) was sent to an actor's graph. */
   readonly specificIdle?: (actor: number) => void;
   /**
-   * The height of the ground under a point (the world's physics, actors left out), if any
-   * within reach: where one placed in its furniture as its cell loaded leaves to.
+   * The height of the ground under a marker at a point (the world's physics, actors left out),
+   * if any within reach: where one placed in its furniture as its cell loaded leaves to, and
+   * where an enter on another floor begins. The point is at the marker's own height; the lift
+   * the look starts from is the callback's (marker-ground.ts).
    */
   readonly ground?: (at: readonly [number, number, number]) => number | undefined;
 }
@@ -178,11 +181,6 @@ const SPOT_HEIGHT = 160;
  * furniture's own height (game units); higher ones put the root at the marker.
  */
 const SEAT_HEIGHT_MAX = 64;
-/**
- * The ground where an enter begins is looked for from this far over its marker's height (units):
- * over a lean's floor-level marker, under the top of a table in front of a chair.
- */
-const START_LIFT = 16;
 /** The event that ends an idle and returns the graph to its default state. */
 const FORCE_DEFAULT_STATE = 'IdleForceDefaultState';
 
@@ -907,12 +905,16 @@ export class ActorFurniture {
       // Sit across Whiterun) was sent to a point in the air there, and warped to it (#giveUp).
       const sx = marker.position[0] - (tx * cos + ty * sin);
       const sy = marker.position[1] - (-tx * sin + ty * cos);
-      const sz = marker.position[2];
-      const floor =
-        Math.abs(user.position[2] - sz) <= SPOT_HEIGHT
-          ? user.position[2]
-          : (this.#options.ground?.([sx, sy, sz + START_LIFT]) ?? sz);
-      const start: Vec3 = [sx, sy, floor];
+      const start: Vec3 = [
+        sx,
+        sy,
+        enterFloor(
+          user.position[2],
+          [sx, sy, marker.position[2]],
+          SPOT_HEIGHT,
+          this.#options.ground,
+        ),
+      ];
       const arrived = await walk(start, 16, heading);
       if (this.#uses.get(actor) !== use) return false;
       if (!arrived) {
