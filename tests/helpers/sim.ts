@@ -1284,12 +1284,28 @@ export class Sim {
     return result;
   }
 
+  /**
+   * Waits for an info's fragment while the world runs, as long as a conversation's step is waited
+   * for: one still running then (waiting on a scene the speaker plays in once the conversation
+   * is over: CW01A's oath, whose stage 200 waits for Tullius's map table scene) goes on as its own
+   * thread while the conversation does. Awaited past that, the world stood still for it.
+   */
+  async #fragment(work: Promise<void>): Promise<void> {
+    const state = { done: false };
+    const settled = work.finally(() => {
+      state.done = true;
+    });
+    // A fragment still running is not waited for; its failure later is the VM's to report.
+    settled.catch(() => undefined);
+    if (await this.until(() => state.done, LINE_SECONDS)) await settled;
+  }
+
   /** The actor says an info: its begin fragment, its responses, its end fragment. */
   async #say(spoken: SpokenInfo, speaker: number): Promise<void> {
     const engine = this.runtime.dialogue;
-    await this.#drive(engine.runFragment(spoken.info, 'begin', speaker));
+    await this.#fragment(engine.runFragment(spoken.info, 'begin', speaker));
     engine.said(spoken.info);
-    await this.#drive(engine.runFragment(spoken.info, 'end', speaker));
+    await this.#fragment(engine.runFragment(spoken.info, 'end', speaker));
   }
 
   /** After an info: its Invisible Continues, then Goodbye ends it, else the topics show. */
