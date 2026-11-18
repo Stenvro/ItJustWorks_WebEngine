@@ -13,7 +13,9 @@
 // a function it does not support ("This function not supported"), never pretending.
 // Notes: docs/ui.md ("The console").
 
+import { ConditionRunOn, NOT_VALUED, type Condition } from '../scripting/conditions.ts';
 import type { NativeCall } from '../scripting/papyrus-vm.ts';
+import { conditionFunctionValue } from '../scripting/runtime/condition-values.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { referenceName } from '../scripting/runtime/quest-text.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -116,6 +118,33 @@ const SEARCHED = [
   'EXPL',
   'HAZD',
   'ARTO',
+  // The other record types the game's parameters take (src/shell/console-table.ts).
+  'SNDR',
+  'SOUN',
+  'DIAL',
+  'CLAS',
+  'PACK',
+  'CSTY',
+  'EFSH',
+  'IMAD',
+  'IMGS',
+  'VTYP',
+  'ECZN',
+  'IDLE',
+  'MESG',
+  'EQUP',
+  'MUSC',
+  'KYWD',
+  'LCRT',
+  'LCTN',
+  'SCEN',
+  'ASTP',
+  'RFCT',
+  'SNCT',
+  'REGN',
+  'AACT',
+  'LIGH',
+  'SCRL',
 ] as const;
 
 /** Record types of placed references. */
@@ -139,6 +168,11 @@ const TAMRIEL = 0x3c;
 const NOT_SAVED = 'Compiled script not saved!';
 /** What the game prints for a function it does not support. */
 const NOT_SUPPORTED = 'This function not supported';
+
+/** EquipItemEx's slot of a casting source parameter's hand (0 left, 1 right): 2 left, 1 right. */
+function handOfSource(source: number): number | undefined {
+  return source === 1 ? 1 : source === 0 ? 2 : undefined;
+}
 
 /** EquipItemEx's slot of a hand the console names: 1 right, 2 left. */
 export function handSlot(hand: string): number | undefined {
@@ -165,6 +199,50 @@ export function placementOffset(
 const onOff = (on: boolean): string => (on ? 'On' : 'Off');
 const fixed = (value: number): string => value.toFixed(2);
 const hex = (formId: number): string => formId.toString(16).toUpperCase().padStart(8, '0');
+
+/** A float as the condition's integer parameter holds it (its bits). */
+function floatBits(value: number): number {
+  const view = new DataView(new ArrayBuffer(4));
+  view.setFloat32(0, value, true);
+  return view.getInt32(0, true);
+}
+
+/**
+ * The condition a script function's parameters make: the first two as its parameters (a form
+ * by its id, an axis by its letter's code, an actor value by its index, a float by its bits),
+ * text as its strings, run on the reference.
+ */
+export function consoleCondition(info: ConsoleCommandInfo, args: readonly Arg[]): Condition {
+  const raw = (index: number): number => {
+    const param = info.params[index];
+    const value = args[index];
+    if (param === undefined || value === undefined) return 0;
+    if (param.type.kind === 'axis' && typeof value === 'number') return 0x58 + value;
+    if (param.type.kind === 'actorValue' && typeof value === 'string')
+      return actorValueIndex(value) ?? 0;
+    if (param.type.kind === 'float' && typeof value === 'number') return floatBits(value);
+    return typeof value === 'number' ? value : 0;
+  };
+  const strings = args.filter((value): value is string => typeof value === 'string');
+  return {
+    function: info.condition ?? 0,
+    operator: 0,
+    or: false,
+    comparand: 0,
+    form: raw(0),
+    raw1: raw(0),
+    param2: raw(1),
+    form2: raw(1),
+    strings,
+    runOn: ConditionRunOn.subject,
+    reference: 0,
+    param3: -1,
+    eventMember: '',
+  };
+}
+
+/** A casting source parameter's words (0 left hand, 1 right hand, 2 voice, 3 instant). */
+const CASTING_SOURCES = ['left', 'right', 'voice', 'instant'];
 
 /** A parameter's value as read: a number (a form, reference, number, axis, sex) or text. */
 type Arg = number | string | undefined;
@@ -265,6 +343,10 @@ export class ConsoleCommands {
         const sex = text.toLowerCase();
         return sex === 'male' ? 0 : sex === 'female' ? 1 : undefined;
       }
+      case 'castingSource': {
+        const source = CASTING_SOURCES.indexOf(text.toLowerCase());
+        return source < 0 ? undefined : source;
+      }
       case 'reference':
         return this.#reference(text);
       case 'form':
@@ -304,10 +386,10 @@ export class ConsoleCommands {
     const formId = parseFormId(name);
     if (formId !== undefined) {
       const type = await this.#typeOf(formId);
-      if (type !== undefined && types.includes(type)) return formId;
+      if (type !== undefined && (types.length === 0 || types.includes(type))) return formId;
     }
     const named = (await this.#index()).get(name.toLowerCase());
-    return named && types.includes(named.type) ? named.formId : undefined;
+    return named && (types.length === 0 || types.includes(named.type)) ? named.formId : undefined;
   }
 
   /** A placed reference by "player", hex form id or (a persistent one's) editor id. */
@@ -581,8 +663,8 @@ export class ConsoleCommands {
       case 'equipitem':
       case 'unequipitem':
         // A hand named (left, right): as EquipItemEx/UnequipItemEx's slot (1 right, 2 left).
-        if (text(2) !== '') {
-          const hand = handSlot(text(2));
+        if (typeof args[2] === 'number') {
+          const hand = handOfSource(args[2]);
           if (hand === undefined) return [NOT_SUPPORTED];
           await this.#native(`actor.${name}ex`, target, [
             this.#formValue(num(0)),
@@ -619,7 +701,7 @@ export class ConsoleCommands {
         if (runtime.progression.skillIndex(text(0)) === undefined) {
           return this.#notFound(
             call.typed[0] ?? '',
-            call.info.params[0] ?? { name: 'Actor Value', type: { kind: 'actorValue' } },
+            call.info.params[0] ?? { name: 'Actor Value', type: { kind: 'actorValue' }, code: 5 },
           );
         }
         if (name === 'incrementpcskill') await runtime.progression.incrementSkill(text(0), 1);
@@ -840,8 +922,8 @@ export class ConsoleCommands {
         return [];
       // <ref>.Cast <spell> <target>: as Spell.Cast (player.cast WerewolfChange player).
       case 'cast':
-        // TODO(M13): the casting source (left, right, voice, instant) the console names.
-        if (text(2) !== '') return [NOT_SUPPORTED];
+        // The casting source (left, right, voice, instant) only picks the node the spell leaves
+        // from. TODO(M13): the launch node by the source (the world launches from the caster's own).
         await runtime.magic.cast(num(0), target, num(1));
         return [];
 
@@ -916,18 +998,30 @@ export class ConsoleCommands {
           return [];
         }
         return this.#pick(args[0]);
-      case 'getselectedref':
-        return this.#selected === undefined
-          ? ['No Reference Selected']
-          : [
-              `GetSelectedRef: ${await referenceName(runtime, this.#selected)} (${hex(this.#selected)})`,
-            ];
       case 'clearconsole':
         context.clear?.();
         return [];
       default:
-        return [NOT_SUPPORTED];
+        return this.#generic(call, target);
     }
+  }
+
+  /**
+   * A command no case above runs: one whose action returns at once does nothing (observed in the
+   * original); a script function with a condition function prints that function's value for the
+   * reference, as the game's actions of those functions do ("GetIsID >> 1.00").
+   */
+  async #generic(call: Invocation, target: number): Promise<string[]> {
+    const { info, args } = call;
+    if (info.returnsAtOnce) return [];
+    if (info.condition === undefined || info.noAction) return [NOT_SUPPORTED];
+    const value = await conditionFunctionValue(
+      this.#context.runtime,
+      consoleCondition(info, args),
+      this.#context.runtime.referenceHandle(target),
+    );
+    if (value === NOT_VALUED) return [NOT_SUPPORTED];
+    return [`${info.name} >> ${fixed(value ?? 0)}`];
   }
 
   /** showinventory: each item it holds with its count, name and form id. */
@@ -1128,11 +1222,8 @@ export class ConsoleCommands {
         for (const info of CONSOLE_COMMANDS) {
           if (info.console !== consoleOnly) continue;
           if (!has(info.help) && !has(info.name) && !has(info.short)) continue;
-          lines.push(
-            info.short
-              ? `${info.name} (${info.short}) -> ${info.help}`
-              : `${info.name} -> ${info.help}`,
-          );
+          const named = info.short ? `${info.name} (${info.short})` : info.name;
+          lines.push(info.help === '' ? named : `${named} -> ${info.help}`);
         }
       }
     }

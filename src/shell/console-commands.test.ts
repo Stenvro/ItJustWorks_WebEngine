@@ -6,7 +6,8 @@ import {
   type ConsoleContext,
 } from './console-commands.ts';
 import { parseAxis, parseConsoleLine, parseConsoleNumber, parseFormId } from './console-parse.ts';
-import { consoleCommand } from './console-table.ts';
+import { CONSOLE_COMMANDS, consoleCommand } from './console-table.ts';
+import { ObjectHandle } from '../scripting/values.ts';
 
 /** Record types by form id, as the fake forms answer. */
 const TYPES = new Map([
@@ -225,9 +226,48 @@ describe('ConsoleCommands perks and spells', () => {
 
   it('casts a spell from a reference at a target as Spell.Cast does', async () => {
     const { commands, calls } = setup();
-    expect(await commands.run('player.cast 12fcd 1a2b')).toEqual([]);
-    expect(await commands.run('player.cast 12fcd, player')).toEqual([]);
+    // The game's table marks the source as needed, its "(Optional)" name notwithstanding.
+    expect(await commands.run('player.cast 12fcd 1a2b')).toEqual([
+      'Missing parameter Source (Optional).',
+      'Compiled script not saved!',
+    ]);
+    expect(await commands.run('player.cast 12fcd 1a2b right')).toEqual([]);
+    expect(await commands.run('player.cast 12fcd, player, voice')).toEqual([]);
     expect(calls).toEqual(['cast 12fcd 14 1a2b', 'cast 12fcd 14 14']);
+  });
+});
+
+describe('the game command table', () => {
+  it('holds every console command and script function of the game', () => {
+    expect(CONSOLE_COMMANDS.filter((info) => info.console)).toHaveLength(342);
+    expect(CONSOLE_COMMANDS.filter((info) => !info.console)).toHaveLength(737);
+    // A script function's place among them is its condition function index.
+    expect(consoleCommand('GetIsID')).toMatchObject({ condition: 72, reference: true });
+    expect(consoleCommand('GetWantBlocking')?.condition).toBe(0);
+    expect(consoleCommand('pc1st')?.name).toBe('IsPC1stPerson');
+    expect(consoleCommand('GetIsID')?.params[0]).toMatchObject({ name: 'ObjectID', code: 21 });
+  });
+
+  it('accepts a command whose action returns at once and does nothing', async () => {
+    const commands = new ConsoleCommands(fakeContext({}));
+    expect(consoleCommand('tnm')?.returnsAtOnce).toBe(true);
+    expect(await commands.run('ToggleNavMesh')).toEqual([]);
+    expect(await commands.run('player.IsUndead')).toEqual([]);
+  });
+
+  it("prints a script function's condition value for the reference", async () => {
+    const runtime = {
+      inMenuMode: true,
+      world: {},
+      referenceHandle: (formId: number) => new ObjectHandle(formId, 'objectreference'),
+      reference: (handle: ObjectHandle) => handle.formId,
+    };
+    const commands = new ConsoleCommands(fakeContext({}, runtime));
+    expect(await commands.run('MenuMode')).toEqual(['MenuMode >> 1.00']);
+    runtime.inMenuMode = false;
+    expect(await commands.run('menumode 0')).toEqual(['MenuMode >> 0.00']);
+    // A reference function needs a reference.
+    expect(await commands.run('GetDisabled')).toEqual(['No Reference Selected']);
   });
 });
 
