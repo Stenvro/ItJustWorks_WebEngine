@@ -575,14 +575,13 @@ export class GameState {
   /** The favorites' hotkeys (1-8 as 0..7), by form; a hotkey holds one favorite. */
   readonly hotkeys = new Map<number, number>();
   /**
-   * What the player used, by how often (the journal's Favorite Weapon, Spell, School, Shout:
-   * src/scripting/runtime/usage-stats.ts): weapons, spells and shouts by form, schools by skill.
+   * The player's last uses, oldest first, at most 100 each (the journal's Favorite Weapon,
+   * Spell, School, Shout: src/scripting/runtime/usage-stats.ts): weapons, spells, shouts by form.
    */
-  readonly usage = {
-    weapons: new Map<number, number>(),
-    spells: new Map<number, number>(),
-    schools: new Map<number, number>(),
-    shouts: new Map<number, number>(),
+  readonly recentUses = {
+    weapons: [] as number[],
+    spells: [] as number[],
+    shouts: [] as number[],
   };
   /** Merchant chests: the game days passed when each last restocked (barter-menu.ts). */
   readonly restocked = new Map<number, { readonly days: number; readonly count: number }>();

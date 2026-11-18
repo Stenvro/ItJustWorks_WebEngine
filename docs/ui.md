@@ -438,9 +438,9 @@ stepped, so everyone stands there before the fade) and the actors' face tints.
 on the player), NNAM the static whose model is shown, SNAM its scale, RNAM its rotation
 (degrees), ONAM the rotation limits, XNAM its offset, MOD2 a camera path. Of the 371 vanilla
 screens 134 have conditions; after a new game's opening exactly one holds, `ChargenLoadScreen`
-(MQ101 stage 10: Alduin's wall and the Song of the Dragonborn). Screens whose conditions hold
-are taken before those without (inferred from the new game always showing its own); else one at
-random.
+(MQ101 stage 10: Alduin's wall and the Song of the Dragonborn). Observed in the original: of the
+screens whose conditions hold (one without conditions always does) and that have a model to
+show, one at random among those with conditions, else among them all.
 
 **Camera paths** (`meshes\cameras\LSCamera*.nif`, `src/render/camera-path.ts`): a
 `CameraPathNode` moved by the 60-second looping `CameraPath` sequence, with an NiCamera under it
@@ -1011,10 +1011,13 @@ turned off active again.
 Stats: `updateStats` is answered with every statistic as name, value, category and an unused
 field (`src/gameplay/misc-stats.ts`: the game's stats in the journal's order and categories,
 after UESP); the menu shows `"$" + name`, translated as it is set. Favorite Weapon, Spell,
-School and Shout are names: what the player used most (`src/scripting/runtime/usage-stats.ts`:
-each swing of a melee weapon or shot of a bow, each spell cast (a concentration spell each time
-it is let go) and its school (its cost's skill, named by its AVIF), each shout; the first to reach
-the most on a tie; TODO(M13): what the engine counts as a use), read as the journal opens.
+School and Shout are names: what the player used most (`src/scripting/runtime/usage-stats.ts`;
+observed in the original: the last 100 uses of each kind are kept, the oldest dropped, and the
+favorite is the one most often among them, the school the one most often among the kept spells'
+schools; a weapon's use is a swing of a melee weapon or the release of a bow, crossbow or staff,
+a shout's each shout let out). TODO(M13): which of several tied the original names (ours the
+first in the window) and which moments of the caster count a spell (ours: each spell cast, a
+concentration spell each time it is let go). Read as the journal opens.
 Who counts each stat (observed in the original: its misc stat handlers and incrementers,
 `src/scripting/runtime/stat-events.ts`): Gold Found is every rise of the player's gold (loot,
 sales, rewards); Chests Looted the first item taken from a container that is not an actor in one

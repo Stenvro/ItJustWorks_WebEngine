@@ -87,6 +87,7 @@ import {
 } from '../scripting/runtime/runtime-save.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
 import { MISC_QUEST_TYPE } from '../scripting/runtime/journal.ts';
+import { addUse } from '../scripting/runtime/usage-stats.ts';
 import type { StoryEventData } from '../scripting/runtime/story-manager.ts';
 import { ObjectHandle, PapyrusArray, type Value } from '../scripting/values.ts';
 import { CELL_SIZE } from '../world/land.ts';
@@ -2137,15 +2138,12 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       // help messages, which ours does not save yet.
       if ((read.extra?.entries.length ?? 0) > 0) skips.add('interface: help messages waiting');
       for (const name of read.extra?.names ?? []) state.helpDone.add(name.toLowerCase());
-      for (const [list, usage] of [
-        [read.lastUsedWeapons, state.usage.weapons],
-        [read.lastUsedSpells, state.usage.spells],
-        [read.lastUsedShouts, state.usage.shouts],
+      for (const [list, uses] of [
+        [read.lastUsedWeapons, state.recentUses.weapons],
+        [read.lastUsedSpells, state.recentUses.spells],
+        [read.lastUsedShouts, state.recentUses.shouts],
       ] as const) {
-        for (const form of list) {
-          const id = form === 0 ? undefined : ours(form);
-          if (id) usage.set(id, (usage.get(id) ?? 0) + 1);
-        }
+        for (const form of list) addUse(uses, form === 0 ? undefined : ours(form));
       }
     } catch {
       skips.add('interface: unreadable');

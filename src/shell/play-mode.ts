@@ -1511,8 +1511,8 @@ export class PlayMode {
   }
 
   /**
-   * A loading screen whose conditions hold (run on the player): those with conditions first
-   * (inferred: a new game always shows its own, ChargenLoadScreen), else one at random.
+   * A loading screen whose conditions hold (run on the player): those with conditions first,
+   * else one at random (pickLoadingScreen).
    */
   async #pickLoadingScreen(runtime: ScriptRuntime): Promise<LoadingScreen | undefined> {
     this.#loadingScreens ??= this.#session.db.then(async (db) => {
@@ -1530,9 +1530,10 @@ export class PlayMode {
       if (screen.conditions.length === 0) continue;
       if (await runtime.conditionsHold(screen.conditions, player)) holding.add(screen);
     }
-    return holding.size > 0
-      ? pickLoadingScreen([...holding], () => true)
-      : pickLoadingScreen(screens, (screen) => screen.conditions.length === 0);
+    return pickLoadingScreen(
+      screens,
+      (screen) => screen.conditions.length === 0 || holding.has(screen),
+    );
   }
 
   /** The loading menu, its text the loading screen's. */
