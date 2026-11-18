@@ -54,6 +54,28 @@ describe("SKSE's UI script", () => {
     ]);
   });
 
+  it('opens and closes the custom menu by its path, and tells whether text input is allowed', () => {
+    const told: string[] = [];
+    let count = 0;
+    const runtime = {
+      customMenu: {
+        open: (path: string) => told.push(`open ${path}`),
+        close: () => told.push('close'),
+      },
+      textInputCount: () => count,
+    } as unknown as ScriptRuntime;
+    const natives = new Map<string, NativeFunction>();
+    registerUiScript((name, fn) => natives.set(name, fn), runtime);
+    const call = (name: string, ...args: Value[]): unknown =>
+      natives.get(name)?.({ args, self: null } as unknown as NativeCall);
+    call('ui.opencustommenu', 'mymod/menu', 0);
+    call('ui.closecustommenu');
+    expect(told).toEqual(['open mymod/menu', 'close']);
+    expect(call('ui.istextinputenabled')).toBe(false);
+    count = 2;
+    expect(call('ui.istextinputenabled')).toBe(true);
+  });
+
   it("knows each menu's movie by the menu's name", () => {
     expect(menuMovie('InventoryMenu')).toBe('inventorymenu.swf');
     expect(menuMovie('journal menu')).toBe('quest_journal.swf');

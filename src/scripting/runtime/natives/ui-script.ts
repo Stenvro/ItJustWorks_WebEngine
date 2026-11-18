@@ -2,7 +2,9 @@
 // paths, and its functions called, by the menu's name ("InventoryMenu", "_root.Menu_mc.x"):
 // GetBool/Int/Float/String/Number, SetBool/Int/Float/String/Number, Invoke and its one-argument
 // and array forms. A menu that is not open reads as its type's default and takes nothing, as
-// SKSE's do (UI.psc). Platform-independent. Notes: docs/ui.md ("The menu stack").
+// SKSE's do (UI.psc). And the custom menu (OpenCustomMenu, CloseCustomMenu) and whether text
+// input is allowed (IsTextInputEnabled). Platform-independent. Notes: docs/ui.md ("The menu
+// stack").
 
 import { PapyrusArray, type Value } from '../../values.ts';
 import type { ScriptRuntime } from '../runtime.ts';
@@ -83,4 +85,15 @@ export function registerUiScript(n: Register, runtime: ScriptRuntime): void {
     movie(args[0])?.invoke(str(args[1]), { formId });
     return null;
   });
+  // The custom menu: the path given (its flags argument unused, as SKSE's), and its close.
+  n('ui.opencustommenu', ({ args }) => {
+    runtime.customMenu?.open(str(args[0]));
+    return null;
+  });
+  n('ui.closecustommenu', () => {
+    runtime.customMenu?.close();
+    return null;
+  });
+  // Whether anything allows text input now (the control map's count above 0).
+  n('ui.istextinputenabled', () => (runtime.textInputCount?.() ?? 0) !== 0);
 }

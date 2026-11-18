@@ -1497,6 +1497,11 @@ export class WorldViewer {
         });
       },
     });
+    // The free camera (tfc) moves as the game's, by its settings as they are now (sucsm).
+    this.#camera.game = () => ({
+      translation: session.ini.number('Camera', 'fFreeCameraTranslationSpeed'),
+      run: session.ini.number('Camera', 'fFreeCameraRunSpeed'),
+    });
     // bBorderRegionsEnabled: the worldspace's border regions stop the player.
     if (playerData.ini.number('General', 'bBorderRegionsEnabled') !== 0) {
       const [border, settings] = await Promise.all([

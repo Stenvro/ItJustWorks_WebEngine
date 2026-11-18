@@ -683,6 +683,19 @@ AllowSaving, ...). The stack answers what the flags say together: menu mode foll
 open (F5 in an item menu, a book or the map saves nothing), and scripts ask it through SKSE's
 `UI.IsMenuOpen`. A mod registers its own menus with their flags (`register`).
 
+SKSE's UI script reaches an open menu's movie by the menu's name (Get*, Set*, Invoke*,
+InvokeForm: `src/scripting/runtime/natives/ui-script.ts`). `UI.OpenCustomMenu(path)` opens SKSE's
+CustomMenu (`src/shell/custom-menu.ts`): the movie at that path under the interface folder (no
+extension), modal and pausing the game at depth 10, the cursor shown while no gamepad is in use,
+as SKSE's constructor makes it; the flags argument is unused, one open already stays, and
+`UI.CloseCustomMenu()` closes it. `UI.IsTextInputEnabled()` asks the control map's count of
+what allows text input now (`src/ui/text-input.ts`): a byte each allowing raises (past 255 it
+wraps) and each taking back lowers, never below 0. Observed in the original, the vanilla menus
+that move it are the console (raised as it shows, lowered as it hides), the race menu (its
+movie's SetAllowTextInput raises it once per call whatever the arguments, each ChangeName lowers
+it) and the enchanting name field (raised as the menu calls EditItemName, lowered at
+EndItemRename); the rest are the consoles' on-screen keyboard and the Creations menus.
+
 The title cards are `TitleSequence Menu` while open. `LoadWaitSpinner` (always open, saving
 allowed; `src/shell/load-wait-spinner.ts`) shows while a save is written: the movie's icon turns
 in the bottom right corner (`InitExtensions` locks it there), with its `FadeInMenu` and
@@ -937,9 +950,9 @@ function index. Every name the game knows is known; how each runs:
 - **A condition function** (397 script functions): the console prints that function's value for
   the reference (`src/scripting/runtime/condition-values.ts`, the same evaluator the conditions
   use), in the game's words for it (`src/shell/console-script-functions.ts`: most say
-  "GetIsID >> 1.00", some round ("GetDisabled >> 0") or name it otherwise ("Is Weapon/Magic Out
-  > > 1.00", "GetRelAng: Z >> 12.50"); observed in the original). A function the evaluator does
-  > > not value prints "This function not supported".
+  "GetIsID >> 1.00", some round ("GetDisabled >> 0") or name it otherwise
+  ("Is Weapon/Magic Out >> 1.00", "GetRelAng: Z >> 12.50"); observed in the original). A
+  function the evaluator does not value prints "This function not supported".
 - **A Papyrus native** (StartCombat, SetGhost, DamageAV, PushActorAway, EquipSpell, imod and
   rimod, SetPCExpelled, SetEnemy, SetAlly, StartScene, PMS and SMS, PlaySound, AddMusic,
   CameraShake, Autosave, AddFormToFormList, ... : `NATIVE_FUNCTIONS`): done by the native the
@@ -949,17 +962,49 @@ function index. Every name the game knows is known; how each runs:
 - **The math functions** Sin, Cos, Tan (degrees; 1 after the value gives the inverse), Sqrt,
   Log (natural, or to a base given) and Abs. TODO(M13): what they take is inferred from their
   parameters and the earlier games' script documentation.
-- **Built here**: sglv ("--- Global Variables ---" then each global, a float's value with four
-  decimals, a short's or long's whole: TODO(M13) which of the original's two lines goes with
-  which type is inferred from their order beside the header), sv and sqv (each script's
-  variables under its name; the layout of these lines, and of ShowQuestAliases' and sqt's, is
-  ours), setpqv and setpv (a script property set to a number, a bool, None or a form), saq ("All
-  Quests Enabled."), caqs ("All Quest Stages Completed."), ssq (the scope quest, whose aliases a
-  line may then name as references: "Console Scope Quest >> MQ101 (0003372B)", "... EMPTY"),
-  save and load by name, ShowMenu and HideMenu (the menus by their names on the stack),
-  GetINISetting ("INISetting fJumpHeightMin:Movement >> 76.00", "... NOT FOUND") and
-  SetINISetting (the running value; the player's settings keep it for the session), sucsm (the
-  free camera's speed times the value), SetRace (the player's, as Actor.SetRace).
+- **Built here** (the lines observed in the original; src/shell/console-papyrus.ts):
+  - sglv: "--- Global Variables -----------------------------", then each global in the load
+    order as "Name = value": a float's with four decimals, a long's whole, a short's as 16 bits.
+  - sv on a reference: "--- Papyrus ---------------------------------", its update
+    registrations ("\tRegistered for update every 5.00 seconds", "\tRegistered for game-time
+    update every 1.00 hours"), then each script attached: "Name:", "\tScript state = "..."" and
+    its variables and its parents' sorted by name with case ignored, each "\tName = value" with
+    "[]" after an array's name ("\tNo variables" when it has none), or "No papyrus scripts
+    attached"; then the same under "--- Papyrus - Alias <alias> on Quest <quest> (<id>)" for
+    each alias holding it. A value is written as the script engine writes values: an Int whole,
+    a Float with six decimals, True or False, a String in quotes, None, an object as
+    "[Type <what it is>]" (an alias "alias Hadvar on quest MQ101 (0003372B)"), an array as
+    "[a, b, ...]" or "[]", within a 256-character buffer. TODO(M13): a form's and a
+    reference's "what it is" (its editor id and id, a reference its id alone) is written as the
+    game's Papyrus logs show it, not confirmed in the original; the object's type is the
+    variable's declared one; an actor's active magic effects' scripts, which the original lists
+    after its aliases ("--- Papyrus - Active magic effect <n>"), are not listed.
+  - sqv on a quest: the same for the quest, then ShowQuestAliases' lines, then
+    "--- Quest state -----------------------------", "Enabled?" Yes or No, "State:" (Running,
+    Stopped, Waiting For Stage while its start waits to run; the original's Waiting For
+    Promotion never, as there is no reference promotion here), "Current stage:" and
+    "Priority:".
+  - ShowQuestAliases: "- 3 Aliases for quest 'MQ101' (0003372B)-", then each alias as
+    "REF 'Hadvar'-> 'Hadvar' (0002BF9F)" or "LOC 'Town'-> 'WhiterunLocation' (...)", or
+    "-> NONE" while empty. TODO(M13): the name the original gives a reference or location there
+    (its form's editor-id call) is not confirmed: the reference's name and the location's
+    editor id here.
+  - sqt: per quest with targets "Current quest: MQ101", "2 current targets", then
+    "Target 1: Reference: <name> (<id>), load door: <door> (<id>)", the door the compass's
+    route toward it goes through. TODO(M13): the original also names a container carrying the
+    target ("(carrying ...)"), not tracked here; a target without a door reads
+    "Same cell/exterior" in the player's space and "UNREACHABLE" without a route, a mapping of
+    the original's two cases that is inferred.
+  - setpqv and setpv (a script property set to a number, a bool, None or a form), saq ("All
+    Quests Enabled."), caqs ("All Quest Stages Completed."), ssq (the scope quest, whose aliases
+    a line may then name as references: "Console Scope Quest >> MQ101 (0003372B)", "...
+    EMPTY"), save and load by name, ShowMenu and HideMenu (the menus by their names on the
+    stack), GetINISetting ("INISetting fJumpHeightMin:Movement >> 76.00", "... NOT FOUND") and
+    SetINISetting (the running value; the player's settings keep it for the session), SetRace
+    (the player's, as Actor.SetRace).
+  - sucsm sets the INI setting fFreeCameraTranslationSpeed:Camera (default 20), the units the
+    free camera moves each update with a move key held, whatever the update's length, times
+    fFreeCameraRunSpeed (2) while running (src/render/fly-camera.ts).
 - **Cast** takes the casting source the game's table marks as needed (its "(Optional)" name
   notwithstanding). TODO(M13): the node the spell leaves from by that source.
 

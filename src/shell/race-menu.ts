@@ -230,7 +230,10 @@ class Editing {
         const index = Number(args[1]);
         this.#enqueue(() => this.#changeRace(menu, index));
       },
+      // Each name the box sends takes back what SetAllowTextInput allowed (observed in the
+      // original).
       ChangeName: (menu, args) => {
+        this.#session.textInput.allow(false);
         void this.#changeName(menu, args[1]);
       },
       ConfirmDone: (menu) => {
@@ -239,8 +242,11 @@ class Editing {
       ZoomPC: (_menu, args) => {
         this.#camera.zoom(args[1] === true);
       },
-      // The name field took the focus: the menu host gives a focused text field the keys.
-      SetAllowTextInput: () => undefined,
+      // The name field took the focus: text input is allowed, once more each call, whatever
+      // the arguments (observed in the original); the menu host gives the focused field the keys.
+      SetAllowTextInput: () => {
+        this.#session.textInput.allow(true);
+      },
       // Consoles' on-screen keyboard; the PC types into the name box.
       ShowVirtualKeyboard: () => undefined,
     };

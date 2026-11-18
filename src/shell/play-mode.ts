@@ -6,7 +6,6 @@
 // player (MQ101: the cart to Helgen) and the world there has loaded.
 // In the game the HUD (hud-controller.ts) and the game's menus (game-menus.ts).
 
-import { FREE_CAMERA_SPEED } from '../render/fly-camera.ts';
 import { menuMovie } from '../ui/menu-movies.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { Vec3 } from '../render/math.ts';
@@ -57,9 +56,10 @@ import { DialogueMenu } from './dialogue-menu.ts';
 import { cellPlacement, exteriorCells } from './cell-placement.ts';
 import { ConsoleMenu, isConsoleKey, type ConsoleRunner } from './console-menu.ts';
 import { ConsoleCommands, parseConsoleLine } from './console-commands.ts';
-import { Compass, questTargets } from './compass.ts';
+import { Compass, firstDoorToward, questTargets } from './compass.ts';
 import { MenuHost, type Menu } from '../ui/menu-host.ts';
-import { MenuName } from '../ui/menu-stack.ts';
+import { CUSTOM_MENU, MenuName } from '../ui/menu-stack.ts';
+import { CustomMenu } from './custom-menu.ts';
 import { floatingMarker } from './hud-elements.ts';
 import type { GameSession } from './game-session.ts';
 import { headPosition, type PlacedActor } from './actors.ts';
@@ -359,6 +359,7 @@ export class PlayMode {
     this.#host.menuKeys = () => menuKeys(this.#playerData?.controls);
     // Scripts reach into an open menu's movie by the menu's name (SKSE's UI script).
     session.menuMovies = (name) => {
+      if (name.toLowerCase() === CUSTOM_MENU.toLowerCase()) return this.#customMenu.movie;
       const movie = menuMovie(name);
       return movie === undefined ? undefined : this.#host.openMovie(movie);
     };
@@ -389,6 +390,15 @@ export class PlayMode {
       short: ini.number('Interface', 'fMenuKeyRepeatShort'),
     };
     this.#console = new ConsoleMenu(this.#host, terminal, ini);
+    // SKSE's custom menu, as scripts open it (UI.OpenCustomMenu).
+    this.#customMenu = new CustomMenu(
+      this.#host,
+      session.menuStack,
+      terminal,
+      () => this.#enterMenuMode(),
+      () => inputPlatform() !== Platform.pcGamepad,
+    );
+    session.customMenu = this.#customMenu;
     this.#fader = new FaderMenu(this.#host, terminal, () => session.loading);
     this.#titles = new TitleSequence(
       this.#host,
@@ -1116,6 +1126,7 @@ export class PlayMode {
 
   /** The console (~): over the game and its menus, in menu mode while open. */
   readonly #console: ConsoleMenu;
+  readonly #customMenu: CustomMenu<Menu>;
   #commands: { readonly runtime: ScriptRuntime; readonly commands: ConsoleCommands } | undefined;
 
   readonly #consoleKey = (event: KeyboardEvent): void => {
@@ -1126,7 +1137,13 @@ export class PlayMode {
     // Not while a place loads.
     if (this.#session.loading) return;
     event.preventDefault();
-    const leave = this.#enterMenuMode();
+    const leaveMenuMode = this.#enterMenuMode();
+    // The console allows text input while it shows (observed in the original).
+    const releaseTextInput = this.#session.textInput.hold();
+    const leave = (): void => {
+      releaseTextInput();
+      leaveMenuMode();
+    };
     this.#console
       .open(
         CONSOLE_DEPTH,
@@ -1245,6 +1262,18 @@ export class PlayMode {
           },
           gameSettings: () => session.settings(),
           questTargets: () => questTargets(runtime),
+          // The load door toward a target in another space, as the compass finds it.
+          questTargetDoor: async (target) => {
+            const at = await runtime.placement(PLAYER_REF);
+            const to = target.placement ?? (await runtime.placement(target.reference));
+            if (!at || !to) return 'unreachable';
+            const same =
+              at.world !== undefined
+                ? to.world === at.world
+                : to.cell !== undefined && to.cell === at.cell;
+            if (same) return 'same';
+            return firstDoorToward(await session.routeMap(), at, to)?.door ?? 'unreachable';
+          },
           pick: (x, y, aspect) => this.#world.player()?.play.pickAt(x, y, aspect),
           forceWeather: (weather, override) => {
             session.sky.forceWeather(weather, override);
@@ -1285,10 +1314,6 @@ export class PlayMode {
             if (session.ini.lookup(section, key) === undefined) return false;
             session.preferences.set(`${section}:${key}`, value);
             return true;
-          },
-          setFreeCameraSpeed: (multiplier) => {
-            const camera = this.#world.player()?.play.camera;
-            if (camera) camera.speed = FREE_CAMERA_SPEED * multiplier;
           },
         }),
       };
@@ -1586,6 +1611,7 @@ export class PlayMode {
     document.removeEventListener('keydown', this.#consoleKey);
     document.removeEventListener('keydown', this.#saveKeys);
     this.#console.close();
+    this.#customMenu.close();
     this.#dialogue?.close();
     this.#dialogue = undefined;
     this.#menus?.close();

@@ -247,6 +247,16 @@ export const VANILLA_MENUS: Readonly<Record<string, MenuKind>> = {
   },
 };
 
+/** SKSE's custom menu (UI.OpenCustomMenu: src/shell/custom-menu.ts), registered at the start. */
+export const CUSTOM_MENU = 'CustomMenu';
+/**
+ * Its flags as SKSE's constructor sets them: modal and pausing the game, and with no gamepad in
+ * use the cursor (the PC's, kept here; the menu host leaves the cursor out with a gamepad).
+ */
+export const CUSTOM_MENU_KIND: MenuKind = {
+  flags: F.modal | F.pausesGame | F.updateUsesCursor | F.usesCursor,
+};
+
 /** A menu opened or closed (MenuOpenCloseEvent). */
 export interface MenuOpenClose {
   readonly name: string;
@@ -284,6 +294,7 @@ export class MenuStack {
 
   constructor() {
     for (const [name, kind] of Object.entries(VANILLA_MENUS)) this.register(name, kind);
+    this.register(CUSTOM_MENU, CUSTOM_MENU_KIND);
   }
 
   /** A kind of menu by name (a mod's own: UI::Register); replaces one of the same name. */

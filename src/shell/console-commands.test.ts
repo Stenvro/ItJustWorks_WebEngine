@@ -8,7 +8,7 @@ import {
 import { parseAxis, parseConsoleLine, parseConsoleNumber, parseFormId } from './console-parse.ts';
 import { conditionLine } from './console-script-functions.ts';
 import { CONSOLE_COMMANDS, consoleCommand } from './console-table.ts';
-import { ObjectHandle } from '../scripting/values.ts';
+import { ObjectHandle, PapyrusArray } from '../scripting/values.ts';
 
 /** Record types by form id, as the fake forms answer. */
 const TYPES = new Map([
@@ -351,6 +351,80 @@ describe('the game command table', () => {
     expect(await commands.run('save Before')).toEqual([]);
     expect(await commands.run('load Before')).toEqual([]);
     expect(saved).toEqual(['save Before', 'load Before']);
+  });
+
+  it("shows a reference's registrations, scripts and aliases in the original's lines (sv)", async () => {
+    const quest = 0x3372b;
+    const runtime = {
+      forms: {
+        record: (formId: number) =>
+          Promise.resolve(formId === quest ? { type: 'QUST', editorId: 'MQ101' } : undefined),
+        quest: (formId: number) =>
+          Promise.resolve(
+            formId === quest
+              ? { aliases: [{ id: 2, name: 'Hadvar', location: false }], priority: 50 }
+              : undefined,
+          ),
+      },
+      vm: {
+        scriptVariables: (handle: ObjectHandle) =>
+          Promise.resolve(
+            handle.formId === 0x14 && handle.alias < 0
+              ? [
+                  {
+                    script: 'PlayerScript',
+                    state: 'Waiting',
+                    variables: [
+                      { name: 'Ratio', type: 'float', value: 0.5 },
+                      { name: 'Count', type: 'Int', value: 3 },
+                      { name: 'Names', type: 'string[]', value: new PapyrusArray(['a', 'b']) },
+                      { name: 'Nothing', type: 'int[]', value: null },
+                      {
+                        name: '::Guard_var',
+                        type: 'ReferenceAlias',
+                        value: new ObjectHandle(quest, 'referencealias', 2),
+                      },
+                      { name: 'Done', type: 'Bool', value: true },
+                    ],
+                  },
+                ]
+              : [],
+          ),
+      },
+      updateInterval: (handle: ObjectHandle, gameTime: boolean) =>
+        handle.formId === 0x14 && !gameTime ? 5 : undefined,
+      aliasesHolding: () => [{ quest, alias: 2 }],
+    };
+    const commands = new ConsoleCommands(fakeContext({}, runtime));
+    expect(await commands.run('player.sv')).toEqual([
+      '--- Papyrus ---------------------------------',
+      '\tRegistered for update every 5.00 seconds',
+      'PlayerScript:',
+      '\tScript state = "Waiting"',
+      '\t::Guard_var = [ReferenceAlias <alias Hadvar on quest MQ101 (0003372B)>]',
+      '\tCount = 3',
+      '\tDone = True',
+      '\tNames[] = ["a", "b"]',
+      '\tNothing[] = []',
+      '\tRatio = 0.500000',
+      '--- Papyrus - Alias Hadvar on Quest MQ101 (0003372B)',
+      'No papyrus scripts attached',
+    ]);
+  });
+
+  it("sets the free camera's translation speed setting with sucsm", async () => {
+    const ini = new Map([['fFreeCameraTranslationSpeed:Camera', 20]]);
+    const commands = new ConsoleCommands(
+      fakeContext({
+        setIniSetting: (name: string, value: number) => {
+          if (!ini.has(name)) return false;
+          ini.set(name, value);
+          return true;
+        },
+      }),
+    );
+    expect(await commands.run('sucsm 5')).toEqual([]);
+    expect(ini.get('fFreeCameraTranslationSpeed:Camera')).toBe(5);
   });
 
   it('names a quest alias as a reference once the scope quest is set', async () => {
