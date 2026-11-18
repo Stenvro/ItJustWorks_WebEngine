@@ -1555,7 +1555,11 @@ frame) is dropped. The weight (starting at 1) falls by 1.5 a second while the gr
 flag is set (CameraOverrideStart / Stop, the flag's one reader), the player is in a paired
 interaction, the smoothed speed is over 500, or the scripts drive the player (SetPlayerAIDriven),
 and rises by 1.5 a second otherwise; a load resets it. TODO(M13): one more condition of the
-original's (a reference the player holds) is not read.
+original's (a reference the player holds) is not read. The first-person arms take the same offset
+as the camera (it rides their skeleton's Camera1st node), so they stay where the view has them on a
+walk or a stair instead of running ahead of it (`Player.firstPersonOffset`; inferred, TODO(M13):
+whether the original moves the first-person skeleton by the offset is not confirmed; placed on
+the feet alone they ran some 19 units ahead at a walk).
 
 How the engine dresses the first-person body (observed in the original; implemented in
 `src/world/actors.ts`: `addonModel`, `inFirstPerson`, `underSkin`):
@@ -1944,7 +1948,10 @@ Observed in the original (Havok's clip generator as the original runs it), in ou
 - An acyclic trigger (8 in vanilla: AOWoodPickUp's, AOBarTableIdle's) is not raised by the cycles: it
   raises once the time played since the clip became active (its speed applied, a negative one
   counting back, a ping-pong's way back too) passes its time, after the cyclic ones; never in a
-  user-controlled clip.
+  user-controlled clip. Its time is taken as a cyclic trigger's (from the end if relative to it, in
+  the enforced duration's time, kept within the clip: `triggerClipTime`); inferred, TODO(M13): the
+  conversion was observed for the clip's triggers, not seen applied to the acyclic ones apart (no
+  vanilla acyclic trigger is relative to the end or on a clip with an enforced duration).
 - A speed nearer 0 than 0.001 plays at 0.001, forward if above 0, else backward.
 - User controlled: the step is from where the clip was to where its variable puts it, either way.
 - In a syncing blender: forward from where the clip was to its phase (over the seam into the next
