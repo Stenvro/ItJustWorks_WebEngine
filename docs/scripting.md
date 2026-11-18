@@ -416,7 +416,10 @@ quests (the College's MGR quests) may come out differently from one new game to 
   GetInCurrentLocation and GetInFaction conditions: 200,000 conditions in one go held the page
   for up to 8 s. TODO(M13): the engine's own share of a frame for quest start-up. Who an alias
   holds is kept per reference (`aliasesHolding`; the player is in hundreds of aliases), and the
-  alias factions read from it once per change (`ActorEngine`).
+  alias factions read from it once per change (`ActorEngine`). An alias's factions are joined
+  as it takes the actor (a removal from them before then undone): a RemoveFromFaction after that
+  takes the actor out while the alias still holds it (DLC2CultistAmbush's stage 10 turns its
+  cultists on the player so). TODO(M13): inferred that the fill joins them as AddToFaction would.
 
 ## The world
 
@@ -766,7 +769,10 @@ stats go to every object registered for them. What each kind becomes:
 - Loading a game (`game-session.ts`: OnPlayerLoadGame at the first frame the loaded game runs, once its world is up, as the original sends it).
 - Scenes (`scene-runtime.ts` through `scene-host.ts`): a scene's begin and end, each phase's
   begin and end, each action as it starts. Topic infos (`dialogue-engine.ts` runFragment):
-  each said line's begin and end, however it is said (menu, scene, world). Quest init
+  each said line's begin and end, however it is said (menu, scene, world). The conversation
+  goes on once the fragment returns or first waits on a clock (`PapyrusVm.callUntilLatent`):
+  Gjalund's SetSail waits for the conversation to end before it sails. TODO(M13): inferred
+  that what runs before that first wait is done before the line goes on. Quest init
   (`quests.ts`): as a quest's and its aliases' OnInit are set going. Perk entries
   (`perk-engine.ts`): an Activate entry's choice as it runs, with its fragment. Active
   effects (`magic-engine.ts`): an effect starting and stopping to act on its target.
