@@ -1246,16 +1246,6 @@ const say: ProcedureRunner = async (run) => {
 };
 
 /**
- * ForceGreet: waits at its wait location until the player comes into its trigger location,
- * then opens the conversation with its topic from where it stands. One whose greeting could not
- * begin (the player in a menu, another conversation) tries again after fAIForceGreetingTimer.
- * The way to the player is the package's own, a Travel before it to its Forcegreet Distance: the
- * ForceGreet template's 300 unless a package sets its own (Whiterun's gate guard 500),
- * Paarthurnax's 1200 from his marker, none from a chair
- * (ForceGreetFromSitting), and their ForceGreet's own places are "near the player, 5000".
- * TODO(M13): whether the procedure itself ever walks closer (nothing in the data asks it to).
- */
-/**
  * A force greet's conversation: the procedure (and so its package, and a scene's package action
  * on it) is done once the conversation its greeting opened has ended, so the lines chosen in it
  * still find its package current (MQ106DelphineIntroTopic's greeting asks
@@ -1274,10 +1264,23 @@ async function inConversation(run: ProcedureRun): Promise<void> {
   while (!run.stopped() && conversing()) await run.wait(CONVERSATION_POLL);
 }
 
-/** How long a greeting's conversation is waited for to begin, and looked at (seconds; ours). */
+/**
+ * How long a greeting's conversation is waited for to begin, and looked at (seconds).
+ * TODO(M13): our own numbers (inferred).
+ */
 const GREET_BEGIN_SECONDS = 3;
 const CONVERSATION_POLL = 0.25;
 
+/**
+ * ForceGreet: waits at its wait location until the player comes into its trigger location,
+ * then opens the conversation with its topic from where it stands. One whose greeting could not
+ * begin (the player in a menu, another conversation) tries again after fAIForceGreetingTimer.
+ * The way to the player is the package's own, a Travel before it to its Forcegreet Distance: the
+ * ForceGreet template's 300 unless a package sets its own (Whiterun's gate guard 500),
+ * Paarthurnax's 1200 from his marker, none from a chair
+ * (ForceGreetFromSitting), and their ForceGreet's own places are "near the player, 5000".
+ * TODO(M13): whether the procedure itself ever walks closer (nothing in the data asks it to).
+ */
 const forceGreet: ProcedureRunner = async (run) => {
   const topic = run.inputs.topic(0);
   const waitAt = await placeIn(run, 1);
