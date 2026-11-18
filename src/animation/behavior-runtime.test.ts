@@ -4,6 +4,7 @@ import type {
   BehaviorGenerator,
   BehaviorGraph,
   BehaviorModifier,
+  ClipTrigger,
   StateTransition,
   Vec4,
 } from '../formats/hkx/behavior.ts';
@@ -223,6 +224,49 @@ describe('the behavior runtime', () => {
     runtime.update(0.6);
     runtime.update(0.6);
     expect(names(runtime.takeRaised())).toEqual([]);
+  });
+
+  it('takes an acyclic trigger’s time as a cyclic one’s: from the end if relative, enforced-scaled', () => {
+    const acyclic = (localTime: number, id: number, relativeToEndOfClip = false): ClipTrigger => ({
+      localTime,
+      event: { id },
+      relativeToEndOfClip,
+      acyclic: true,
+      isAnnotation: false,
+    });
+    // Relative to the end: 0.2 s before the 1 s clip's end, once, by the time played.
+    const fromEnd: BehaviorGenerator = {
+      ...(clip('loop') as Extract<BehaviorGenerator, { kind: 'clip' }>),
+      triggers: [acyclic(-0.2, 0, true)],
+    };
+    const ended = new BehaviorRuntime({
+      root: graph(fromEnd, ['nearEnd']),
+      host: host({ loop: animation(0, 1) }),
+      skeleton,
+    });
+    ended.update(0);
+    ended.update(0.7);
+    expect(names(ended.takeRaised())).toEqual([]);
+    ended.update(0.2);
+    expect(names(ended.takeRaised())).toEqual(['nearEnd']);
+    ended.update(1);
+    expect(names(ended.takeRaised())).toEqual([]);
+    // An enforced duration of 2 s: a trigger at 1.5 s of it raises 1.5 s in.
+    const enforced: BehaviorGenerator = {
+      ...(clip('loop') as Extract<BehaviorGenerator, { kind: 'clip' }>),
+      enforcedDuration: 2,
+      triggers: [acyclic(1.5, 0)],
+    };
+    const slow = new BehaviorRuntime({
+      root: graph(enforced, ['late']),
+      host: host({ loop: animation(0, 1) }),
+      skeleton,
+    });
+    slow.update(0);
+    slow.update(1.4);
+    expect(names(slow.takeRaised())).toEqual([]);
+    slow.update(0.2);
+    expect(names(slow.takeRaised())).toEqual(['late']);
   });
 
   it("raises a clip's trigger at its start as the clip first moves, once", () => {

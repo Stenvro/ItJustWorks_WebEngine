@@ -6,6 +6,7 @@ import {
   clipStartTime,
   stepClip,
   timesPassed,
+  triggerClipTime,
 } from './clip-playback.ts';
 
 const at = (time: number, backward = false, cycle = 0) => ({ time, backward, cycle });
@@ -78,6 +79,21 @@ describe('clip playback', () => {
     expect(acyclicPassed(0.5, 0.5, 0.2)).toBe(false);
     expect(acyclicPassed(0.2, 0.1, 0.2)).toBe(true);
     expect(acyclicPassed(0.1, 0.1, 0.2)).toBe(false);
+  });
+
+  it('takes a trigger’s time from the end if relative, in the enforced duration’s time', () => {
+    const trigger = (localTime: number, relativeToEndOfClip = false) => ({
+      localTime,
+      relativeToEndOfClip,
+    });
+    expect(triggerClipTime(trigger(0.3), 1, 1)).toBeCloseTo(0.3);
+    expect(triggerClipTime(trigger(-0.2, true), 1, 1)).toBeCloseTo(0.8);
+    // A 1 s clip enforced to 2 s (scale 0.5): 1.5 s of it is 0.75 of the clip's own time.
+    expect(triggerClipTime(trigger(1.5), 1, 0.5)).toBeCloseTo(0.75);
+    expect(triggerClipTime(trigger(-0.5, true), 1, 0.5)).toBeCloseTo(0.75);
+    // Kept within the clip.
+    expect(triggerClipTime(trigger(3), 1, 1)).toBe(1);
+    expect(triggerClipTime(trigger(-3, true), 1, 1)).toBe(0);
   });
 
   it('a speed nearer 0 than 0.001 plays at 0.001: forward above 0, else backward', () => {

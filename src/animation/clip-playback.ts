@@ -18,7 +18,9 @@
 // - An acyclic trigger is not raised by the clip's cycles at all: it raises once the time the
 //   clip has played since it became active (its speed applied, negative counting back) passes its
 //   time, that time included and the step's end not (acyclicPassed); never for a user-controlled
-//   clip.
+//   clip. Its time is taken as a cyclic trigger's (triggerClipTime: from the end if relative to
+//   it, in the enforced duration's time); TODO(M13): inferred for the acyclic ones (no vanilla
+//   acyclic trigger is relative to the end or on a clip with an enforced duration).
 // - A speed nearer 0 than 0.001 plays at 0.001 forward if it is above 0, else backward (0 itself
 //   too: such a clip crawls back from where it is).
 
@@ -191,6 +193,21 @@ export function timesPassed(
     if (time >= low && (sweep.closed ? time <= high : time < high)) times++;
   }
   return times;
+}
+
+/**
+ * A trigger's time in the clip's own time (the times its steps are in), cyclic or acyclic alike:
+ * given in the played time (an enforced duration's where it has one: `scale` is the clip's
+ * duration over it, else 1), from the clip's end if relative to it, kept within the clip.
+ */
+export function triggerClipTime(
+  trigger: { readonly localTime: number; readonly relativeToEndOfClip: boolean },
+  duration: number,
+  scale: number,
+): number {
+  const played = duration / scale;
+  const local = trigger.relativeToEndOfClip ? played + trigger.localTime : trigger.localTime;
+  return Math.min(played, Math.max(0, local)) * scale;
 }
 
 /**

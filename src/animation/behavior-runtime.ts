@@ -44,6 +44,7 @@ import {
   clipStartTime,
   stepClip,
   timesPassed,
+  triggerClipTime,
   type ClipSweep,
 } from './clip-playback.ts';
 import { MirroredSkeleton } from './mirror.ts';
@@ -3843,8 +3844,11 @@ export class BehaviorRuntime {
     for (const trigger of node.triggers ?? []) {
       if (!trigger.acyclic || playedStep <= 0) continue;
       if (((flags[trigger.event.id] ?? 0) & EVENT_FLAGS.silent) !== 0) continue;
-      if (acyclicPassed(playedFrom, playedStep, trigger.localTime)) {
-        const late = dt > 0 ? (dt * (playedFrom + playedStep - trigger.localTime)) / playedStep : 0;
+      // Its time taken as a cyclic trigger's (from the end if relative to it, in the enforced
+      // duration's time), compared in the clip's own time as `played` counts it.
+      const time = triggerClipTime(trigger, duration, scale);
+      if (acyclicPassed(playedFrom, playedStep, time)) {
+        const late = dt > 0 ? (dt * (playedFrom + playedStep - time)) / playedStep : 0;
         this.#raise(trigger.event, scope, own, late > 0 ? Math.min(dt, late) : undefined);
       }
     }
@@ -3875,8 +3879,7 @@ export class BehaviorRuntime {
     for (const trigger of node.triggers ?? []) {
       if (trigger.acyclic) continue;
       if (((flags[trigger.event.id] ?? 0) & EVENT_FLAGS.silent) !== 0) continue;
-      const local = trigger.relativeToEndOfClip ? played + trigger.localTime : trigger.localTime;
-      triggers.push({ time: Math.min(played, Math.max(0, local)) * scale, trigger });
+      triggers.push({ time: triggerClipTime(trigger, duration, scale), trigger });
     }
     // The annotations within the clip's crop become triggers as it activates (after its own;
     // those outside it never raise), at their time in the cropped clip, taken as triggers' are.
