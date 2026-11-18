@@ -55,6 +55,8 @@ export function craftingMenuOf(benchType: number): CraftingMenuType | undefined 
     case WorkbenchType.alchemy:
     case WorkbenchType.alchemyExperiment:
       return menu('Alchemy', 'alchemy', undefined, 'sAlchemyMenuDescription');
+    // A furniture whose bench type is None (WBDT 0) is sat or leant on and opens no menu.
+    case WorkbenchType.none:
     default:
       return undefined;
   }

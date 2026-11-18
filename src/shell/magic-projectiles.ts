@@ -28,11 +28,13 @@ import {
   carriedByBody,
   coneDone,
   flightKind,
+  isMine,
   launchCone,
   lightsGivingWay,
   launchFlight,
   LOBBER_DEFAULTS,
   MAX_PLAYER_RUNES,
+  mineBursts,
   normalize,
   pathHitsActor,
   pointAt,
@@ -159,6 +161,11 @@ interface Flying {
   done: boolean;
   /** A rune: when it came to rest (the projectiles' clock), the oldest giving way first. */
   restedAt?: number;
+  /**
+   * A mine: the actors within its proximity, each with whether its Calculate Mine Explode Chance
+   * burst it (undefined while their perks are asked); one gone out of it rolls again on its return.
+   */
+  mineRolls?: Map<number, boolean | undefined>;
   /** A loaded save's state of its model's graph, put back as its model loads. */
   savedGraph?: SavedGraph | undefined;
 }
@@ -1077,15 +1084,12 @@ export class MagicProjectiles {
         this.#physics?.matrix.indexOf(flying.projectile.collisionLayer) ?? Layer.spell,
       );
       const hit = this.#sweep(flying.delivered.caster, from, to, flying.projectile.collisionRadius);
-      // Its alternative trigger: within its proximity of an actor it bursts.
+      // Its alternative trigger: within its proximity of an actor it bursts (a mine as that
+      // actor's Calculate Mine Explode Chance says: #mineNear).
       const near =
         !hit &&
         (flying.projectile.flags & ProjectileFlag.altTrigger) !== 0 &&
-        [...this.#options.targets()].some(
-          (target) =>
-            target.reference !== flying.delivered.caster &&
-            withinProximity(flying.projectile, to, target.shape),
-        );
+        this.#near(flying, to);
       // A lobber with an alternative trigger that meets a surface bounces or rests there,
       // waiting for an actor within its proximity or its timer (a rune on the floor).
       if (
@@ -1525,6 +1529,43 @@ export class MagicProjectiles {
       flying.instance.world.set(placementOf(flying.flight));
       flying.motion.version++;
     }
+  }
+
+  /**
+   * Whether an actor other than its caster is within a projectile's proximity and bursts it: any
+   * such actor for one that is no mine; for a mine, one whose Calculate Mine Explode Chance (the
+   * actor's perks, the mine's spell its item tab) came up as it came within (mineBursts). The
+   * roll is asked once as the actor comes within, and again after it went out of reach.
+   */
+  #near(flying: Flying, at: Vec3): boolean {
+    const within: number[] = [];
+    for (const target of this.#options.targets())
+      if (
+        target.reference !== flying.delivered.caster &&
+        withinProximity(flying.projectile, at, target.shape)
+      )
+        within.push(target.reference);
+    if (!isMine(flying.projectile)) return within.length > 0;
+    const rolls = (flying.mineRolls ??= new Map<number, boolean | undefined>());
+    for (const reference of [...rolls.keys()])
+      if (!within.includes(reference)) rolls.delete(reference);
+    const runtime = this.#options.session.scriptsReady;
+    for (const reference of within) {
+      if (rolls.has(reference)) continue;
+      if (!runtime) {
+        rolls.set(reference, true);
+        continue;
+      }
+      rolls.set(reference, undefined);
+      void runtime.perks
+        .apply(EntryPoint.calculateMineExplodeChance, reference, 100, [
+          flying.delivered.item.formId,
+        ])
+        .then((chance) => {
+          if (rolls.has(reference)) rolls.set(reference, mineBursts(chance, Math.random()));
+        });
+    }
+    return within.some((reference) => rolls.get(reference) === true);
   }
 
   /**

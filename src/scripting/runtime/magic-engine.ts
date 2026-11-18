@@ -2057,8 +2057,16 @@ export class MagicEngine {
     }
     await this.apply(item, actor, { caster: actor });
     const addiction = item.potion?.addiction;
-    if (addiction !== undefined && Math.random() < (item.potion?.addictionChance ?? 0))
-      await runtime.actors.addSpell(actor, addiction);
+    if (addiction !== undefined) {
+      // Its chance through the drinker's perks (Mod Addiction Chance; no vanilla perk has one,
+      // nor any vanilla potion an addiction).
+      const chance = await runtime.perks.apply(
+        EntryPoint.modAddictionChance,
+        actor,
+        item.potion?.addictionChance ?? 0,
+      );
+      if (Math.random() < chance) await runtime.actors.addSpell(actor, addiction);
+    }
   }
 
   /**

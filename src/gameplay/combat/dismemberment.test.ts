@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { BodyPartFlag } from '../../world/body-part-data.ts';
+import { EntryPoint } from '../perk-entry-points.ts';
 import {
   decapitationLaunch,
   faceKeepsPartition,
+  adjustedLimbDamage,
   cripplesLimb,
   HEAD_LIMB,
   limbDamage,
@@ -163,5 +165,34 @@ describe('dismemberment', () => {
     expect(cripplesLimb({ flags: BodyPartFlag.explodable }, 50, 40)).toBe(false);
     expect(cripplesLimb({ flags: BodyPartFlag.explodable }, 0, 40)).toBe(false);
     expect(cripplesLimb({ flags: BodyPartFlag.severable }, 30, 40)).toBe(false);
+  });
+});
+
+describe('Adjust Limb Damage', () => {
+  it('runs the limb damage through the target’s perks, the attacker and its weapon their tabs', async () => {
+    const asked: unknown[] = [];
+    const perks = {
+      apply: (
+        entryPoint: number,
+        owner: number,
+        value: number,
+        targets?: readonly (number | undefined)[],
+      ) => {
+        asked.push([entryPoint, owner, value, targets]);
+        return Promise.resolve(value * 0.5);
+      },
+    };
+    const limb = await adjustedLimbDamage(
+      perks,
+      7,
+      9,
+      0x12eb7,
+      20,
+      100,
+      { healthPercent: 50 },
+      false,
+    );
+    expect(limb).toBeCloseTo(20);
+    expect(asked).toEqual([[EntryPoint.adjustLimbDamage, 7, 40, [9, 0x12eb7]]]);
   });
 });

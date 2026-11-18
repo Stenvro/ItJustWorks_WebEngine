@@ -5,6 +5,7 @@
 
 import { BodyPartFlag, BodyPartType, type BodyPart } from '../../world/body-part-data.ts';
 import type { Vec3 } from '../../render/math.ts';
+import { EntryPoint } from '../perk-entry-points.ts';
 import { COMBAT_DEFAULTS, type CombatSettings } from './combat-settings.ts';
 
 /** The limb a decapitation takes (the body part data's head part). */
@@ -241,6 +242,37 @@ export function limbDamage(
   let limb = damage;
   if (health > 0) limb = share <= 0 ? 0 : (damage / (health * share)) * 100;
   return targetIsPlayer ? limb * settings.playerLimbDamageMult : limb;
+}
+
+/** The perks' side of a limb damage: an entry point asked of an actor (PerkEngine.apply). */
+export interface LimbPerks {
+  apply(
+    entryPoint: number,
+    owner: number,
+    value: number,
+    targets?: readonly (number | undefined)[],
+  ): Promise<number>;
+}
+
+/**
+ * A hit's limb damage (limbDamage) as the target's perks adjust it (Adjust Limb Damage: the
+ * target the perk owner, its tabs the attacker and the attacker's weapon; the engine asks it, no
+ * vanilla perk has one). TODO(M13): inferred that the perks act on the damage after the player's
+ * fCombatPlayerLimbDamageMult.
+ */
+export async function adjustedLimbDamage(
+  perks: LimbPerks,
+  target: number,
+  attacker: number,
+  weapon: number | undefined,
+  damage: number,
+  health: number,
+  part: Pick<BodyPart, 'healthPercent'>,
+  targetIsPlayer: boolean,
+  settings: LimbRollSettings = LIMB_ROLL_DEFAULTS,
+): Promise<number> {
+  const limb = limbDamage(damage, health, part, targetIsPlayer, settings);
+  return perks.apply(EntryPoint.adjustLimbDamage, target, limb, [attacker, weapon]);
 }
 
 /**

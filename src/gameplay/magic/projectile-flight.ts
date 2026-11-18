@@ -128,6 +128,21 @@ export function lobberAgeMax(
   return mine ? settings.mineAgeMax : settings.grenadeAgeMax;
 }
 
+/** Whether a projectile is a mine: an alternative trigger and an explosion proximity above zero. */
+export function isMine(data: Pick<FlightData, 'flags' | 'proximity'>): boolean {
+  return (data.flags & ProjectileFlag.altTrigger) !== 0 && data.proximity > 0;
+}
+
+/**
+ * Whether a mine bursts for an actor come within its proximity: its Calculate Mine Explode
+ * Chance (percent; 100 without perks, the engine asks the actor's perks, no vanilla perk has one)
+ * against a roll of 0..1. TODO(M13): inferred that 100 is where the chance starts and that it is
+ * rolled once each time the actor comes within the proximity.
+ */
+export function mineBursts(chancePercent: number, roll: number): boolean {
+  return roll * 100 < chancePercent;
+}
+
 /** Whether a lobber of an age has outlived the most it lives (lobberAgeMax; zero: never). */
 export function lobberOutlived(
   data: Pick<FlightData, 'flags' | 'lifetime' | 'proximity'>,
