@@ -551,7 +551,8 @@ describe.skipIf(!hasGamedata())('MQ105 The Horn of Jurgen Windcaller', () => {
       expect(await sim.until(() => sim.stageDone(MQ105, 190), 10)).toBe(true);
       expect(sim.activate(TOMB_NOTE)).toBe(true);
       expect(await sim.until(() => sim.stageDone(MQ105, 200), 10)).toBe(true);
-      expect(sim.stage(HORN_QUEST)).toBe(20);
+      // 200's fragment sets the Horn quest's 20 (and MQ106 5) after the stage is done.
+      expect(await sim.until(() => sim.stage(HORN_QUEST) === 20, 10)).toBe(true);
       afterNote = await sim.save('Horn note');
     } finally {
       await sim.close();
