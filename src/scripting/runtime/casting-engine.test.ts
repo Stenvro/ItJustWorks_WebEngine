@@ -14,9 +14,12 @@ import type { ScriptRuntime } from './runtime.ts';
 const DESTRUCTION = 20;
 const FIRE = 0x100;
 const HEAL = 0x101;
+/** A fire whose damage is detrimental but not hostile (MG01FireDamageFFAimed's kind). */
+const TEACHING_FIRE = 0x102;
 const FIREBOLT = 0x200;
 const FLAMES = 0x201;
 const POWER = 0x202;
+const TEACHING_FIREBOLT = 0x203;
 const SHOUT = 0x300;
 const WORDS = [0x310, 0x311, 0x312];
 const SPELLS = [0x320, 0x321, 0x322];
@@ -48,6 +51,12 @@ const ITEMS = new Map<number, MagicItemRecord>([
   [FIREBOLT, spell(FIREBOLT, CastType.fireAndForget)],
   [FLAMES, spell(FLAMES, CastType.concentration, { cost: 10, chargeTime: 0 })],
   [POWER, spell(POWER, CastType.fireAndForget, { kind: 'power', delivery: Delivery.self })],
+  [
+    TEACHING_FIREBOLT,
+    spell(TEACHING_FIREBOLT, CastType.fireAndForget, {
+      effects: [{ effect: TEACHING_FIRE, magnitude: 15, area: 0, duration: 0, conditions: [] }],
+    }),
+  ],
   ...SPELLS.map((id): [number, MagicItemRecord] => [
     id,
     spell(id, CastType.fireAndForget, { kind: 'voice', cost: 0 }),
@@ -143,9 +152,18 @@ function world() {
                 actorValue: ActorValue.health,
                 archetype: EffectArchetype.valueModifier,
               }
-            : formId === HEAL
-              ? { formId: HEAL, baseCost: 1, skill: 22, flags: 0, actorValue: ActorValue.health }
-              : undefined,
+            : formId === TEACHING_FIRE
+              ? {
+                  formId: TEACHING_FIRE,
+                  baseCost: 1,
+                  skill: DESTRUCTION,
+                  flags: EffectFlag.detrimental,
+                  actorValue: ActorValue.health,
+                  archetype: EffectArchetype.valueModifier,
+                }
+              : formId === HEAL
+                ? { formId: HEAL, baseCost: 1, skill: 22, flags: 0, actorValue: ActorValue.health }
+                : undefined,
         ),
       acted: () => undefined,
       holdWards: (actor: number) => {
@@ -157,6 +175,10 @@ function world() {
       },
       hostile: (item: MagicItemRecord) =>
         Promise.resolve(item.effects.some((entry) => entry.effect === FIRE)),
+      warded: (item: MagicItemRecord) =>
+        Promise.resolve(
+          item.effects.some((entry) => entry.effect === FIRE || entry.effect === TEACHING_FIRE),
+        ),
       extendHeld: () => new Set<number>(),
       apply: (
         item: MagicItemRecord,
@@ -403,6 +425,25 @@ describe('wards and absorption', () => {
     w.set(PLAYER_REF, 83, 100);
     expect(await w.engine.deliver(firebolt, PLAYER_REF)).toBe(0);
     expect(w.value(PLAYER_REF, ActorValue.magicka)).toBe(40);
+  });
+
+  // MG01's ward lesson: Tolfdir's Firebolt is detrimental, not hostile; the ward takes it, and
+  // its fire does not reach the student.
+  it('take a detrimental spell that is not hostile as a hostile one', async () => {
+    const w = world();
+    const firebolt = {
+      caster: NPC,
+      item: need(ITEMS.get(TEACHING_FIREBOLT)),
+      via: 'spell' as const,
+      dual: false,
+      cost: { base: 23, magicka: 23, charge: 0, school: undefined, chargeTime: 0.5 },
+    };
+    w.set(PLAYER_REF, 63, 40);
+    expect(await w.engine.deliver(firebolt, PLAYER_REF)).toBe(0);
+    expect(w.applied).toEqual([]);
+    // Absorbed (OnWardHit's status 1), the ward down by its 15.
+    expect(w.engine.wardState(PLAYER_REF)).toBe(1);
+    expect(w.value(PLAYER_REF, 63)).toBe(25);
   });
 });
 
