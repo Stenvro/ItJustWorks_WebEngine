@@ -16,6 +16,7 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { movementBlocked, reactToDestroyedObject, surfaceTo } from '../ai/engine-packages.ts';
 import { RAGDOLL_FALL_SHARE } from '../gameplay/falling.ts';
 import { actorFell } from './time-flow.ts';
+import { markerGround } from './marker-ground.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import {
   animateInStep,
@@ -260,8 +261,6 @@ const TIME_SKIP_MS = 1500;
 const SNAP_REACH = 512;
 /** A human's controller radius (HUMAN_BOUND's narrow half extent), for one with no controller yet. */
 const HUMAN_RADIUS = 14;
-/** How far below a furniture marker its ground is looked for (units). */
-const MARKER_GROUND_REACH = 4096;
 /** Clairvoyance towards a target beyond the loaded area: this far along the way (units). */
 const GUIDE_AHEAD = 6144;
 /** The collision this near an actor (its cell and the neighbours there) must be in place to set it down (units). */
@@ -454,15 +453,7 @@ export class ActorStage {
       specificIdle: (actor) => {
         this.ambientIdles.specificIdle(actor);
       },
-      ground: (at) => {
-        const hit = this.#physics?.raycast(
-          [at[0], at[1], at[2] - 1],
-          [0, 0, -1],
-          MARKER_GROUND_REACH,
-          Layer.charController,
-        );
-        return hit && hit.owner?.kind !== 'actor' ? hit.point[2] : undefined;
-      },
+      ground: (at) => markerGround(this.#physics, at),
     });
     this.movers = new ActorMovers({
       session: options.session,

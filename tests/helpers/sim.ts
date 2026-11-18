@@ -1051,6 +1051,26 @@ export class Sim {
   }
 
   /**
+   * The player picks an actor's pockets through the container menu's model in pickpocket mode
+   * (sneaking, activated): an item taken from it or, `placing`, one of theirs put in. Whether
+   * the attempt succeeded (false: caught); throws if the menu lists no such entry.
+   */
+  async pickpocket(actor: number, item: number, placing = false): Promise<boolean> {
+    const inventory = inventoryModel(this.world.session, this.world.terminal, () =>
+      Promise.resolve(),
+    );
+    const model = containerModel(this.world.session, actor, inventory, false, true);
+    const entry = (await model.view()).entries.find(
+      (candidate) => candidate.formId === item && (candidate.container === true) !== placing,
+    );
+    if (!entry || !model.transfer) throw new Error(`No pickpocket entry ${item.toString(16)}`);
+    const had = await this.runtime.itemCount(actor, item);
+    await this.#stepUntil(Promise.resolve(model.transfer(entry, 1, !placing)));
+    const has = await this.runtime.itemCount(actor, item);
+    return placing ? has > had : has < had;
+  }
+
+  /**
    * The player sells items to a merchant through the barter menu's model (bartermenu.swf's
    * ItemSelect on one of the player's entries: src/shell/barter-menu.ts), at the price it shows.
    * False if the merchant does not buy it.
