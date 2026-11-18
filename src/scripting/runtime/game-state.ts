@@ -9,6 +9,7 @@ import type { KeepOffset } from '../../ai/movement-overrides.ts';
 import type { SavedGraph } from '../../animation/script-graphs.ts';
 import type { PlayerAppearance } from '../../gameplay/chargen.ts';
 import type { DismemberedLimb } from '../../gameplay/combat/dismemberment.ts';
+import type { WaitingHelp } from '../../gameplay/help-messages.ts';
 import { emptyLoadout, type Loadout } from '../../gameplay/equipment.ts';
 import type { CreatedForm } from '../../world/created-forms.ts';
 import type { StoryEventData } from './story-manager.ts';
@@ -598,6 +599,11 @@ export class GameState {
    * their help is not shown again until reset (Message.ResetHelpMessage).
    */
   readonly helpDone = new Set<string>();
+  /**
+   * The help messages waiting for their event (Message.ShowAsHelpMessage), by the event (lower
+   * case): showing or waiting out their interval, as the original's save keeps them.
+   */
+  readonly helpWaiting = new Map<string, WaitingHelp>();
   /** How often each skill (actor value) has been made Legendary. */
   readonly legendary = new Map<number, number>();
   /** What the player has seen of interiors (the local map's fog of war), by cell. */

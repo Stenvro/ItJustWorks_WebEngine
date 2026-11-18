@@ -1772,7 +1772,8 @@ export class PlaySession {
           this.physics.settle(placed);
           // A loaded save's object in motion moves on as it moved.
           const motion = this.savedMotion?.(placed.owner.reference);
-          if (motion) this.physics.setVelocity(placed, motion.linear, motion.angular);
+          if (motion?.bodies) this.physics.restoreBodyStates(placed, motion.bodies);
+          else if (motion) this.physics.setVelocity(placed, motion.linear, motion.angular);
         } else group.settle[kept++] = placed;
       }
       group.settle.length = kept;
@@ -1961,8 +1962,9 @@ export class PlaySession {
 
   /**
    * The loose objects of the loaded cells in motion, for a save (src/save/world-save.ts): each
-   * awake simulated body's velocity, game units and radians a second (a placement of several
-   * bodies by its first). TODO(M13): each body of an articulated object on its own.
+   * awake simulated body's velocity, game units and radians a second; a placement of several
+   * bodies awake by its first, and with each simulated body's own place, turn and velocities,
+   * so an articulated object (a swinging cage) swings on as it hung.
    */
   saveMotions(): SavedMotion[] {
     const out: SavedMotion[] = [];
@@ -1980,7 +1982,13 @@ export class PlaySession {
         if (Math.hypot(...linear) < MOVING_SPEED && Math.hypot(w.x, w.y, w.z) < MOVING_TURN) {
           continue;
         }
-        out.push({ reference: placed.owner.reference, linear, angular: [w.x, w.y, w.z] });
+        // Of several bodies (a weight swinging under a fixed bracket too): each simulated one.
+        out.push({
+          reference: placed.owner.reference,
+          linear,
+          angular: [w.x, w.y, w.z],
+          ...(placed.bodies.length > 1 && { bodies: this.physics.bodyStates(placed) }),
+        });
       }
     }
     return out;

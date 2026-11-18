@@ -25,6 +25,11 @@ export interface SaveHeader {
    * it, as the original by the id its save files' names carry. None in saves made before.
    */
   readonly characterId?: number | undefined;
+  /**
+   * Made with mods (a plugin of plugins.txt loaded, character-id.ts moddedLoadOrder): the Load
+   * list keeps a character's saves with mods apart, as the original by its file names' digit.
+   */
+  readonly modded?: boolean | undefined;
   readonly playerLevel: number;
   /** Where the player is (the location's or cell's name). */
   readonly location: string;

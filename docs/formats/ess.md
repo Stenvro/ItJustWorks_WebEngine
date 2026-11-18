@@ -624,7 +624,9 @@ ess)` reads those places ahead);
   on the opening's executed and killed, 0 on the living; 6 restrained, 3 unconscious): dead,
   restrained, unconscious; one saved dying (1) is dead and kept as our own save keeps the dying
   (`RuntimeSave.engines.dying`), so its scripts hear the OnDeath it was still waiting for as the
-  load ends (docs/formats/save.md), with its killer as the akKiller. The killer is the
+  load ends (docs/formats/save.md), with its killer as the akKiller; one bleeding out (8) or
+  an essential one down (7) bleeds on as it is placed (`SavedActor.down`; TODO(M13): how long
+  it had bled is not found in the save, so from the load). The killer is the
   reference written just before the state bytes (`EssActorData.killer`), kept on the dead too
   (`ActorState.killer`). Measured on the two saves read: of their 4,727 actors (2,362 and
   2,365) only two keep one, both in the second save and both dead (life state 2) with their
@@ -681,9 +683,10 @@ ess)` reads those places ahead);
   (`controls.journalTabs`); the tutorials shown, by their default objects' places
   (src/save/ess-import.ts tutorialOfDefaultObject: CommonLibSSE's order of the help messages,
   one place later in the runtime that wrote the saves: 252 is HBJL), into
-  `GameState.tutorialsShown`, not shown again. The help part's waiting messages (none in the
-  saves read) are logged (TODO(M13): ours keeps them in the HUD, unsaved); none showing (−2)
-  needs nothing;
+  `GameState.tutorialsShown`, not shown again. The help part's waiting messages go on in ours
+  (`GameState.helpWaiting`: the entry showing shows; TODO(M13): none is in the saves read, so
+  the values' encoding, floats but the times left, is inferred); none showing (−2) needs
+  nothing;
 - the process lists (global data 100): the next crime's number becomes `GameState.nextCrime`,
   the number our crime ledger gives the next crime (src/gameplay/crime.ts);
 - the graphs' event-driven modifiers (`NamedGraphState.modifiers`): one switched on stays on as

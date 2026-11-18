@@ -762,6 +762,20 @@ export function poseMatrix(t: Vec3, q: Quaternion, out?: Mat4): Mat4 {
 }
 
 /** A body the simulation moves (not a phantom). */
+/** One simulated body as a save keeps it (PhysicsWorld.bodyStates). */
+export interface BodyState {
+  /** Its index among its placement's bodies. */
+  readonly index: number;
+  /** Game units. */
+  readonly position: readonly [number, number, number];
+  /** A quaternion (x, y, z, w). */
+  readonly rotation: readonly [number, number, number, number];
+  /** Game units a second. */
+  readonly linear: readonly [number, number, number];
+  /** Radians a second. */
+  readonly angular: readonly [number, number, number];
+}
+
 function dynamicBody(data: CollisionBody): boolean {
   return data.motion === 'dynamic' && !data.phantom;
 }
@@ -3740,6 +3754,49 @@ export class PhysicsWorld {
       body.setLinvel({ x: toHavok(linear[0]), y: toHavok(linear[1]), z: toHavok(linear[2]) }, true);
       body.setAngvel({ x: angular[0], y: angular[1], z: angular[2] }, true);
     }
+  }
+
+  /**
+   * Each simulated body of a placement as a save keeps it (an articulated object's bodies each
+   * on its own): its place in game units, its turn (a quaternion, x y z w) and its velocities
+   * (game units and radians a second), by its index among the placement's bodies.
+   */
+  bodyStates(placed: PlacedCollision): BodyState[] {
+    const out: BodyState[] = [];
+    placed.bodies.forEach(({ body, data }, index) => {
+      if (!dynamicBody(data) || !body.isDynamic()) return;
+      const t = body.translation();
+      const r = body.rotation();
+      const v = body.linvel();
+      const w = body.angvel();
+      out.push({
+        index,
+        position: [t.x * HAVOK_SCALE, t.y * HAVOK_SCALE, t.z * HAVOK_SCALE],
+        rotation: [r.x, r.y, r.z, r.w],
+        linear: [v.x * HAVOK_SCALE, v.y * HAVOK_SCALE, v.z * HAVOK_SCALE],
+        angular: [w.x, w.y, w.z],
+      });
+    });
+    return out;
+  }
+
+  /** A save's body states put back: each body where it was, moving as it moved. */
+  restoreBodyStates(placed: PlacedCollision, states: readonly BodyState[]): void {
+    for (const state of states) {
+      const entry = placed.bodies[state.index];
+      if (!entry || !dynamicBody(entry.data)) continue;
+      const { body } = entry;
+      this.release(body);
+      this.#depenetrating.delete(body.handle);
+      const [x, y, z] = state.position;
+      body.setTranslation({ x: toHavok(x), y: toHavok(y), z: toHavok(z) }, true);
+      const [qx, qy, qz, qw] = state.rotation;
+      body.setRotation({ x: qx, y: qy, z: qz, w: qw }, true);
+      const [vx, vy, vz] = state.linear;
+      body.setLinvel({ x: toHavok(vx), y: toHavok(vy), z: toHavok(vz) }, true);
+      body.setAngvel({ x: state.angular[0], y: state.angular[1], z: state.angular[2] }, true);
+    }
+    this.#changed = true;
   }
 
   /**

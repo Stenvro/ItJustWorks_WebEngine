@@ -120,7 +120,11 @@ the world loads again, as the original's change forms hold it (nothing of the re
   AnimObjLoad again; those of actors not yet placed are kept by a save made meanwhile.
 - `motions` (`SavedMotion`): the loose objects in motion (an awake simulated body faster than
   1 unit or 0.05 radians a second): their velocity, given back as each body settles after the
-  load (src/shell/play-session.ts), so one falling as the game is saved falls on.
+  load (src/shell/play-session.ts), so one falling as the game is saved falls on. An object of
+  several bodies keeps each simulated body's own place, turn and velocities (`bodies`,
+  `PhysicsWorld.bodyStates`), so an articulated one (a cage swinging under its bracket) swings
+  on from where each body was. Test: src/physics/articulation.test.ts "an articulated object
+  across a save".
 - `detection` (`DetectionSave`, src/ai/detection-states.ts): what each actor knew of the others
   (noticed, searching, detected, with the level, when and where it last knew), who is alerted,
   alarmed, attacked and the lasting offences, as seconds before or after the save: put back as
@@ -481,8 +485,7 @@ A save of ours made after the import keeps the graphs in our own form.
 
 - What a low-process actor would have done off the stage in the time since it left, while its
   package stays the one saved (TODO(M13); "Off the stage"); a combat
-  group's own timers (its dialogue and update timers: they run from the load); each body of an articulated object in motion on its own (`motions` keeps the first's,
-  TODO(M13)).
+  group's own timers (its dialogue and update timers: they run from the load).
 
 - (Each save has its thumbnail: the frame drawn as it was made, src/shell/save-screenshot.ts;
   an import keeps the .ess's.)
@@ -497,8 +500,17 @@ the player; the journal's Save and Load list the playing character's. Naming the
 the id while the name is the one the id goes by (or the player was never named), else draws a
 new one, so a new character with a name used before is listed apart. Saves made before the id
 was kept are grouped by the player's name. An imported .ess keeps the id its file name carries.
-TODO(M13): the original also keys a character by whether its saves had mods (the file name's
-"modded" digit), which ours does not.
+The original also keys a character by whether its saves had mods (the file name's "modded"
+digit): each save of ours says whether a plugin of plugins.txt was loaded (`SaveHeader.modded`;
+an imported .ess takes its file name's), and the Load list keeps a character's saves with mods
+apart (`characterKey`). TODO(M13): inferred that the plugins of plugins.txt are what counts
+(the game's masters and Skyrim.ccc's Creations not). Test: character-id.test.ts.
+
+The help messages scripts show (Message.ShowAsHelpMessage) are kept while they wait for their
+input event (`GameState.helpWaiting`, src/gameplay/help-messages.ts), as the original's save
+keeps them (docs/formats/ess.md, global data 102): the event, text, seconds, interval, times
+left and seconds since last shown, one showing at a time; a loaded game shows them on from where
+they were (the HUD advances them with its frames). Test: src/gameplay/help-messages.test.ts.
 
 Save on Pause, as observed in the original: the "pause" is the tween menu opening. With
 bSaveOnPause on, once fAutosaveEveryXMins real minutes have passed since the last save and the

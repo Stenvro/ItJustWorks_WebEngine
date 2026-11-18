@@ -1,9 +1,9 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { identity } from '../render/math.ts';
 import { articulatedPose, Articulation } from './articulation.ts';
-import type { CollisionBody, CollisionData } from './collision-data.ts';
+import { HAVOK_SCALE, type CollisionBody, type CollisionData } from './collision-data.ts';
 import { CollisionMatrix, Layer } from './collision-layers.ts';
-import { GRAVITY, initPhysics, PhysicsWorld } from './physics-world.ts';
+import { GRAVITY, initPhysics, PhysicsWorld, type PlacedCollision } from './physics-world.ts';
 
 const matrix = new CollisionMatrix([
   { formId: 1, editorId: 'L_STATIC', index: Layer.static, name: '', flags: 0, collidesWith: [] },
@@ -135,5 +135,46 @@ describe('articulated objects', () => {
     moved.update();
     expect(x(dressed.pose, 2)).toBeCloseTo(x(articulated.pose, 2));
     physics.free();
+  });
+});
+
+describe('an articulated object across a save', () => {
+  it('swings on from where each body was, as it moved', () => {
+    const place = (physics: PhysicsWorld): PlacedCollision => {
+      const placed = physics.addObject(
+        collision,
+        identity(),
+        { reference: 1, kind: 'object' },
+        false,
+      );
+      for (const { body } of placed.bodies) physics.release(body);
+      return placed;
+    };
+    const weightAt = (placed: PlacedCollision): number =>
+      (placed.bodies[1]?.body.translation().x ?? 0) * HAVOK_SCALE;
+    const first = new PhysicsWorld(matrix, GRAVITY);
+    const swinging = place(first);
+    first.step(1 / 60);
+    swinging.bodies[1]?.body.applyImpulse({ x: 0.5, y: 0, z: 0 }, true);
+    for (let i = 0; i < 10; i++) first.step(1 / 60);
+    // Saved mid-swing: the weight alone is simulated (the bracket is fixed).
+    const saved = first.bodyStates(swinging);
+    expect(saved.map((state) => state.index)).toEqual([1]);
+    expect(saved[0]?.position[0]).toBeCloseTo(weightAt(swinging));
+    expect(weightAt(swinging)).toBeGreaterThan(1);
+    // Loaded: placed at rest, then put back as saved.
+    const second = new PhysicsWorld(matrix, GRAVITY);
+    const loaded = place(second);
+    expect(weightAt(loaded)).toBeCloseTo(0);
+    second.restoreBodyStates(loaded, saved);
+    for (let i = 0; i < 10; i++) {
+      first.step(1 / 60);
+      second.step(1 / 60);
+    }
+    // It swings on with the one saved.
+    expect(weightAt(swinging)).toBeGreaterThan(1);
+    expect(weightAt(loaded)).toBeCloseTo(weightAt(swinging), 0);
+    first.free();
+    second.free();
   });
 });

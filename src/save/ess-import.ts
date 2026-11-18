@@ -74,6 +74,7 @@ import type {
   ThreadWait,
 } from '../scripting/papyrus-vm.ts';
 import type { Hand } from '../gameplay/equipment.ts';
+import type { WaitingHelp } from '../gameplay/help-messages.ts';
 import {
   GameState,
   type ActorValueState,
@@ -103,7 +104,7 @@ import { cellKey } from '../world/worldspace.ts';
 import type { GameSave } from './game-save.ts';
 import type { SavedCreatedObject } from '../scripting/runtime/crafting-engine.ts';
 import { SAVE_VERSION, type SaveHeader } from './save-codec.ts';
-import { characterIdOfEssName, drawCharacterId } from './character-id.ts';
+import { characterIdOfEssName, drawCharacterId, moddedOfEssName } from './character-id.ts';
 import type {
   SavedActor,
   SavedAnimObject,
@@ -228,6 +229,34 @@ const TUTORIALS = [
   'HBAT',
 ] as const;
 
+/**
+ * A help message waiting as the interface's global data (102) keeps it: its input event, its
+ * text, then the seconds it shows, its interval, its times left (−1: no limit) and the seconds
+ * since it last showed (docs/formats/ess.md). Undefined for one with no event.
+ */
+export function waitingHelpOf(
+  entry: { readonly name0: string; readonly name1: string; readonly values: readonly number[] },
+  showing: boolean,
+): WaitingHelp | undefined {
+  if (entry.name0 === '') return undefined;
+  const bits = new DataView(new ArrayBuffer(4));
+  const float = (value: number | undefined): number => {
+    bits.setUint32(0, value ?? 0, true);
+    const read = bits.getFloat32(0, true);
+    return Number.isFinite(read) ? read : 0;
+  };
+  const [seconds, interval, timesLeft, since] = entry.values;
+  return {
+    event: entry.name0,
+    text: entry.name1,
+    seconds: float(seconds),
+    interval: float(interval),
+    timesLeft: (timesLeft ?? 0) | 0,
+    since: float(since),
+    showing,
+  };
+}
+
 /** A tutorial's DOBJ use by its place among the default objects (undefined: not a tutorial). */
 export function tutorialOfDefaultObject(index: number): string | undefined {
   const use = TUTORIALS[index - FIRST_TUTORIAL];
@@ -247,7 +276,15 @@ const HEALTH_AV = 24;
  */
 /** A scene's phase word when none runs yet. */
 const NO_PHASE = 0xffffffff;
-const LifeState = { alive: 0, dying: 1, dead: 2, unconscious: 3, restrained: 6 } as const;
+const LifeState = {
+  alive: 0,
+  dying: 1,
+  dead: 2,
+  unconscious: 3,
+  restrained: 6,
+  essentialDown: 7,
+  bleedout: 8,
+} as const;
 /** ACBS's flags (UESP NPC_): those scripts set on a base. */
 const ActorBaseFlag = { essential: 0x2, protected: 0x800, invulnerable: 0x80000000 } as const;
 /** A cell's flags as its change form keeps them (its record's DATA has the same 0x20). */
@@ -1708,7 +1745,13 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       (actor?.combat ? ours(actor.combat.target) : undefined) ?? groupTargets.get(formId);
     const horse = riding.get(formId);
     const graph = actorGraphs.get(formId);
-    if (!id && !target && horse === undefined && !graph) return undefined;
+    // Bleeding out (an essential one down or one in bleedout) as the save was made: it bleeds
+    // on (ActorCombat.restoreDown), its graph's bleedout state put back with the graph.
+    // TODO(M13): how long it had bled is not found in the save: from the load.
+    const life = actor?.stateBits?.[StateByte.life];
+    const down =
+      life === LifeState.bleedout || life === LifeState.essentialDown ? { bleedout: 0 } : undefined;
+    if (!id && !target && horse === undefined && !graph && !down) return undefined;
     const initial = form.initial;
     // An actor the save keeps where its record stands (no place written): there.
     const at =
@@ -1747,6 +1790,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       ...(weaponDrawn(actor?.stateBits) && { weaponDrawn: true }),
       ...(horse !== undefined && { riding: horse }),
       ...(graph && { graph }),
+      ...(down && { down }),
       ...(id && {
         package: {
           id,
@@ -2133,10 +2177,18 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
         else skips.add('interface: a tutorial shown not known');
       }
       // The help messages waiting (ShowAsHelpMessage's: their event, text, seconds, interval,
-      // times left and seconds since shown): none in the saves read. TODO(M13): into the HUD's
-      // help messages, which ours does not save yet.
-      if ((read.extra?.entries.length ?? 0) > 0) skips.add('interface: help messages waiting');
+      // times left and seconds since shown) and the one showing (its place among them; −1 or
+      // −2: none) go on in ours (GameState.helpWaiting, src/gameplay/help-messages.ts). None
+      // is in the saves read. TODO(M13): the four values' encoding (taken as floats but the
+      // times left, a signed count) is inferred until a save holding one is read.
       for (const name of read.extra?.names ?? []) state.helpDone.add(name.toLowerCase());
+      const showingNow = read.extra === undefined ? -1 : read.extra.unknown | 0;
+      read.extra?.entries.forEach((entry, i) => {
+        const help = waitingHelpOf(entry, i === showingNow);
+        if (help && !state.helpDone.has(help.event.toLowerCase())) {
+          state.helpWaiting.set(help.event.toLowerCase(), help);
+        }
+      });
       for (const [list, usage] of [
         [read.lastUsedWeapons, state.usage.weapons],
         [read.lastUsedSpells, state.usage.spells],
@@ -2498,6 +2550,9 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     number: request.number,
     playerName: state.playerName ?? ess.header.playerName,
     characterId: state.characterId,
+    // Made with mods as its file name says (a save of no such name: none known).
+    ...(request.fileName !== undefined &&
+      moddedOfEssName(request.fileName) === true && { modded: true }),
     playerLevel: ess.header.playerLevel,
     location: ess.header.location,
     gameDays: state.gameDaysPassed,
