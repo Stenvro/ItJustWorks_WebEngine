@@ -819,6 +819,7 @@ export class ActorStage {
       camera: () => options.renderer.view?.camera,
       actor: (reference) => this.#actors.get(reference),
       detects: (observer, target) => this.senses.detects(observer, target),
+      sight: (observer, target) => this.senses.sight(observer, target),
       inFurniture: (reference) => this.furniture.interaction(reference) !== undefined,
       passByTarget: (reference) => this.flight.passByTarget(reference),
       weaponPoint: (reference) => this.combat.weaponPoint(reference),

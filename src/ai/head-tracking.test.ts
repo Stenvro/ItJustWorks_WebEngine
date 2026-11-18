@@ -3,6 +3,7 @@ import {
   chooseLookActor,
   HeadTracker,
   LookRequests,
+  lookEnds,
   lookParty,
   noticesPlayer,
   pathLookAhead,
@@ -91,9 +92,65 @@ describe('head tracking', () => {
     expect(chooseLookActor(head, 0, [close], 400)?.reference).toBe(1);
     const seated = { reference: 1, head: [0, 200, 100] as const, inFurniture: true, party: true };
     expect(chooseLookActor(head, 0, [seated], 400, undefined, true)?.reference).toBe(1);
-    // Still not behind it, nor beyond reach.
+    // Behind it as well (observed: the engine's link skips the angle too); not beyond reach.
     const behind = { reference: 1, head: [0, -200, 100] as const, party: true };
+    expect(chooseLookActor(head, 0, [behind], 400)?.reference).toBe(1);
+    const far = { reference: 1, head: [0, -500, 100] as const, party: true };
+    expect(chooseLookActor(head, 0, [far], 400)).toBeUndefined();
+  });
+
+  it('never chooses the mount it rides, nor a mount its rider (original)', () => {
+    const head = [0, 0, 100] as const;
+    const horse = { reference: 1, head: [0, 150, 100] as const, mountLink: true };
+    const someone = { reference: 2, head: [0, 300, 100] as const };
+    expect(chooseLookActor(head, 0, [horse], 400)).toBeUndefined();
+    expect(chooseLookActor(head, 0, [horse, someone], 400)?.reference).toBe(2);
+    // Not even the one it looks at already.
+    expect(chooseLookActor(head, 0, [horse], 400, 1)).toBeUndefined();
+    // The player riding: the horse does not look at them.
+    const rider = { reference: 0x14, head: [0, 120, 100] as const, player: true, mountLink: true };
+    expect(chooseLookActor(head, 0, [rider], 400)).toBeUndefined();
+  });
+
+  it('moving, it chooses only one in its view cone; talking with the player, any round it (original)', () => {
+    const head = [0, 0, 100] as const;
+    const unseen = { reference: 1, head: [0, 200, 100] as const, inView: false };
+    expect(chooseLookActor(head, 0, [unseen], 400)?.reference).toBe(1);
+    expect(chooseLookActor(head, 0, [unseen], 400, undefined, false, { moving: true })).toBe(
+      undefined,
+    );
+    const behind = { reference: 2, head: [0, -200, 100] as const };
     expect(chooseLookActor(head, 0, [behind], 400)).toBeUndefined();
+    expect(
+      chooseLookActor(head, 0, [behind], 400, undefined, false, { talkingToPlayer: true })
+        ?.reference,
+    ).toBe(2);
+  });
+
+  it('the player it looks at stays chosen only with a line of sight to them (original)', () => {
+    const head = [0, 0, 100] as const;
+    const hidden = {
+      reference: 0x14,
+      head: [0, 200, 100] as const,
+      player: true,
+      lineOfSight: false,
+    };
+    // Chosen anew (detected without a line of sight: heard), yes; kept as its look, no.
+    expect(chooseLookActor(head, 0, [hidden], 400)?.reference).toBe(0x14);
+    expect(chooseLookActor(head, 0, [hidden], 400, 0x14)).toBeUndefined();
+    expect(
+      chooseLookActor(head, 0, [hidden], 400, undefined, false, { talkingToPlayer: true }),
+    ).toBeUndefined();
+  });
+
+  it('its own look ends when the one looked at is gone or is the player undetected (original)', () => {
+    const look = { present: true, player: false, detected: false, talkingToPlayer: false };
+    // Another actor it no longer detects: the look stays until another is chosen.
+    expect(lookEnds(look)).toBe(false);
+    expect(lookEnds({ ...look, present: false })).toBe(true);
+    expect(lookEnds({ ...look, player: true })).toBe(true);
+    expect(lookEnds({ ...look, player: true, talkingToPlayer: true })).toBe(false);
+    expect(lookEnds({ ...look, player: true, detected: true })).toBe(false);
   });
 
   it('looks along its path as far as its speed takes it in fPathLookAtPointTime', () => {

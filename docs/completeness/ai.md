@@ -291,11 +291,15 @@ the readers ask for by name.
       (fMin/fMaxPathLookAtPointDist, fPathLookAtPointTime) only with no one to look at.
 - [ ] A package target's look: read (only Use Weapon, Use Magic and Shout ask the Procedure look;
       actor-practice.ts asks it so), no test has it.
-- [x] Head tracking's exceptions for a commanded actor and a teammate: one's commander, its
-      commanded and those following the same leader are chosen as the player is (lookParty;
-      inferred, TODO(M13): the fields were not identified).
-- [ ] Head tracking: the mount's check; what ends a look that may no longer be chosen (ours: at
-      the next look).
+- [x] Head tracking's link between two actors: observed that a candidate is chosen as the player
+      is (near, behind, past furniture and detection) when either holds a link to another actor,
+      the linked one itself never; lookParty (one's commander, its commanded, those following the
+      same leader) stands in for it (inferred, TODO(M13): the actor's field was not identified).
+- [x] Head tracking: never the mount it rides nor a mount its rider; moving, only those in its
+      view cone; the player it looks at only with a line of sight; anyone round it while it talks
+      with the player. What it chose stays until a later choice finds another, ending at once
+      when the one looked at is gone or is the player undetected (observed; lookEnds,
+      src/ai/head-tracking.test.ts).
 - [x] Furniture use: entry, exit, idle markers (actor-furniture.ts).
 - [x] Process levels and their budget (process-levels.ts).
 - [ ] Process levels: the high-process distance ours; actors away keep a schedule (ours). Not read
