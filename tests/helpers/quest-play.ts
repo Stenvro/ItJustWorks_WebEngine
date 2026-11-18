@@ -86,17 +86,29 @@ export async function travelTo(
     const navmesh = map.nearestNavmesh(space, at.position);
     return navmesh === undefined ? undefined : { space, position: at.position, navmesh };
   };
-  // The way as planned from the start, its doors in turn (planned again from an arrival, a place's
-  // other doors may look nearer than the stair to the next: the College's tower doors).
-  const [from, to] = await Promise.all([endOf(PLAYER_REF), endOf(target)]);
-  if (!from || !to) return false;
-  for (const { door } of findRoute(map, from, to)?.doors ?? []) {
-    const at = await sim.position(door);
-    if (!at || !(await walkFighting(sim, at, until - sim.time, 150))) return false;
-    if (!sim.activate(door)) return false;
-    await sim.world.settle();
-    await sim.step(1);
+  // The way as planned, its doors in turn (planned again only once it is walked and the target
+  // is elsewhere: planned from an arrival, a place's other doors may look nearer than the stair to
+  // the next, the College's tower doors).
+  const same = (x: Space, y: Space): boolean =>
+    x.kind === 'world'
+      ? y.kind === 'world' && x.world === y.world
+      : y.kind === 'interior' && x.cell === y.cell;
+  for (let plan = 0; plan < 4 && sim.time < until; plan++) {
+    const [from, to] = await Promise.all([endOf(PLAYER_REF), endOf(target)]);
+    if (!from || !to) return false;
+    if (same(from.space, to.space)) break;
+    const doors = findRoute(map, from, to)?.doors ?? [];
+    if (doors.length === 0) return false;
+    for (const { door } of doors) {
+      const at = await sim.position(door);
+      if (!at || !(await walkFighting(sim, at, until - sim.time, 150))) return false;
+      if (!sim.activate(door)) return false;
+      await sim.world.settle();
+      await sim.step(1);
+    }
   }
+  const [mine, theirs] = await Promise.all([endOf(PLAYER_REF), endOf(target)]);
+  if (!mine || !theirs || !same(mine.space, theirs.space)) return false;
   const at = await sim.position(target);
   return at !== undefined && walkFighting(sim, at, Math.max(1, until - sim.time), reach);
 }
