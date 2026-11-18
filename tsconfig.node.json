@@ -9,5 +9,11 @@
   },
   "include": ["tools", "tests", "src/**/*.test.ts", "vite.config.ts"],
   // The simulation's tests and tools: tsconfig.sim.json.
-  "exclude": ["tests/helpers/sim.ts", "tests/sim-*.ts", "tests/conformance", "tools/sim-*.ts"]
+  "exclude": [
+    "tests/helpers/sim.ts",
+    "tests/helpers/follower.ts",
+    "tests/sim-*.ts",
+    "tests/conformance",
+    "tools/sim-*.ts"
+  ]
 }
