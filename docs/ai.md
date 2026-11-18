@@ -2451,7 +2451,12 @@ meanwhile.
   bleeding out, the knock state and paired animations, moved by the graphs' annotations
   (`tools/behavior-run.ts`: 1HM_Equip raises weaponDraw at 0.6 s and WeapEquip_Out at its end;
   attackStart preHitFrame, weaponSwing, HitFrame, AttackWinStart, attackStop; a bow
-  arrowAttach, bowDrawn and, on attackRelease, arrowRelease). The conditions IsWeaponOut,
+  arrowAttach, bowDrawn and, on attackRelease, arrowRelease). The idle tree's BashFail (a bash
+  out of the block with no stamina left: GetActorValue(Stamina) <= 0) starts no attack: no
+  race has attack data for it, and the character graphs play only the block bash intro for
+  it, back to the block with bashRelease, never bashStop (an attack taken from it stood for
+  good, and an attacker chooses no movement: Hadvar stood blocking in Helgen Keep's
+  storeroom, `tests/sim-helgen-keep-follow.int.test.ts`). The conditions IsWeaponOut,
   IsWeaponMagicOut, IsShieldOut, GetAttackState, IsAttacking, IsPowerAttacking, IsBlocking,
   GetWantBlocking, IsStaggered, IsRecoiling, IsBleedingOut, GetKnockStateEnum, GetKnockedState,
   GetPairedAnimation, GetMovementDirection, GetLastHitCritical, IsInCombat, GetCombatState,
