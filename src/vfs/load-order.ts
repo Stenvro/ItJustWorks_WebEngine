@@ -113,10 +113,10 @@ export function computeLoadOrder(input: {
       extension === '.esm' || extension === '.esl' || (candidate.header?.isMaster ?? false);
     return { name: candidate.name, source, isLight, isMaster };
   });
-  const sorted = [
-    ...classified.filter((p) => p.isMaster),
-    ...classified.filter((p) => !p.isMaster),
-  ];
+  const sorted = hoistMasters(
+    [...classified.filter((p) => p.isMaster), ...classified.filter((p) => !p.isMaster)],
+    present,
+  );
   const refused = refuseMissingMasters(sorted, present, problems);
 
   const entries: LoadOrderEntry[] = [];
@@ -142,12 +142,46 @@ export function computeLoadOrder(input: {
 }
 
 /**
+ * The masters of a master file load before it (libloadorder's account of the games from
+ * Skyrim SE on, which it follows as it reads a load order): a master-flagged plugin whose own
+ * master is listed after it pulls that master up to just before itself (before the earliest
+ * master file needing it), and so on for the master pulled up. A plugin that is not a master
+ * file pulls nothing up: it loads where it is listed, after its master or not (reported by
+ * refuseMissingMasters). Otherwise the order stays as it was.
+ */
+export function hoistMasters<T extends { readonly name: string; readonly isMaster: boolean }>(
+  sorted: readonly T[],
+  present: ReadonlyMap<string, PluginCandidate>,
+): T[] {
+  const order = [...sorted];
+  // Each pass pulls one master up; a cycle of masters (a broken set) cannot loop forever.
+  for (let pass = 0; pass < 4 * order.length; pass++) {
+    let moved = false;
+    for (let i = 0; i < order.length && !moved; i++) {
+      const plugin = order[i];
+      if (!plugin?.isMaster) continue;
+      for (const master of present.get(asciiLowerCase(plugin.name))?.masters ?? []) {
+        const key = asciiLowerCase(master);
+        const at = order.findIndex((p) => asciiLowerCase(p.name) === key);
+        if (at <= i) continue;
+        const [pulled] = order.splice(at, 1);
+        if (pulled) order.splice(i, 0, pulled);
+        moved = true;
+        break;
+      }
+    }
+    if (!moved) break;
+  }
+  return order;
+}
+
+/**
  * A plugin whose master (MAST) is missing from Data or not active is not loaded, and so in turn
  * are the plugins that need it (the game refuses such a plugin rather than load records that
  * point into a file it lacks). Returns the refused plugins (lower case) with the reason; a
- * master that loads after a plugin needing it is reported but loaded.
- * TODO(M13): what the original does with a master loading after its dependent (LOOT and
- * libloadorder call that order invalid; the game is not documented to refuse it).
+ * master that still loads after a plugin needing it (a plugin that is not a master file, whose
+ * master is a later plugin: hoistMasters moves only master files' masters) is reported but
+ * loaded, as the game loads it.
  */
 function refuseMissingMasters(
   sorted: readonly { readonly name: string }[],

@@ -62,9 +62,14 @@ The reason (`its master X is missing` / `is not active`) goes to the log and the
 (`Vfs.refused`), and its archives are not mounted. Indexes are given after refusing, so the
 plugins after it close up.
 
-A master that loads **after** a plugin needing it (an `.esp` needing a later `.esp`; masters
-before non-masters prevents the rest) is reported (`X loads before its master Y`) but loaded.
-TODO(M13): what the original does then; LOOT and libloadorder call the order invalid.
+A master file's masters load before it (libloadorder, which reads a load order as the games
+from Skyrim SE on load it): once masters are put before non-masters, a master-flagged plugin
+(`.esm`, `.esl` or the ESM flag) whose own master is listed after it pulls that master up to
+just before itself, before the earliest master file needing it, and so on for each master
+pulled up (`hoistMasters`). A plugin that is not a master file pulls nothing up: an `.esp`
+needing a later `.esp` loads where it is listed, as the game loads it, and is reported
+(`X loads before its master Y`). TODO(M13): not confirmed in the original itself (the rule is
+libloadorder's).
 
 Vanilla: every plugin's masters load before it (`Update.esm` needs `Skyrim.esm`; the DLCs both;
 the Creations all five, `_ResourcePack.esl` Skyrim, Update, HearthFires).
