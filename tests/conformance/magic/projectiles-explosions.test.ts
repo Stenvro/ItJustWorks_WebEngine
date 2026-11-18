@@ -38,7 +38,8 @@ import {
 } from '../../../src/gameplay/magic/projectile-flight.ts';
 import type { Vec3 } from '../../../src/render/math.ts';
 import { parseProjectile, ProjectileType } from '../../../src/world/projectile-data.ts';
-import { ActorValue } from '../../../src/world/actor-values.ts';
+import { ActorValue, actorValueIndex } from '../../../src/world/actor-values.ts';
+import { parseBodyPartData } from '../../../src/world/body-part-data.ts';
 import { EffectFlag } from '../../../src/world/magic-effects.ts';
 import { parseMagicItem, type MagicItemRecord } from '../../../src/world/magic-records.ts';
 import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
@@ -160,6 +161,78 @@ describe.skipIf(!hasGamedata())('a fireball’s burst and other hits on actors (
     await runtime.casting.explode(caster.reference, explosion, at(-1));
     expect(whole - (await health())).toBeGreaterThan(30);
     runtime.actors.restore(target.reference, ActorValue.health, 1000);
+  }, 120_000);
+
+  // Observed in the original: an explosion's hit takes the condition of the (at most two) body
+  // parts it kept of the actor that have an actor value, by its damage over the base Health's
+  // share of the part, as the target's Adjust Limb Damage perks leave it. No vanilla part has an
+  // actor value, so the target's body part data is given one here, as a mod's would.
+  it('takes a mod’s body part condition by an explosion’s limb damage', async () => {
+    const runtime = sim.runtime;
+    const [target, caster] = sim.actors();
+    const placement = target && runtime.world.livePlacement?.(target.reference);
+    if (!target || !caster || !placement) throw new Error('no actors');
+    const race = await runtime.actors.raceOf(target.reference);
+    const raceRecord = race === undefined ? undefined : await sim.db.get(race);
+    const bptd = raceRecord?.formIdAt(raceRecord.fields.first('GNAM') ?? new Uint8Array(4));
+    const real = bptd === undefined ? undefined : await sim.db.get(bptd);
+    if (!real) throw new Error('no body part data');
+    const condition = actorValueIndex('LeftMobilityCondition') ?? -1;
+    let first = true;
+    let healthPercent = 0;
+    const list = real.fields.list.map((field) => {
+      if (field.type !== 'BPND' || !first) return field;
+      first = false;
+      healthPercent = field.data[6] ?? 0;
+      const data = field.data.slice();
+      data[7] = condition;
+      return { ...field, data };
+    });
+    // The record as it is, its fields' list but the one part changed.
+    const bound = (of: object, key: string | symbol, value: unknown): unknown => {
+      const own: unknown = Reflect.get(of, key, of);
+      return value !== undefined ? value : typeof own === 'function' ? own.bind(of) : own;
+    };
+    const fields = new Proxy(real.fields, {
+      get: (of, key) => bound(of, key, key === 'list' ? list : undefined),
+    });
+    const modded = new Proxy(real, {
+      get: (of, key) => bound(of, key, key === 'fields' ? fields : undefined),
+    });
+    const node = parseBodyPartData(modded)[0]?.node ?? '';
+    const [x, y, z] = placement.position;
+    const at: Vec3 = [x, y, z + 60];
+    const records = runtime.forms.record.bind(runtime.forms);
+    const nodes = runtime.world.nodePlacement?.bind(runtime.world);
+    runtime.forms.record = (formId) =>
+      formId === bptd ? Promise.resolve(modded) : records(formId);
+    runtime.world.nodePlacement = (reference, name) =>
+      reference === target.reference && name === node
+        ? { position: [x, y, z + 50], rotation: [0, 0, 0] }
+        : nodes?.(reference, name);
+    const value = (index: number) => runtime.actors.value(target.reference, index);
+    try {
+      const explosion = await sim.formId('EXPL', 'dunHighGateFlamingThrallFireBallExp01');
+      runtime.actors.restore(target.reference, ActorValue.health, 1000);
+      const health = (await value(ActorValue.health)).current;
+      const before = (await value(condition)).current;
+      await runtime.casting.explode(caster.reference, explosion, at);
+      expect(health - (await value(ActorValue.health)).current).toBeGreaterThan(0);
+      // The burst's own damage at the target (its enchantment's fire comes on top of it).
+      const record = await runtime.casting.explosion(explosion);
+      if (!record) throw new Error('no explosion');
+      const damage = record.damage * explosionShare(60, record.radius);
+      const baseHealth = (await value(ActorValue.health)).base;
+      expect(before - (await value(condition)).current).toBeCloseTo(
+        (damage / (baseHealth * healthPercent * 0.01)) * 100,
+        3,
+      );
+    } finally {
+      runtime.forms.record = records;
+      if (nodes) runtime.world.nodePlacement = nodes;
+      runtime.actors.restore(target.reference, ActorValue.health, 1000);
+      runtime.actors.restore(target.reference, condition, 100000);
+    }
   }, 120_000);
 
   it('reaches only those an area’s point sees, unless the spell ignores line of sight', async () => {

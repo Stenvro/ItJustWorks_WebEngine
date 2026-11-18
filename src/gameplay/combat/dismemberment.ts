@@ -254,25 +254,77 @@ export interface LimbPerks {
   ): Promise<number>;
 }
 
+/** A body part an explosion found on an actor, and how far from the burst. */
+export interface LimbReached {
+  /** The part's index in its body part data. */
+  readonly part: number;
+  readonly distance: number;
+}
+
 /**
- * A hit's limb damage (limbDamage) as the target's perks adjust it (Adjust Limb Damage: the
- * target the perk owner, its tabs the attacker and the attacker's weapon; the engine asks it, no
- * vanilla perk has one). TODO(M13): inferred that the perks act on the damage after the player's
- * fCombatPlayerLimbDamageMult.
+ * The parts an explosion keeps of one actor as it meets its bodies (observed in the original):
+ * at most two. With two kept, a body no nearer than the nearer of them is passed over; one
+ * nearer takes the place of that nearer one (or of the entry of its own part). Below two, a
+ * part not kept yet is added, one kept already takes the new distance.
  */
-export async function adjustedLimbDamage(
+export function keepLimbReached(kept: LimbReached[], reached: LimbReached): void {
+  let nearest = -1;
+  for (const [index, entry] of kept.entries())
+    if (nearest < 0 || entry.distance < (kept[nearest]?.distance ?? Infinity)) nearest = index;
+  if (kept.length > 1 && (kept[nearest]?.distance ?? Infinity) <= reached.distance) return;
+  const same = kept.findIndex((entry) => entry.part === reached.part);
+  if (kept.length < 2) {
+    if (same >= 0) kept[same] = reached;
+    else kept.push(reached);
+    return;
+  }
+  kept[same >= 0 ? same : nearest] = reached;
+}
+
+/**
+ * The limb damage an explosion's hit does to a part it kept (observed in the original): the
+ * hit's damage over the target's base Health times the part's health share, times 100.
+ */
+export function explosionLimbDamage(
+  damage: number,
+  baseHealth: number,
+  part: Pick<BodyPart, 'healthPercent'>,
+): number {
+  return (damage / (baseHealth * part.healthPercent * 0.01)) * 100;
+}
+
+/** The form of the unarmed "weapon" (WEAP 0x1F4), a hit's weapon when it has none. */
+export const UNARMED_WEAPON = 0x1f4;
+
+/**
+ * An explosion's hit on an actor takes the condition of each part it kept that has an actor
+ * value (observed in the original; no vanilla body part has one, so only mods' parts): its limb
+ * damage (explosionLimbDamage) as the target's perks adjust it (Adjust Limb Damage: the target
+ * the perk owner, its tabs the attacker and the hit's weapon, the unarmed one for an explosion),
+ * taken from that actor value. Returns each part's actor value and the damage it takes.
+ */
+export async function explosionLimbs(
   perks: LimbPerks,
   target: number,
-  attacker: number,
-  weapon: number | undefined,
+  attacker: number | undefined,
   damage: number,
-  health: number,
-  part: Pick<BodyPart, 'healthPercent'>,
-  targetIsPlayer: boolean,
-  settings: LimbRollSettings = LIMB_ROLL_DEFAULTS,
-): Promise<number> {
-  const limb = limbDamage(damage, health, part, targetIsPlayer, settings);
-  return perks.apply(EntryPoint.adjustLimbDamage, target, limb, [attacker, weapon]);
+  baseHealth: number,
+  parts: readonly Pick<BodyPart, 'healthPercent' | 'actorValue'>[],
+  kept: readonly LimbReached[],
+): Promise<{ readonly actorValue: number; readonly damage: number }[]> {
+  const taken: { actorValue: number; damage: number }[] = [];
+  for (const { part: index } of kept) {
+    const part = parts[index];
+    if (!part || part.actorValue < 0) continue;
+    const limb = await perks.apply(
+      EntryPoint.adjustLimbDamage,
+      target,
+      explosionLimbDamage(damage, baseHealth, part),
+      [attacker, UNARMED_WEAPON],
+    );
+    taken.push({ actorValue: part.actorValue, damage: limb });
+  }
+  return taken;
 }
 
 /**

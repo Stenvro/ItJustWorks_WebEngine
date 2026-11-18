@@ -20,6 +20,13 @@
 // IsDualCasting, GetCurrentCastingType, GetCurrentDeliveryType, IsCurrentSpell,
 // SpellHasKeyword, GetCurrentShoutVariation, IsWardState). Platform-independent.
 
+import { parseRaceHits } from '../../gameplay/combat/combat-records.ts';
+import {
+  explosionLimbs,
+  keepLimbReached,
+  type LimbReached,
+} from '../../gameplay/combat/dismemberment.ts';
+import { parseBodyPartData } from '../../world/body-part-data.ts';
 import {
   combatSpellScore,
   scriptCasterDelay,
@@ -1321,6 +1328,51 @@ export class CastingEngine {
    * to it), both flags anyone but the player. `direction`: the way it faces (off the surface it
    * burst on), where its sight starts from. Returns the actors reached.
    */
+  /**
+   * An explosion's hit takes the condition of the parts of the actor it reached (observed in the
+   * original; dismemberment.ts explosionLimbs): the parts it kept as it met the actor's bodies
+   * (keepLimbReached), each with an actor value (no vanilla part has one) losing the hit's limb
+   * damage as the target's perks adjust it. TODO(M13): which of the actor's bodies the burst
+   * meets, and in what order, is ours: each part whose node lies within its radius, in the body
+   * part data's order; and an explosion of a weapon's ammunition passing that weapon to the
+   * perks (ours: the unarmed one, as for a spell's).
+   */
+  async #explosionLimbs(
+    reference: number,
+    caster: number | undefined,
+    point: Point,
+    radius: number,
+    damage: number,
+  ): Promise<void> {
+    const runtime = this.#runtime;
+    const race = await runtime.actors.raceOf(reference);
+    const raceRecord = race === undefined ? undefined : await runtime.forms.record(race);
+    const data = raceRecord && parseRaceHits(raceRecord).bodyParts;
+    const record = data === undefined ? undefined : await runtime.forms.record(data);
+    const parts = record?.type === 'BPTD' ? parseBodyPartData(record) : [];
+    if (!parts.some((part) => part.actorValue >= 0)) return;
+    const kept: LimbReached[] = [];
+    for (const [index, part] of parts.entries()) {
+      const at = part.node
+        ? runtime.world.nodePlacement?.(reference, part.node)?.position
+        : undefined;
+      if (!at) continue;
+      const distance = Math.hypot(at[0] - point[0], at[1] - point[1], at[2] - point[2]);
+      if (distance <= radius) keepLimbReached(kept, { part: index, distance });
+    }
+    const baseHealth = (await runtime.actors.value(reference, HEALTH)).base;
+    for (const limb of await explosionLimbs(
+      runtime.perks,
+      reference,
+      caster,
+      damage,
+      baseHealth,
+      parts,
+      kept,
+    ))
+      await runtime.actors.damage(reference, limb.actorValue, limb.damage, caster);
+  }
+
   async explode(
     caster: number | undefined,
     explosionId: number,
@@ -1388,7 +1440,10 @@ export class CastingEngine {
           );
           damage = passes === 'absorbed' ? 0 : damage * passes;
         }
-        if (damage > 0) await runtime.actors.damage(reference, HEALTH, damage, caster);
+        if (damage > 0) {
+          await runtime.actors.damage(reference, HEALTH, damage, caster);
+          await this.#explosionLimbs(reference, caster, point, explosion.radius, damage);
+        }
       }
       if (enchantment)
         await this.deliver(
