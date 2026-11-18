@@ -160,7 +160,10 @@ export class DestructionLooks {
   }
 
   /** Every frame: the looks brought up to date, debris aged; the scenes to draw. */
-  *scenes(): Iterable<GpuScene> {
+  scenes(): GpuScene[] {
+    // A plain loop into a list, not a generator: walking the map inside one made an object
+    // for every reference each frame.
+    const shown: GpuScene[] = [];
     const now = performance.now() / 1000;
     const runtime = this.#session.scriptsReady;
     const play = this.#play();
@@ -202,15 +205,16 @@ export class DestructionLooks {
         entry.visibility.hidden = !enabled;
       }
       this.#collide(entry, enabled);
-      if (look?.scene && !look.visibility.hidden) yield look.scene;
+      if (look?.scene && !look.visibility.hidden) shown.push(look.scene);
     }
     for (const piece of [...this.#debris]) {
       if (now >= piece.until) {
         this.#dropPiece(piece);
         continue;
       }
-      if (piece.scene) yield piece.scene;
+      if (piece.scene) shown.push(piece.scene);
     }
+    return shown;
   }
 
   /**

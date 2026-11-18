@@ -710,9 +710,13 @@ export function matrixQuaternion(m: Mat4): Quaternion {
 }
 
 /** Rigid matrix (game units) of a translation and a quaternion. */
-export function poseMatrix(t: Vec3, q: Quaternion): Mat4 {
+export function poseMatrix(t: Vec3, q: Quaternion, out?: Mat4): Mat4 {
   const { x, y, z, w } = q;
-  const m = new Float32Array(16);
+  // `out`: a matrix to write it into (every entry), else a new one.
+  const m = out ?? new Float32Array(16);
+  m[3] = 0;
+  m[7] = 0;
+  m[11] = 0;
   m[0] = 1 - 2 * (y * y + z * z);
   m[1] = 2 * (x * y + z * w);
   m[2] = 2 * (x * z - y * w);
@@ -1167,12 +1171,21 @@ function axisLimits(data: ConstraintData): readonly AxisLimit[] {
  * that component of the turn from the first body's frame to the second's.
  */
 function jointAngle(joint: RAPIER.ImpulseJoint, axis: RAPIER.JointAxis): number {
+  return turnAngle(jointTurn(joint), axis);
+}
+
+/** The turn of a joint's second frame relative to its first, as its bodies stand. */
+function jointTurn(joint: RAPIER.ImpulseJoint): RAPIER.Rotation {
   const qa = joint.body1().rotation();
   const qb = joint.body2().rotation();
   const fa = joint.frameX1();
   const fb = joint.frameX2();
   const conj = (q: RAPIER.Rotation): RAPIER.Rotation => ({ x: -q.x, y: -q.y, z: -q.z, w: q.w });
-  const r = quatMultiply(conj(quatMultiply(qa, fa)), quatMultiply(qb, fb));
+  return quatMultiply(conj(quatMultiply(qa, fa)), quatMultiply(qb, fb));
+}
+
+/** A joint's angle about one of its axes from its turn (jointTurn), as Rapier measures it. */
+function turnAngle(r: RAPIER.Rotation, axis: RAPIER.JointAxis): number {
   const sign = r.w < 0 ? -1 : 1;
   const component =
     axis === RAPIER.JointAxis.AngX ? r.x : axis === RAPIER.JointAxis.AngY ? r.y : r.z;
@@ -2204,7 +2217,9 @@ export class PhysicsWorld {
       return;
     }
     const { axes } = giving;
-    const angles = axes.map((axis) => jointAngle(joint, axis.axis));
+    // The turn read once for all the axes and the cone (the bodies do not move meanwhile).
+    const turn = jointTurn(joint);
+    const angles = axes.map((axis) => turnAngle(turn, axis.axis));
     const pushes: AxisPush[] = axes.map(() => ({
       torque: 0,
       stiffness: 0,
@@ -2255,8 +2270,8 @@ export class PhysicsWorld {
     solved.coneGives = giving.cone !== undefined;
     if (giving.cone !== undefined) {
       const parts = [
-        Math.sin(jointAngle(joint, RAPIER.JointAxis.AngY) / 2),
-        Math.sin(jointAngle(joint, RAPIER.JointAxis.AngZ) / 2),
+        Math.sin(turnAngle(turn, RAPIER.JointAxis.AngY) / 2),
+        Math.sin(turnAngle(turn, RAPIER.JointAxis.AngZ) / 2),
       ] as const;
       const half = Math.min(1, Math.hypot(parts[0], parts[1]));
       const excess = 2 * Math.asin(half) - giving.cone;
@@ -2272,7 +2287,7 @@ export class PhysicsWorld {
         // the push on a twisted joint went aside too: a 10 kg weight on a cone of 0.5 rad came
         // to rest 2.3, 5.4 and 7.2 units beside its lowest point at 0.2, 0.45 and 0.7 rad of
         // twist ("lets a twisted ragdoll joint's cone give …").
-        const twist = Math.sin(jointAngle(joint, RAPIER.JointAxis.AngX) / 2);
+        const twist = Math.sin(turnAngle(turn, RAPIER.JointAxis.AngX) / 2);
         const w = Math.sqrt(Math.max(0, 1 - twist * twist - half * half));
         const swing = [w * parts[0] - twist * parts[1], w * parts[1] + twist * parts[0]] as const;
         const length = Math.hypot(swing[0], swing[1]);
