@@ -2113,7 +2113,8 @@ export class SimWorld {
         this.terminal.log('ui', `fast travel: ${destination.toString(16)} is nowhere`, 'warn');
         return;
       }
-      await fastTravelJourney(this.session, at, fastTravelWay(this.session, at), async (place) => {
+      const way = await fastTravelWay(this.session, at);
+      await fastTravelJourney(this.session, at, way, async (place) => {
         await this.stage.followers.comeAlong(place, true);
         await this.#journey(place);
       });
