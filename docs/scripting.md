@@ -453,6 +453,15 @@ its references). The world encounters and interactions typed miscellaneous that 
 objective nor a journal entry (most WE and WI quests) are not part of it: the WE trigger
 references raise them in the wilderness, with the trigger as the event's reference.
 
+On 2026-11-18, 260 of the 285 quests start and reach their first stage without a fault of the
+engine. Of the 25 left, 18 wait for event data only the place where the event happens gives (the
+courier's letter of WE100's objectives, the actors of the WI interactions, WEDA02's trigger, the
+bounties' locations: BQ01, BQ04); the others want the world as the game had it by then
+(CWMiscObj the civil war's faction leader, DA14 the inn DA14Start found, Favor253's quest giver
+in Whiterun, FreeformSkyHavenTempleB a dragon lair, BYOHHouseBanditAttack2 a house built,
+ccBGSSSE001_Radiant_1 an innkeeper in the loaded area). TODO(M13): the sweep gives none of them
+that world yet.
+
 ## The world
 
 The shell (`src/shell/script-world.ts`) is the runtime's WorldBridge for the cells and
