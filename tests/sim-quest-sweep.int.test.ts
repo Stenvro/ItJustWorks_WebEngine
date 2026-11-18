@@ -148,15 +148,19 @@ interface SweepResult {
    */
   readonly firstStage: number | undefined;
   readonly begun: boolean;
+  /** Why the story manager's tree did not start it (a quest it then started directly). */
+  readonly treeWhy: readonly string[];
 }
 
 /**
- * A logged line that is the game's own: a script error the original's Papyrus log has too (a
- * None object, a bad index), a fault of its data, a story manager node marked to warn when it
- * starts no quest.
+ * A logged warning that is not the engine's fault: a story manager node the plugin marked to warn
+ * when it starts no quest. The game's own script errors (those the engine proves the plugin's:
+ * a property the plugin left empty, a cast of an object without the script, a bad array index)
+ * go to the game's log, not to the warnings, and are not counted. Every other warning (a None
+ * the engine gave where the game gives an object, a call it cannot make, a fragment that threw)
+ * is the engine's fault and fails the case.
  */
-const GAME_LINE =
-  /on a None object|^[a-z]+: game data:|Cannot (call|get|set|cast)|Array index|index out of|is not a valid|started no quest$|the quest does not start$/i;
+const GAME_LINE = /^papyrus: story manager: \S+ started no quest$/;
 
 /** The value that makes `value op n` hold, `now` if it does already. */
 function satisfying(operator: number, n: number, now: number): number | undefined {
@@ -187,11 +191,15 @@ interface Start {
   readonly how: How;
   readonly whyNot: string | undefined;
   readonly firstStage: number | undefined;
+  /** Why the story manager's tree did not start it, per event tried (a story manager quest). */
+  readonly treeWhy?: ReadonlySet<string>;
 }
 
 class Sweep {
   readonly sim: Sim;
   readonly #locationsByKeyword = new Map<number, readonly number[]>();
+  /** The quests the story manager's tree started for the sweep's events, of any case. */
+  readonly #byTree = new Set<number>();
 
   constructor(sim: Sim) {
     this.sim = sim;
@@ -429,6 +437,48 @@ class Sweep {
   }
 
   /**
+   * What on the tree's way to a quest does not hold for an event, read before the event is
+   * raised: per path, the first node whose conditions fail (and which of its conditions fail on
+   * their own), else the quest's own event conditions, else a full node.
+   */
+  async #treeWhy(id: number, event: StoryEventData): Promise<string> {
+    const runtime = this.#runtime;
+    const player = runtime.referenceHandle(PLAYER_REF);
+    const failing = async (conditions: readonly Condition[]): Promise<string> => {
+      const names: string[] = [];
+      for (const condition of conditions) {
+        if (!(await runtime.conditionsHold([{ ...condition, or: false }], player, event))) {
+          names.push(conditionFunctionName(condition.function));
+        }
+      }
+      return names.join(' ');
+    };
+    const why: string[] = [];
+    for (const path of paths.get(id) ?? []) {
+      let blocked: string | undefined;
+      for (const at of path) {
+        if (await runtime.conditionsHold(at.conditions, player, event)) continue;
+        blocked = `${at.editorId} (${await failing(at.conditions)})`;
+        break;
+      }
+      const last = path[path.length - 1];
+      if (blocked === undefined && last && last.maxConcurrent > 0) {
+        const running = last.quests.filter(({ quest }) => runtime.quests.isRunning(quest)).length;
+        if (running >= last.maxConcurrent) blocked = `${last.editorId} full`;
+      }
+      if (blocked === undefined) {
+        const record = await runtime.forms.quest(id);
+        const own = record?.eventConditions ?? [];
+        if (own.length > 0 && !(await runtime.conditionsHold(own, player, event))) {
+          blocked = `its own conditions (${await failing(own)})`;
+        }
+      }
+      why.push(blocked ?? `${last?.editorId ?? '?'}: every condition held`);
+    }
+    return why.join(', ') || 'no node lists it';
+  }
+
+  /**
    * Starts a quest the way the game does (see the file's head); the quests it needs running
    * first (its external aliases') are started before it and listed in `chain`.
    */
@@ -457,6 +507,13 @@ class Sweep {
       }
     }
     if (record.event !== undefined) {
+      // A quest that runs once, started by the tree already for an earlier case's event (a
+      // node that shares its event: DA09 with DA06's Increase Level), was started as the game
+      // starts it then.
+      const ran = (runtime.state.quests.get(id)?.starts ?? 0) > 0;
+      if (ran && (record.flags & QuestFlag.runOnce) !== 0 && this.#byTree.has(id)) {
+        return { how: 'story manager', whyNot: undefined, firstStage: startUp?.index };
+      }
       // Each quest node that lists it is a way the event reaches it (Favor001's Markarth node
       // finds its quest giver, its Windhelm node none): the events of every node are tried.
       const events: StoryEventData[] = [];
@@ -467,11 +524,21 @@ class Sweep {
       }
       events.splice(MAX_EVENTS);
       // Through the story manager first (its first events: each runs the whole tree).
+      const treeWhy = new Set<string>();
       for (const event of events.slice(0, SM_EVENTS)) {
+        const why = await this.#treeWhy(id, event);
         const started = (await this.#drive(runtime.storyManager.quests(event))) ?? [];
+        for (const quest of started) this.#byTree.add(quest);
         if (started.includes(id)) {
-          return { how: 'story manager', whyNot: undefined, firstStage: startUp?.index };
+          return { how: 'story manager', whyNot: undefined, firstStage: startUp?.index, treeWhy };
         }
+        const others = started.map((other) => other.toString(16)).join(' ');
+        const refused = runtime.quests.notStarted.get(id);
+        treeWhy.add(
+          [why, refused, started.length > 0 ? `the event started ${others}` : undefined]
+            .filter((part) => part !== undefined)
+            .join('; '),
+        );
         // What its first start filled is let go before the next event is tried.
         for (const other of started) await this.#drive(runtime.quests.stop(other));
       }
@@ -506,6 +573,7 @@ class Sweep {
         how: 'story manager (direct)',
         whyNot: started ? undefined : [...reasons].join('; ') || 'no node started it',
         firstStage: startUp?.index,
+        treeWhy,
       };
     }
     const lowest = record.stages.find((stage) => stage.index > 0)?.index;
@@ -541,7 +609,11 @@ class Sweep {
     const problemsBefore = sim.problems().length;
     const stagesBefore = sim.stagesSet(id).length;
     const chain: QuestRecord[] = [];
-    const { how, whyNot, firstStage } = await this.start(record, chain);
+    // The story manager remembers when it last started each quest and what each node started
+    // (a node's hours until reset, do all before repeating): what the earlier cases' starts left
+    // there is let go, as on a new game's world.
+    runtime.storyManager.loadData({});
+    const { how, whyNot, firstStage, treeWhy } = await this.start(record, chain);
     await sim.world.settle();
     await sim.step(RUN_SECONDS);
     const state = runtime.state.quests.get(id);
@@ -574,6 +646,7 @@ class Sweep {
         .map(([index]) => index),
       firstStage,
       begun: firstStage === undefined || state?.stagesDone.has(firstStage) === true,
+      treeWhy: [...(treeWhy ?? [])],
     };
     for (const quest of [record, ...chain.reverse()]) {
       const startedWithGame = (quest.flags & QuestFlag.startGameEnabled) !== 0;
@@ -605,7 +678,8 @@ describe.skipIf(!hasGamedata())('every other quest, started as the game starts i
         `stages [${r.stages.join(' ')}] first ${String(r.firstStage)}${r.begun ? '' : ' NOT REACHED'}`,
         `objectives [${r.objectives.join(' ')}]`,
         r.faults.length > 0 ? `faults: ${r.faults.join(' | ')}` : '',
-        r.scriptErrors.length > 0 ? `game log ${String(r.scriptErrors.length)}` : '',
+        r.scriptErrors.length > 0 ? `notices ${String(r.scriptErrors.length)}` : '',
+        r.how === 'story manager (direct)' ? `tree: ${r.treeWhy.join(' / ')}` : '',
       ].join('\t'),
     );
     console.log(`quest sweep: ${String(results.size)} quests\n${lines.join('\n')}`);
@@ -617,6 +691,8 @@ describe.skipIf(!hasGamedata())('every other quest, started as the game starts i
       const result = await sweep.run(record);
       results.set(record.formId, result);
       expect(result.whyNot).toBeUndefined();
+      // A story manager quest started by its event going through the tree, not past it.
+      expect(result.how).not.toBe('story manager (direct)');
       expect(result.unfilled).toEqual([]);
       expect(result.faults).toEqual([]);
       // The quest began: its start-up stage, or the stage its starter sets, is done.

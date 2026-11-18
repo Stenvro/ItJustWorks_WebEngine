@@ -116,7 +116,7 @@ describe.skipIf(!hasGamedata())('DA08 The Whispering Door', () => {
     }
   }, 900_000);
 
-  it('has the key lifted, the door opened and the Ebony Blade taken (30-50)', async () => {
+  it('has the key lifted, the door opened and the Ebony Blade taken, the instructions heard (30-60)', async () => {
     expect(doorHeard).toBeDefined();
     if (!doorHeard) return;
     const sim = await loadSim(doorHeard);
@@ -166,16 +166,19 @@ describe.skipIf(!hasGamedata())('DA08 The Whispering Door', () => {
       );
       expect(sim.runtime.scenes.isPlaying(INSTRUCTIONS)).toBe(true);
       bladeTaken = await sim.save('DA08 blade');
+      // Played on in the same game, the instructions end the quest (60).
+      expect(await sim.until(() => sim.stageDone(DA08, 60), 90)).toBe(true);
+      expect(sim.runtime.state.quests.get(DA08)?.completed).toBe(true);
     } finally {
       await sim.close();
     }
   }, 900_000);
 
   // The instructions' lines are the voice marker's (DA08VoiceInYourHeadMarker, the
-  // MephalaInYourHead alias: no actor); the scene's end fragment sets 60, the quest done.
-  // TODO(M13): played on in the game that picked the blade up, the scene did not end within 90 s;
-  // loaded from its save it ends at once. Why the live game holds it was not found.
-  it("has Mephala's instructions end the quest (60)", async () => {
+  // MephalaInYourHead alias: no actor); the scene's end fragment sets 60, the quest done. The
+  // segment before plays it to its end in the live game; here a save made while it plays goes
+  // on to its end too.
+  it("has Mephala's instructions, saved while they play, end the quest once loaded (60)", async () => {
     expect(bladeTaken).toBeDefined();
     if (!bladeTaken) return;
     const sim = await loadSim(bladeTaken);
