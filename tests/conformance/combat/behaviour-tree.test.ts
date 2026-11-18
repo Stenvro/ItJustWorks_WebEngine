@@ -30,6 +30,7 @@ import {
   type CombatAction,
   type CombatValue,
 } from '../../../src/ai/combat-tree.ts';
+import { ActorValue } from '../../../src/world/actor-values.ts';
 import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 // --- The node classes, on a small tree --------------------------------------------------------
@@ -787,4 +788,39 @@ describe.skipIf(!hasGamedata())('the combat tree in a fight (headless simulation
     // (about 100 units at most). Maintain Optimal Range itself is the Ranged Movement case's.
     expect(mageDistances.length).toBeGreaterThan(0);
   });
+});
+
+// --- Low Combat's blow: a hit put on its target, no swing ------------------------------------
+
+describe.skipIf(!hasGamedata())('Low Combat’s blow (headless simulation)', () => {
+  it('lands its weapon’s hit on the target as it stands, with no attack of its graph  [original]', async () => {
+    const sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
+    try {
+      await sim.step(1);
+      for (const actor of sim.actors()) {
+        if (actor.reference !== PLAYER_REF) await sim.kill(actor.reference);
+      }
+      const bandit = await sim.place(
+        await sim.formId('NPC_', 'EncBandit01Melee1HTankNordM'),
+        PLAYER_REF,
+      );
+      const wolf = await sim.place(await sim.formId('NPC_', 'EncWolf'), PLAYER_REF);
+      await sim.step(0.5);
+      const health = async (): Promise<number> =>
+        (await sim.runtime.actors.value(wolf, ActorValue.health)).current;
+      const before = await health();
+      // Observed in the original: Attack Low builds a hit of the attacker with its weapon and
+      // puts it on its target; no attack event goes to the attacker's graph.
+      await sim.world.stage.combat.lowBlow(bandit, wolf);
+      await sim.step(0.25);
+      const hit = sim.world.log
+        .game('hit')
+        .find((entry) => entry.aggressor === bandit && entry.target === wolf);
+      expect(hit).toBeDefined();
+      expect(hit?.powerAttack).toBe(false);
+      expect(await health()).toBeLessThan(before);
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
 });

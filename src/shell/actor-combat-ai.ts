@@ -298,6 +298,11 @@ export interface CombatAiHost {
     action: string,
     melee?: { readonly powerCooling: boolean; readonly left?: boolean },
   ): Promise<boolean>;
+  /**
+   * Low Combat's blow (Attack Low): the attacker's hit with what its hands hold lands on the
+   * target as it is, without a swing.
+   */
+  lowBlow?(attacker: number, target: number): Promise<void>;
   release(reference: number, action: string): Promise<void>;
   block(reference: number, on: boolean): Promise<void>;
   /** A blocking fighter sees a blow come at it: its block meets it (ActionBlockAnticipate). */
@@ -3771,8 +3776,12 @@ export class ActorCombatAi {
             const fleeing = this.#minds.get(f.target.reference)?.mode === 'flee';
             const lands = lowCombatBlow(f.distance, fleeing, this.#random, this.#subtrees);
             if (lands === undefined) return 'failure';
-            // TODO(M13): the low process's blow lands without a swing (its damage); ours swings.
-            if (lands && run.elapsed >= 0) this.#strike(f, 'ActionRightAttack');
+            // Its blow lands without a swing (observed in the original: a hit with its weapon put
+            // on the target as it is).
+            if (lands && run.elapsed >= 0) {
+              f.mind.lastAttack = this.#clock;
+              void this.#options.host.lowBlow?.(f.mind.reference, f.target.reference);
+            }
             return 'running';
           },
           search: (f) => {

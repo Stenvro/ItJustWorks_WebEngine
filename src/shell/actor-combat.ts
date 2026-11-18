@@ -3878,6 +3878,32 @@ export class ActorCombat implements CombatBridge {
     await runtime.actors.endDeferredKill(fighter.reference);
   }
 
+  /**
+   * Low Combat's blow (Attack Low, observed in the original): a hit of the attacker with the
+   * weapon it holds is put on the target as it stands, with no swing and no attack of its graph;
+   * its landing roll is the tree's (lowCombatBlow). The damage is #hit's, as a plain blow's.
+   */
+  async lowBlow(attackerRef: number, targetRef: number): Promise<void> {
+    const attacker = this.#fighters.get(attackerRef);
+    const victim = this.#fighters.get(targetRef);
+    const from = attacker && this.#feet(attacker);
+    const at = victim && this.#feet(victim);
+    if (!attacker || !victim || !from || !at || victim.state.life === LifeState.dead) return;
+    const chest: Vec3 = [from[0], from[1], from[2] + this.#size(attacker).height * CHEST];
+    const point: Vec3 = [at[0], at[1], at[2] + this.#size(victim).height * CHEST];
+    const way: Vec3 = [point[0] - chest[0], point[1] - chest[1], point[2] - chest[2]];
+    const length = Math.hypot(...way) || 1;
+    await this.#hit(attackerRef, targetRef, {
+      power: false,
+      bash: false,
+      sneak: false,
+      ranged: false,
+      point,
+      direction: [way[0] / length, way[1] / length, way[2] / length],
+      shot: undefined,
+    });
+  }
+
   /** A killmove's hit frame: its victim takes the blow (#hit: Ã— fCombatKillMoveDamageMult). */
   async #killMoveStrike(leader: Fighter): Promise<void> {
     const victim = this.#victimOf(leader);
@@ -4223,6 +4249,7 @@ export class ActorCombat implements CombatBridge {
       draw: (reference) => this.draw(reference),
       sheathe: (reference) => this.sheathe(reference),
       attack: (reference, action, melee) => this.attack(reference, action, melee),
+      lowBlow: (attacker, target) => this.lowBlow(attacker, target),
       killMove: (reference) => this.killMove(reference),
       release: (reference, action) => this.release(reference, action),
       block: async (reference, on) => {

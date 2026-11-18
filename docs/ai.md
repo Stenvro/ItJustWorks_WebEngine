@@ -3260,11 +3260,13 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   Target): far off the chase; else the maneuver (flank or stalk), out of range Flank Distant
   (circling at a distance), else the close movement selector.
 - **Low Combat**, the low process's own root (the Low Combat Selector, every second): Flee while
-  it flees; Attack (blows without their animations, landing by fCombatLowTargetHitPercent, 0.5,
-  fCombatLowFleeingTargetHitPercent, 0.25, on one that flees) within
-  fCombatLowMaxAttackDistance (2048); else Pursue; Search once its group searches. Ours runs it
-  for a fighter the movers do not run (TODO(M13): ours keeps nearly every fighter of the loaded
-  area in the high process, and its blow still swings).
+  it flees; Attack (landing by fCombatLowTargetHitPercent, 0.5, fCombatLowFleeingTargetHitPercent,
+  0.25, on one that flees) within fCombatLowMaxAttackDistance (2048); else Pursue; Search once its
+  group searches. Its blow (observed in the original) is a hit of the attacker with the weapon it
+  holds put on the target as it stands: no swing, no attack event to its graph
+  (`ActorCombat.lowBlow`; the damage #hit's, as a plain blow's). It runs for a fighter out of the
+  high process; a fighter in the loaded area stays in the high process (see "The actors of the
+  loaded area"), so in play it is the fighters the movers do not run.
 - **Search** (Wait to Start Search; Search Repeat: the Search Selector's Search Location,
   Search, Search Unimportant Location, Search Wander, Search Center, Search Idle and Fail Search,
   then the Investigate Selector's Investigating Door, Investigating, Looking): ours stands
