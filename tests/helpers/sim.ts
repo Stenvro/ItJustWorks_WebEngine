@@ -37,6 +37,7 @@ import {
   tryLock,
 } from '../../src/shell/lock-picking.ts';
 import { passHours } from '../../src/shell/sleep-wait-menu.ts';
+import { takeWorldItem } from '../../src/shell/world-take.ts';
 import type { SimRecord } from '../../src/sim/sim-log.ts';
 import { SIM_STEP, SimWorld } from '../../src/sim/sim-world.ts';
 import { Vfs } from '../../src/vfs/vfs.ts';
@@ -1047,6 +1048,24 @@ export class Sim {
     );
     if (!entry || !model.transfer) return false;
     await this.#stepUntil(Promise.resolve(model.transfer(entry, count, true)));
+    return true;
+  }
+
+  /**
+   * The player takes an item lying in the world as Play's crosshair does (activated: its
+   * scripts hear OnActivate first, then it is taken: src/shell/world-take.ts, stolen if another
+   * owns it). False if no such item is placed, or its activation was blocked.
+   */
+  async pickUp(reference: number): Promise<boolean> {
+    const object = this.world.placed(reference)?.object;
+    if (!object) return false;
+    let taking: Promise<void> | undefined;
+    this.runtime.playerActivated(reference, () => {
+      taking = takeWorldItem(this.world.session, object);
+    });
+    await this.world.until(() => taking !== undefined, 2);
+    if (!taking) return false;
+    await this.#stepUntil(taking);
     return true;
   }
 
