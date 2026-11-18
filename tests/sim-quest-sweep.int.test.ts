@@ -340,9 +340,11 @@ class Sweep {
         const member = eventMember(condition);
         const data = condition.form2;
         switch (condition.raw1 & 0xffff) {
-          case 0: // GetIsID
-            if (wants) forms.set(member, data);
-            else avoid.set(member, data);
+          case 0: // GetIsID: the form named is the member (a keyword asked of it before holds)
+            if (wants) {
+              forms.set(member, data);
+              candidates.delete(member);
+            } else avoid.set(member, data);
             break;
           case 2: {
             // GetValue
@@ -362,6 +364,7 @@ class Sweep {
             break;
         }
       } else if (fn === 'GetIsID' && condition.runOn === ConditionRunOn.eventData && wants) {
+        candidates.delete(condition.eventMember);
         forms.set(condition.eventMember, condition.form);
       }
     }
@@ -474,15 +477,18 @@ class Sweep {
       }
       // Another node took the event, or a node's condition did not hold (chance, a script's
       // variable): the quest is started with the event, as its node would start it.
-      let whyNot: string | undefined = 'no node started it';
+      // Why each event did not start it (with its place: L2, else L1).
+      const reasons = new Set<string>();
       const tries = async (): Promise<boolean> => {
         for (const event of events) {
           const direct = await this.#drive(runtime.quests.start(id, event));
           if (direct === true) return true;
-          whyNot =
+          const place = event.forms.get('L2') ?? event.forms.get('L1');
+          const why =
             direct === undefined
               ? `its start did not finish within ${String(START_SECONDS)} s`
-              : (runtime.quests.notStarted.get(id) ?? whyNot);
+              : (runtime.quests.notStarted.get(id) ?? 'no node started it');
+          reasons.add(place === undefined ? why : `${why} at ${place.toString(16)}`);
         }
         return false;
       };
@@ -498,7 +504,7 @@ class Sweep {
       }
       return {
         how: 'story manager (direct)',
-        whyNot: started ? undefined : whyNot,
+        whyNot: started ? undefined : [...reasons].join('; ') || 'no node started it',
         firstStage: startUp?.index,
       };
     }

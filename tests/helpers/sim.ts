@@ -1051,6 +1051,49 @@ export class Sim {
   }
 
   /**
+   * The player takes an item lying in the world, through its activation as Play takes it
+   * (src/shell/play-mode.ts #take: its OnActivate first, then it goes into the inventory, a
+   * theft if another owns it, the story manager's Add To Player). False if its activation was
+   * blocked.
+   */
+  async pickUp(reference: number): Promise<boolean> {
+    const runtime = this.runtime;
+    const base = await runtime.baseOf(reference);
+    if (base === undefined) return false;
+    let taken: Promise<void> | undefined;
+    const ran = runtime.playerActivated(reference, () => {
+      taken = (async () => {
+        const stealing = !(await runtime.crime.mayTake(PLAYER_REF, reference));
+        await runtime.pickUp(reference, PLAYER_REF);
+        const count = runtime.state.references.get(reference)?.container?.count ?? 1;
+        if (stealing) await runtime.crime.steal(PLAYER_REF, base, count, reference);
+        runtime.detach(runtime.storyEvents.pickedUp(base, reference, stealing));
+      })();
+    });
+    if (taken) await this.#stepUntil(taken);
+    return ran;
+  }
+
+  /**
+   * The player picks an actor's pocket for an item through the container menu's model in
+   * pickpocket mode (src/shell/container-menu.ts: the attempt by its chance, crime-engine.ts).
+   * Whether the item came over (false: not carried, or the attempt failed and the actor noticed).
+   */
+  async pickpocket(actor: number, item: number, count = 1): Promise<boolean> {
+    const inventory = inventoryModel(this.world.session, this.world.terminal, () =>
+      Promise.resolve(),
+    );
+    const model = containerModel(this.world.session, actor, inventory, false, true);
+    const entry = (await model.view()).entries.find(
+      (candidate) => candidate.formId === item && candidate.container === true,
+    );
+    if (!entry || !model.transfer) return false;
+    const before = await this.runtime.itemCount(PLAYER_REF, item);
+    await this.#stepUntil(Promise.resolve(model.transfer(entry, count, true)));
+    return (await this.runtime.itemCount(PLAYER_REF, item)) > before;
+  }
+
+  /**
    * The player sells items to a merchant through the barter menu's model (bartermenu.swf's
    * ItemSelect on one of the player's entries: src/shell/barter-menu.ts), at the price it shows.
    * False if the merchant does not buy it.
