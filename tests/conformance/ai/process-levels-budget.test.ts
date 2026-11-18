@@ -4,20 +4,28 @@
 // - The budget rule, observed in the original (src/ai/process-levels.ts): the process lists'
 //   update gets fProcessListsUpdateTimeMax ms a frame at fProcessListsUpdateHighFrameRate frames a
 //   second or more, fProcessListsUpdateTimeMin below fProcessListsUpdateLowFrameRate, and
-//   (Min + Max) × frame rate / (Low + High) between.
+//   (Min + Max) × frame rate / (Low + High) between. One deadline the lists share in order: the
+//   middle-high list from its cursor (the clock read after every tenth actor, never past the
+//   list's end), then the middle-low, then the low with what is left (observed in the original).
 // - The settings' built-in values ([General], the engine's defaults): fProcessListsUpdateTimeMin 0.5,
 //   fProcessListsUpdateTimeMax 5, fProcessListsUpdateLowFrameRate 10, …HighFrameRate 30,
-//   iLowProcessingMilliseconds 2, bRunMiddleLowLevelProcess 1; Skyrim_Default.ini sets none.
-// - The levels: CommonLibSSE ProcessLists (high, middle-high, middle-low, low actor handles).
+//   bRunMiddleLowLevelProcess 1; iLowProcessingMilliseconds 2 is registered and never read by
+//   the original; Skyrim_Default.ini sets none.
+// - The levels: CommonLibSSE ProcessLists (high, middle-high, middle-low, low actor handles);
+//   observed in the original: an actor's level follows its cell's state (attached: high;
+//   loading or loaded: middle-high; without 3D or its cell not loaded: middle-low or low), with
+//   no distance from the player in it.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AI_DEFAULTS } from '../../../src/ai/ai-settings.ts';
 import {
+  CLOCK_EVERY,
   processLevel,
   ProcessLevel,
   processListsBudget,
   ProcessSlicer,
 } from '../../../src/ai/process-levels.ts';
+import { PLAYER_REF } from '../../../src/scripting/runtime/forms.ts';
 import { hasGamedata, openSim, type Sim } from '../../helpers/sim.ts';
 
 describe('process lists: the update budget by frame rate', () => {
@@ -36,49 +44,44 @@ describe('process lists: the update budget by frame rate', () => {
   });
 });
 
-describe('process levels: the level of an actor', () => {
-  it('puts the loaded area’s actors near the player in the high process, the farther ones in the middle-high', () => {
-    expect(processLevel({ loaded: true, distance: 1000 })).toBe(ProcessLevel.high);
-    expect(processLevel({ loaded: true, distance: 5000 })).toBe(ProcessLevel.middleHigh);
+describe('process levels: the level of an actor, by its cell', () => {
+  it('puts every actor of an attached cell in the high process, however far from the player', () => {
+    expect(processLevel({ cell: 'attached' })).toBe(ProcessLevel.high);
+    expect(processLevel({ cell: 'attached', shown: true })).toBe(ProcessLevel.high);
   });
 
-  it('keeps an actor in the high process a little beyond the edge it came in by (no churn)', () => {
-    expect(processLevel({ loaded: true, distance: 4500, wasHigh: true })).toBe(ProcessLevel.high);
-    expect(processLevel({ loaded: true, distance: 4500, wasHigh: false })).toBe(
-      ProcessLevel.middleHigh,
-    );
-    expect(processLevel({ loaded: true, distance: 6000, wasHigh: true })).toBe(
-      ProcessLevel.middleHigh,
-    );
+  it('puts an actor of a cell loading or loaded but not attached in the middle-high process', () => {
+    expect(processLevel({ cell: 'loaded' })).toBe(ProcessLevel.middleHigh);
   });
 
-  it('keeps an actor in combat, a scene, dialogue or head tracking in the high process', () => {
-    expect(processLevel({ loaded: true, distance: 20000, kept: true })).toBe(ProcessLevel.high);
+  it('puts an actor without its 3D in the middle-low process while its cell is loaded', () => {
+    expect(processLevel({ cell: 'attached', shown: false })).toBe(ProcessLevel.middleLow);
+    expect(processLevel({ cell: 'loaded', shown: false })).toBe(ProcessLevel.middleLow);
   });
 
-  it('puts actors outside the loaded area in the middle-low process near the player, else the low', () => {
-    expect(processLevel({ loaded: false, distance: 0, nearby: true })).toBe(ProcessLevel.middleLow);
-    expect(processLevel({ loaded: false, distance: 0 })).toBe(ProcessLevel.low);
+  it('puts actors of cells not loaded in the middle-low process near the player, else the low', () => {
+    expect(processLevel({ cell: 'unloaded', nearby: true })).toBe(ProcessLevel.middleLow);
+    expect(processLevel({ cell: 'unloaded' })).toBe(ProcessLevel.low);
   });
 });
 
-describe('process levels: the middle-high process’s turns within the budget', () => {
+describe('process levels: the middle-high list within the budget', () => {
   const FRAME = 1 / 60;
-  /** Ten middle-high actors whose updates cost 1 ms each, two of the high process. */
-  function setUp(): {
+  /** Twenty-five middle-high actors whose updates cost 1 ms each, two of the high process. */
+  function setUp(budget: number): {
     slicer: ProcessSlicer;
     frame: () => { updated: number[]; owed: Map<number, number> };
   } {
     let now = 0;
     const slicer = new ProcessSlicer(() => now);
     const levels = new Map<number, ProcessLevel>();
-    for (let reference = 1; reference <= 10; reference++) {
+    for (let reference = 1; reference <= 25; reference++) {
       levels.set(reference, ProcessLevel.middleHigh);
     }
     levels.set(100, ProcessLevel.high);
     levels.set(101, ProcessLevel.high);
     const frame = (): { updated: number[]; owed: Map<number, number> } => {
-      slicer.begin(levels, 3);
+      slicer.begin(levels, budget);
       const updated: number[] = [];
       const owed = new Map<number, number>();
       for (const reference of levels.keys()) {
@@ -92,25 +95,54 @@ describe('process levels: the middle-high process’s turns within the budget', 
     };
     return { slicer, frame };
   }
+  const run = (from: number, to: number): number[] =>
+    Array.from({ length: to - from + 1 }, (_, i) => from + i);
 
-  it('updates the high process every frame, the middle-high round-robin as their cost fits', () => {
-    const { frame } = setUp();
+  it('reads the clock after every tenth actor: ten a frame past a 3 ms budget, from its cursor on', () => {
+    const { frame } = setUp(3);
     // Their cost not yet known: all have a turn, and it is measured.
-    expect(frame().updated).toHaveLength(12);
-    expect(frame().updated).toEqual([1, 2, 3, 100, 101]);
-    expect(frame().updated).toEqual([4, 5, 6, 100, 101]);
-    expect(frame().updated).toEqual([7, 8, 9, 100, 101]);
-    // The list's cursor wraps round.
-    expect(frame().updated).toEqual([1, 2, 10, 100, 101]);
+    expect(frame().updated).toHaveLength(27);
+    expect(CLOCK_EVERY).toBe(10);
+    expect(frame().updated).toEqual([...run(1, 10), 100, 101]);
+    expect(frame().updated).toEqual([...run(11, 20), 100, 101]);
+  });
+
+  it('never goes past the list’s end in a frame; the next frame starts it from its first', () => {
+    const { frame } = setUp(3);
+    frame();
+    frame();
+    frame();
+    // Five left: the list ends there, though the budget would take more.
+    expect(frame().updated).toEqual([...run(21, 25), 100, 101]);
+    expect(frame().updated).toEqual([...run(1, 10), 100, 101]);
+  });
+
+  it('runs the whole list in a frame while its cost is within the budget', () => {
+    const { frame } = setUp(30);
+    frame();
+    expect(frame().updated).toEqual([...run(1, 25), 100, 101]);
   });
 
   it('gives each turn the time owed since its last', () => {
-    const { frame } = setUp();
+    const { frame } = setUp(3);
     frame();
     frame();
     const third = frame();
-    expect(third.owed.get(4)).toBeCloseTo(2 * FRAME, 9);
+    expect(third.owed.get(15)).toBeCloseTo(2 * FRAME, 9);
     expect(third.owed.get(100)).toBeCloseTo(FRAME, 9);
+  });
+
+  it('leaves the low processes what the middle-high list did not take of the budget', () => {
+    const { slicer, frame } = setUp(30);
+    expect(slicer.left).toBeUndefined();
+    frame();
+    frame();
+    // 25 actors at 1 ms of 30.
+    expect(slicer.left).toBeCloseTo(5, 9);
+    const tight = setUp(3);
+    tight.frame();
+    tight.frame();
+    expect(tight.slicer.left).toBe(0);
   });
 
   it('gives at least one turn a frame however small the budget', () => {
@@ -158,4 +190,35 @@ describe.skipIf(!hasGamedata())('actors away: the low process (headless simulati
         Math.hypot(at.position[0] - stall.position[0], at.position[1] - stall.position[1]),
     ).toBeLessThan(512);
   }, 120_000);
+});
+
+describe.skipIf(!hasGamedata())('process levels: Whiterun’s actors (headless simulation)', () => {
+  let sim: Sim;
+  beforeAll(async () => {
+    sim = await openSim({ exterior: { world: WHITERUN, cell: [4, -2] }, hour: 10 });
+    await sim.step(2);
+  }, 300_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it('has the loaded area’s living actors beyond a cell from the player in the high process too', async () => {
+    const player = await sim.position(PLAYER_REF);
+    if (!player) throw new Error('no player');
+    const stage = sim.world.stage;
+    const far = sim
+      .actors()
+      .filter(
+        (staged) =>
+          !staged.dead &&
+          !staged.visibility.hidden &&
+          Math.hypot(staged.position[0] - player[0], staged.position[1] - player[1]) > 4096,
+      );
+    // Whiterun's districts are wider than a cell: some of its people stand farther off.
+    expect(far.length).toBeGreaterThan(0);
+    for (const staged of far) {
+      expect(stage.process.level(staged.reference)).toBe(ProcessLevel.high);
+    }
+    expect(far.some((staged) => stage.movers.inHighProcess(staged.reference))).toBe(true);
+  }, 60_000);
 });

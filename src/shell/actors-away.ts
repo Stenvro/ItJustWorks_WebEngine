@@ -19,7 +19,6 @@ import type { PackageStart, Space } from '../ai/package-start.ts';
 import { fliesByRace } from '../ai/flight.ts';
 import { MovementCatalog } from '../ai/movement-types.ts';
 import { parseRaceCombat, type RaceCombat } from '../ai/race-combat-records.ts';
-import { LOW_PROCESSING_MS } from '../ai/process-levels.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
 import { doorArrivalSpot } from '../ai/followers.ts';
 import {
@@ -70,6 +69,12 @@ export interface ActorsAwayOptions {
    * (its trip's end, out of a door) it is on the ground.
    */
   readonly aloft?: (actor: number, inAir: boolean) => void;
+  /**
+   * What the frame's process lists' budget has left after the middle-high list (ms): the low
+   * processes work in it (observed in the original: they share the one deadline, after the
+   * middle-high list; iLowProcessingMilliseconds is never read).
+   */
+  readonly budgetLeft?: () => number | undefined;
 }
 
 /** The package an actor away walks for: it and the procedure that sent it. */
@@ -137,12 +142,12 @@ const SKIP_SECONDS = 600;
 /** Actors asked at once by a run of the schedules. */
 const SCHEDULE_PARALLEL = 16;
 /**
- * How long a run of the schedules works before it lets a frame be drawn (ms): the low
- * process's slice of a frame (iLowProcessingMilliseconds). Asking a worldspace's actors where
- * their packages have them is a long run of cached reads and conditions (docs/ai.md, "Actors
- * away").
+ * How long a run of the schedules works before it lets a frame be drawn (ms) without a stage to
+ * say what the frame's budget left: fProcessListsUpdateTimeMax, the budget at 30 frames a second
+ * or more. Asking a worldspace's actors where their packages have them is a long run of cached
+ * reads and conditions (docs/ai.md, "Actors away").
  */
-const SCHEDULE_SLICE_MS = LOW_PROCESSING_MS;
+const SCHEDULE_SLICE_MS = 5;
 /** The size of an exterior cell (units). */
 const CELL_SIZE = 4096;
 
@@ -429,6 +434,11 @@ export class ActorsAway {
     this.#ask({ mode: 'jump', far: false });
   }
 
+  /** How long a run of the schedules works in a frame (ms): what the frame's budget left. */
+  #slice(): number {
+    return this.#options.budgetLeft?.() ?? SCHEDULE_SLICE_MS;
+  }
+
   /** fEvaluatePackageTimer (seconds). */
   #evaluateTimer(): number {
     return aiSettingsOf(this.#options.session).evaluatePackageTimer;
@@ -501,7 +511,7 @@ export class ActorsAway {
     let since = scheduler.now();
     const next = async (): Promise<void> => {
       for (let actor = queue.pop(); actor !== undefined; actor = queue.pop()) {
-        since = await scheduler.giveWay(since, SCHEDULE_SLICE_MS);
+        since = await scheduler.giveWay(since, this.#slice());
         if (await this.#scheduleActor(runtime, placer, actor, mode)) run.moved++;
       }
     };
@@ -710,7 +720,7 @@ export class ActorsAway {
     const living: number[] = [];
     let since = runtime.vm.scheduler.now();
     for (const reference of found) {
-      since = await runtime.vm.scheduler.giveWay(since, SCHEDULE_SLICE_MS);
+      since = await runtime.vm.scheduler.giveWay(since, this.#slice());
       if (runtime.state.actors.get(reference)?.dead === true) continue;
       if (!(await runtime.isEnabled(reference))) continue;
       living.push(reference);

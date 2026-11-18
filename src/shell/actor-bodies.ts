@@ -38,11 +38,11 @@ import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
 import { ActorPose as Pose } from '../animation/skeleton.ts';
 import type { StagedActor } from './actor-stage.ts';
 import type { PlacedActor } from './actors.ts';
-import { HIGH_PROCESS_DISTANCE } from './actor-movers.ts';
+import { CONTROLLER_DISTANCE, LEAVE_CONTROLLER_DISTANCE } from './actor-movers.ts';
 import type { GameSession } from './game-session.ts';
 
 /** Actors keep their bodies until this far (no churn at the edge). */
-const LEAVE_DISTANCE = HIGH_PROCESS_DISTANCE * 1.25;
+const LEAVE_DISTANCE = LEAVE_CONTROLLER_DISTANCE;
 
 /**
  * An actor whose bodies are kept: one of the stage, or the dead player's avatar
@@ -265,7 +265,7 @@ export class ActorBodies {
         ? Math.hypot(staged.position[0] - focus[0], staged.position[1] - focus[1])
         : 0;
       if (!entry) {
-        if (distance < HIGH_PROCESS_DISTANCE && this.#lives(staged)) void this.#add(staged);
+        if (distance < CONTROLLER_DISTANCE && this.#lives(staged)) void this.#add(staged);
         continue;
       }
       if (distance > LEAVE_DISTANCE || staged.visibility.hidden || staged.placed !== entry.actor) {
