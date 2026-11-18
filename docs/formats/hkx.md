@@ -156,8 +156,9 @@ world-from-model weight; a damping modifier without enableScalarDamping leaves i
 binding sets one bit; the powered ragdoll's world-from-model mode places a knocked-down
 character (every vanilla character: FullyRagdoll's mode 4, the get-up's matching mode 2;
 docs/physics.md, "Motors"). Read, not applied yet (TODO(M13)): the sync point flag (blenders
-sync by normalized time, not by sync points), the powered ragdoll's bone weights, the narrow
-quadruped foot IK.
+sync by normalized time, not by sync points), the powered ragdoll's bone weights. The narrow
+quadruped foot IK is applied: such a quadruped leans to its ground forward and back only
+(docs/animation.md, "Procedural modifiers").
 
 ### Projects without a character
 

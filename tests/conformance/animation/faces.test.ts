@@ -48,6 +48,8 @@ describe('the settings', () => {
       fExpressionStrengthAdd: 1,
       fLookDownDisableBlinkingAmt: 0.25,
       fTrackSpeed: 2,
+      fTrackEyeXY: 28,
+      fTrackEyeZ: 20,
     });
   });
   it('the blink: Skyrim.esm’s values', () => {
@@ -80,20 +82,32 @@ describe('expressions and emotions (FaceGen, CommonLibSSE)', () => {
   });
 });
 
-describe('faces (todo)', () => {
-  it.todo(
-    'a line’s expression strength from its emotion value (TRDT) by the engine’s scale  [original]',
-  );
-  // Open: the engine's scale from an eye turn to a look morph's weight is not documented, no
-  // game setting gives it (the eyes read fTrackSpeed alone; the load order has no fTrackEye*
-  // range), and the eye TRIs' look morphs are no rigid turn that would give it. The mechanics
-  // below run on an inferred estimate (EYE_MORPH_HEADING, EYE_MORPH_PITCH; TODO(M13)).
-  it.todo('the eyes’ look by head tracking within the eye morphs’ range  [original]');
+describe('the expressions’ strengths and change rate (observed in the original)', () => {
+  const at = (name: string): number =>
+    FACE_EXPRESSIONS.indexOf(name as (typeof FACE_EXPRESSIONS)[number]);
+  it('a line’s emotion shows at its TRDT value / 100', () => {
+    const face = new FaceAnimation(() => 0.5, VANILLA_BLINK, NO_WANDER);
+    face.showEmotion(5, 40);
+    for (let i = 0; i < 20; i++) face.update(0.1);
+    expect(face.weights[at('DialogueHappy')]).toBeCloseTo(0.4, 5);
+  });
+  it('the morphs move by fExpressionChangePerSec + fExpressionStrengthAdd × the strongest morph shown', () => {
+    const face = new FaceAnimation(() => 0.5, VANILLA_BLINK, NO_WANDER);
+    face.setExpression('MoodHappy', 0.6);
+    face.update(0.05);
+    // (2 + 1 × 0.6) × 0.05 a step towards 0.6.
+    expect(face.weights[at('MoodHappy')]).toBeCloseTo(0.13, 5);
+    for (let i = 0; i < 10; i++) face.update(0.05);
+    // Back to no expression: by fExpressionChangePerSec alone.
+    face.setExpression(undefined);
+    face.update(0.05);
+    expect(face.weights[at('MoodHappy')]).toBeCloseTo(0.5, 5);
+  });
 });
 
 // The eyes (BSFaceGenAnimationData eyesHeading, eyesPitch): head tracking's look-at turns them
 // (BehaviorRuntime.eyes), and they show it by the eye TRI's look morphs, a morph at full weight
-// at its estimated turn and held there beyond it (inferred, TODO(M13)). They wander a little
+// at the engine's fTrackEyeXY (28°) and fTrackEyeZ (20°) and held there beyond it (observed in the original). They wander a little
 // within their emotion's offsets (fEye*OffsetEmotion*: Skyrim.esm's; 0 where it sets none,
 // TODO(M13)).
 
@@ -101,7 +115,7 @@ const STILL = { headingMin: 0, headingMax: 0, pitchMin: 0, pitchMax: 0 };
 const NO_WANDER = { Neutral: STILL, Angry: STILL, Fear: STILL, Happy: STILL, Sad: STILL };
 const morph = (name: string): number => FACE_MORPHS.indexOf(name);
 
-describe('the eyes’ look by the look morphs (inferred scale)', () => {
+describe('the eyes’ look by the look morphs (observed in the original: fTrackEyeXY, fTrackEyeZ)', () => {
   /** A face whose eyes go straight where the look turns them (radians). */
   const looking = (heading: number, pitch: number): Float32Array => {
     const face = new FaceAnimation(() => 0.5, { ...VANILLA_BLINK, fTrackSpeed: 100 }, NO_WANDER);
@@ -117,6 +131,21 @@ describe('the eyes’ look by the look morphs (inferred scale)', () => {
     const down = looking(0, -EYE_MORPH_PITCH / 2);
     expect(down[morph('LookDown')]).toBeCloseTo(0.5, 3);
     expect(down[morph('LookUp')]).toBe(0);
+  });
+
+  it('a morph is at full weight at fTrackEyeXY (28°) to the side and fTrackEyeZ (20°) up and down', () => {
+    const deg = Math.PI / 180;
+    expect(looking(14 * deg, 0)[morph('LookRight')]).toBeCloseTo(0.5, 4);
+    expect(looking(0, 10 * deg)[morph('LookUp')]).toBeCloseTo(0.5, 4);
+    // A load order's own range (a mod's), at most a quarter turn.
+    const face = new FaceAnimation(
+      () => 0.5,
+      { ...VANILLA_BLINK, fTrackSpeed: 100, fTrackEyeXY: 40 },
+      NO_WANDER,
+    );
+    face.lookWith({ heading: -20 * deg, pitch: 0 });
+    face.update(0.5);
+    expect(face.weights[morph('LookLeft')]).toBeCloseTo(0.5, 4);
   });
 
   it('beyond a morph’s turn the morph holds at full weight', () => {

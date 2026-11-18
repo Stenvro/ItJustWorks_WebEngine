@@ -41,8 +41,8 @@ annotations, records) use it.
 | Idle conditions (functions) |   111 |  111 |    0 |
 | Actions (AACT)              |    71 |   68 |    3 |
 | Game settings (GMST)        |    20 |   20 |    0 |
-| Mechanics (by hand)         |    27 |   18 |    9 |
-| Total                       |  1149 | 1120 |   29 |
+| Mechanics (by hand)         |    28 |   26 |    2 |
+| Total                       |  1150 | 1128 |   22 |
 
 Round 1 wrote the sweep and this list. Built: the animations' SoundStop.<descriptor> and
 SoundRelease.<descriptor> (17 and 8 annotations: the bow's draw loop, WPNBowPullLPM, stops as
@@ -319,22 +319,28 @@ what fills it was not found).
       original: the graphs set it; it is read with bIsSynced and bSpeedSynced: round 8.)
 - [x] Head tracking (docs/animation.md, "Head tracking"; the settings above).
 - [x] Look-at, direct-at (BSLookAtModifier, BSDirectAtModifier) and limb IK.
-- [ ] Foot IK: the narrow quadrupeds' (the formats' list).
+- [x] Foot IK: the narrow quadrupeds' (the formats' list): they lean to their ground forward and
+      back only, its sideways spread dropped (observed in the original; procedural.ts groundPlaneTurn).
 - [x] Faces: expressions, phonemes, blinks, the head's morphs (src/animation/face.ts).
-- [ ] Faces: the expression change rate (fExpressionChangePerSec and fExpressionStrengthAdd as
-      docs/animation.md, "Faces", describes; which strength scales it is inferred, TODO(M13)).
+- [x] Faces: the expression change rate (fExpressionChangePerSec, and fExpressionStrengthAdd times
+      the strongest morph of what the face moves to), a line's emotion at its value / 100, the mood
+      at iMoodFaceValue / 100, SetExpressionOverride's range (observed in the original;
+      tests/conformance/animation/faces.test.ts).
 - [x] Lip sync (.lip, .fuz) with the dialogue.
 - [x] Faces: the emotions' eye offsets from the settings; a creature line's curves matched to its
       graph's Lip variables by phoneme (tests/conformance/animation/faces.test.ts).
-- [ ] Faces: the engine's scale from an eye turn to a look morph's weight (ours an inferred
-      estimate from the eyes' TRI, 29° and 16°).
+- [x] Faces: the engine's scale from an eye turn to a look morph's weight: fTrackEyeXY (28°) and
+      fTrackEyeZ (20°), the engine's own (observed in the original).
 - [x] Paired animations: the support's mark, its side to the clip's end, death limp.
 - [x] Paired animations: events routed per side by their prefix ("2_", "NPC"; the other side's
       not heard from it); pairedStop ends only the pair of the side that raised it, the other
       side's by its own pairedStop or as its graph leaves the clip (inferred;
       tests/conformance/animation/paired-animations.test.ts).
-- [ ] Paired animations: a vampire feeding pair ends the feeding procedures. TODO(M11): our AI
-      runs no feeding procedure; VampireFeedEnd ends the feeder's GetVampireFeed (inferred).
+- [ ] Paired animations: a vampire feeding pair. Observed in the original: VampireFeedEnd ends the
+      vampire feeding procedure of the actor that raised it only (the victim's side and a
+      cannibal's feeding untouched: built); StartVampireFeed refuses a dead target and gives an NPC
+      in combat no feeding (built). Open (TODO(M13)): the player's feed also puts a created Do
+      Nothing package on the victim, and when that ends was not read; ours gives the victim none.
 - [x] Kill moves (docs/animation.md, "Killmoves").
 - [x] Dismemberment and decapitation (the head's flight, the stump, persistence).
 - [ ] The severed head's flight into MQ101's basket: it lies in the basket in the simulation (at

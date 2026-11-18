@@ -982,7 +982,7 @@ come before the response files are read wait for them.
 | MountDismountEnd (MountEnd, DismountEnd)                          | ends the mount or dismount under way for rider and horse                                                                                                                      | the ride's phase ends (as at its paired end)                                                                                                                                                                                                       |
 | EndSummonAnimation (summonStop)                                   | a summoned actor's arrival is over: it takes its commander's combat target                                                                                                    | as the engine                                                                                                                                                                                                                                      |
 | ActionActivateDone (ActivationDone)                               | the object the actor's process holds is activated, the procedure done                                                                                                         | an NPC's activation with an ActionActivate idle waits for it (3 s at most)                                                                                                                                                                         |
-| VampireFeedEnd                                                    | a vampire feeding procedure is done                                                                                                                                           | the feeding (StartVampireFeed: GetVampireFeed) of the actor whose graph raised it ends (the feeder's NPCVampireFeedEnd, 1.07 s before its clip ends: inferred, TODO(M13)); else in six seconds; its Vampire Feed package ends with it (docs/ai.md) |
+| VampireFeedEnd                                                    | marks the package the raising actor runs done, only when it runs the vampire feeding procedure (not a cannibal's, not the victim's)                                           | the feeding (StartVampireFeed: GetVampireFeed) of the actor whose graph raised it ends, its Vampire Feed package with it (the feeder's NPCVampireFeedEnd, 1.07 s before its clip ends); one whose graph raises none ends in 6 seconds (docs/ai.md) |
 | PairedStop (pairedStop)                                           | the paired animation ends                                                                                                                                                     | for the side that raised it only (inferred: [Killmoves](#killmoves))                                                                                                                                                                               |
 | NPCAttach / NPCDetach                                             | attach the actor to its furniture's node the payload names, or detach it                                                                                                      | recorded. TODO(M13): our furniture keeps markers, not animated nodes                                                                                                                                                                               |
 | CameraShake (payload: strength)                                   | shakes the camera from the actor's place (src/shell/camera-shake.ts)                                                                                                          | as the engine                                                                                                                                                                                                                                      |
@@ -1668,16 +1668,18 @@ the morphs to the FaceGen head's shapes (rendering.md, Skinning).
   override (Actor.SetExpressionOverride: the mfg expression and its strength 0..100, until
   ClearExpressionOverride), else CombatShout while the actor shouts and CombatAnger in combat,
   else its AI's mood (the Mood actor value, AIDT: neutral, anger, fear, happy, sad, surprised,
-  puzzled, disgusted) as its Mood* expression at half strength (TODO(M13): the engine's
-  strengths; SetExpressionOverride's default 50 is taken). The player's face too. A response's
+  puzzled, disgusted) as its Mood* expression at the game setting iMoodFaceValue / 100
+  (the engine's 50; the load order sets none), combat's in full (observed in the original).
+  SetExpressionOverride takes the mfg expressions 1..16 only (0 and beyond: an error, the face
+  as it was) and holds its strength, read unsigned, to 100 (observed in the original). The player's face too. A response's
   emotion (INFO TRDT emotion type and value: anger, disgust, fear,
   sad, happy, surprise, puzzled as the Dialogue* expressions; neutral none) shows instead of it
-  while it is said, at the value / 100 (inferred, TODO(M13): the scale of the mfg console's
-  expression strengths; the engine's own is not documented). The shown expression's morph moves
+  while it is said, at the value / 100 (observed in the original: the speaker's emotion value times
+  0.01). The shown expression's morph moves
   towards its strength, the others towards none, by fExpressionChangePerSec (2) a second and
-  fExpressionStrengthAdd (1) more times the strength (the engine's expression update, observed in
-  the original; TODO(M13): the strength is taken to be the target expression's, none when the
-  face goes back to no expression).
+  fExpressionStrengthAdd (1) more times the strongest morph of what it moves to: the shown
+  expression's strength, none when the face goes back to no expression (the engine's expression
+  update, observed in the original).
 - **Speech:** a line's lip-sync curves (formats/audio.md, LIP) drive the phonemes and the
   modifiers (blinks join the face's own, the strongest wins; brows, eye looks). The curves
   start with their lead-in frames, the audio after them, at the head through the 3D dialogue
@@ -1700,13 +1702,10 @@ the morphs to the FaceGen head's shapes (rendering.md, Skinning).
 - **Eyes:** they look where the graph's look-at turned the eye bone (Head tracking, below),
   by the eye TRI's look morphs (the engine's BSFaceGenAnimationData eyesHeading and eyesPitch;
   eyesmale, eyesfemale and the Khajiit's eyes carry LookLeft, LookRight, LookUp and LookDown,
-  the Argonian's and the child's none), a morph at full weight at 29° to the sides and 16° up
-  and down and held there beyond it. Inferred, TODO(M13): the engine's scale is not documented
-  and no setting gives it (the eyes read fTrackSpeed alone; the load order has no fTrackEye*
-  range, an earlier game's setting); the values are a rough estimate from the eyes' TRI, whose
-  look morphs are no rigid turn of the eyeball (measured as the centroid of an eye's vertices
-  about the centre of the sphere fitted to them they turn it some 11–25° to the sides and 9–18°
-  up and down, unevenly between the eyes). They wander by a random offset in the range of the
+  the Argonian's and the child's none): observed in the original, the heading is held within
+  fTrackEyeXY degrees to either side and the pitch within fTrackEyeZ up and down (each at most
+  a quarter turn), and the look morph of its side takes the turn over that range as its weight.
+  The load order sets neither: the engine's 28 and 20 hold. They wander by a random offset in the range of the
   face's emotion (fEyeHeading/PitchMin/MaxOffsetEmotion*: Skyrim.esm's, read from the settings;
   the three it does not set, the pitch min of anger and happiness and the pitch max of sadness,
   are the engine's own, not documented: taken as 0, TODO(M13); a new offset every 1–3 s,
@@ -2142,7 +2141,10 @@ Tool's 30 Hz, made frame-rate independent (1 − (1 − g)^(30 dt); TODO(M13)).
   dragon's): under each ankle a ray (from raycastDistanceUp above, 40, to raycastDistanceDown
   below, 32) finds the ground; the leg's error is its height over the model's ground, eased by
   the ground gains. Quadrupeds lean to the plane of their feet's ground
-  (alignWorldFromModelGain); the body goes down by the worldFromModel feedback
+  (alignWorldFromModelGain); a narrow quadruped (the driver's isQuadrupedNarrow: the bear, wolf,
+  cow, deer, horse, sabre cat and skeever) leans by a line along its length instead, its grounds
+  taken onto the plane across its right axis (their sideways spread dropped): forward and back,
+  never to a side (observed in the original; `groundPlaneTurn`); the body goes down by the worldFromModel feedback
   (m_worldFromModelFeedbackGain 0.35 for humans; errorUpDownBias 1: as far as the lowest foot
   needs). Each ankle then goes to its animated height over its own ground (within its min and
   max heights), the knee turned about its hinge (its interior angle within its limits), the hip

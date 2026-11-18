@@ -763,7 +763,7 @@ export function footIk(
 
   // The body leans to the plane of the feet's ground (quadrupeds).
   if (legs.length >= 3 && gains.alignWorldFromModelGain > 0) {
-    const wanted = groundPlaneTurn(ankles, errors);
+    const wanted = groundPlaneTurn(ankles, errors, setup.isQuadrupedNarrow === true);
     if (moving)
       state.align = nlerp(state.align, wanted, gainStep(gains.alignWorldFromModelGain, dt));
     const lean = nlerp([0, 0, 0, 1], state.align, weight);
@@ -835,8 +835,19 @@ export function footIk(
   return { legs: results, offset };
 }
 
-/** The turn that leans model up to the plane through the feet's grounds (least squares). */
-function groundPlaneTurn(ankles: readonly ReadonlyVec3[], errors: readonly number[]): Quat {
+/**
+ * The turn that leans model up to the plane through the feet's grounds (least squares). A
+ * narrow quadruped (hkbFootIkDriverInfo.isQuadrupedNarrow) leans by a line along its length
+ * instead, its grounds' sideways spread dropped (observed in the original: Havok's foot IK
+ * driver takes the grounds onto the plane across the model's right axis): pitch, no roll. (Its
+ * fallback to no lean is for a right axis within a hair of up, which a character standing on
+ * its feet never has: the solver works in the model's frame.)
+ */
+export function groundPlaneTurn(
+  ankles: readonly ReadonlyVec3[],
+  errors: readonly number[],
+  narrow = false,
+): Quat {
   // z = a x + b y + c over the ground points.
   let sx = 0;
   let sy = 0;
@@ -866,6 +877,13 @@ function groundPlaneTurn(ankles: readonly ReadonlyVec3[], errors: readonly numbe
   const cxy = sxy - (sx * sy) / n;
   const cxz = sxz - (sx * sz) / n;
   const cyz = syz - (sy * sz) / n;
+  if (narrow) {
+    // A narrow quadruped's ground points are taken onto its middle (their sideways spread
+    // dropped) and a line fitted along its length: it leans forward and back, never to a side.
+    if (cyy < EPSILON) return [0, 0, 0, 1];
+    const slope = cyz / cyy;
+    return quatFromTo([0, 0, 1], normalize([0, -slope, 1]) ?? [0, 0, 1]);
+  }
   const det = cxx * cyy - cxy * cxy;
   if (Math.abs(det) < EPSILON) return [0, 0, 0, 1];
   const a = (cxz * cyy - cyz * cxy) / det;

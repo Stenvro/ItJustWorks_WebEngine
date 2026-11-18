@@ -222,4 +222,35 @@ describe('the events the runtime sends', () => {
     ]);
     expect(put).toEqual(['vampireFeed 200 on 400']);
   });
+
+  it('refuses a dead target; an NPC in combat does not feed; VampireFeedEnd ends a vampire’s feeding only (original)', async () => {
+    const { runtime: scripts, sent } = runtime();
+    const put: string[] = [];
+    scripts.world.putCreatedPackage = (who, kind) => {
+      put.push(`${kind} ${who.toString(16)}`);
+      return false;
+    };
+    const actor = scripts.actorHandle(NPC);
+    const victim = scripts.actorHandle(VICTIM);
+    scripts.state.actor(VICTIM).dead = true;
+    await callNative(scripts, 'actor', 'startvampirefeed', actor, [victim]);
+    await settle(scripts);
+    expect(put).toEqual([]);
+    expect(sent).toEqual([]);
+    scripts.state.actor(VICTIM).dead = false;
+    // In combat: no feeding package, the event all the same.
+    scripts.world.combat = () =>
+      ({ inCombat: true }) as ReturnType<NonNullable<typeof scripts.world.combat>>;
+    await callNative(scripts, 'actor', 'startvampirefeed', actor, [victim]);
+    await settle(scripts);
+    expect(put).toEqual([]);
+    expect(sent).toEqual(['OnVampireFeed 200 (400)']);
+    // A cannibal's feeding is not ended by the graph's VampireFeedEnd; a vampire's is.
+    scripts.state.actor(NPC).feeding = { kind: 'cannibal', until: scripts.state.realTime + 6 };
+    scripts.feedingDone(NPC);
+    expect(scripts.state.actors.get(NPC)?.feeding?.kind).toBe('cannibal');
+    scripts.state.actor(NPC).feeding = { kind: 'vampire', until: scripts.state.realTime + 6 };
+    scripts.feedingDone(NPC);
+    expect(scripts.state.actors.get(NPC)?.feeding).toBeUndefined();
+  });
 });

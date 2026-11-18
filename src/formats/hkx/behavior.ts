@@ -145,8 +145,8 @@ export interface FootIkSetup {
   /**
    * hkbFootIkDriverInfo.isQuadrupedNarrow: a quadruped whose feet stand close together (the
    * bear, wolf, cow, deer, horse, sabre cat and skeever: 7 of the 16 characters with foot IK),
-   * whose ground is sampled under its body rather than beside each foot. TODO(M13): the foot
-   * IK solver (src/animation/procedural.ts) does not tell narrow quadrupeds apart yet.
+   * which leans to its ground forward and back only (src/animation/procedural.ts
+   * groundPlaneTurn: observed in the original).
    */
   readonly isQuadrupedNarrow?: boolean;
 }
