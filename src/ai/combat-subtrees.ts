@@ -1187,3 +1187,19 @@ export function attackLocationKeyHolds(
 export function unreachableResponse(hasRanged: boolean): 'ranged' | 'hold' {
   return hasRanged ? 'ranged' : 'hold';
 }
+
+/**
+ * Whether a target it does not chase stands where the navmeshes do not let it come within its
+ * reach (Check Unreachable Target for a near target): no navmesh point lies within `reach` of the
+ * target's feet (across, near its height). A target a few units past the navmesh's edge (the
+ * player by a door, an actor pushed against a wall) is within reach of the edge and reachable;
+ * one deep in a fallen hall the navmesh does not cover (MQ101's hallway Stormcloaks in Helgen
+ * Keep's rubble, 266 units past its edge) is not. Inferred, TODO(M13): that the engine's Check
+ * Unreachable Target asks this of a target it does not chase (ours: its chase marks one it
+ * cannot find a way to; a near one was never marked, and a melee fighter on the edge stood
+ * facing it for good).
+ */
+export function beyondNavmeshReach(set: NavmeshSet, target: Vec3, reach: number): boolean {
+  if (set.locate(target)) return false;
+  return set.nearest?.(target, reach) === undefined;
+}
