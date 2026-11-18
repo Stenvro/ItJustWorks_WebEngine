@@ -5,7 +5,6 @@
 import type { Space } from '../../src/ai/package-start.ts';
 import { loadRouteMap } from '../../src/ai/route-map.ts';
 import { findRoute, type RouteEnd, type RouteMap } from '../../src/ai/routes.ts';
-import { ObjectHandle } from '../../src/scripting/values.ts';
 import { parseTeleport } from '../../src/world/cell-records.ts';
 import { ActorValue } from '../../src/world/actor-values.ts';
 import { PLAYER_REF, SIM_STEP, type Sim } from './sim.ts';
@@ -100,41 +99,6 @@ export async function travelTo(
   }
   const at = await sim.position(target);
   return at !== undefined && walkFighting(sim, at, Math.max(1, until - sim.time), reach);
-}
-
-/**
- * The player solves a Nordic pillar puzzle as one who has read its carved hints: each pillar
- * (defaultPuzzlePillarNoFurn) turned until it shows the face its hint names (its solveState), then
- * the lever pulled (defaultPillarPuzzleLeverNoFurn), which opens the way. Whether every pillar
- * came to its face.
- */
-export async function solvePillars(
-  sim: Sim,
-  pillars: readonly number[],
-  lever: number,
-): Promise<boolean> {
-  const vm = sim.runtime.vm;
-  let solved = true;
-  for (const pillar of pillars) {
-    const handle = new ObjectHandle(pillar, 'defaultpuzzlepillarnofurn');
-    const at = await sim.position(pillar);
-    if (at) await walkFighting(sim, at, 60, 180);
-    const solve = await vm.getVariable(handle, '::solveState_var');
-    const want = `position0${typeof solve === 'number' ? String(solve) : '?'}`;
-    for (let turn = 0; turn < 4 && (await vm.stateOf(handle)) !== want; turn++) {
-      sim.activate(pillar);
-      for (let wait = 0; wait < 10 && (await vm.stateOf(handle)) === 'busy'; wait++) {
-        await sim.step(0.5);
-      }
-      await sim.step(0.5);
-    }
-    if ((await vm.stateOf(handle)) !== want) solved = false;
-  }
-  const at = await sim.position(lever);
-  if (at) await walkFighting(sim, at, 60, 150);
-  sim.activate(lever);
-  await sim.step(4);
-  return solved;
 }
 
 /** The player goes through a load door: walks up to it and opens it. */
