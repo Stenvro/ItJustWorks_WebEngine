@@ -212,6 +212,8 @@ class Thread {
   resume: ThreadWait | undefined;
   /** Its stack's memory: the pages its frames take (stack-memory.ts). */
   readonly memory: StackMemory;
+  /** Told as it first waits on a latent native (callUntilLatent). */
+  onLatent: (() => void) | undefined;
 
   constructor(
     id: number,
@@ -1050,6 +1052,10 @@ export class PapyrusVm {
    * holds it meanwhile (none: it cannot).
    */
   async #latent<T>(thread: Thread, promise: Promise<T>, resume?: ThreadWait): Promise<T> {
+    if (resume?.kind === 'clock') {
+      thread.onLatent?.();
+      thread.onLatent = undefined;
+    }
     thread.state = 'waiting';
     thread.resume = resume;
     this.#release(thread);
@@ -1084,6 +1090,35 @@ export class PapyrusVm {
       null,
       { kind: 'call', target, name, args: [...args] },
     );
+  }
+
+  /**
+   * Calls a method as `call` does, but resolves as soon as its thread first waits on a latent
+   * native (Utility.Wait, a path, an animation), or when it returns if it never does: what the
+   * call does at once is done, and the rest goes on without its caller (the engine dispatching
+   * a dialogue fragment does not wait for it).
+   */
+  callUntilLatent(target: ObjectHandle, name: string, args: readonly Value[] = []): Promise<void> {
+    return new Promise<void>((resolve) => {
+      void this.#spawn(
+        false,
+        (thread) => {
+          thread.onLatent = resolve;
+          return this.#callMethod(
+            target,
+            name,
+            [...args],
+            0,
+            thread,
+            undefined,
+            undefined,
+            args.map((value) => value === null),
+          );
+        },
+        null,
+        { kind: 'call', target, name, args: [...args] },
+      ).finally(resolve);
+    });
   }
 
   /**

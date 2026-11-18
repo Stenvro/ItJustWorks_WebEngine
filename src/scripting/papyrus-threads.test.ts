@@ -98,8 +98,11 @@ class Host implements VmHost {
         self ? latent(vm.call(self, 'OnQuick')).then(() => null) : null;
     }
     if (script === 'utility' && fn === 'wait') {
-      return ({ vm, args, latent }) =>
-        latent(vm.scheduler.waitReal(typeof args[0] === 'number' ? args[0] : 0)).then(() => null);
+      // As the runtime's Utility.Wait (natives/core.ts): a clock wait.
+      return ({ vm, args, latent }) => {
+        const wait = vm.scheduler.clockWait('real', typeof args[0] === 'number' ? args[0] : 0);
+        return latent(vm.scheduler.waitUntil(wait), wait).then(() => null);
+      };
     }
     return undefined;
   }
@@ -195,5 +198,22 @@ describe('Papyrus threads', () => {
     expect(frames).toBeGreaterThan(20);
     scheduler.framed = false;
     expect(await readLog()).toBe('busy-start,busy-end,activate,');
+  });
+
+  // Found 2026-11-18: Gjalund's sailing fragment (SetSail) waits for the conversation to end,
+  // and the conversation waited for the fragment: neither ever went on.
+  it('lets the caller of callUntilLatent go on once the call waits, the rest running after', async () => {
+    const { vm, target, scheduler, readLog } = setup();
+    const init = vm.initialize(target);
+    await settle();
+    scheduler.advance(1, 0);
+    await init;
+    await vm.callUntilLatent(target, 'OnSlow');
+    expect(await readLog()).toBe('init-start,init-end,slow-start,');
+    scheduler.advance(2, 0);
+    await settle();
+    expect(await readLog()).toBe('init-start,init-end,slow-start,slow-end,');
+    await vm.callUntilLatent(target, 'OnQuick');
+    expect(await readLog()).toBe('init-start,init-end,slow-start,slow-end,quick,');
   });
 });
