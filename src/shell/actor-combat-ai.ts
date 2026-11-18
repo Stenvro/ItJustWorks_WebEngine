@@ -120,6 +120,7 @@ import {
   lowCombatBlow,
   pickCover,
   coverRange,
+  beyondNavmeshReach,
   fallbackPlace,
   fleeRunStatus,
   hideEnd,
@@ -525,6 +526,8 @@ interface Mind {
   chaseRetry: number;
   /** A target its way could not reach, until it looks again (Check Unreachable Target). */
   unreachable: { readonly target: number; readonly until: number } | undefined;
+  /** When it next asks whether a near target stands where the navmeshes do not reach. */
+  nextReachCheck: number;
   /** Use Cover: the cover it holds and what it does there; when it may look for cover again. */
   cover:
     | {
@@ -1289,6 +1292,7 @@ export class ActorCombatAi {
         chase: undefined,
         chaseRetry: 0,
         unreachable: undefined,
+        nextReachCheck: 0,
         cover: undefined,
         coverRetry: 0,
         lineOfFire: undefined,
@@ -2489,6 +2493,7 @@ export class ActorCombatAi {
       range,
       close: undefined,
     };
+    this.#checkReach(mind, target.reference, there, frame.reach, distance, aloft);
     // Its AI not run by the movers (out of the high process, not walking on its own), the Low
     // Combat root runs instead (TODO(M13): ours keeps nearly every fighter in the loaded area in
     // the high process, so this is rare).
@@ -2528,6 +2533,30 @@ export class ActorCombatAi {
         };
       }
     });
+  }
+
+  /**
+   * Check Unreachable Target for a target it does not chase (within CHASE_BEYOND past its reach),
+   * every fCombatUnreachableTargetCheckTime: one standing where the navmeshes do not let it come
+   * within its reach (combat-subtrees.ts beyondNavmeshReach) is unreachable until it looks again,
+   * as a far one is whose way its chase could not find. Inferred, TODO(M13): the engine's own
+   * test for a near target.
+   */
+  #checkReach(
+    mind: Mind,
+    target: number,
+    there: Vec3,
+    reach: number,
+    distance: number,
+    aloft: boolean,
+  ): void {
+    if (aloft || distance > reach + CHASE_BEYOND || this.#clock < mind.nextReachCheck) return;
+    const wait = this.#subtrees.unreachableTargetCheckTime;
+    mind.nextReachCheck = this.#clock + wait;
+    const set = this.#navmeshes();
+    if (set && beyondNavmeshReach(set, there, reach)) {
+      mind.unreachable = { target, until: this.#clock + wait };
+    }
   }
 
   // --- How it moves and faces near its target (combat-movement.ts) -------------------------------

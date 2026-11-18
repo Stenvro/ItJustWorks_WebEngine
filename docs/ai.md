@@ -279,7 +279,9 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   CollisionMarker boxes that cut the navmesh round it; Hadvar, leading the player to the keep
   as it fell, ran along a box's face into the rubble and stood wedged between the two, his
   searches finding the same way each time, until he was warped and his scene stopped. Round the
-  node he goes north of the rubble and on.
+  node he goes north of the rubble and on. Played again 2026-11-18 from the inn's floor to the
+  keep: Hadvar leads to the courtyard without a stall (his stops are his scenes' lines and the
+  waits for the player), and Ralof walks to the Stormcloak door's marker and waits there.
   TODO(M13): the avoider's own trigger (the window against fAcceptableErrorRatio) and the
   node's own width.
 - **Against a wall** (observed in the original): its graph is told what the actor wants,
@@ -3124,19 +3126,24 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   fCombatRangedDistance, looking again each half second; farther already, it stays); without one it
   holds where it stands, and target selection weighs
   the unreachable target down so a reachable one is fought first (TODO(M13): the weight).
-  Open (found 2026-11-12, TODO(M13)): only a chase's way that could not be found marks a target
-  unreachable. One standing off the navmeshes within the chase distance (CHASE_BEYOND past its
-  reach) is never chased, and its close movement's runs end at once (straightReach 0 from the
-  navmesh's edge; an advance's travel there ends at the island's nearest point), so a melee
-  fighter on the edge stands in Melee's idle facing it for good. In Helgen Keep, with MQ101's
+  A target it does not chase (within CHASE_BEYOND past its reach) is asked about too, every
+  fCombatUnreachableTargetCheckTime: one standing where no navmesh point lies within the
+  fighter's reach of its feet (`beyondNavmeshReach`, src/ai/combat-subtrees.ts) is unreachable
+  until it looks again; one a few units past the edge (the player by a door, an actor against
+  a wall) is within reach of the edge and fought as any other. Found 2026-11-12: only a chase's
+  way that could not be found marked a target unreachable, so one standing off the navmeshes
+  near was never marked, its close movement's runs ended at once (straightReach 0 from the
+  navmesh's edge; an advance's travel there ends at the island's nearest point), and a melee
+  fighter on the edge stood in Melee's idle facing it for good. In Helgen Keep, with MQ101's
   hallway Stormcloaks enabled after the hall fell in (stage 305 after 310), Hadvar stood so at
   876,2775 before the last of them at 917,3038, 266 units off, in the fallen hall that has no
-  navmesh beyond y 2780. From the same save, a build before the execution-at-any-frame-rate
-  merge (b041f00b) got to him only by leaving the navmesh, where straightReach counts the whole
-  way (a start off the navmeshes); the merge's animation changes made the fight go otherwise
-  from about its 40th second (Hadvar chose a far enemy first), and from that merge's own save
-  the builds before it stood just the same. Whether the original's Check Unreachable Target
-  asks the way to a target it does not chase, and what it does then, is not documented.
+  navmesh beyond y 2780; an earlier build got to him only by leaving the navmesh, where
+  straightReach then counted every line clear (a start off the navmeshes: below, now held to the
+  lines that come back onto them). Now a fighter there with a bow falls back and shoots (Hadvar
+  carries one), one without holds while another target can be chosen
+  (tests/conformance/combat/behaviour-tree.test.ts, a bandit on that edge). Inferred,
+  TODO(M13): that the original's Check Unreachable Target asks this of a target it does not
+  chase, and by this test.
 - **Acquire Weapon** (Find Weapon Sequence, Move to Weapon, the pick-up; only a race with Can
   Pickup Items, RACE DATA): one that held a weapon
   this fight and has only its fists looks within fCombatAcquireWeaponUnarmed (Disarmed)
@@ -3696,7 +3703,11 @@ Its range is its reach (with the target's radius) and its inner advance radius; 
 tree's Close Movement Idle, 0.25 s standing. Each behaviour is a straight combat path
 (CombatPathRequestStraightPath) to one goal the navmesh must allow (`straightReach` in
 `src/ai/pathfinding.ts`: the line and the lines its radius to either side stay on the navmeshes;
-a goal cut short where the navmesh ends, if the rest is still worth going), at a combat speed on
+a goal cut short where the navmesh ends, if the rest is still worth going; from a start off the
+navmeshes with one within 512 units, the line must come back onto them about as soon as their
+nearest point lies, the actor's radius and a sample more, and is measured from there, a line that
+runs on off them reaching nowhere: inferred, TODO(M13); before, every line from off them counted
+clear, and an actor pushed past the edge against Helgen's rubble saw its way through it), at a combat speed on
 the normalized scale (fCombatSpeedValueWalk 1, FastWalk 1.33, Jog 1.66, Run 2: between the
 movement type's walk and run speeds in the way it goes). It ends at its goal or by its own rule,
 checked every 0.1 s:

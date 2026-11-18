@@ -629,6 +629,40 @@ describe('straightReach', () => {
     const set = setOf([gridMesh(1, L_SQUARES)]);
     expect(straightReach(set, [-500, -500, 0], [-500, 0, 0], 10)).toBeCloseTo(500);
   });
+
+  /** The L's squares (100 units each) with their nearest point, as the loaded navmeshes have. */
+  const nearSet = (): NavmeshSet => ({
+    ...setOf([gridMesh(1, L_SQUARES)]),
+    nearest: ([x, y, z], reach) => {
+      let best: Point | undefined;
+      for (const [sx, sy] of L_SQUARES) {
+        const point: Point = [
+          Math.min(Math.max(x, sx * 100), sx * 100 + 100),
+          Math.min(Math.max(y, sy * 100), sy * 100 + 100),
+          z,
+        ];
+        const far = Math.hypot(point[0] - x, point[1] - y);
+        if (far <= reach && (!best || far < Math.hypot(best[0] - x, best[1] - y))) best = point;
+      }
+      return best;
+    },
+  });
+
+  // Found in MQ101's Helgen: an actor pushed past the navmesh's edge (the rubble it is cut round)
+  // had every straight line from there counted clear, along the edge and through the rubble.
+  it('holds a start just off the navmesh to the lines that come back onto it', () => {
+    const set = nearSet();
+    // 30 units south of the bottom strip, along it: it never comes back on.
+    expect(straightReach(set, [50, -30, 0], [290, -30, 0], 10)).toBe(0);
+    // Away from it.
+    expect(straightReach(set, [50, -30, 0], [50, -300, 0], 10)).toBe(0);
+    // Back onto it and on along it: the whole way.
+    expect(straightReach(set, [50, -30, 0], [150, 60, 0], 10)).toBeCloseTo(Math.hypot(100, 90));
+    // Back on, then off its far side: cut where it leaves.
+    const across = straightReach(set, [50, -30, 0], [50, 300, 0], 10);
+    expect(across).toBeGreaterThan(80);
+    expect(across).toBeLessThan(130);
+  });
 });
 
 describe("a random reachable point (a wanderer's first walk)", () => {

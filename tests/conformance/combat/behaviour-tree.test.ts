@@ -769,3 +769,78 @@ describe.skipIf(!hasGamedata())('the combat tree in a fight (headless simulation
     expect(mageDistances.length).toBeGreaterThan(0);
   });
 });
+
+// --- Check Unreachable Target for a near target ------------------------------------------------
+
+// A target standing where the navmeshes do not let a fighter come within its reach is unreachable,
+// though it is too near to be chased: one with a ranged option falls back to fight from range, as
+// against a far target whose way could not be found. Observed in the original (docs/ai.md, Check
+// Unreachable Target): an unreachable target is fought from range by Fallback To Ranged (backing
+// along the line from it to fCombatRangedDistance) where the fighter has a ranged option, else
+// held; inferred (TODO(M13)): that the engine asks this of a target it does not chase
+// (src/ai/combat-subtrees.ts beyondNavmeshReach). Found in MQ101's Helgen Keep: the hallway
+// Stormcloaks stood in the fallen hall, which has no navmesh beyond y 2780, and Hadvar stood on its
+// edge facing the last of them, 266 units off, for good.
+
+/** HelgenKeep01. */
+const KEEP = 0x5de24;
+/** Where the last hallway Stormcloak stood in the fallen hall, off the navmesh (y beyond 2780). */
+const OFF_THE_NAVMESH: readonly [number, number, number] = [900, 3030, -100];
+/** On the navmesh south of the hall's edge, where Hadvar stood. */
+const ON_THE_EDGE: readonly [number, number, number] = [876, 2700, -110];
+
+describe.skipIf(!hasGamedata())('a near target off the navmesh, beyond reach of it', () => {
+  let sim: Sim;
+  let bandit = 0;
+  let start = 0;
+  let farthest = 0;
+  let beyond = false;
+
+  beforeAll(async () => {
+    // The opening's game (the main menu's start puts the player outside Helgen as it steps).
+    sim = await openSim({ opening: true });
+    await sim.step(1);
+    for (const playing of sim.runtime.scenes.snapshot()) sim.runtime.scenes.stop(playing.scene);
+    await sim.openInterior(KEEP);
+    await sim.step(1);
+    for (const actor of sim.actors()) {
+      if (actor.reference !== PLAYER_REF) await sim.kill(actor.reference);
+    }
+    // A sword-and-shield bandit with a bow in its pack (its ranged option), placed where the
+    // player stood on the edge; the player then steps off the navmesh.
+    await sim.moveTo([...ON_THE_EDGE]);
+    await sim.step(0.25);
+    bandit = await sim.place(await sim.formId('NPC_', 'EncBandit01Melee1HTankNordM'), PLAYER_REF);
+    await sim.moveTo([...OFF_THE_NAVMESH]);
+    await sim.step(0.5);
+    const feet = sim.world.player.feet;
+    const set = sim.world.navmeshes;
+    beyond = !set.locate(feet) && set.nearest?.(feet, 200) === undefined;
+    const runtime = sim.runtime;
+    const bow = await sim.formId('WEAP', 'HuntingBow');
+    const arrows = await sim.formId('AMMO', 'IronArrow');
+    await runtime.addItem(bandit, runtime.formHandle(bow), 1, true);
+    await runtime.addItem(bandit, runtime.formHandle(arrows), 40, true);
+    await sim.step(0.5);
+    start = (await sim.distance(bandit, PLAYER_REF)) ?? 0;
+    sim.world.stage.combat.startCombat(bandit, PLAYER_REF);
+    for (let i = 0; i < 60; i++) {
+      sim.world.stage.combat.startCombat(bandit, PLAYER_REF);
+      await sim.step(0.25);
+      farthest = Math.max(farthest, (await sim.distance(bandit, PLAYER_REF)) ?? 0);
+    }
+  }, 600_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it('the target stands near, past the navmesh’s edge by more than the bandit’s reach', () => {
+    expect(beyond).toBe(true);
+    expect(start).toBeGreaterThan(200);
+    expect(start).toBeLessThan(600);
+  });
+
+  it('the bandit falls back to fight from range instead of standing on the edge', () => {
+    expect(farthest).toBeGreaterThan(start + 200);
+  });
+});

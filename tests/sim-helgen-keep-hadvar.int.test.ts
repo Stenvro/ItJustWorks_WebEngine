@@ -75,9 +75,10 @@ async function keepBy(sim: Sim, actor: number): Promise<void> {
  * to fall in, and the collapse disables them six seconds later; the other way round they stood
  * in the rubble for good, off the navmeshes, and Hadvar fought them from the corridor instead of
  * leading on. The last of them stood 266 units beyond the navmesh's edge, never chased and never
- * marked unreachable, and Hadvar stood facing him for good (docs/ai.md, Check Unreachable
- * Target: open); whether he got to him first went with the fight (from one save the builds before
- * and after the execution-at-any-frame-rate merge differed, from another both stood).
+ * marked unreachable, and Hadvar stood facing him for good; a target that near is now asked
+ * about too, and Hadvar falls back to his bow (docs/ai.md, Check Unreachable Target;
+ * tests/conformance/combat/behaviour-tree.test.ts). The player still walks into each trigger as
+ * a player passing it does.
  */
 async function passTrigger(sim: Sim, actor: number): Promise<void> {
   const next = TRIGGERS.find(([stage]) => !sim.stageDone(MQ101, stage));

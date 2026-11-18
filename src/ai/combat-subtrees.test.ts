@@ -6,6 +6,7 @@ import {
   chooseCaster,
   chooseCombatSupport,
   coverSpots,
+  beyondNavmeshReach,
   coverTimes,
   doorSpots,
   dualCastHold,
@@ -225,5 +226,33 @@ describe('the combat subtrees', () => {
     search.update(0.2);
     search.update(0.1);
     expect(trips).toEqual([[500, 0, 0]]);
+  });
+});
+
+describe('Check Unreachable Target for a target it does not chase', () => {
+  // A navmesh over x 0..300, y 0..100 (its nearest point clamps to it).
+  const strip: NavmeshSet = {
+    navmesh: () => undefined,
+    locate: ([x, y]) =>
+      x >= 0 && x <= 300 && y >= 0 && y <= 100 ? { navmesh: mesh, triangle: 0 } : undefined,
+    nearest: ([x, y, z], reach) => {
+      const point: [number, number, number] = [
+        Math.min(Math.max(x, 0), 300),
+        Math.min(Math.max(y, 0), 100),
+        z,
+      ];
+      return Math.hypot(point[0] - x, point[1] - y) <= reach ? point : undefined;
+    },
+  };
+
+  // Found in MQ101's Helgen Keep: a Stormcloak 266 units into the fallen hall past the navmesh's
+  // edge was never marked unreachable, and Hadvar stood on the edge facing him for good.
+  it('marks one standing farther past the navmesh than its reach', () => {
+    expect(beyondNavmeshReach(strip, [150, 366, 0], 160)).toBe(true);
+  });
+
+  it('leaves one on the navmesh, or past its edge within reach of it', () => {
+    expect(beyondNavmeshReach(strip, [150, 50, 0], 160)).toBe(false);
+    expect(beyondNavmeshReach(strip, [150, 140, 0], 160)).toBe(false);
   });
 });
