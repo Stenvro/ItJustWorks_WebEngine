@@ -795,6 +795,9 @@ const MAGIC_ITEM_TYPES: ReadonlySet<string> = new Set(['SPEL', 'SCRL', 'ENCH', '
 /** How often the joints scripts made are looked at, as their references come back (seconds). */
 const SCRIPT_CONSTRAINT_CHECK = 0.5;
 
+/** The alias functions that give what an alias holds (ReferenceAlias, LocationAlias). */
+const ALIAS_GETTERS = new Set(['getreference', 'getactorreference', 'getref', 'getlocation']);
+
 /** The record types an inventory holds as items (those whose own scripts can run there). */
 const INVENTORY_ITEM_TYPES = new Set([
   'ALCH',
@@ -1292,6 +1295,18 @@ export class ScriptRuntime implements VmHost {
 
   gameLog(message: string): void {
     this.#gameLog(message);
+  }
+
+  /**
+   * A None the game returns too: what an alias of a quest that is not running holds (a stopped
+   * quest's aliases are let go, in the game as here). A script that goes on with it after its
+   * quest stopped (FavorChangeLocationQuestScript's game-time updates calling IsInLocation on
+   * its LocationAlias) makes the game's own script error.
+   */
+  gameNone(target: Value, fn: string): boolean {
+    if (!(target instanceof ObjectHandle) || target.alias < 0) return false;
+    if (!ALIAS_GETTERS.has(fn.toLowerCase())) return false;
+    return !this.quests.isRunning(target.formId);
   }
 
   /**
@@ -3405,42 +3420,60 @@ export class ScriptRuntime implements VmHost {
     const items = await this.inventory(container);
     for (const item of await this.#expand(form)) {
       const record = await this.forms.record(item);
-      if (record?.type === 'LVLI') {
-        await this.#addResolved(
-          items,
-          item,
-          count,
-          seededRandom(Date.now() & 0xffffffff),
-          await this.#itemLevel(container),
-        );
-      } else {
+      if (record?.type !== 'LVLI') {
         items.set(item, (items.get(item) ?? 0) + count);
+        await this.#itemGiven(container, item, count, silent, takeUp);
+        continue;
       }
-      // An item whose base has scripts of its own is a reference in the container: its scripts
-      // run there (OnInit) and hear it move (OnContainerChanged), as the Creation Kit's
-      // ObjectReference scripts on inventory items do. From the data: DA08's Whispering Door key,
-      // given to Farengar and the Jarl by AddItem, sets the quest's stage 40 from its
-      // OnContainerChanged as it reaches the player. TODO(M13): inferred that the items one
-      // AddItem gives are one reference standing for their count.
-      const reference =
-        record?.type !== 'LVLI' && (await this.#scriptedItem(item))
-          ? this.state.create(item, count)
-          : undefined;
-      if (reference !== undefined) {
-        this.state.reference(reference).container = { holder: container, base: item, count };
-        this.#initialized.add(reference);
-        await this.#initializeReference(reference);
-      }
-      if (!silent && container === PLAYER_REF) this.detach(this.#itemMessage(item, count, true));
-      this.events.emit('containerChanged', {
-        from: undefined,
-        to: container,
+      // A leveled list gives what it resolves to; each item given is told as the list's.
+      const given = new Map<number, number>();
+      await this.#addResolved(
+        given,
         item,
         count,
-        reference,
-      });
-      if (takeUp) await this.equipment.itemsGiven(container, item);
+        seededRandom(Date.now() & 0xffffffff),
+        await this.#itemLevel(container),
+      );
+      for (const [resolved, n] of given) items.set(resolved, (items.get(resolved) ?? 0) + n);
+      for (const [resolved, n] of given) {
+        await this.#itemGiven(container, resolved, n, silent, takeUp);
+      }
     }
+  }
+
+  /**
+   * Items a script gave to a container (AddItem): `base` is what the container holds now (the
+   * item named, or what a leveled list resolved to: a list is never held itself).
+   */
+  async #itemGiven(
+    container: number,
+    base: number,
+    count: number,
+    silent: boolean,
+    takeUp: boolean,
+  ): Promise<void> {
+    // An item whose base has scripts of its own is a reference in the container: its scripts
+    // run there (OnInit) and hear it move (OnContainerChanged), as the Creation Kit's
+    // ObjectReference scripts on inventory items do; so is one a leveled list resolved to.
+    // From the data: DA08's Whispering Door key, given to Farengar and the Jarl by AddItem,
+    // sets the quest's stage 40 from its OnContainerChanged as it reaches the player.
+    // TODO(M13): inferred that the items one AddItem gives are one reference standing for
+    // their count.
+    const reference = (await this.#scriptedItem(base)) ? this.state.create(base, count) : undefined;
+    if (reference !== undefined) {
+      this.state.reference(reference).container = { holder: container, base, count };
+      this.#initialized.add(reference);
+      await this.#initializeReference(reference);
+    }
+    if (!silent && container === PLAYER_REF) this.detach(this.#itemMessage(base, count, true));
+    this.events.emit('containerChanged', {
+      from: undefined,
+      to: container,
+      item: base,
+      count,
+      reference,
+    });
+    if (takeUp) await this.equipment.itemsGiven(container, base);
   }
 
   /**

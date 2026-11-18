@@ -264,3 +264,78 @@ describe('a state change (the compiled GotoState)', () => {
     expect(await vm.call(lever, 'Trail')).toBe('end up;begin down;');
   });
 });
+
+describe('a None the game returns too (an alias of a stopped quest)', () => {
+  // A script that goes on after its quest stopped asks its location alias for its location
+  // (None: a stopped quest's aliases are empty, in the game as here) and calls on it
+  // (FavorChangeLocationQuestScript's game-time update): the script's own error, the game's.
+  const built: BuildScript[] = [
+    {
+      name: 'LocationAlias',
+      functions: [{ name: 'GetLocation', returnType: 'Location', native: true }],
+    },
+    {
+      name: 'Location',
+      functions: [
+        { name: 'IsChild', returnType: 'Bool', native: true, params: [['akOther', 'Location']] },
+      ],
+    },
+    {
+      name: 'Updater',
+      functions: [
+        {
+          name: 'Check',
+          returnType: 'Bool',
+          params: [['a', 'LocationAlias']],
+          locals: [
+            ['l', 'Location'],
+            ['b', 'Bool'],
+          ],
+          code: [
+            ['callmethod', id('GetLocation'), id('a'), id('l')],
+            ['callmethod', id('IsChild'), id('l'), id('b'), id('l')],
+            ['return', id('b')],
+          ],
+        },
+      ],
+    },
+  ];
+  const scripts = new Map(
+    built.map((script) => [script.name.toLowerCase(), parsePex(buildPex(script))]),
+  );
+
+  const run = async (running: boolean): Promise<string[]> => {
+    const logged: string[] = [];
+    const host: VmHost = {
+      formType: () => Promise.resolve('form'),
+      attachedScripts: (target) =>
+        Promise.resolve(target.alias >= 0 ? [] : [{ name: 'Updater', properties: new Map() }]),
+      native: (script, fn) =>
+        script === 'locationalias' && fn === 'getlocation' ? () => null : undefined,
+      warn: (message) => logged.push(`warn: ${message}`),
+      gameLog: (message) => logged.push(message),
+      gameNone: (target, fn) =>
+        !running &&
+        target instanceof ObjectHandle &&
+        target.alias >= 0 &&
+        fn.toLowerCase() === 'getlocation',
+    };
+    const vm = new PapyrusVm(new ScriptLibrary((name) => Promise.resolve(scripts.get(name))), host);
+    const alias = new ObjectHandle(0x40, 'LocationAlias', 3);
+    await vm.call(new ObjectHandle(0x40, 'Updater'), 'Check', [alias]);
+    return logged;
+  };
+
+  it("logs the call on it as the game's own error once the alias's quest stopped", async () => {
+    const logged = await run(false);
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toMatch(/^Updater\.Check .*Cannot call IsChild\(\) on a None object/);
+    expect(logged[0]).toContain('(l: None as the engine gave it, unchecked)');
+  });
+
+  it('logs it as a fault of the engine while the quest runs (its alias should hold one)', async () => {
+    const logged = await run(true);
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toMatch(/^warn: .*Cannot call IsChild\(\) on a None object/);
+  });
+});
