@@ -34,7 +34,7 @@ annotations, records) use it.
 | --------------------------- | ----: | ---: | ---: |
 | Behavior classes            |    66 |   66 |    0 |
 | Behavior members (read)     |   320 |  320 |    0 |
-| Behavior node fields (run)  |   292 |  283 |    9 |
+| Behavior node fields (run)  |   292 |  284 |    8 |
 | Annotations (tags)          |   135 |  127 |    8 |
 | Response handlers           |    97 |   97 |    0 |
 | Idles (IDLE fields)         |    10 |    9 |    1 |
@@ -42,7 +42,7 @@ annotations, records) use it.
 | Actions (AACT)              |    71 |   68 |    3 |
 | Game settings (GMST)        |    20 |   20 |    0 |
 | Mechanics (by hand)         |    27 |   18 |    9 |
-| Total                       |  1149 | 1119 |   30 |
+| Total                       |  1149 | 1120 |   29 |
 
 Round 1 wrote the sweep and this list. Built: the animations' SoundStop.<descriptor> and
 SoundRelease.<descriptor> (17 and 8 annotations: the bow's draw loop, WPNBowPullLPM, stops as
@@ -156,11 +156,11 @@ what fills it was not found).
 - [x] synchronized-clip.markErrorThreshold (540): the partner is at its mark once within it on
       each axis (with bReorientSupportChar, its rotation too) after its get-to-mark time; until
       then it is put there again (observed in the original; `atMark`; round 8).
-- [ ] synchronized-clip.applyMotionFromRoot (13: Mount, Dismount, DragonMount, DragonDismount,
+- [x] synchronized-clip.applyMotionFromRoot (13: Mount, Dismount, DragonMount, DragonDismount,
       the dragon's grapple and mount): observed in the original, the actor's placement follows
       its skeleton's root bone (the mark composed with the bone's pose, the bone left at the
-      origin). TODO(M13): not built (the drawn picture is the same; the actor's own place does
-      not follow).
+      origin): BehaviorRuntime.motionFromRoot, the riders placed by it (src/shell/actor-mounts.ts;
+      built 2026-11-09, checked off 2026-11-18; tests/conformance/animation/paired-animations.test.ts).
 - [x] powered-ragdoll.worldFromModelMode (95): the powered ragdoll's root (world-from-model
       mode, its pose-matching bones): FullyRagdoll's (4) places one lying by its ragdoll's way,
       the get-up's matching (2) by the match (docs/physics.md, "Motors";
@@ -221,7 +221,9 @@ what fills it was not found).
       passed (src/shell/actor-furniture.ts; round 2). TODO(M13): per actor or not; a group
       idle's delay over its children.
 - [ ] animationGroupSection (3128 idles): "stray bytes" in Skyrim's data (idle-records.ts).
-      TODO(M13): confirm the original reads nothing there.
+      Observed in the original: the idle's load reads DATA's six bytes whole into the form (the
+      byte kept beside the loop times, flags and replay delay). TODO(M13): no reader of it was
+      established, nor its absence proven.
 - [x] Actions performed (**DONE** of 71): ActionIdle, ActionDraw, ActionSheath, the attacks
       and power attacks, interrupts, ready and release of each hand and the voice,
       ActionActivate, ActionLand, ActionFall, ActionDeath, ActionDeathWait, the bleedout's, the
@@ -286,9 +288,11 @@ what fills it was not found).
       [General] iFPSClamp; observed in the original): at most 1/6 s a frame, evened out over the
       last frames; one step for every system, graphs near and far alike (docs/animation.md,
       "Frame time"; `tests/conformance/animation/frame-time.test.ts`).
-- [ ] Read by the original and not by us. bApplyPitchToExtractedMotion (1): a clip's root motion
-      turned by the actor's pitch (no effect at pitch 0; the movers' root motion is level);
-      bEnableHavokHit (0) with fHavokHit*: off in the game; bFootIKFeedback (1), bForceJumpingFromGraph
+- [x] bApplyPitchToExtractedMotion (1): observed in the original, an animation-driven actor's
+      root motion is turned about its right axis by its character controller's pitch (from float
+      epsilon up; its turn untouched): the movers' tilting races' lean (src/animation/
+      extracted-motion.ts, src/shell/actor-movers.ts; tests/conformance/animation/clips.test.ts).
+- [ ] Read by the original and not by us. bEnableHavokHit (0) with fHavokHit*: off in the game; bFootIKFeedback (1), bForceJumpingFromGraph
       (0), bRandomizeGraphSeed (1), fIdleChangeClearTime (1), fWeaponChangeClearTime (0.5),
       fMaxFrameCounterDifferenceToConsiderVisible, the player's
       fPlayerCharacterDrawSheatheTimeout, fPlayerCharacterPowerAttackStartTime,
@@ -303,12 +307,14 @@ what fills it was not found).
       blenders, bindings, expressions (docs/animation.md, "Behavior runtime").
 - [x] Sync points: a syncing blender's children play between their own sync points as its
       cycle is between its layout's (src/animation/sync-points.ts; round 2).
-- [x] Mirrored additive clips: by our own rule (docs/animation.md, "Mirrored clips"), and no
-      vanilla graph plays one (tests/conformance/animation/clips.test.ts). TODO(M13): the engine's
-      rule, for a mod's.
+- [x] Mirrored additive clips: observed in the original, each bone's rotation turned by its
+      parent's invariant on both sides, translations as a full pose's (docs/animation.md,
+      "Mirrored clips"); no vanilla graph plays one (tests/conformance/animation/clips.test.ts).
 - [x] Engine handlers: the response files' 95 of 97 (above).
-- [x] An event no node takes is reported as not handled (BehaviorRuntime.answered): a death
-      idle its graph does not take lets the body go at once (inferred, TODO(M13);
+- [x] An event sent to an actor's graphs is handled at once and answers whether a node of any of
+      them took it (observed in the original: every graph of the actor is sent it; one inactive,
+      or without the event among its names, takes none): a death idle no active state takes lets
+      the body go as it is sent (BehaviorRuntime.wouldHandle; letting it go inferred, TODO(M13);
       tests/conformance/animation/graph-runtime.test.ts). (bDisableInterp has no setter in the engine, observed in the
       original: the graphs set it; it is read with bIsSynced and bSpeedSynced: round 8.)
 - [x] Head tracking (docs/animation.md, "Head tracking"; the settings above).
@@ -341,8 +347,10 @@ what fills it was not found).
 - [x] Animation objects: the list, the female hands' scale while one is held (inferred: the
       skeleton's own node scale stays under the clips), the POV switch off while the player holds
       one, a model without "Prn" never shown, saves (tests/conformance/animation/animation-objects.test.ts).
-- [x] Ambient idles (but which idles skip the next PickNewIdle, the complex scene's wait); the
-      meal's gate (an Eat package's eating step) and the seated request (settling in furniture at a
+- [x] Ambient idles; which idles skip the next PickNewIdle (a specific idle sent while the
+      graph's bForceIdleStop is set stops the playing one first; the skip holds until the next
+      PickNewIdle) and the complex scene's wait (the SetSceneIsComplex count): observed in the
+      original. The meal's gate (an Eat package's eating step) and the seated request (settling in furniture at a
       sit or lean marker asks for an idle: the player's chair idles in third person; getting up
       cuts the idle that played and drops a wish only the settling raised), both inferred
       (TODO(M13); docs/animation.md, "Ambient idles").
@@ -351,7 +359,8 @@ what fills it was not found).
       handled yet, transitions and modifiers (docs/formats/save.md, "Animation graphs";
       tests/conformance/animation/graph-runtime.test.ts).
 - [x] Clips: compression, root motion, float tracks, annotations.
-- [x] Clip triggers and annotations raised as they are passed: looping cycles, ping-pong turns,
-      a negative speed played from the end, acyclic triggers (docs/animation.md, "Clip triggers";
-      inferred where Havok's rule is not documented).
+- [x] Clip triggers and annotations raised as they are passed: a step's start in and its end
+      out, a stretch to a cycle's or single play's end with both, cycle by cycle; a negative
+      speed from 0 played from the end; acyclic triggers by the time played; speeds under 0.001
+      (docs/animation.md, "Clip triggers"; observed in the original).
 - [x] Sounds of animations: footsteps, SoundPlay, NPCSoundPlay, SoundStop, SoundRelease.
