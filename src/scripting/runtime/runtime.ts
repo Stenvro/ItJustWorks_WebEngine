@@ -595,6 +595,13 @@ export interface WorldBridge {
   savedGraph?(reference: number): SavedGraph | undefined;
 }
 
+/** A menu's movie as scripts reach into it (SKSE's UI script): paths as "_root.Menu_mc.x". */
+export interface MenuMovie {
+  get(path: string): unknown;
+  set(path: string, value: unknown): void;
+  invoke(path: string, ...args: unknown[]): unknown;
+}
+
 /** A quest's update as the HUD announces it. */
 export interface QuestUpdate {
   readonly quest: number;
@@ -1029,6 +1036,8 @@ export class ScriptRuntime implements VmHost {
   inMenuMode = false;
   /** Whether a menu of that name is open (the menu manager's stack: SKSE's UI.IsMenuOpen). */
   menuOpen: ((name: string) => boolean) | undefined;
+  /** An open menu's movie by the menu's name: what SKSE's UI script reads, sets and calls in. */
+  menuMovie: ((name: string) => MenuMovie | undefined) | undefined;
   /** The actor the player is in a conversation with (IsInDialogueWithPlayer), if any. */
   dialogueSpeaker: number | undefined;
   frameRate = 60;

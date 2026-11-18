@@ -8,6 +8,7 @@ import { formatValue } from '../../values.ts';
 import { globalValue } from '../condition-values.ts';
 import type { ScriptRuntime } from '../runtime.ts';
 import { bool, formOf, int, num, object, str, type Register } from './args.ts';
+import { registerUiScript } from './ui-script.ts';
 
 const DEG = 180 / Math.PI;
 
@@ -39,6 +40,7 @@ export function registerCore(n: Register, runtime: ScriptRuntime): void {
   n('utility.isinmenumode', () => runtime.inMenuMode);
   // SKSE's UI script: whether a menu is open, by its name ("InventoryMenu", "Book Menu", ...).
   n('ui.ismenuopen', ({ args }) => runtime.menuOpen?.(str(args[0])) ?? false);
+  registerUiScript(n, runtime);
   n('utility.gametimetostring', ({ args }) => runtime.gameTimeString(num(args[0])));
   n('utility.getcurrentmemory', () => 0);
   n('utility.getbudgetcount', () => 0);

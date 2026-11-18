@@ -7,6 +7,7 @@
 // In the game the HUD (hud-controller.ts) and the game's menus (game-menus.ts).
 
 import { FREE_CAMERA_SPEED } from '../render/fly-camera.ts';
+import { menuMovie } from '../ui/menu-movies.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { Vec3 } from '../render/math.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -356,6 +357,11 @@ export class PlayMode {
     );
     // The menus' navigation keys as the player's bindings say (W, A, S, D as the arrows).
     this.#host.menuKeys = () => menuKeys(this.#playerData?.controls);
+    // Scripts reach into an open menu's movie by the menu's name (SKSE's UI script).
+    session.menuMovies = (name) => {
+      const movie = menuMovie(name);
+      return movie === undefined ? undefined : this.#host.openMovie(movie);
+    };
     // The menus' button hints as the player's bindings say: with a gamepad in use its own, by
     // the names its device reads (interface\controls\pc\gamepad.txt), sent again as the device
     // in use changes.
