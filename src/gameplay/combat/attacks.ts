@@ -66,6 +66,11 @@ export function attackEventKind(
     };
   }
   const name = event.toLowerCase();
+  // The idle tree's BashFail (blocking, no stamina left) is a refused bash: no race has attack
+  // data for it, and the character graphs play only the block bash intro for it, back to the
+  // block raising bashRelease, never bashStop (tools/behavior-run.ts). An attack taken from it
+  // would stand for good.
+  if (name === 'bashfail') return undefined;
   if (name.startsWith('pa_')) return { power: true, bash: false, left: false };
   if (name.includes('bash')) return { power: name.includes('power'), bash: true, left: false };
   if (name.includes('attack') || name === 'combatstancestart') {

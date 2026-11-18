@@ -248,7 +248,8 @@ and 290 built-in ones the readers ask for by name.
 - [x] Attacks while closing in (attackReaches: each attack's reach with its clip's move or its
       own speed at its hit frame); the special attack has no attack data: the idle tree's
       ActionRightPowerAttack, an NPC's kill moves (real-fight.test.ts, melee-choice.test.ts).
-- [x] Blocks, sustained block, block attack, bashes, offensive bash (block-bash.test.ts).
+- [x] Blocks, sustained block, block attack, bashes, offensive bash (block-bash.test.ts); the
+      refused bash (BashFail, no stamina left) starts no attack (combat-state.test.ts).
 - [x] The block attack's opening, observed in the original: only while its target draws back the
       swing, inside that swing's strike angle × fCombatBlockAttackStrikeAngleMult and within the
       target's weapon reach × fCombatBlockAttackReachMult plus a radius, now or
