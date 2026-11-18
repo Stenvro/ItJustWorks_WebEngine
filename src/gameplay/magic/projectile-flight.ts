@@ -134,13 +134,23 @@ export function isMine(data: Pick<FlightData, 'flags' | 'proximity'>): boolean {
 }
 
 /**
- * Whether a mine bursts for an actor come within its proximity: its Calculate Mine Explode
- * Chance (percent; 100 without perks, the engine asks the actor's perks, no vanilla perk has one)
- * against a roll of 0..1. TODO(M13): inferred that 100 is where the chance starts and that it is
- * rolled once each time the actor comes within the proximity.
+ * Whether an actor sets a mine off by where it stands (observed in the original): its position
+ * (its feet) nearer the mine than the mine's proximity (in an exterior times
+ * fMineExteriorRadiusMult, 1, which no plugin sets).
+ */
+export function withinMineRadius(mine: Vec3, feet: Vec3, proximity: number): boolean {
+  return length([feet[0] - mine[0], feet[1] - mine[1], feet[2] - mine[2]]) < proximity;
+}
+
+/**
+ * Whether the player near a mine sets it off (observed in the original): the engine asks the
+ * player's Calculate Mine Explode Chance (from 100, the mine's projectile its item tab; no
+ * vanilla perk has one) and rolls 0..99 against it; a roll at or above the chance passes the mine
+ * for good (it never asks the player again; others near it still set it off). Other actors set a
+ * mine off without a roll. The roll is 0..1.
  */
 export function mineBursts(chancePercent: number, roll: number): boolean {
-  return roll * 100 < chancePercent;
+  return Math.floor(roll * 100) < chancePercent;
 }
 
 /** Whether a lobber of an age has outlived the most it lives (lobberAgeMax; zero: never). */
@@ -229,6 +239,8 @@ export interface LobberSettings {
   readonly grenadeAgeMax: number;
   /** fMineAgeMax: the same for a mine (0: no limit). */
   readonly mineAgeMax: number;
+  /** fMinesDelayMin: the seconds from a mine's being set off to its burst. */
+  readonly minesDelayMin: number;
 }
 
 /** The lobbers' ages alone (lobberAgeMax). */
@@ -242,6 +254,7 @@ export const LOBBER_DEFAULTS: LobberSettings = {
   friction: 5,
   grenadeAgeMax: 90,
   mineAgeMax: 0,
+  minesDelayMin: 0.1,
 };
 
 /** Below this speed (units a second) off a surface a lobber stops bouncing and lies still. */

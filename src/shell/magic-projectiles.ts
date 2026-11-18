@@ -35,6 +35,7 @@ import {
   LOBBER_DEFAULTS,
   MAX_PLAYER_RUNES,
   mineBursts,
+  withinMineRadius,
   normalize,
   pathHitsActor,
   pointAt,
@@ -111,6 +112,8 @@ export interface MagicProjectilesOptions {
   readonly shotWay?: (from: Vec3, to: Vec3) => void;
   /** The living actors of the loaded area (the player too). */
   readonly targets: () => Iterable<ProjectileTarget>;
+  /** The loaded area is an interior (a mine's reach is not scaled by fMineExteriorRadiusMult). */
+  readonly interior?: () => boolean;
   /** A sound at a place is a noise the actors may hear (src/shell/actor-senses.ts). */
   readonly noise?: (at: Vec3, owner: number | undefined, soundLevel: number) => void;
   /**
@@ -162,10 +165,13 @@ interface Flying {
   /** A rune: when it came to rest (the projectiles' clock), the oldest giving way first. */
   restedAt?: number;
   /**
-   * A mine: the actors within its proximity, each with whether its Calculate Mine Explode Chance
-   * burst it (undefined while their perks are asked); one gone out of it rolls again on its return.
+   * A mine: the seconds left from its being set off to its burst (fMinesDelayMin), whether the
+   * player passed it for good (their Calculate Mine Explode Chance failed), and whether their
+   * perks are being asked now.
    */
-  mineRolls?: Map<number, boolean | undefined>;
+  mineCountdown?: number;
+  minePassed?: boolean;
+  mineAsking?: boolean;
   /** A loaded save's state of its model's graph, put back as its model loads. */
   savedGraph?: SavedGraph | undefined;
 }
@@ -1089,7 +1095,7 @@ export class MagicProjectiles {
       const near =
         !hit &&
         (flying.projectile.flags & ProjectileFlag.altTrigger) !== 0 &&
-        this.#near(flying, to);
+        this.#near(flying, to, seconds);
       // A lobber with an alternative trigger that meets a surface bounces or rests there,
       // waiting for an actor within its proximity or its timer (a rune on the floor).
       if (
@@ -1162,6 +1168,7 @@ export class MagicProjectiles {
       friction: read.number('fGrenadeFriction') ?? LOBBER_DEFAULTS.friction,
       grenadeAgeMax: read.number('fGrenadeAgeMax') ?? LOBBER_DEFAULTS.grenadeAgeMax,
       mineAgeMax: read.number('fMineAgeMax') ?? LOBBER_DEFAULTS.mineAgeMax,
+      minesDelayMin: read.number('fMinesDelayMin') ?? LOBBER_DEFAULTS.minesDelayMin,
     };
   }
 
@@ -1532,40 +1539,60 @@ export class MagicProjectiles {
   }
 
   /**
-   * Whether an actor other than its caster is within a projectile's proximity and bursts it: any
-   * such actor for one that is no mine; for a mine, one whose Calculate Mine Explode Chance (the
-   * actor's perks, the mine's spell its item tab) came up as it came within (mineBursts). The
-   * roll is asked once as the actor comes within, and again after it went out of reach.
+   * Whether a projectile with an alternative trigger bursts by who is near it: one that is no mine
+   * as an actor other than its caster comes within its proximity; a mine (observed in the
+   * original) fMinesDelayMin after it was set off: by an actor other than its caster standing
+   * within its proximity (projectile-flight.ts withinMineRadius), or by the player as their
+   * Calculate Mine Explode Chance comes up (mineBursts), whom a failed roll lets pass it for good.
+   * TODO(M13): who else the original lets pass a mine (its check of the actor against the mine) is
+   * not read: here only its caster.
    */
-  #near(flying: Flying, at: Vec3): boolean {
-    const within: number[] = [];
-    for (const target of this.#options.targets())
-      if (
-        target.reference !== flying.delivered.caster &&
-        withinProximity(flying.projectile, at, target.shape)
-      )
-        within.push(target.reference);
-    if (!isMine(flying.projectile)) return within.length > 0;
-    const rolls = (flying.mineRolls ??= new Map<number, boolean | undefined>());
-    for (const reference of [...rolls.keys()])
-      if (!within.includes(reference)) rolls.delete(reference);
-    const runtime = this.#options.session.scriptsReady;
-    for (const reference of within) {
-      if (rolls.has(reference)) continue;
-      if (!runtime) {
-        rolls.set(reference, true);
-        continue;
-      }
-      rolls.set(reference, undefined);
-      void runtime.perks
-        .apply(EntryPoint.calculateMineExplodeChance, reference, 100, [
-          flying.delivered.item.formId,
-        ])
-        .then((chance) => {
-          if (rolls.has(reference)) rolls.set(reference, mineBursts(chance, Math.random()));
-        });
+  #near(flying: Flying, at: Vec3, seconds: number): boolean {
+    if (!isMine(flying.projectile)) {
+      for (const target of this.#options.targets())
+        if (
+          target.reference !== flying.delivered.caster &&
+          withinProximity(flying.projectile, at, target.shape)
+        )
+          return true;
+      return false;
     }
-    return within.some((reference) => rolls.get(reference) === true);
+    if (flying.mineCountdown !== undefined) {
+      flying.mineCountdown -= seconds;
+      return flying.mineCountdown <= 0;
+    }
+    const settings = this.#lobberSettings();
+    const exteriorMult = this.#settings?.number('fMineExteriorRadiusMult') ?? 1;
+    const reach =
+      flying.projectile.proximity * (this.#options.interior?.() === true ? 1 : exteriorMult);
+    const setOff = (): void => {
+      flying.mineCountdown ??= settings.minesDelayMin;
+    };
+    let player = false;
+    for (const target of this.#options.targets()) {
+      if (target.reference === flying.delivered.caster) continue;
+      if (!withinMineRadius(at, target.shape.feet, reach)) continue;
+      if (target.reference !== PLAYER_REF) {
+        setOff();
+        return false;
+      }
+      player = true;
+    }
+    const runtime = this.#options.session.scriptsReady;
+    if (!player || flying.minePassed === true || flying.mineAsking === true) return false;
+    if (!runtime) {
+      setOff();
+      return false;
+    }
+    flying.mineAsking = true;
+    void runtime.perks
+      .apply(EntryPoint.calculateMineExplodeChance, PLAYER_REF, 100, [flying.projectile.formId])
+      .then((chance) => {
+        flying.mineAsking = false;
+        if (mineBursts(chance, Math.random())) setOff();
+        else flying.minePassed = true;
+      });
+    return false;
   }
 
   /**

@@ -123,7 +123,12 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
   /** The player's runes falling onto the ground: projectiles with a runtime and physics stubbed. */
   async function placed(
     maxRunes: number,
-    mine?: { readonly chance: number; readonly xs?: readonly number[] },
+    mine?: {
+      readonly chance: number;
+      readonly xs?: readonly number[];
+      readonly walker?: number;
+      readonly frames?: number;
+    },
   ): Promise<number[]> {
     const SPELL = 0x2001;
     const RUNE = {
@@ -137,7 +142,7 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
       light: undefined,
       muzzleFlashLight: undefined,
       tracerChance: 0,
-      proximity: 10,
+      proximity: 60,
       timer: 0,
       explosion: undefined,
       sound: undefined,
@@ -223,7 +228,8 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
           projectile: RUNE.formId,
           item: SPELL,
           via: 'spell',
-          caster: PLAYER_REF,
+          // A mine of the tests is another's (its caster sets it off never).
+          caster: mine ? 0x5555 : PLAYER_REF,
           dual: false,
           position: [x, 0, 2],
           velocity: [0, 0, -10],
@@ -236,11 +242,11 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
     }
     if (mine) {
       walker = {
-        reference: 0x1234,
+        reference: mine.walker ?? PLAYER_REF,
         heading: 0,
-        shape: { feet: [120, 0, 0], height: 128, radius: 30 },
+        shape: { feet: [140, 0, 0], height: 128, radius: 30 },
       };
-      for (let frame = 0; frame < 3; frame++) {
+      for (let frame = 0; frame < (mine.frames ?? 3); frame++) {
         magic.frame(0.1);
         for (let tick = 0; tick < 5; tick++) await new Promise((resolve) => setTimeout(resolve, 0));
       }
@@ -262,9 +268,12 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
     expect(isMine({ flags: ProjectileFlag.altTrigger, proximity: 0 })).toBe(false);
     expect(mineBursts(100, 0.99)).toBe(true);
     expect(mineBursts(30, 0.5)).toBe(false);
-    // Without perks the chance is 100: the rune is gone; a perk setting it to 0 keeps it.
+    // Without perks the chance is 100: the rune is gone fMinesDelayMin (0.1 s) after;
+    // a perk setting it to 0 lets the player pass it for good.
     expect(await placed(1, { chance: 100, xs: [100] })).toEqual([]);
-    expect(await placed(1, { chance: 0, xs: [100] })).toEqual([100]);
+    expect(await placed(1, { chance: 0, xs: [100], frames: 6 })).toEqual([100]);
+    // Another actor sets it off without a roll.
+    expect(await placed(1, { chance: 0, xs: [100], walker: 0x1234 })).toEqual([]);
   });
 });
 

@@ -869,6 +869,7 @@ export class ActorStage {
     });
     this.projectiles = new MagicProjectiles({
       session: options.session,
+      interior: () => options.interior === true,
       renderer: options.renderer,
       terminal: options.terminal,
       shotWay,

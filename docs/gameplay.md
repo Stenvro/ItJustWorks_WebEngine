@@ -1032,6 +1032,15 @@ same aim; what differs is where they leave from and, for an NPC, what it aims at
   these two numbers stays inferred, TODO(M13)); one with an alternative trigger then lies, or slides down a slope steeper than
   the friction's angle (78.7°) until one holds it, and waits at rest for an actor within its
   proximity (the runes' 150) or its timer, then bursts; without one it bursts on the surface.
+  A mine (observed in the original) is set off by an actor other than its caster whose position
+  (its feet) is within its proximity (in an exterior times fMineExteriorRadiusMult, 1), or by the
+  player as their Calculate Mine Explode Chance (from 100, the mine's projectile its item tab)
+  comes up on a roll of 0..99; a failed roll lets the player pass that mine for good. It bursts
+  fMinesDelayMin (0.1 s) after (projectile-flight.ts withinMineRadius, mineBursts). TODO(M13):
+  the original's own check of the actor against the mine is not read (ours passes only its
+  caster); a mine model's ##LightOn node blinks in the original (every fMinesBlinkSlow, faster
+  to fMinesBlinkFast within fMinesBlinkMax of its burst): no vanilla rune model has one, ours
+  does not blink it yet.
   An actor it meets in flight sets it off. A lobber's age (observed in the original, asked at
   each of its updates): the most it lives is its PROJ's Lifetime; where that is zero,
   fGrenadeAgeMax, or for a mine (Alt. Trigger with an explosion proximity above zero)

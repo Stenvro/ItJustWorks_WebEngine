@@ -137,12 +137,12 @@ Round 4 (2026-11-02) read the settings no document names from the original (docs
 - fMagicAreaScaleMin, fMagicAreaScaleMax: registered and never read (inert).
 
 Round 5 (2026-11-18) built the entry points the original asks that no vanilla perk uses:
-Calculate Mine Explode Chance (a mine bursts for an actor come within its proximity as that
-actor's chance, 100 without perks, comes up; rolled again after it went out of reach:
-projectile-flight.ts mineBursts, magic-projectiles.ts), Adjust Limb Damage (the target's perks on
+Calculate Mine Explode Chance (observed in the original: asked of the player alone as they come
+within a mine's proximity, from 100, a failed roll passing that mine for good; other actors set
+it off without one: projectile-flight.ts mineBursts, magic-projectiles.ts), Adjust Limb Damage (the target's perks on
 a hit's limb damage, the attacker and its weapon their tabs: dismemberment.ts adjustedLimbDamage)
 and Mod Addiction Chance (a potion's addiction chance through the drinker's perks:
-magic-engine.ts consumed); where the engine asks them is inferred (TODO(M13)). The five entry
+magic-engine.ts consumed); where the engine asks the last two is inferred (TODO(M13)). The five entry
 points no call of was found for in the original (Mod Addiction Duration, Mod Positive Chem
 Duration, Mod Player Reputation, Mod Lockpick Level Allowed, Set Progression Picking) are
 explained as asked nowhere. The workbench type None is named where the menus are chosen (no
@@ -192,7 +192,7 @@ menu), and Enchant Visuals was already read (enchantment-glow.ts).
 ### Perk entry points (92 of 92)
 
 - [x] calculateWeaponDamage (12), calculateMyCriticalHitChance (14), calculateMyCriticalHitDamage (8), modRecoveredHealth (0), modEnemyCriticalHitChance (0), modRecoverArrowChance (2), modBashingDamage (2), modPowerAttackStamina (4), modPowerAttackDamage (2), modIncomingStagger (2), modTargetStagger (1), modIncomingDamage (23), modTargetDamageResistance (7), modPercentBlocked (8), modShieldDeflectArrowChance (1), setSweepAttack (1), applyCombatHitSpell (58), applyBashingSpell (5), setBooleanGraphVariable (3), applyWeaponSwingSpell (1), modSoulPctCapturedToWeapon (1): src/shell/actor-combat.ts
-- [x] calculateMineExplodeChance (0), modMaxPlaceableMines (0): src/shell/magic-projectiles.ts (asked by the original: the mine's chance as an actor comes within its proximity, inferred where; the player's iMaxPlayerRunes, observed in the original)
+- [x] calculateMineExplodeChance (0), modMaxPlaceableMines (0): src/shell/magic-projectiles.ts (observed in the original: the player's chance as they come within a mine's proximity; the player's iMaxPlayerRunes)
 - [x] adjustLimbDamage (0): src/gameplay/combat/dismemberment.ts (asked by the original; the target's perks on the hit's limb damage, inferred where)
 - [x] adjustBookSkillPoints (1): src/shell/book-reading.ts
 - [x] getShouldAttack (0): src/shell/actor-combat-ai.ts (asked by the original; where, inferred: the other actor off its targets)
