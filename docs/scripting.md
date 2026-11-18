@@ -454,8 +454,9 @@ quest are not. A quest starts as the game starts it: with the new game (Start Ga
 through the story manager's tree for its event, once per quest node that lists it (each node is
 a way the event reaches it: Favor001's Markarth node finds its quest giver, its Windhelm node
 none), with the event data the nodes' and its own GetEventData conditions ask for (the form they
-name, the locations with the keyword they name; for a member an event alias fills, the forms its
-conditions accept), after the world state the nodes' conditions wait for is set (stages,
+name, the locations with the keyword they name, for a form member an item with the keyword or the
+first form of the list they name; for a member an event alias fills, the forms its conditions
+accept; the script event's arguments in its parameters' order), after the world state the nodes' conditions wait for is set (stages,
 completed quests, the player's level, globals) and with the player where the event happens (in
 a Change Location event's new location, in the location a path's GetInCurrentLoc asks for: the
 tree's conditions run on the player); an event the engine raises meanwhile counts too (the
@@ -476,17 +477,21 @@ event's reference.
 
 On 2026-11-18, 253 of the 285 quests start as the game starts them and reach their first stage
 without a fault of the engine. The 32 left are expected to fail (`it.fails`), each with its reason
-(the file's `OPEN`), and a case that passes fails the run until it comes off the list. 20 want
-event data only the place where the event happens gives (WE100's ten objectives the treasure
-hunter's letter and item, the WI interactions' actors, WEDA02's trigger) or what the player is
-(the skills and spells WIChangeLocation03 and 04 ask for, a node's roll); 2 the bounty's location
-the steward's script sends (BQ02, BQ04); 6 the world as the game had it by then (CWMiscObj the
-civil war's faction leader, DA14 the inn DA14Start found, Favor253's quest giver in Whiterun,
-FreeformSkyHavenTempleB a dragon lair, BYOHHouseBanditAttack2 a house built,
-ccBGSSSE001_Radiant_1 an innkeeper in the loaded area); 4 a fault of the engine not yet fixed
-(Survival's cold update finds no current weather on the simulation before the sky has one; the
-civil war's mission generator gets a global as None; StockadeBarricade01ActivatorScript finds no
-linked reference; dunStonehillBarrowQST's start-up fragment calls on an alias left empty).
+(the file's `OPEN`), and a case that passes fails the run until it comes off the list. The dice
+are seeded per quest and per event raised (`Sim.reseed`, `VirtualClock.reseed`), so a node's
+GetRandomPercent (WIEventChance for the WI nodes) rolls the same when a case runs alone as in the
+whole run, and the tree's roll is the one read for why it stopped. 19 want event data only the
+place where the event happens gives (WE100's ten objectives the treasure hunter's letter and
+item, the WI interactions' actors, WEDA02's trigger) or what the player is (the skills and spells
+WIChangeLocation03 and 04's own conditions ask for: with the node's roll passing, the tree stops
+there); 4 the bounty's location (BQ01 to BQ04: the event's location fills none of their aliases);
+6 the world as the game had it by then (CWMiscObj the civil war's faction leader, DA14 the inn
+DA14Start found, Favor253's quest giver in Whiterun, FreeformSkyHavenTempleB a dragon lair,
+BYOHHouseBanditAttack2 a house built, ccBGSSSE001_Radiant_1 an innkeeper in the loaded area); 3 a
+fault of the engine not yet fixed (Survival's cold update finds no current weather on the
+simulation before the sky has one; the civil war's mission generator gets a global as None;
+StockadeBarricade01ActivatorScript finds no linked reference); and BQ04's dunStonehillBarrowQST
+start-up fragment calls on an alias left empty.
 TODO(M13): each of them.
 
 ## The world

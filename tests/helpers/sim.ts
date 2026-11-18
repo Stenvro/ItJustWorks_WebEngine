@@ -364,6 +364,11 @@ export class Sim {
     return this.runtime.quests.isRunning(quest);
   }
 
+  /** The simulation's dice start again from `seed` (VirtualClock.reseed). */
+  reseed(seed: number): void {
+    this.world.clock.reseed(seed);
+  }
+
   /** Sets a global (GlobalVariable.SetValue; the clock's globals move the clock). */
   setGlobal(global: number, value: number): void {
     if (!this.runtime.setClockGlobal(global, value)) this.runtime.state.globals.set(global, value);

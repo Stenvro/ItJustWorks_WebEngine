@@ -35,7 +35,7 @@ describe.skipIf(!hasGamedata())('hazards placed in a cell (headless simulation)'
     // Its cell lists it with its model (no longer a reference without one).
     const data = await loadCellData(sim.db, RATWAY);
     drawn = data.objects.some(
-      (object) => object.reference === CAMPFIRE && object.model.endsWith("fxfire01new.nif"),
+      (object) => object.reference === CAMPFIRE && object.model.endsWith('fxfire01new.nif'),
     );
     const fire = await sim.position(CAMPFIRE);
     if (fire) {

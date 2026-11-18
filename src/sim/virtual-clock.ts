@@ -38,13 +38,21 @@ type TimerHandler = (...args: unknown[]) => void;
 export class VirtualClock {
   /** Milliseconds on the clock (what performance.now() reads while installed). */
   #ms: number;
-  readonly #random: () => number;
+  #random: () => number;
   readonly #timers = new Map<number, Timer>();
   #nextTimer = 1;
   #restore: (() => void) | undefined;
 
   constructor(seed = 1, startMs = 1000) {
     this.#ms = startMs;
+    this.#random = seededRandom(seed);
+  }
+
+  /**
+   * The dice start again from `seed` (Math.random while installed): what is rolled next is the
+   * same whatever was rolled before (one case of a long simulation rolls as it does on its own).
+   */
+  reseed(seed: number): void {
     this.#random = seededRandom(seed);
   }
 
@@ -125,7 +133,7 @@ export class VirtualClock {
     Object.defineProperty(Math, 'random', {
       configurable: true,
       writable: true,
-      value: this.#random,
+      value: () => this.#random(),
     });
     const clear = (id: unknown): void => {
       if (typeof id === 'number') this.#timers.delete(id);

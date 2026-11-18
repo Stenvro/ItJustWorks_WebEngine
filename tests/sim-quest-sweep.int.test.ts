@@ -9,7 +9,8 @@
 // - Start Game Enabled: with the new game (the sweep reads it as the new game left it);
 // - a story manager event type: the event is raised through the story manager's tree, with the
 //   event data the tree's and the quest's own GetEventData conditions ask for (a location with
-//   the keyword they name, the form they name; a location its event alias's conditions accept for
+//   the keyword they name, the form they name, an item with the keyword they name, a form of the
+//   list they name; a location its event alias's conditions accept for
 //   a member nothing names), after the world state its nodes' conditions wait for is set (stages
 //   reached or done, quests completed, the player's level, globals);
 // - neither: another quest's script or a dialogue line starts it. The sweep calls Quest.Start
@@ -19,7 +20,8 @@
 //
 // Each case reports: started (and how), the aliases filled, the faults logged while it started,
 // the first stage reached and the objectives shown. The cases run on one simulation in turn,
-// the world stepping while a start runs; each quest is stopped once read (unless it started with
+// the world stepping while a start runs, the dice seeded per quest and per event raised (a node's
+// GetRandomPercent rolls the same whether the case runs alone or after the others); each quest is stopped once read (unless it started with
 // the game) so that the next starts on a world close to a new game's.
 //
 // Run one quest: vitest run tests/sim-quest-sweep.int.test.ts -t "DA01 "
@@ -67,6 +69,17 @@ const EVENT_VARIANTS = 4;
 const MAX_EVENTS = 10;
 /** Of those, the ones raised through the story manager's tree before the direct starts. */
 const SM_EVENTS = 3;
+/** The record types an event's item member is looked for in (HasKeyword of a form member). */
+const ITEM_TYPES = ['WEAP', 'ARMO', 'AMMO', 'MISC', 'BOOK', 'ALCH', 'INGR', 'SCRL'];
+/**
+ * The members of the event types whose script event takes them as arguments, in its parameters'
+ * order (as the engine raises them: src/scripting/runtime/story-events.ts).
+ */
+const EVENT_MEMBERS: Readonly<Record<string, readonly string[]>> = {
+  AIPL: ['R1', 'R2', 'L1', 'F1', 'V1'],
+  CAST: ['R1', 'R2', 'L1', 'F1'],
+  CLOC: ['R1', 'L1', 'L2'],
+};
 
 interface SweptQuest {
   readonly record: QuestRecord;
@@ -236,6 +249,16 @@ class Sweep {
     return value;
   }
 
+  /** The first item of the load order with a keyword (an event's form member). */
+  async #itemWith(keyword: number): Promise<number | undefined> {
+    for (const type of ITEM_TYPES) {
+      for (const item of this.sim.db.formIdsOfType(type)) {
+        if (await this.#runtime.hasKeyword(item, keyword)) return item;
+      }
+    }
+    return undefined;
+  }
+
   /** The locations of the load order with a keyword (candidates for an event's location). */
   async #locationsWith(keyword: number): Promise<readonly number[]> {
     const known = this.#locationsByKeyword.get(keyword);
@@ -382,6 +405,12 @@ class Sweep {
               candidates.delete(member);
             } else avoid.set(member, data);
             break;
+          case 1: // IsInList: a form member is the list's first entry (the shout cast, the item)
+            if (wants && member.startsWith('F') && !forms.has(member)) {
+              const first = (await runtime.formList(data))[0];
+              if (first !== undefined) forms.set(member, first);
+            }
+            break;
           case 2: {
             // GetValue
             const value = satisfying(condition.operator, n, 0);
@@ -394,6 +423,10 @@ class Sweep {
               const known = candidates.get(member);
               const both = known ? found.filter((location) => known.includes(location)) : found;
               candidates.set(member, both);
+            } else if (wants && member.startsWith('F') && !forms.has(member)) {
+              // A form member (the item added): the first item of the load order with it.
+              const item = await this.#itemWith(data);
+              if (item !== undefined) forms.set(member, item);
             }
             break;
           default:
@@ -405,17 +438,25 @@ class Sweep {
       }
     }
     for (const [member, form] of avoid) if (forms.get(member) === form) forms.delete(member);
+    const handle = (member: string, form: number): Value =>
+      member.startsWith('L')
+        ? new ObjectHandle(form, 'location')
+        : member.startsWith('K')
+          ? new ObjectHandle(form, 'keyword')
+          : runtime.formHandle(form);
+    // The script event's arguments in its parameters' order (None for a member not given).
+    const order = EVENT_MEMBERS[type];
     const event = (data: ReadonlyMap<string, number>): StoryEventData => ({
       type,
       forms: data,
       values,
-      args: [...data.entries()].map(([member, form]): Value =>
-        member.startsWith('L')
-          ? new ObjectHandle(form, 'location')
-          : member.startsWith('K')
-            ? new ObjectHandle(form, 'keyword')
-            : runtime.formHandle(form),
-      ),
+      args: order
+        ? order.map((member): Value => {
+            const form = data.get(member);
+            if (form !== undefined) return handle(member, form);
+            return member.startsWith('V') ? (values.get(member) ?? 0) : null;
+          })
+        : [...data.entries()].map(([member, form]) => handle(member, form)),
     });
     // A member an event alias fills that the conditions do not name: the forms its alias's own
     // conditions accept (of the locations the conditions' keyword allows; of the persistent
@@ -579,7 +620,12 @@ class Sweep {
         if (byEngine()) {
           return { how: 'story manager', whyNot: undefined, firstStage: startUp?.index, treeWhy };
         }
+        // A node's roll (GetRandomPercent) is the event's own: seeded per quest and event, and
+        // the same for the tree as for what reads why it did not reach the quest.
+        const seed = (Math.imul(id, 31) + i) >>> 0;
+        this.sim.reseed(seed);
         const why = await this.#treeWhy(id, event);
+        this.sim.reseed(seed);
         const started = (await this.#drive(runtime.storyManager.quests(event))) ?? [];
         if (started.includes(id) || byEngine()) {
           return { how: 'story manager', whyNot: undefined, firstStage: startUp?.index, treeWhy };
@@ -667,6 +713,8 @@ class Sweep {
     // (a node's hours until reset, do all before repeating): what the earlier cases' starts left
     // there is let go, as on a new game's world.
     runtime.storyManager.loadData({});
+    // The dice roll from the quest's own seed: a case rolls the same alone as after the others.
+    sim.reseed(id);
     const { how, whyNot, firstStage, treeWhy } = await this.start(record, chain);
     await sim.world.settle();
     await sim.step(RUN_SECONDS);
@@ -723,8 +771,9 @@ const WI_PLACE =
   "TODO(M13): the event's actors are those where it happens (a child at play, a caster, a " +
   'killer, a victim); the sweep has no such place';
 const WI_PLAYER =
-  "TODO(M13): its own conditions want the player's skills and spells (GetActorValue, " +
-  'HasSpell) or a roll of the node (GetRandomPercent); the sweep sets neither';
+  "TODO(M13): its own conditions want the player's skills or spells (GetActorValue, HasSpell), " +
+  "which the new game's player does not have and the sweep does not set (with the node's roll " +
+  'passing, the tree stops there)';
 const BOUNTY =
   "TODO(M13): the bounty's location is the one the steward's script sends; the sweep's event " +
   'gives none its aliases accept';
@@ -750,12 +799,12 @@ const OPEN: Readonly<Record<string, string>> = {
   WICastMagic03: WI_PLACE,
   WIKill04: WI_PLACE,
   WIAssault02: WI_PLACE,
-  WIAddItem07: WI_PLAYER,
-  WICastMagic04: WI_PLAYER,
   WIChangeLocation03: WI_PLAYER,
   WIChangeLocation04: WI_PLAYER,
   WEDA02: "TODO(M13): its TRIGGER is the trigger the player walks into, the event's reference",
+  BQ01: BOUNTY,
   BQ02: BOUNTY,
+  BQ03: BOUNTY,
   BQ04: `${BOUNTY}; and dunStonehillBarrowQST's start-up fragment calls EvaluatePackage on an alias the engine left empty`,
   Favor253: 'TODO(M13): its quest giver in Whiterun is not where its alias looks in the new game',
   FreeformSkyHavenTempleB: 'TODO(M13): wants a dragon lair the main quest has opened',

@@ -146,8 +146,8 @@ export class HazardEngine {
   /**
    * A hazard the plugin placed in a cell (PHZD), its cell attached and it enabled: it stands
    * there and its spell hits those within its radius every target interval, as a placed one's
-   * does, until its cell detaches or it is disabled (`leave`). Its limit is a spawned
-   * hazard's (the oldest of a source's go). From the data: most placed ones are campfires
+   * does, until its cell detaches or it is disabled (`leave`). It has no source and so is
+   * under no limit (a spawned hazard's limit counts a source's). From the data: most placed ones are campfires
    * (FireLgPlacedHazard, 307 references, lifetime 0: for good) and fire plates' flames
    * (TrapFirePlateFXHaz01-06, lifetime 0). TODO(M13): inferred that a placed hazard whose record
    * has a lifetime (FireSmLongHazard, 7 s, 18 references) stands for good too.
