@@ -78,6 +78,7 @@ import {
   circleAngle,
   circleDistantGoals,
   circleGoals,
+  closeOutOfRange,
   combatTurning,
   COMBAT_MOVEMENT_DEFAULTS,
   fallbackGoal,
@@ -3582,11 +3583,34 @@ export class ActorCombatAi {
           flanking: (f) => (style(f).flags & CombatStyleFlag.flanking) !== 0,
           farAway: (f) => f.distance > f.reach + CHASE_BEYOND,
           beyondRange: (f) => f.distance > f.range,
-          // Beyond its range, its target's place fCombatAnticipateTime ahead (a place of its
-          // own it holds nearer keeps it in range: the target locations' Reposition).
+          // Observed in the original: the two bodies fCombatAnticipateTime ahead lie beyond
+          // its range, unless it stands in its place round its target within its range now.
           outOfRange: (f) => {
             const close = this.#close(f);
-            return flat(f.feet, close.moving.anticipated) > close.range;
+            const own = this.#options.movers.motion(f.mind.reference)?.velocity;
+            const ahead = this.#movement.anticipateTime;
+            return closeOutOfRange({
+              own: {
+                feet: f.feet,
+                ahead: own
+                  ? [f.feet[0] + own[0] * ahead, f.feet[1] + own[1] * ahead, f.feet[2]]
+                  : f.feet,
+                height: f.view.height,
+              },
+              target: {
+                feet: close.moving.feet,
+                ahead: close.moving.anticipated,
+                height: f.target.height,
+              },
+              range: close.range,
+              inPlace: this.#locations.inPlace(
+                f.mind.reference,
+                f.target.reference,
+                f.feet,
+                close.moving.feet,
+                1,
+              ),
+            });
           },
           outOfPosition: (f) =>
             this.#locations.outOfPosition(

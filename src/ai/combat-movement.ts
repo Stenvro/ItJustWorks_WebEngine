@@ -327,9 +327,20 @@ export class TargetLocations {
   }
 
   /**
-   * Whether an attacker has left its place: its bearing from its target is off its reservation
-   * by more than fCombatTargetLocationRepositionAngleMult × its width (observed in the original: the
-   * reposition check), or another holds it now.
+   * Whether an attacker stands in its place round `target` (observed in the original): it holds
+   * one there, and its bearing from the target (at `at`) lies off the place's by less than half
+   * its width × `mult`.
+   */
+  inPlace(attacker: number, target: number, from: Vec3, at: Vec3, mult: number): boolean {
+    const own = this.#reservations.get(attacker);
+    if (own?.target !== target) return false;
+    return Math.abs(turn(own.angle, bearing(at, from))) < (own.width / 2) * mult;
+  }
+
+  /**
+   * Whether an attacker is out of position (observed in the original: the Out of Position
+   * Movement Selector's condition): it holds no place round its target, or its bearing has left
+   * the place by half its width × fCombatTargetLocationRepositionAngleMult.
    */
   outOfPosition(
     attacker: number,
@@ -338,13 +349,7 @@ export class TargetLocations {
     at: Vec3,
     settings: CombatMovementSettings,
   ): boolean {
-    const own = this.#reservations.get(attacker);
-    if (own?.target !== target) return false;
-    const off = Math.abs(turn(own.angle, bearing(at, from)));
-    return (
-      off > settings.targetLocationRepositionAngleMult * own.width ||
-      !this.free(attacker, target, own.angle, own.width)
-    );
+    return !this.inPlace(attacker, target, from, at, settings.targetLocationRepositionAngleMult);
   }
 }
 
@@ -402,9 +407,11 @@ export interface CloseMovementInput {
  * Idle (0.25 s) and the selector runs again. Fallback and Circle by the style's chances (the
  * Fallback / Circle selector's value nodes), Backoff by fCombatBackoffChance and Circle Distant
  * by the style's circle distant chance (random nodes; their own conditions decide the rest).
- * Out of range is beyond its range (TODO(M13): the value that splits out of range, out of
- * position and in range is not read, nor Fallback To Ranged's condition: its behaviour, backing
- * off to fCombatRangedDistance to shoot, is left to the equipment choice).
+ * The split, observed in the original: out of range by closeOutOfRange (the two bodies ahead
+ * beyond its range, unless in its place within it now), out of position by
+ * TargetLocations.outOfPosition, in range always. TODO(M13): Fallback To Ranged's condition is not
+ * read here (its behaviour, backing off to fCombatRangedDistance to shoot, is left to the
+ * equipment choice).
  */
 export function chooseCloseMovement(
   input: CloseMovementInput,
@@ -444,6 +451,49 @@ export function chooseCloseMovement(
   );
   tree.instance(random).tick(undefined, 0);
   return tries;
+}
+
+/** One body as the range split weighs it: its feet now, fCombatAnticipateTime ahead, its height. */
+export interface RangeBody {
+  readonly feet: Vec3;
+  readonly ahead: Vec3;
+  readonly height: number;
+}
+
+/**
+ * The distance between two bodies fCombatAnticipateTime ahead (observed in the original): flat,
+ * and with the height between them as well once their middles lie apart by half the taller
+ * one's height or more (one above the other: on a ledge, a stair, in the air).
+ */
+export function anticipatedApart(own: RangeBody, target: RangeBody): number {
+  const dx = own.ahead[0] - target.ahead[0];
+  const dy = own.ahead[1] - target.ahead[1];
+  const dz = own.ahead[2] - target.ahead[2];
+  const taller = Math.max(own.height, target.height);
+  const middles = Math.abs((own.height - target.height) / 2 + dz);
+  return Math.sqrt(dx * dx + dy * dy + (taller / 2 <= middles ? dz * dz : 0));
+}
+
+/**
+ * The close movement's range split (observed in the original: the Out of Range Movement
+ * Selector's condition): out of range when the two bodies, each fCombatAnticipateTime ahead
+ * (anticipatedApart), lie farther apart than its range (its reach and its inner advance radius);
+ * one standing in its place round its target (TargetLocations.inPlace, within half the place's
+ * width) and within its range now stays in range. Otherwise out of position (no place, or one
+ * left: TargetLocations.outOfPosition), else in range.
+ */
+export function closeOutOfRange(input: {
+  readonly own: RangeBody;
+  readonly target: RangeBody;
+  readonly range: number;
+  readonly inPlace: boolean;
+}): boolean {
+  if (input.inPlace) {
+    const [x, y, z] = input.own.feet;
+    const [tx, ty, tz] = input.target.feet;
+    if (Math.hypot(x - tx, y - ty, z - tz) < input.range) return false;
+  }
+  return anticipatedApart(input.own, input.target) > input.range;
 }
 
 /** Its target as the behaviours read it. */
