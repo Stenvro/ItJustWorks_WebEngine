@@ -803,6 +803,23 @@ const MAGIC_ITEM_TYPES: ReadonlySet<string> = new Set(['SPEL', 'SCRL', 'ENCH', '
 /** How often the joints scripts made are looked at, as their references come back (seconds). */
 const SCRIPT_CONSTRAINT_CHECK = 0.5;
 
+/** The alias functions that give what an alias holds (ReferenceAlias, LocationAlias). */
+const ALIAS_GETTERS = new Set(['getreference', 'getactorreference', 'getref', 'getlocation']);
+
+/** The record types an inventory holds as items (those whose own scripts can run there). */
+const INVENTORY_ITEM_TYPES = new Set([
+  'ALCH',
+  'AMMO',
+  'ARMO',
+  'BOOK',
+  'INGR',
+  'KEYM',
+  'LIGH',
+  'MISC',
+  'SCRL',
+  'SLGM',
+  'WEAP',
+]);
 const CELL_INTERIOR = 0x01;
 /** MESG DNAM: shown as a message box (else, without buttons, as a notification). */
 const MESSAGE_BOX_FLAG = 0x01;
@@ -1304,6 +1321,18 @@ export class ScriptRuntime implements VmHost {
   }
 
   /**
+   * A None the game returns too: what an alias of a quest that is not running holds (a stopped
+   * quest's aliases are let go, in the game as here). A script that goes on with it after its
+   * quest stopped (FavorChangeLocationQuestScript's game-time updates calling IsInLocation on
+   * its LocationAlias) makes the game's own script error.
+   */
+  gameNone(target: Value, fn: string): boolean {
+    if (!(target instanceof ObjectHandle) || target.alias < 0) return false;
+    if (!ALIAS_GETTERS.has(fn.toLowerCase())) return false;
+    return !this.quests.isRunning(target.formId);
+  }
+
+  /**
    * Work that goes on by itself (events sent, waits, story events): a fault in it (a broken
    * record) is reported, never left to stop the app.
    */
@@ -1395,6 +1424,14 @@ export class ScriptRuntime implements VmHost {
     return (await this.actors.isActor(reference)) && !(await this.actors.isDead(reference));
   }
 
+  /** Whether an item an inventory holds has scripts of its own (a reference there: addItem). */
+  async #scriptedItem(item: number): Promise<boolean> {
+    const type = (await this.forms.record(item))?.type;
+    return (
+      INVENTORY_ITEM_TYPES.has(type ?? '') && (await this.forms.attachments(item)) !== undefined
+    );
+  }
+
   /** Whether an equipped item's own scripts hear of it (OnEquipped: an item's, with scripts). */
   async itemScripted(item: number): Promise<boolean> {
     const type = (await this.forms.record(item))?.type;
@@ -1476,6 +1513,11 @@ export class ScriptRuntime implements VmHost {
       this.#initialized.add(reference);
       await this.#initializeReference(reference);
     }
+    // The hazards the plugin placed in it stand while it is attached (a disabled one once it
+    // is enabled: referenceShown).
+    for (const reference of references) {
+      if (await this.isEnabled(reference)) await this.#cellHazard(reference, true);
+    }
     // The hub tells every reference of the cell that it attached (TESCellAttachDetachEvent,
     // observed in the original: with scripts or not, for every consumer of the event); the
     // relay's OnCellAttach reaches those with scripts, their own or those of an alias that
@@ -1503,6 +1545,20 @@ export class ScriptRuntime implements VmHost {
     this.events.emit('cellReadyToApplyDecals', { cell });
     this.events.emit('cellFullyLoaded', { cell, references: shown });
     return scripted;
+  }
+
+  /** A hazard the plugin placed in a cell (PHZD) stands, or no longer (HazardEngine.standing). */
+  async #cellHazard(reference: number, shown: boolean): Promise<void> {
+    if (!shown) {
+      this.hazards.leave(reference);
+      return;
+    }
+    // Only a reference of the plugins' (one a script or a spell made is the engine's to track).
+    if (this.state.created.has(reference)) return;
+    const record = await this.forms.record(reference);
+    if (record?.type !== 'PHZD') return;
+    const base = record.formIdField('NAME');
+    if (base !== undefined) await this.hazards.standing(reference, base);
   }
 
   /**
@@ -1540,6 +1596,7 @@ export class ScriptRuntime implements VmHost {
     // Its 3D gone (disabled), its behavior graph goes with it, and the animation events
     // registered on it (OnAnimationEventUnregistered), as when its cell detaches.
     if (!shown) this.animationGraphUnloaded(reference);
+    await this.#cellHazard(reference, shown);
     if (await this.#hearsEvents(reference)) {
       this.events.emit('objectLoaded', { reference, loaded: shown });
     }
@@ -1553,6 +1610,7 @@ export class ScriptRuntime implements VmHost {
     // Before the view lets go of their 3D (no wait): each loaded object's animated state is
     // kept (a chest's lid open, a lever pulled) and the animation events registered on it go
     // with its graph.
+    for (const reference of references) this.hazards.leave(reference);
     for (const reference of references) {
       if (!loaded(reference)) continue;
       const graph = this.world.savedGraph?.(reference);
@@ -2781,6 +2839,14 @@ export class ScriptRuntime implements VmHost {
    * in (for a worldspace's persistent references, the exterior cell at its place).
    */
   async editorLocation(reference: number): Promise<number | undefined> {
+    // A unique actor's is the one the locations' unique actor lists give it (LCUN's editor
+    // location), before its persist location (XLCN): Aeri's is her house at Anga's Mill, though
+    // her persist location is the mill and she stands in its exterior cells; Favor001's
+    // QuestGiverHouse (HasSameEditorLocAsRefAlias with LocTypeDwelling) looks for it. The house
+    // is inside the mill, so what asks for the mill still finds her there. Inferred from the
+    // data (xEdit names the field "Editor Location"), TODO(M13).
+    const unique = (await this.#uniqueEditorLocations()).get(reference);
+    if (unique !== undefined) return unique;
     const indexed = this.#index?.flags.has(reference) === true;
     const own = indexed
       ? this.#index?.persistLocation.get(reference)
@@ -2799,6 +2865,23 @@ export class ScriptRuntime implements VmHost {
     }
     return cell === undefined ? undefined : this.#cellLocation(cell);
   }
+
+  /** The unique actors' editor locations of every location's list (LCUN, ACUN), read once. */
+  #uniqueEditorLocations(): Promise<ReadonlyMap<number, number>> {
+    this.#uniqueEditors ??= (async () => {
+      const editors = new Map<number, number>();
+      for (const formId of this.forms.db.formIdsOfType('LCTN')) {
+        const location = await this.location(formId);
+        for (const [actor, editor] of location?.uniqueEditorLocations ?? []) {
+          editors.set(actor, editor);
+        }
+      }
+      return editors;
+    })();
+    return this.#uniqueEditors;
+  }
+
+  #uniqueEditors: Promise<ReadonlyMap<number, number>> | undefined;
 
   /**
    * A cell's location, read once per cell, as the engine finds it (observed in the
@@ -3408,27 +3491,60 @@ export class ScriptRuntime implements VmHost {
     const items = await this.inventory(container);
     for (const item of await this.#expand(form)) {
       const record = await this.forms.record(item);
-      if (record?.type === 'LVLI') {
-        await this.#addResolved(
-          items,
-          item,
-          count,
-          seededRandom(Date.now() & 0xffffffff),
-          await this.#itemLevel(container),
-        );
-      } else {
+      if (record?.type !== 'LVLI') {
         items.set(item, (items.get(item) ?? 0) + count);
+        await this.#itemGiven(container, item, count, silent, takeUp);
+        continue;
       }
-      if (!silent && container === PLAYER_REF) this.detach(this.#itemMessage(item, count, true));
-      this.events.emit('containerChanged', {
-        from: undefined,
-        to: container,
+      // A leveled list gives what it resolves to; each item given is told as the list's.
+      const given = new Map<number, number>();
+      await this.#addResolved(
+        given,
         item,
         count,
-        reference: undefined,
-      });
-      if (takeUp) await this.equipment.itemsGiven(container, item);
+        seededRandom(Date.now() & 0xffffffff),
+        await this.#itemLevel(container),
+      );
+      for (const [resolved, n] of given) items.set(resolved, (items.get(resolved) ?? 0) + n);
+      for (const [resolved, n] of given) {
+        await this.#itemGiven(container, resolved, n, silent, takeUp);
+      }
     }
+  }
+
+  /**
+   * Items a script gave to a container (AddItem): `base` is what the container holds now (the
+   * item named, or what a leveled list resolved to: a list is never held itself).
+   */
+  async #itemGiven(
+    container: number,
+    base: number,
+    count: number,
+    silent: boolean,
+    takeUp: boolean,
+  ): Promise<void> {
+    // An item whose base has scripts of its own is a reference in the container: its scripts
+    // run there (OnInit) and hear it move (OnContainerChanged), as the Creation Kit's
+    // ObjectReference scripts on inventory items do; so is one a leveled list resolved to.
+    // From the data: DA08's Whispering Door key, given to Farengar and the Jarl by AddItem,
+    // sets the quest's stage 40 from its OnContainerChanged as it reaches the player.
+    // TODO(M13): inferred that the items one AddItem gives are one reference standing for
+    // their count.
+    const reference = (await this.#scriptedItem(base)) ? this.state.create(base, count) : undefined;
+    if (reference !== undefined) {
+      this.state.reference(reference).container = { holder: container, base, count };
+      this.#initialized.add(reference);
+      await this.#initializeReference(reference);
+    }
+    if (!silent && container === PLAYER_REF) this.detach(this.#itemMessage(base, count, true));
+    this.events.emit('containerChanged', {
+      from: undefined,
+      to: container,
+      item: base,
+      count,
+      reference,
+    });
+    if (takeUp) await this.equipment.itemsGiven(container, base);
   }
 
   /**

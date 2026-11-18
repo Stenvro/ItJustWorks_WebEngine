@@ -9,6 +9,7 @@ import { identity, multiply, type Mat4 } from '../render/math.ts';
 import { fadeKind, neverFades, type FadeKind } from '../render/object-fade.ts';
 import {
   baseModelPath,
+  hasModelKind,
   enabledAtGameStart,
   LightFlag,
   parseCell,
@@ -1042,7 +1043,10 @@ export async function loadCellData(
 
     const model = baseModelPath(base);
     if (!model) {
-      if (base.type !== 'LIGH' && base.type !== 'SOUN') skip(`${base.type} without a world model`);
+      // One of a kind with models that gives none (an activator without MODL) has nothing to
+      // draw, in the game too; another kind placed in a cell is one the loader does not draw.
+      if (base.type !== 'LIGH' && base.type !== 'SOUN' && !hasModelKind(base))
+        skip(`${base.type} without a world model`);
       continue;
     }
     const item = parseItem(base);

@@ -41,4 +41,18 @@ describe('VirtualClock', () => {
     expect(roll(7)).toEqual(roll(7));
     expect(roll(7)).not.toEqual(roll(8));
   });
+
+  it('rolls from a seed again once reseeded, whatever was rolled before', () => {
+    const clock = new VirtualClock(3);
+    clock.install();
+    try {
+      clock.reseed(9);
+      const first = [Math.random(), Math.random()];
+      Math.random();
+      clock.reseed(9);
+      expect([Math.random(), Math.random()]).toEqual(first);
+    } finally {
+      clock.restore();
+    }
+  });
 });

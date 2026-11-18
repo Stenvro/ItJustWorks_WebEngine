@@ -2,7 +2,7 @@
 // actor does, the activator its speaker: its greeting and topics are its quests' dialogue whose
 // conditions name it (GetIsID on its base), said in its voice type (TACT VNAM) where it stands.
 // The Sanctuary's Black Door asks its question so ("What is the music of life?"), and DB04's
-// Night Mother speaks from her coffin; MG04's Augur of Dunlain talks so too. Its scripts hear the activation first, as for any
+// Night Mother speaks from her coffin; MG04's Augur of Dunlain, the Whispering Door's voice (DA08's stage 25 waits for its line) and the Daedric shrines' voices talk so too. Its scripts hear the activation first, as for any
 // activator (ScriptRuntime.playerActivated runs the default after OnActivate).
 
 import type { CellObject } from '../world/cell-loader.ts';

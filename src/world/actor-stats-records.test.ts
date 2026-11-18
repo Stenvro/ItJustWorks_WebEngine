@@ -227,6 +227,8 @@ describe('actor stats', () => {
     const location = parseLocation([master, override]);
     expect(location?.references.map((entry) => entry.reference)).toEqual([0x500, 0x502]);
     expect(location?.uniques.get(0x13bb)).toBe(0x600);
+    // A unique actor's editor location (LCUN's third form), by its reference.
+    expect(location?.uniqueEditorLocations.get(0x600)).toBe(0x100);
     expect(location?.parent).toBe(0x90);
   });
 });

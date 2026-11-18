@@ -359,6 +359,8 @@ const MODEL_FIELD: Readonly<Record<string, string>> = {
   DOOR: 'MODL',
   FLOR: 'MODL',
   FURN: 'MODL',
+  // A hazard placed in a cell (PHZD): a campfire's flames, a fire plate's.
+  HAZD: 'MODL',
   IDLM: 'MODL',
   INGR: 'MODL',
   KEYM: 'MODL',
@@ -372,6 +374,14 @@ const MODEL_FIELD: Readonly<Record<string, string>> = {
   TREE: 'MODL',
   WEAP: 'MODL',
 };
+
+/**
+ * Whether a base object's kind has a world model, whether or not this one gives it one (an
+ * activator without MODL is in the game too, with nothing to draw).
+ */
+export function hasModelKind(record: Pick<GameRecord, 'type'>): boolean {
+  return MODEL_FIELD[record.type] !== undefined;
+}
 
 /** `meshes\...` path of a base object's world model, or undefined if it has none. */
 export function baseModelPath(record: GameRecord): string | undefined {

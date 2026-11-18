@@ -420,6 +420,82 @@ quests (the College's MGR quests) may come out differently from one new game to 
   as it takes the actor (a removal from them before then undone): a RemoveFromFaction after that
   takes the actor out while the alias still holds it (DLC2CultistAmbush's stage 10 turns its
   cultists on the player so). TODO(M13): inferred that the fill joins them as AddToFaction would.
+- **A talking activator** (TACT) the player activates starts a conversation with it, as an
+  actor does: the dialogue engine's speaker is the activator (its voice type is its VNAM), the
+  dialogue menu names it and says its lines from where it stands, with no face
+  (`src/shell/talking-activator.ts` talkToActivator, by `objectActivation`'s talk). Its OnActivate runs first, as for any
+  activator, and a blocked activation keeps the conversation from starting; anyone else
+  activating it only runs its scripts. From the data: DA08's Whispering Door says "(Listen at
+  the door)" and Mephala's lines, and the quest's stage 25 waits for them.
+  TODO(M13): a talking activator's greeting with no topics to list (said where it stands, as an
+  actor's) is not said: the world's lines are an actor's.
+- **A stopped event quest's script** (FavorChangeLocationQuestScript's game-time updates go on
+  after its quest stopped) that calls SetStage on it gets the original's "attempting to start
+  event scoped quest outside of story manager": it is the game's own script error, logged as the
+  game's (`PapyrusVm.gameLog`), not as a fault of the engine.
+- **A None the game has too** is the script's own error when it calls on it, logged as the
+  game's: what an alias of a quest that is not running gives (ReferenceAlias.GetReference,
+  GetActorReference, LocationAlias.GetLocation: a stopped quest's aliases are empty; the same
+  FavorChangeLocationQuestScript asks `IsInLocation(pFavorLocation.GetLocation())` after its
+  quest stopped, and ObjectReference.IsInLocation calls IsChild on the None), and an object
+  property the plugin gives form 0 (FXCameraAttachScript's CameraAttachFX on 3 references),
+  which is None as one it leaves out. The VM marks such a None as the engine's (`gameNone`), as
+  it marks an event's None argument; a None the engine gives where the game has an object stays
+  a warning, a fault of the engine.
+
+### The quest sweep
+
+`tests/sim-quest-sweep.int.test.ts` starts every quest of the load order that is neither the
+main quest, a guild's, the civil war's nor a DLC story's (types 6, 7, 8 of Skyrim.esm and
+Update.esm; every quest of HearthFires.esm and the Creation Club files), of those the player
+follows (with an objective or a journal entry), on one headless simulation, one case per QUST
+record, and reads it at its first objectives: started (and how), the aliases filled, the faults
+logged meanwhile, the first stage reached. A fault is every warning the engine logs (a None it
+gave where the game has an object, a call it could not make); the game's own script errors (those
+the engine proves the plugin's: `PapyrusVm.gameLog`) and a node marked to warn when it starts no
+quest are not. A quest starts as the game starts it: with the new game (Start Game Enabled);
+through the story manager's tree for its event, once per quest node that lists it (each node is
+a way the event reaches it: Favor001's Markarth node finds its quest giver, its Windhelm node
+none), with the event data the nodes' and its own GetEventData conditions ask for (the form they
+name, the locations with the keyword they name, for a form member an item with the keyword or the
+first form of the list they name; for a member an event alias fills, the forms its conditions
+accept; the script event's arguments in its parameters' order), after the world state the nodes' conditions wait for is set (stages,
+completed quests, the player's level, globals) and with the player where the event happens (in
+a Change Location event's new location, in the location a path's GetInCurrentLoc asks for: the
+tree's conditions run on the player); an event the engine raises meanwhile counts too (the
+player put in a location raises its Change Location event). Each case wants a story manager
+quest started through the tree: the sweep's start past it (the quest started with the event, as
+its node would) is kept only to read the rest of the case, and fails it. Of its tries, an event is
+raised again when there are fewer than three (a random node, or one that does all its quests
+before repeating, starts another the next time); the story manager's memory of what it started
+is let go between cases, as on a new game's world. A quest with an event type that runs as its
+case begins, or that runs once and ran, was started by its event (the engine refuses any other
+start) and counts so, unless the sweep started it past the tree. Every other quest is started by
+Quest.Start (a start-up stage) or its lowest stage, as the other quest's script or the dialogue
+line that starts it does. A quest whose aliases are another quest's (external) starts with that
+quest started first (DA14 after DA14Start). The world encounters and interactions typed
+miscellaneous that show neither an objective nor a journal entry (most WE and WI quests) are not
+part of it: the WE trigger references raise them in the wilderness, with the trigger as the
+event's reference.
+
+On 2026-11-18, 253 of the 285 quests start as the game starts them and reach their first stage
+without a fault of the engine. The 32 left are expected to fail (`it.fails`), each with its reason
+(the file's `OPEN`), and a case that passes fails the run until it comes off the list. The dice
+are seeded per quest and per event raised (`Sim.reseed`, `VirtualClock.reseed`), so a node's
+GetRandomPercent (WIEventChance for the WI nodes) rolls the same when a case runs alone as in the
+whole run, and the tree's roll is the one read for why it stopped. 19 want event data only the
+place where the event happens gives (WE100's ten objectives the treasure hunter's letter and
+item, the WI interactions' actors, WEDA02's trigger) or what the player is (the skills and spells
+WIChangeLocation03 and 04's own conditions ask for: with the node's roll passing, the tree stops
+there); 4 the bounty's location (BQ01 to BQ04: the event's location fills none of their aliases);
+6 the world as the game had it by then (CWMiscObj the civil war's faction leader, DA14 the inn
+DA14Start found, Favor253's quest giver in Whiterun, FreeformSkyHavenTempleB a dragon lair,
+BYOHHouseBanditAttack2 a house built, ccBGSSSE001_Radiant_1 an innkeeper in the loaded area); 3 a
+fault of the engine not yet fixed (Survival's cold update finds no current weather on the
+simulation before the sky has one; the civil war's mission generator gets a global as None;
+StockadeBarricade01ActivatorScript finds no linked reference); and BQ04's dunStonehillBarrowQST
+start-up fragment calls on an alias left empty.
+TODO(M13): each of them.
 
 ## The world
 
@@ -634,6 +710,22 @@ DLC2SolstheimLocation through their worldspace, Sovngarde's and the Soul Cairn's
 reference's location is that of the cell it stands in (in a worldspace, the exterior cell at its
 place). GetInCurrentLocation, the aliases and the events all read it so.
 
+A reference's editor location (GetIsEditorLocation, HasSameEditorLocAsRef): for a unique actor
+the editor location the locations' unique actor lists give it (LCUN, ACUN: the actor, its
+reference, its editor location), else its own persist location (XLCN), else its cell's
+location. From the data: Aeri's persist location is Anga's Mill and she stands in its exterior
+cells, and AngasMillLocation's list gives her AngasMillAerisHouseLocation; Favor001's
+QuestGiverHouse alias asks for the dwelling of the quest giver's editor location, and with the
+mill no favor quest giver had one (the house is inside the mill, so a check for the mill holds).
+Across the load order 907 unique actors have both: for 897 the list's location is the persist
+location or one inside it (the College's people: their dormitories, inside
+WinterholdCollegeLocation), and the 10 others have VirtualLocation as their persist location (a
+holding place: Paarthurnax, MQ206's heroes, whom the list puts at the Throat of the World). So a
+check for the persist location (GetIsEditorLocation, which takes one inside) still holds for
+the 897, and HasSameEditorLocAsRef without a keyword is the same room's people now, not the whole
+place's. `tests/conformance/scripting/scripted-inventory-items.test.ts` pins the order.
+TODO(M13): inferred from the data (xEdit names the list's third field "Editor Location").
+
 ### Actor location change
 
 `actor-locations.ts` emits `actorLocationChange` (actor, old location, new; none is the
@@ -693,6 +785,18 @@ stats go to every object registered for them. What each kind becomes:
 | switchRaceComplete                     | OnRaceSwitchComplete                                                                                                                                            |
 | trapHit                                | to the trap, only for a living actor hit: OnTrapHitStart, OnTrapHit (target, velocity, position, material, first hit, motion type), OnTrapHitStop (target)      |
 | trigger, triggerEnterLeave             | OnTrigger, OnTriggerEnter / OnTriggerLeave to the trigger (who is inside)                                                                                       |
+
+An item whose base has scripts of its own that AddItem puts in a container is a reference
+there (one standing for the count given): its scripts start (OnInit) and hear each move
+(OnContainerChanged), as the Creation Kit's ObjectReference scripts on inventory items do.
+From the data: DA08's Whispering Door key is given to Farengar and the Jarl by AddItem, and its
+own OnContainerChanged sets the quest's stage 40 as it reaches the player (picked from a pocket,
+taken from a corpse). A leveled list AddItem names gives what it resolves to, each item told
+as given (OnItemAdded, containerChanged: the item, never the list), and one with scripts is a
+reference too (LItemDawnguardWarAxe gives DLC1DawnguardAxe;
+`tests/conformance/scripting/scripted-inventory-items.test.ts`). TODO(M13): the items of a
+container's own inventory (CNTO) with scripts, and those a leveled list in it resolves to, are
+not references yet, and whether one AddItem's items are one reference is inferred.
 
 **The producers**, each where the engine raises its event (observed in the original):
 

@@ -163,6 +163,11 @@ export interface VmHost {
    */
   gameLog?(message: string): void;
   /**
+   * Whether a None a native call returned is the game's own None too, not one the engine gave
+   * for want of the object (an alias of a quest that is not running is empty in the game).
+   */
+  gameNone?(target: Value, fn: string): boolean;
+  /**
    * What an object is, inside its string's angle brackets (observed in the original): a form's
    * editor ID, where the original keeps one at run time, and its id ("MQ101 (0003372B)",
    * " (00000014)"); an alias "alias <name> on quest <quest's editor ID> (<quest's id>)".
@@ -498,10 +503,12 @@ export class PapyrusVm {
           continue;
         }
         if (property.autoVariable) {
-          instance.vars
-            .get(level.name)
-            ?.set(property.autoVariable.toLowerCase(), retype(value, property.type));
-          instance.filled.add(property.autoVariable.toLowerCase());
+          const bound = retype(value, property.type);
+          instance.vars.get(level.name)?.set(property.autoVariable.toLowerCase(), bound);
+          // An object property the plugin gives no object (form 0: FXCameraAttachScript's
+          // CameraAttachFX on the Blue Palace's references) is None in the game too: a call on
+          // it is the plugin's own fault, as one it leaves out.
+          if (bound !== null) instance.filled.add(property.autoVariable.toLowerCase());
         } else if (property.setter) {
           instance.bound.push({ level, name: property.name, value: retype(value, property.type) });
         } else {
@@ -1987,19 +1994,27 @@ export class PapyrusVm {
                 [],
               );
           }
-          set(
-            2,
-            await this.#callMethod(
-              get(1),
-              name,
-              rest(3),
-              frame.depth + 1,
-              thread,
-              frame,
-              arg(1).kind === 'identifier' ? identifier(arg(1)) : undefined,
-              nonesOf(3),
-            ),
+          const target = get(1);
+          const result = await this.#callMethod(
+            target,
+            name,
+            rest(3),
+            frame.depth + 1,
+            thread,
+            frame,
+            arg(1).kind === 'identifier' ? identifier(arg(1)) : undefined,
+            nonesOf(3),
           );
+          set(2, result);
+          // A None the game returns too (an empty alias of a stopped quest) is the game's: a
+          // call on it later is the script's own error, as the original logs it.
+          const into = arg(2);
+          if (into.kind === 'identifier') {
+            const key = into.name.toLowerCase();
+            if (result === null && this.host.gameNone?.(target, name) === true) {
+              frame.engineNones.add(key);
+            } else frame.engineNones.delete(key);
+          }
           break;
         }
         case 'callparent': {

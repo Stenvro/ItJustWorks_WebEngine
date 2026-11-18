@@ -655,6 +655,14 @@ the player in a runtime on the game data, `--audit` reads every record).
   are placed so too. The world shows its model (the created reference), its light, its sound
   while it stands and its image-space modifier on the player within its image-space radius
   (src/shell/magic-fx.ts).
+- The hazards the plugins place in cells (PHZD: 394 in the load order, 307 of them campfires'
+  flames, FireLgPlacedHazard, and fire plates' flames, TrapFirePlateFXHaz01-06) stand while
+  their cell is attached and they are enabled (a fire plate's flames once its trap enables them),
+  their spell on the living within their radius every target interval, with no source and under
+  no limit; they go as their cell detaches or they are disabled, and a save does not keep them
+  (their cell brings them back). Their model is drawn as a placed object's (HAZD MODL).
+  TODO(M13): inferred that one whose record has a lifetime (FireSmLongHazard, 7 s, 18 placed)
+  stands for good too (`tests/conformance/magic/placed-hazards.test.ts`).
 - What the world shows (src/shell/actor-effects.ts, WorldBridge.magicEffect): the hit shader
   (EFSH) and hit art (ARTO) on the target as the effect takes hold (with FX Persist while it
   lasts, else their own time once), the light of a Light effect over its shoulder (Candlelight;

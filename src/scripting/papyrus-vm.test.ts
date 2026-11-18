@@ -235,6 +235,8 @@ class TestHost implements VmHost {
             ['isalreadyopen', true],
             ['isbroken', true],
             ['triggertype', 2],
+            // The plugin gives the lever no object (form 0): None, as one left out.
+            ['lever', null],
           ]),
         },
       ]);
@@ -394,7 +396,7 @@ describe('Papyrus VM', () => {
       'Property IsBroken on object Gate is read-only, property skipped.',
       'Property triggertype on script Gate attached to [gate < (00000030)>] cannot be initialized because the script no longer contains that property',
     ]);
-    // A call through an auto property the plugin left empty: None, as in the game.
+    // A call through an auto property the plugin gave no object: None, as in the game.
     await vm.call(gate, 'Pull');
     expect(host.gameLogged[2]).toBe(
       'Gate.Pull [gate < (00000030)>]: Cannot call Enable() on a None object, aborting function call (property Lever is not set in the plugin)',
