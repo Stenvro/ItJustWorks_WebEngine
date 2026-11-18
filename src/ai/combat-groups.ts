@@ -264,6 +264,11 @@ export class CombatGroups {
     return this.#of.get(actor);
   }
 
+  /** Every group fighting now (the combat music weighs them). */
+  all(): IterableIterator<CombatGroup> {
+    return this.#groups.values();
+  }
+
   /** The others of an actor's group. */
   *allies(actor: number): Iterable<number> {
     const group = this.#of.get(actor);

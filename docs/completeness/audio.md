@@ -113,7 +113,7 @@ What a sweep of the data cannot see: the engine's own rules around the records.
 | 20  | Thunder's delay after a flash, the weather one-shots' chance                       | done   | ambience.ts, lightning.ts: no delay, 30 ms checks; singles restart (observed)        |
 | 21  | Music: priority, queueing, ducking, cue points and finales, palettes, silences     | done   | music.ts                                                                             |
 | 22  | Music: which fade applies to which change                                          | done   | music.ts (observed in the original)                                                  |
-| 23  | Combat music: start, keep, stop rules                                              | done   | combat-music.ts                                                                      |
+| 23  | Combat music: start, keep, stop rules                                              | done   | combat-music.ts (observed in the original: weighed per combat group, 2026-11-18)     |
 | 24  | Combat music: a second group's threat ratio, the strength cap                      | done   | combat-music.ts (observed in the original; the cap is never read)                    |
 | 25  | Location music: cell, regions, worldspace, default; the location's (LCTN NAM1)     | done   | sound-system #locationMusic (the location's place inferred: TODO(M13))               |
 | 26  | Special music: dungeon cleared, death                                              | done   | location-clearing.ts, player-death.ts                                                |

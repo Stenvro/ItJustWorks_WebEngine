@@ -43,17 +43,20 @@ import {
   Confidence,
   selectTarget,
   shouldFlee,
+  strengthDamage,
   strengthRatio,
   turnsOnAttacker,
   yieldOver,
   yields,
   type AssistCase,
   type CombatAiSettings,
+  type StrengthItem,
   type TargetCandidate,
 } from '../ai/combat-ai.ts';
 import {
   CombatGroups,
   readCombatGroupSettings,
+  type CombatGroup,
   type CombatGroupWorld,
   type DetectionReport,
   type GroupTarget,
@@ -234,8 +237,9 @@ export interface FighterGear {
   readonly damage: number;
   readonly shotDamage: number;
   readonly range: number;
-  /** The damage its strength weighs (strengthDamage: the weapon's, or its best unarmed blow). */
-  readonly strengthDamage: number;
+  /** What its hands hold as its strength weighs them (strengthDamage), and its unarmed damage. */
+  readonly strengthItems: readonly StrengthItem[];
+  readonly strengthUnarmed: number;
   /** Its attack data has a bash, and its power attacks' chance (ATKD). */
   readonly canBash: boolean;
   /** Its power bash's share of its bashes (bashPowerStart against bashStart, by their chances). */
@@ -1020,6 +1024,10 @@ export class ActorCombatAi {
     return this.#groups.groupOf(reference)?.id;
   }
 
+  /** Every combat group fighting now (the combat music weighs them). */
+  combatGroups(): Iterable<Readonly<CombatGroup>> {
+    return this.#groups.all();
+  }
   /** An actor left the stage or died: its combat ends, and others' memory of it goes. */
   remove(reference: number): void {
     const mind = this.#minds.get(reference);
@@ -1857,13 +1865,10 @@ export class ActorCombatAi {
     return this.#dps(this.#options.host.fighter(reference)?.gear);
   }
 
+  /** The damage its strength weighs (strengthDamage: what its hands hold, else its fists). */
   #dps(gear: FighterGear | undefined): number {
-    return attackDps(
-      gear?.strengthDamage ?? 1,
-      gear?.speed ?? 1,
-      gear?.bow === true,
-      this.#settings,
-    );
+    if (!gear) return attackDps(1, 1, false, this.#settings);
+    return strengthDamage(gear.strengthItems, gear.strengthUnarmed, this.#settings);
   }
 
   /** Whether its encounter zone lets an actor fight another (zonesAllow; zones as last read). */
@@ -5141,7 +5146,7 @@ export class ActorCombatAi {
       share,
       points: value.current,
       read: this.#clock,
-      reduction: armour.reduction,
+      reduction: armour.share,
     });
     if (!this.#levels.has(mind.reference)) {
       this.#levels.set(mind.reference, await runtime.actors.level(mind.reference));
@@ -5158,7 +5163,7 @@ export class ActorCombatAi {
         share: own.max > 0 ? own.current / own.max : 0,
         points: own.current,
         read: this.#clock,
-        reduction: armour.reduction,
+        reduction: armour.share,
       });
     }
   }

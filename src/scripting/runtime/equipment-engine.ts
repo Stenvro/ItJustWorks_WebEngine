@@ -126,6 +126,8 @@ export interface ArmorRatingNow {
   readonly pieces: number;
   /** The share of physical damage it takes off (0..fMaxArmorRating / 100). */
   readonly reduction: number;
+  /** That share before fMaxArmorRating holds it (what an actor's strength weighs). */
+  readonly share: number;
 }
 
 /** What a hand holds as a weapon, for combat (5.1, 5.2) and the menus. */
@@ -1115,7 +1117,12 @@ export class EquipmentEngine {
       if (item.armor.armorType !== ArmorType.clothing) pieces++;
     }
     rating += await this.#value(actor, DAMAGE_RESIST);
-    return { rating, pieces, reduction: armorDamageReduction(rating, pieces, settings) };
+    return {
+      rating,
+      pieces,
+      reduction: armorDamageReduction(rating, pieces, settings),
+      share: Math.max(0, armorShare(rating, pieces, settings)),
+    };
   }
 
   /**

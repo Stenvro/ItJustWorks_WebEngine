@@ -3427,8 +3427,9 @@ engine's ([Combat movement](#combat-movement)).
   Disable Combat Boundary, is no candidate ([Combat] bEncounterZoneTargetRestrict: `zonesAllow`),
   and the player's teammates pass children over.
 - **The odds**: every fCombatThreatRatioUpdateTime (5 s) its side's strength against its enemies'
-  (each `actorStrength`: damage per second × health / (1 − its own armour's reduction, at most
-  0.99)); its fleeing allies count nothing, itself always. They stand at 100 unweighed for a
+  (each `actorStrength`: damage per second × health / (1 − its own armour's share, at most 0.99,
+  fMaxArmorRating not holding it); the damage is what its hands hold added up, else its fists:
+  docs/audio.md, "Music"); its fleeing allies count nothing, itself always. They stand at 100 unweighed for a
   frenzied actor (Aggression 3) or one not engaged for 120 s (`oddsWeighed`; TODO(M13): what
   engages it is read here as a blow given or taken). The combat music and daresHelp weigh the same
   strength.

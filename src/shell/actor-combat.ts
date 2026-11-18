@@ -18,7 +18,7 @@
 // assistance, target choice, the combat style's movement and attacks, fleeing, searching): it
 // sets each fighter's target and asks for its draws, attacks, blocks and releases here.
 
-import { strengthDamage } from '../ai/combat-ai.ts';
+import { magicHealthDamage, type StrengthItem } from '../ai/combat-ai.ts';
 import { threatensPlayer } from '../ai/combat-reactions.ts';
 import { RaceAiFlag, parseNpcCombat, parseRaceCombat } from '../ai/race-combat-records.ts';
 import {
@@ -41,8 +41,9 @@ import {
   CombatMusic,
   readCombatMusicSettings,
   type CombatMusicChoice,
+  type CombatMusicGroup,
   type CombatMusicInput,
-  type CombatMusicThreat,
+  type CombatMusicMember,
 } from '../audio/combat-music.ts';
 import { WeaponIdleSounds, type WeaponIdle } from './weapon-idle-sounds.ts';
 import type { ActorCombatState, ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -193,6 +194,7 @@ import type { PlayerAvatar } from './player-avatar.ts';
 import type { CombatBridge } from './script-world.ts';
 import type { Terminal } from './terminal.ts';
 import { Delivery, type MagicItemRecord } from '../world/magic-records.ts';
+import { CastType } from '../world/spell-records.ts';
 import { KillmoveCamera, type KillmoveSubjects } from './killmove-camera.ts';
 import { PlayerCombat, type CastingButtons } from './player-combat.ts';
 import type { ActorTalk } from './actor-talk.ts';
@@ -466,8 +468,9 @@ export interface Practice {
 /** What a fighter's hands hold, for combat. */
 interface Gear {
   readonly right: WeaponStats;
-  /** The damage its strength weighs (strengthDamage: its weapon's, or its best unarmed blow). */
-  readonly strengthDamage: number;
+  /** What its hands hold, as its strength weighs them (strengthDamage), and its unarmed damage. */
+  readonly strengthItems: readonly StrengthItem[];
+  readonly strengthUnarmed: number;
   readonly left: WeaponStats;
   readonly rightRecord: WeaponCombat | undefined;
   readonly leftRecord: WeaponCombat | undefined;
@@ -1817,6 +1820,52 @@ export class ActorCombat implements CombatBridge {
     }
   }
 
+  /**
+   * What one hand holds as strength weighs it (combat-ai.ts itemStrength): a weapon (a bow's or
+   * crossbow's shot with its ammunition), a staff by its enchantment, a spell or scroll; nothing
+   * for an empty hand, a shield or a torch.
+   */
+  async #strengthItem(
+    stats: WeaponStats,
+    spell: number | undefined,
+    runtime: ScriptRuntime,
+  ): Promise<StrengthItem | undefined> {
+    let magic: number | undefined = spell;
+    if (stats.weapon !== undefined) {
+      if (stats.weaponType !== WeaponType.staff) {
+        const bow = stats.weaponType === WeaponType.bow || stats.weaponType === WeaponType.crossbow;
+        return {
+          kind: 'weapon',
+          damage: bow ? stats.shotDamage : stats.damage,
+          speed: stats.speed,
+          bow,
+        };
+      }
+      magic = (await runtime.equipment.item(stats.weapon))?.enchantment;
+    }
+    const item = magic === undefined ? undefined : await runtime.magic.item(magic);
+    if (!item) return undefined;
+    const effects = await Promise.all(
+      item.effects.map(async (effect) => {
+        const record = await runtime.magic.effect(effect.effect);
+        return {
+          magnitude: effect.magnitude,
+          flags: record?.flags ?? 0,
+          actorValue: record?.actorValue ?? -1,
+          secondActorValue: record?.secondActorValue ?? -1,
+          secondValueWeight: record?.secondValueWeight ?? 0,
+          conditioned: (record?.conditions.length ?? 0) > 0,
+        };
+      }),
+    );
+    return {
+      kind: 'magic',
+      health: magicHealthDamage(effects),
+      fireAndForget: item.castType === CastType.fireAndForget,
+      chargeTime: item.chargeTime,
+    };
+  }
+
   async #readGear(fighter: Fighter, runtime: ScriptRuntime): Promise<Gear> {
     const reference = fighter.reference;
     const equipment = runtime.equipment;
@@ -1865,16 +1914,18 @@ export class ActorCombat implements CombatBridge {
     };
     const [rightSpell, leftSpell] = await Promise.all([spell(loadout.right), spell(loadout.left)]);
     const attacks = new AttackSet(raceAttacks, own);
+    const strengthItems = (
+      await Promise.all([
+        this.#strengthItem(right, rightSpell ? loadout.right : undefined, runtime),
+        this.#strengthItem(left, leftSpell ? loadout.left : undefined, runtime),
+      ])
+    ).filter((item) => item !== undefined);
     return {
       right,
-      strengthDamage: strengthDamage(
-        right.damage,
-        right.weapon !== undefined,
-        [...attacks.all()].map((attack) => ({
-          damageMult: attack.damageMult,
-          bash: attackEventKind(attack.event, attack)?.bash === true,
-        })),
-      ),
+      strengthItems,
+      // Its unarmed damage (a hand without a weapon: weaponStats gives it).
+      strengthUnarmed:
+        right.weapon === undefined ? right.damage : left.weapon === undefined ? left.damage : 0,
       left,
       rightRecord,
       leftRecord,
@@ -4294,7 +4345,8 @@ export class ActorCombat implements CombatBridge {
           twoHanded ||
           (gear.right.weapon !== undefined && gear.left.weapon === undefined),
         damage: gear.right.damage,
-        strengthDamage: gear.strengthDamage,
+        strengthItems: gear.strengthItems,
+        strengthUnarmed: gear.strengthUnarmed,
         shotDamage: gear.right.shotDamage,
         range: gear.projectile?.range ?? 0,
         canBash,
@@ -4950,49 +5002,49 @@ export class ActorCombat implements CombatBridge {
   }
 
   /**
-   * The fights combat music weighs (src/audio/combat-music.ts): every live actor in combat
-   * hostile to the player, against the player and their combat group; the fights not against
-   * the player by their own combat groups, each weighed apart.
+   * The combat groups combat music weighs (src/audio/combat-music.ts): each with its living
+   * members (the player left out), whether the player is one of its targets and lost to it,
+   * whether it searches, and its targets' strength (the living, each once).
    */
   #musicInput(runtime: ScriptRuntime): CombatMusicInput {
     const feet = this.#play?.player.feet;
-    const threats: CombatMusicThreat[] = [];
-    // What each group not against the player fights (each target once): its fight's odds.
-    const nearTargets = new Map<number, Set<number>>();
     const senses = this.#options.senses?.();
-    for (const fighter of this.#fighters.values()) {
-      if (fighter.player || fighter.state.life !== LifeState.alive) continue;
-      if (!threatensPlayer(fighter.gear?.raceFlags2 ?? 0)) continue;
-      const reference = fighter.reference;
-      const targetsPlayer = fighter.target === PLAYER_REF;
-      const group = this.#brain.groupId(reference) ?? 0;
-      if (!targetsPlayer) {
-        if (this.#brain.combatState(reference) !== 1) continue;
-        if (!this.#brain.hostile(reference, PLAYER_REF)) continue;
-        if (fighter.target !== undefined) {
-          const targets = nearTargets.get(group) ?? new Set<number>();
-          targets.add(fighter.target);
-          nearTargets.set(group, targets);
-        }
+    const alive = (reference: number): Fighter | undefined => {
+      const fighter = this.#fighters.get(reference);
+      return fighter && fighter.state.life !== LifeState.dead ? fighter : undefined;
+    };
+    const groups: CombatMusicGroup[] = [];
+    for (const group of this.#brain.combatGroups()) {
+      const members: CombatMusicMember[] = [];
+      for (const reference of group.members) {
+        const fighter = reference === PLAYER_REF ? undefined : alive(reference);
+        if (!fighter) continue;
+        const at = this.#feet(fighter);
+        members.push({
+          distance:
+            feet && at ? Math.hypot(at[0] - feet[0], at[1] - feet[1], at[2] - feet[2]) : Infinity,
+          strength: this.#brain.strength(reference),
+          detected: senses ? senses.detects(PLAYER_REF, reference) : true,
+          boss: this.#boss(reference, runtime),
+          fleeing: this.#brain.fleeing(reference),
+        });
       }
-      const at = this.#feet(fighter);
-      threats.push({
-        targetsPlayer,
-        distance:
-          feet && at ? Math.hypot(at[0] - feet[0], at[1] - feet[1], at[2] - feet[2]) : Infinity,
-        strength: this.#brain.strength(reference),
-        detected: senses ? senses.detects(PLAYER_REF, reference) : true,
-        boss: this.#boss(reference, runtime),
-        group,
+      let targetStrength = 0;
+      for (const target of group.targets.keys()) {
+        if (target === PLAYER_REF || alive(target)) targetStrength += this.#brain.strength(target);
+      }
+      const player = group.targets.get(PLAYER_REF);
+      groups.push({
+        id: group.id,
+        members,
+        targetsPlayer: player !== undefined,
+        playerLost: player?.lost === true,
+        searching: group.searching,
+        targets: group.targets.size,
+        targetStrength,
       });
     }
-    const groupTargets = new Map<number, number>();
-    for (const [group, targets] of nearTargets) {
-      let strength = 0;
-      for (const target of targets) strength += this.#brain.strength(target);
-      groupTargets.set(group, strength);
-    }
-    return { threats, player: this.#brain.strength(PLAYER_REF), groupTargets };
+    return { groups, player: this.#brain.strength(PLAYER_REF) };
   }
 
   /** Whether a reference is a boss (location reference type DOBJ LRTB); false until read. */

@@ -1,4 +1,4 @@
-// When combat music plays (observed in the original: its combat manager weighs the fights
+// When combat music plays (observed in the original: its combat manager weighs the combat groups
 // every fCombatMusicUpdateTime). The music type is the default object BTMS (MUSCombat), or the
 // boss music against a boss: an actor whose reference has the location reference type Boss
 // (DOBJ LRTB). Which tracks of it play is the music system's (their conditions ask the combat
@@ -6,29 +6,27 @@
 //
 // - **Strength** (the engine's measure for the odds, also GetThreatRatio's: actorStrength in
 //   src/ai/combat-ai.ts): an actor's damage × its health / (1 − its armour's reduction).
-// - **Start**, a fight against the player: the strength of its fighters the player detects,
-//   against the player's own: the player's strength over theirs below
-//   fCombatMusicPlayerTargetedThreatRatio. A mudcrab or a lone wolf does not start it for a
-//   player much stronger. A fight not against the player (a follower's, a dragon over the town)
-//   with a fighter within fCombatMusicNearCombatInnerRadius: when the player detects one of
-//   them and their strength is above the player's × fCombatMusicPlayerNearStrengthMult.
-// - **Even fights:** a fight not against the player counts for neither only once it is even
-//   (observed in the original: each combat group decides it once, fCombatMusicGroupThreatRatioTimer
-//   seconds after it forms: the strength of its targets over its own between
-//   fCombatMusicGroupThreatRatioMin and Max). Guards cutting down a mudcrab start nothing.
-// - **On:** once it plays, a fight against the player keeps it, as does an even one with a
-//   fighter within fCombatMusicNearCombatOuterRadius (the odds are not weighed again).
-// - **Stop:** once no fight keeps it, it plays on for fCombatMusicStopTime, then ends (with its
+// - **Which groups count:** a group that searches (all its targets lost), that has no target, or
+//   whose members all flee is passed over.
+// - **A group against the player** (the player is one of its targets and not lost to it) starts
+//   the music by its own members the player detects: the player's strength over theirs below
+//   fCombatMusicPlayerTargetedThreatRatio (a mudcrab or a lone wolf does not start it for a
+//   player much stronger). Each such group is weighed alone; once the music plays, any of them
+//   keeps it.
+// - **A group fighting near the player** (not against them) counts only once its fight is even:
+//   each group decides it once, fCombatMusicGroupThreatRatioTimer seconds after it forms (the
+//   time runs only while it is not searching): its own strength (its members not fleeing) over
+//   its targets' between fCombatMusicGroupThreatRatioMin and Max. An even group with a member
+//   within fCombatMusicNearCombatInnerRadius of the player adds its strength to those of the
+//   others so near; the music starts once the player detects a member of one of them and their
+//   sum passes the player's × fCombatMusicPlayerNearStrengthMult. Once it plays, an even group
+//   with a member within fCombatMusicNearCombatOuterRadius keeps it. Guards cutting down a
+//   mudcrab start nothing.
+// - **Stop:** once no group keeps it, it plays on for fCombatMusicStopTime, then ends (with its
 //   finale: music.ts); a fight in the meantime keeps it.
 //
-// fCombatMusicPlayerCombatStrengthCap is a game setting the original never reads.
-//
-// The engine weighs each combat group. The fighters against the player are the targets of the
-// player's own group, weighed together; each group fighting near the player whose fight is not
-// against the player is weighed apart: its own evenness, decided once after it forms, and its
-// own strength against the player's (two small fights near the player do not add up to one
-// worth music; inferred from the per-group settings, TODO(M13): a check of the group the
-// engine makes before the odds is not identified). Pure: src/shell/actor-combat.ts feeds it.
+// fCombatMusicPlayerCombatStrengthCap is a game setting the original never reads. Pure:
+// src/shell/actor-combat.ts feeds it.
 
 export interface CombatMusicSettings {
   /** fCombatMusicPlayerTargetedThreatRatio: the player's strength over the fight's, below it starts. */
@@ -45,7 +43,7 @@ export interface CombatMusicSettings {
   readonly updateTime: number;
   /** fCombatMusicGroupThreatRatioTimer: seconds after a fight forms that its evenness is decided. */
   readonly groupThreatRatioTimer: number;
-  /** fCombatMusicGroupThreatRatioMin / Max: the targets' strength over the group's, exclusive. */
+  /** fCombatMusicGroupThreatRatioMin / Max: the group's strength over its targets', exclusive. */
   readonly groupThreatRatioMin: number;
   readonly groupThreatRatioMax: number;
 }
@@ -72,10 +70,8 @@ export function readCombatMusicSettings(
 
 export const COMBAT_MUSIC_DEFAULTS = readCombatMusicSettings();
 
-/** An actor alive in combat that is hostile to the player. */
-export interface CombatMusicThreat {
-  /** Its combat target is the player. */
-  readonly targetsPlayer: boolean;
+/** A living member of a combat group (the player left out). */
+export interface CombatMusicMember {
   /** Its distance from the player (game units). */
   readonly distance: number;
   /** How strong it is (actorStrength). */
@@ -84,100 +80,103 @@ export interface CombatMusicThreat {
   readonly detected: boolean;
   /** Its reference has the location reference type Boss. */
   readonly boss: boolean;
-  /**
-   * Its combat group (fights not against the player are weighed per group); without one, all
-   * such fighters count as one group.
-   */
-  readonly group?: number | undefined;
+  /** It flees. */
+  readonly fleeing: boolean;
+}
+
+/** A combat group as the music weighs it. */
+export interface CombatMusicGroup {
+  readonly id: number;
+  readonly members: readonly CombatMusicMember[];
+  /** The player is one of its targets. */
+  readonly targetsPlayer: boolean;
+  /** ...and is lost to it. */
+  readonly playerLost: boolean;
+  /** It searches (all its targets lost). */
+  readonly searching: boolean;
+  /** How many targets it has. */
+  readonly targets: number;
+  /** Its targets' strength (each once; the player's own too). */
+  readonly targetStrength: number;
 }
 
 export interface CombatMusicInput {
-  readonly threats: readonly CombatMusicThreat[];
+  readonly groups: readonly CombatMusicGroup[];
   /** The player's strength (actorStrength). */
   readonly player: number;
-  /**
-   * The strength of what the fighters not targeting the player fight (their targets, each
-   * once); without it their fight counts as even.
-   */
-  readonly nearTargets?: number;
-  /**
-   * Per combat group fighting near the player (not against them), the strength of what it
-   * fights (its targets, each once); a group missing here weighs by nearTargets.
-   */
-  readonly groupTargets?: ReadonlyMap<number, number>;
-}
-
-/** The group a fighter not against the player is weighed in (0: none given). */
-const groupOf = (threat: CombatMusicThreat): number => threat.group ?? 0;
-
-/** Fighters by their group. */
-function byGroup(threats: Iterable<CombatMusicThreat>): Map<number, CombatMusicThreat[]> {
-  const groups = new Map<number, CombatMusicThreat[]>();
-  for (const threat of threats) {
-    const group = groups.get(groupOf(threat));
-    if (group) group.push(threat);
-    else groups.set(groupOf(threat), [threat]);
-  }
-  return groups;
 }
 
 export type CombatMusicChoice = 'none' | 'combat' | 'boss';
 
-function total(threats: readonly CombatMusicThreat[]): number {
-  return threats.reduce((sum, threat) => sum + threat.strength, 0);
+/** A group's own strength: its members that do not flee. */
+export function groupStrength(group: Pick<CombatMusicGroup, 'members'>): number {
+  let sum = 0;
+  for (const member of group.members) if (!member.fleeing) sum += member.strength;
+  return sum;
+}
+
+/** Whether the music passes a group over: searching, without targets, or all fleeing. */
+function passedOver(group: CombatMusicGroup): boolean {
+  if (group.searching || group.targets === 0) return true;
+  return group.members.length > 0 && group.members.every((member) => member.fleeing);
+}
+
+function choice(groups: readonly CombatMusicGroup[]): CombatMusicChoice {
+  return groups.some((group) => group.members.some((member) => member.boss)) ? 'boss' : 'combat';
 }
 
 /**
- * Which music the fights call for, before the stop time: none, combat, or the boss music.
- * `nearEven`: whether a group's fight not against the player counts (decided once: CombatMusic).
+ * Which music the groups call for, before the stop time: none, combat, or the boss music.
+ * `even`: whether a group's fight not against the player counts (decided once: CombatMusic).
  */
 export function combatMusicWanted(
   input: CombatMusicInput,
   settings: CombatMusicSettings,
   playing: boolean,
-  nearEven: boolean | ((group: number) => boolean) = true,
+  even: (group: number) => boolean = () => true,
 ): CombatMusicChoice {
-  const even = typeof nearEven === 'function' ? nearEven : () => nearEven;
-  const targeting = input.threats.filter((threat) => threat.targetsPlayer);
-  const near = input.threats.filter(
-    (threat) =>
-      !threat.targetsPlayer &&
-      threat.distance <= settings.nearCombatOuterRadius &&
-      even(groupOf(threat)),
-  );
-  let counted: CombatMusicThreat[] = [];
-  if (playing) {
-    counted = [...targeting, ...near];
-  } else {
-    const detected = total(targeting.filter((threat) => threat.detected));
-    if (detected > 0 && input.player / detected < settings.playerTargetedThreatRatio)
-      counted = targeting;
-    // Each group near the player apart: one of its fighters within the inner radius that the
-    // player detects, and its strength there above the player's.
-    const inner = near.filter((threat) => threat.distance <= settings.nearCombatInnerRadius);
-    for (const group of byGroup(inner).values()) {
-      if (
-        group.some((threat) => threat.detected) &&
-        total(group) > settings.playerNearStrengthMult * input.player
-      )
-        counted = [...counted, ...group];
+  let nearSum = 0;
+  let nearDetected = false;
+  const near: CombatMusicGroup[] = [];
+  const within = (group: CombatMusicGroup, radius: number): boolean =>
+    group.members.some((member) => member.distance < radius);
+  for (const group of input.groups) {
+    if (passedOver(group)) continue;
+    if (group.targetsPlayer) {
+      if (group.playerLost) continue;
+      if (playing) return choice([group]);
+      let detected = 0;
+      for (const member of group.members) if (member.detected) detected += member.strength;
+      if (detected > 0 && input.player / detected < settings.playerTargetedThreatRatio)
+        return choice([group]);
+      continue;
     }
+    if (!even(group.id)) continue;
+    if (playing) {
+      if (within(group, settings.nearCombatOuterRadius)) return choice([group]);
+      continue;
+    }
+    if (!within(group, settings.nearCombatInnerRadius)) continue;
+    if (!nearDetected) nearDetected = group.members.some((member) => member.detected);
+    nearSum += groupStrength(group);
+    near.push(group);
+    if (nearDetected && settings.playerNearStrengthMult * input.player < nearSum)
+      return choice(near);
   }
-  if (counted.length === 0) return 'none';
-  return counted.some((threat) => threat.boss) ? 'boss' : 'combat';
+  return 'none';
 }
 
 /**
- * Whether a fight not against the player is even (observed in the original): its targets'
- * strength over its own between fCombatMusicGroupThreatRatioMin and Max, both exclusive.
+ * Whether a group's fight is even (observed in the original): its own strength over its targets'
+ * between fCombatMusicGroupThreatRatioMin and Max, both exclusive; never without targets' strength.
  */
 export function evenFight(
   ownStrength: number,
   targetStrength: number,
   settings: CombatMusicSettings,
 ): boolean {
-  if (ownStrength <= 0) return false;
-  const ratio = targetStrength / ownStrength;
+  if (!(targetStrength > 0)) return false;
+  const ratio = ownStrength / targetStrength;
   return ratio > settings.groupThreatRatioMin && ratio < settings.groupThreatRatioMax;
 }
 
@@ -190,10 +189,11 @@ export class CombatMusic {
   /** Seconds until the fights are weighed again. */
   #due = 0;
   /**
-   * Each group's fight not against the player: when it formed (this music's clock), and whether
-   * it is even once decided (it is decided once, as the engine's combat groups do).
+   * Each group's evenness: when its timer started (this music's clock; undefined: not yet, it
+   * searched), and whether it is even once decided (it is decided once, as the engine's combat
+   * groups do).
    */
-  readonly #near = new Map<number, { since: number; even: boolean | undefined }>();
+  readonly #groups = new Map<number, { since: number | undefined; even: boolean | undefined }>();
   /** Seconds of the world's time this music has run. */
   #clock = 0;
   /** When the fights were last weighed (its clock). */
@@ -218,7 +218,7 @@ export class CombatMusic {
       fights,
       this.settings,
       this.playing !== 'none',
-      (group) => this.#near.get(group)?.even === true,
+      (group) => this.#groups.get(group)?.even === true,
     );
     if (wanted !== 'none') {
       this.#quiet = 0;
@@ -231,24 +231,27 @@ export class CombatMusic {
   }
 
   /**
-   * Whether each group's fight not against the player counts: undecided until
-   * fCombatMusicGroupThreatRatioTimer after it formed, then decided once by its own strength
-   * against its own targets'; a group whose fight ended forms anew.
+   * Each group's evenness: its timer starts once it does not search; once more than
+   * fCombatMusicGroupThreatRatioTimer has passed it is decided, once, by its own strength
+   * against its targets'. A group gone forms anew.
    */
   #weighGroups(input: CombatMusicInput): void {
-    const groups = byGroup(input.threats.filter((threat) => !threat.targetsPlayer));
-    for (const group of this.#near.keys()) if (!groups.has(group)) this.#near.delete(group);
-    for (const [group, members] of groups) {
-      let fight = this.#near.get(group);
+    const present = new Set(input.groups.map((group) => group.id));
+    for (const id of this.#groups.keys()) if (!present.has(id)) this.#groups.delete(id);
+    for (const group of input.groups) {
+      let fight = this.#groups.get(group.id);
       if (!fight) {
-        // It formed after the last weighing, which did not find it yet.
-        fight = { since: this.#weighedAt, even: undefined };
-        this.#near.set(group, fight);
+        fight = { since: undefined, even: undefined };
+        this.#groups.set(group.id, fight);
       }
       if (fight.even !== undefined) continue;
+      if (fight.since === undefined) {
+        if (group.searching) continue;
+        // It began after the last weighing, which did not find it yet.
+        fight.since = this.#weighedAt;
+      }
       if (this.#clock - fight.since <= this.settings.groupThreatRatioTimer) continue;
-      const targets = input.groupTargets?.get(group) ?? input.nearTargets;
-      fight.even = targets === undefined || evenFight(total(members), targets, this.settings);
+      fight.even = evenFight(groupStrength(group), group.targetStrength, this.settings);
     }
     this.#weighedAt = this.#clock;
   }
@@ -267,7 +270,7 @@ export class CombatMusic {
     this.playing = 'none';
     this.#quiet = 0;
     this.#due = 0;
-    this.#near.clear();
+    this.#groups.clear();
     this.#weighedAt = this.#clock;
   }
 }
