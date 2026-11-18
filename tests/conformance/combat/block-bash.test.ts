@@ -14,7 +14,10 @@ import { blockCost } from '../../../src/gameplay/vitals.ts';
 import { COMBAT_AI_DEFAULTS } from '../../../src/ai/combat-ai.ts';
 import {
   bashChance,
+  BlockAttackWait,
+  blockAttackDelay,
   blockAttackOpening,
+  blockAttackStrikes,
   blockChance,
   blockStartDistance,
   blockStopDistance,
@@ -99,6 +102,49 @@ describe('blocking and bashing (formula)', () => {
     expect(blockAttackOpening({ ...far, distanceSoon: 170 }, settings)).toBe(true);
     // Outside the swing's own strike angle.
     expect(blockAttackOpening({ ...opening, off: 0.7 }, settings)).toBe(false);
+  });
+
+  it('the block attack waits 1 .. 2 s on its opening, or strikes as its target staggers  [original]', () => {
+    expect(blockAttackDelay(0)).toBe(1);
+    expect(blockAttackDelay(0.999)).toBeCloseTo(1.999);
+    const waiting = {
+      sinceOpening: 0.5,
+      delay: 1.5,
+      targetStaggered: false,
+      targetRecoiling: false,
+      bashing: false,
+      targetAttacking: false,
+      off: 0.6,
+      strikeAngle: 0.5,
+    };
+    expect(blockAttackStrikes(waiting, settings)).toBe(false);
+    expect(blockAttackStrikes({ ...waiting, sinceOpening: 1.6 }, settings)).toBe(true);
+    // Sooner as its target staggers or recoils (its blow met the block).
+    expect(blockAttackStrikes({ ...waiting, targetStaggered: true }, settings)).toBe(true);
+    expect(blockAttackStrikes({ ...waiting, targetRecoiling: true }, settings)).toBe(true);
+    // Not while it bashes already, nor while its target swings at it within the strike angle ×
+    // fCombatBlockAttackStrikeAngleMult (0.5 × 1.25 = 0.625).
+    const due = { ...waiting, sinceOpening: 2 };
+    expect(blockAttackStrikes({ ...due, bashing: true }, settings)).toBe(false);
+    expect(blockAttackStrikes({ ...due, targetAttacking: true }, settings)).toBe(false);
+    expect(blockAttackStrikes({ ...due, targetAttacking: true, off: 0.7 }, settings)).toBe(true);
+  });
+
+  it('the block attack’s wait belongs to its block: one that ends takes it along', () => {
+    // Taken at 10 s, drawn at 0.5: it waits 1.5 s.
+    const wait = new BlockAttackWait();
+    wait.open(10, 0.5);
+    expect(wait.pending).toEqual({ at: 10, delay: 1.5 });
+    wait.seen(true);
+    expect(wait.pending).toBeDefined();
+    // Dropped by the graph as it staggers (or lowered by an offensive bash without a shield):
+    // the next block has no wait, so it does not bash at once, and may take a new opening.
+    wait.seen(false);
+    expect(wait.pending).toBeUndefined();
+    // Raised anew, or a bash struck out of the block while it stays up: spent.
+    wait.open(20, 0);
+    wait.end();
+    expect(wait.pending).toBeUndefined();
   });
 
   it('the offensive bash: chosen out of no block by its chance  [original]', () => {

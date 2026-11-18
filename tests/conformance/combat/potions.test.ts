@@ -9,7 +9,11 @@
 
 import { describe, expect, it } from 'vitest';
 import { COMBAT_AI_DEFAULTS } from '../../../src/ai/combat-ai.ts';
-import { holdsRestore } from '../../../src/ai/combat-subtrees.ts';
+import {
+  chooseCombatSupport,
+  holdsRestore,
+  restoreWanted,
+} from '../../../src/ai/combat-subtrees.ts';
 import { chooseSupport, restoreShare } from '../../../src/ai/combat-tactics.ts';
 import { strongestPotion } from '../../../src/scripting/runtime/casting-engine.ts';
 import { ENGINE } from './settings.ts';
@@ -75,8 +79,50 @@ describe('restoring (formula)', () => {
     expect(holdsRestore(0.5, 0.5)).toBe(true);
     expect(holdsRestore(0.74, 0.5)).toBe(true);
     expect(holdsRestore(0.75, 0.5)).toBe(false);
-    // Full: over, whatever the share.
-    expect(holdsRestore(1, 0.9)).toBe(false);
+    // Observed in the original: the stop is the share plus the threshold alone, with no stop at
+    // full health of its own (the engine's shares reach 0.5 at most, so it stops by 0.75); an
+    // earlier expectation here stopped it at full whatever the share.
+    expect(holdsRestore(1, 0.9)).toBe(true);
+    expect(holdsRestore(1.2, 0.9)).toBe(false);
+  });
+
+  it('wanted below the share; on below share + threshold once restoring  [original]', () => {
+    expect(restoreWanted(0.49, 0.5)).toBe(true);
+    expect(restoreWanted(0.6, 0.5)).toBe(false);
+    expect(restoreWanted(0.6, 0.5, { restoring: true })).toBe(true);
+    expect(restoreWanted(0.76, 0.5, { restoring: true })).toBe(false);
+  });
+
+  it('bleeding out, health is wanted whatever its share, and a held heal goes on  [original]', () => {
+    expect(restoreWanted(0.9, 0.5, { bleedingOut: true })).toBe(true);
+    expect(holdsRestore(0.9, 0.5, undefined, true)).toBe(true);
+    const hurt = {
+      health: 0.9,
+      magicka: 1,
+      restoreHealthBelow: 0.5,
+      bleedingOut: true,
+      wardThreat: false,
+      sinceWard: 100,
+      canHeal: true,
+      sinceHealthRestore: 100,
+      restoreHealthRestrictTime: 15,
+      canSummon: false,
+      sinceSummon: 100,
+      corpseDistance: undefined,
+      canReanimate: false,
+      sinceReanimate: 100,
+      canBuff: false,
+    };
+    const potions = {
+      restoreMagickaBelow: 0.4,
+      sinceMagickaRestore: 100,
+      restoreMagickaRestrictTime: 10,
+      health: true,
+      magicka: false,
+    };
+    expect(chooseCombatSupport(hurt, potions)).toEqual({ kind: 'potion', value: 'health' });
+    expect(chooseCombatSupport(hurt, { ...potions, health: false })).toEqual({ kind: 'restore' });
+    expect(chooseCombatSupport({ ...hurt, bleedingOut: false }, potions)).toBeUndefined();
   });
   it('the potion chosen: the one restoring the most  [original]', () => {
     const potions = [

@@ -413,7 +413,15 @@ describe('the subtrees', () => {
     expect(t.tick()).toContain('holdBlock');
     t.ctx.values.mayBlockAttack = true;
     t.ctx.values.blockAttackChance = 1;
-    expect(t.tick()).toEqual(expect.arrayContaining(['noteBlockAttack', 'blockAttack']));
+    // Observed in the original: the opening is taken, and the bash waits on it (an earlier
+    // expectation here struck at once).
+    const opened = t.tick();
+    expect(opened).toEqual(expect.arrayContaining(['noteBlockAttack', 'openBlockAttack']));
+    expect(opened).not.toContain('blockAttack');
+    t.ctx.values.mayBlockAttack = false;
+    t.ctx.values.blockAttackReady = true;
+    expect(t.tick()).toContain('blockAttack');
+    t.ctx.values.blockAttackReady = false;
     t.ctx.values.blockOver = true;
     expect(t.tick()).toContain('releaseBlock');
     // By its block chance.

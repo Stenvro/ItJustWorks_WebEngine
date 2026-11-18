@@ -20,10 +20,10 @@ conformance suites (tests/conformance/combat/).
 | Combat style (CSTY)      |    35 |   35 |    0 |
 | Attack data (ATKD, ATKE) |    16 |   16 |    0 |
 | Race combat (DATA, ATKR) |    15 |   15 |    0 |
-| Behaviour tree actions   |    66 |   66 |    0 |
+| Behaviour tree actions   |    67 |   67 |    0 |
 | Game settings            |   459 |  459 |    0 |
-| Mechanics (by hand)      |    25 |   25 |    0 |
-| Total                    |   616 |  616 |    0 |
+| Mechanics (by hand)      |    30 |   30 |    0 |
+| Total                    |   622 |  622 |    0 |
 
 Round 1 wrote the sweep and this list, and built down:
 
@@ -223,7 +223,7 @@ Round 7 (2026-11-18) read these from the original (docs/ai.md "Combat detection"
 
 ## Behaviour tree
 
-- [x] All 63 actions of the tree (src/ai/combat-tree.ts COMBAT_ACTIONS) have their action in the
+- [x] All 67 actions of the tree (src/ai/combat-tree.ts COMBAT_ACTIONS) have their action in the
       stage's registry (src/shell/actor-combat-ai.ts; typed: one missing does not compile).
 
 ## Game settings
@@ -271,15 +271,22 @@ and 290 built-in ones the readers ask for by name.
       combat-tactics.ts chooseAttack).
 - [x] Attacks while closing in (attackReaches: each attack's reach with its clip's move or its
       own speed at its hit frame); the special attack has no attack data: the idle tree's
-      ActionRightPowerAttack, an NPC's kill moves (real-fight.test.ts, melee-choice.test.ts).
+      ActionRightPowerAttack, an NPC's kill moves (real-fight.test.ts, melee-choice.test.ts). The
+      clear way a moving attack needs below twice the overrun: none at the moving distance to the
+      whole overrun at twice it (clearWayNeeded; 2026-11-18, observed in the original).
 - [x] Blocks, sustained block, block attack, bashes, offensive bash (block-bash.test.ts); the
       refused bash (BashFail, no stamina left) starts no attack (combat-state.test.ts).
 - [x] The block attack's opening, observed in the original: only while its target draws back the
       swing, inside that swing's strike angle × fCombatBlockAttackStrikeAngleMult and within the
       target's weapon reach × fCombatBlockAttackReachMult plus a radius, now or
-      fCombatAnticipateTime ahead (combat-tactics.ts blockAttackOpening). TODO(M13): the original
-      adds a value to that reach read here as the actor's radius, and its node's 1 .. 2 s and
-      0.25 s timers are not modelled.
+      fCombatAnticipateTime ahead (combat-tactics.ts blockAttackOpening). Taken, it waits 1 .. 2 s at
+      random, or less as its target staggers or recoils, and strikes then unless it bashes already
+      or its target swings at it within that strike angle (blockAttackStrikes; 2026-11-18, observed
+      in the original). The wait belongs to its block: a block that ends (lowered, dropped by the
+      graph as the actor staggers) or a bash out of it takes it along (BlockAttackWait).
+      TODO(M13): the original adds a value to that reach read here as the actor's radius; which
+      of the two recoils opens it (ours: either); the node's 0.25 s timer is not modelled (not
+      identified: it may be the each-update look blockAttackStrikes makes, or a rest after it).
 - [x] Staggers, recoils, knockdowns, ragdolls on death (stagger.ts, actor-knockdowns.ts).
 - [x] The blocked hit's stagger, observed in the original: the hit's own stagger less
       fStaggerBlockAttackShieldMult × rating (a shield's, else fStaggerDaggerAR, 1WeapAR, 2WeapAR,
@@ -306,8 +313,10 @@ and 290 built-in ones the readers ask for by name.
       does (a ray on the line-of-sight layer that passes every actor's bodies: whom a shot may
       pass stays the actor rule, so it still shoots past its target's foes); a spell from a hand
       is not cast down a blocked line either, a shout is (combat-tactics.ts lineOfFire,
-      castWaitsForLineOfFire; ranged.test.ts, line-of-fire-world.test.ts). TODO(M13): the world
-      check is ours; that a shout ignores the line is inferred.
+      castWaitsForLineOfFire; ranged.test.ts, line-of-fire-world.test.ts). 2026-11-18, observed in
+      the original: one trace, the first thing met deciding (a foe it may hit before a wall takes
+      the shot). TODO(M13): that a shout ignores the line is inferred; whom a shot may meet (ours:
+      its group's targets); a world hit at the target's point let through.
 - [x] Find Attack Location: the Ranged Movement's subtree (Find Lateral Attack Location, Find
       Attack Location, Find Ally Attack Location, Set Failed Timestamp, observed in the original),
       run while the line of fire is blocked, by the fCombatFind*AttackLocation* settings
@@ -316,7 +325,15 @@ and 290 built-in ones the readers ask for by name.
       and what reads its failed timestamp (docs/ai.md, "The combat behaviour tree").
 - [x] The cover: no score; the first edge that holds as the way search reaches it (round 5).
       TODO(M13): the reservation slots along an edge, an obstacle's move.
-- [x] Magic in combat: casters by purpose, dual casting, concentration, potions.
+- [x] Magic in combat: casters by purpose, dual casting, concentration, potions. 2026-11-18,
+      observed in the original: restoring is wanted below the restore share, a held restore goes
+      on below the share plus fCombatRestoreStopCastThreshold with no stop at full of its own,
+      and health is wanted whatever its share while bleeding out (restoreWanted, holdsRestore).
+- [x] Close Movement: Advance, Backoff, Circle, Fallback, Surround, Strafe (combat-movement.ts;
+      close-movement.test.ts). 2026-11-18, observed in the original: out of range means both
+      bodies fCombatAnticipateTime ahead beyond its range, unless it stands in its place within
+      it now; out of position means no place held, or left by more than half its width ×
+      fCombatTargetLocationRepositionAngleMult (closeOutOfRange).
 - [x] The casters by their spells' combat inventory scores, each with its own check (round 5).
       TODO(M13): a drain's count only for a target that uses the resource (ours: any).
 - [x] The shout in an actor's voice as an inventory item by its word's spell's score and caster,

@@ -78,6 +78,7 @@ import {
   circleAngle,
   circleDistantGoals,
   circleGoals,
+  closeOutOfRange,
   combatTurning,
   COMBAT_MOVEMENT_DEFAULTS,
   fallbackGoal,
@@ -145,7 +146,9 @@ import {
   attackStrikeAngle,
   avoidsThreat,
   blockAttackChance,
+  BlockAttackWait,
   blockAttackOpening,
+  blockAttackStrikes,
   blockStartDistance,
   holdsBlock,
   blockChance,
@@ -462,6 +465,8 @@ interface Mind {
   hand: 'right' | 'left';
   /** The block attack's opening last weighed (its target's swing), and its target's last place. */
   blockAttacked: object | undefined;
+  /** A block attack taken at an opening, waiting to strike in its block (blockAttackStrikes). */
+  readonly blockAttackWait: BlockAttackWait;
   blockTargetAt:
     { readonly distance: number; readonly at: number; readonly speed: number } | undefined;
   maneuver: Maneuver;
@@ -1277,6 +1282,7 @@ export class ActorCombatAi {
         switchedAt: -Infinity,
         hand: 'right',
         blockAttacked: undefined,
+        blockAttackWait: new BlockAttackWait(),
         blockTargetAt: undefined,
         maneuver: 'advance',
         maneuverUntil: 0,
@@ -2514,6 +2520,8 @@ export class ActorCombatAi {
     if (range < this.#subtrees.rangedDistance) mind.leash = undefined;
     const leash = mind.leash;
     const tethered = leash !== undefined && flat(feet, leash.center) > leash.radius;
+    // A block attack's wait goes with its block (the graph may drop it, as the actor staggers).
+    mind.blockAttackWait.seen(view.state.blocking);
     const frame: CombatFrame = {
       mind,
       view,
@@ -3062,6 +3070,10 @@ export class ActorCombatAi {
         ? undefined
         : await spells.chooseSpell(reference, 'reanimate', corpse.reference);
     const health = await share(ActorValue.health);
+    // Bleeding out, health is wanted whatever its share (restoreWanted). TODO(M13): the stage
+    // stands a bleeding-out fighter out of its tree (the tick's bleedingOut gate), so this
+    // holds only for one whose support was under way as it went down.
+    const bleedingOut = view.state.life === LifeState.bleedout;
     const heal = await spells.chooseSpell(reference, 'heal');
     // The combat inventory takes its items by their scores (spell-score.ts).
     const score = async (
@@ -3080,6 +3092,7 @@ export class ActorCombatAi {
         health,
         magicka: await share(ActorValue.magicka),
         restoreHealthBelow: restoreBelow,
+        bleedingOut,
         wardThreat: ward !== undefined,
         sinceWard: this.#clock - mind.wardedAt,
         canHeal: heal !== undefined,
@@ -3113,7 +3126,10 @@ export class ActorCombatAi {
         break;
       case 'restore':
         // A held healing spell goes on past its restore share by the stop threshold.
-        purpose = { kind: 'heal', holds: (now) => holdsRestore(now, restoreBelow, subtrees) };
+        purpose = {
+          kind: 'heal',
+          holds: (now) => holdsRestore(now, restoreBelow, subtrees, bleedingOut),
+        };
         break;
       case 'reanimate':
         if (!corpse) return;
@@ -3640,11 +3656,34 @@ export class ActorCombatAi {
           flanking: (f) => (style(f).flags & CombatStyleFlag.flanking) !== 0,
           farAway: (f) => f.distance > f.reach + CHASE_BEYOND,
           beyondRange: (f) => f.distance > f.range,
-          // Beyond its range, its target's place fCombatAnticipateTime ahead (a place of its
-          // own it holds nearer keeps it in range: the target locations' Reposition).
+          // Observed in the original: the two bodies fCombatAnticipateTime ahead lie beyond
+          // its range, unless it stands in its place round its target within its range now.
           outOfRange: (f) => {
             const close = this.#close(f);
-            return flat(f.feet, close.moving.anticipated) > close.range;
+            const own = this.#options.movers.motion(f.mind.reference)?.velocity;
+            const ahead = this.#movement.anticipateTime;
+            return closeOutOfRange({
+              own: {
+                feet: f.feet,
+                ahead: own
+                  ? [f.feet[0] + own[0] * ahead, f.feet[1] + own[1] * ahead, f.feet[2]]
+                  : f.feet,
+                height: f.view.height,
+              },
+              target: {
+                feet: close.moving.feet,
+                ahead: close.moving.anticipated,
+                height: f.target.height,
+              },
+              range: close.range,
+              inPlace: this.#locations.inPlace(
+                f.mind.reference,
+                f.target.reference,
+                f.feet,
+                close.moving.feet,
+                1,
+              ),
+            });
           },
           outOfPosition: (f) =>
             this.#locations.outOfPosition(
@@ -3740,6 +3779,7 @@ export class ActorCombatAi {
             return (
               blow !== undefined &&
               f.mind.blockAttacked !== blow &&
+              f.mind.blockAttackWait.pending === undefined &&
               f.view.gear?.canBash === true &&
               blockAttackOpening(
                 {
@@ -3754,6 +3794,31 @@ export class ActorCombatAi {
                   ),
                   reach: f.target.reach,
                   radius: f.view.radius,
+                },
+                settings(),
+              )
+            );
+          },
+          // A block attack taken at an opening strikes once its wait is over or its target
+          // staggers or recoils, while its target does not swing at it.
+          blockAttackReady: (f) => {
+            const open = f.mind.blockAttackWait.pending;
+            return (
+              open !== undefined &&
+              blockAttackStrikes(
+                {
+                  sinceOpening: this.#clock - open.at,
+                  delay: open.delay,
+                  targetStaggered: f.target.state.staggered,
+                  targetRecoiling: f.target.state.recoiling,
+                  bashing: f.view.state.attack === AttackState.bash,
+                  targetAttacking: f.target.state.attack !== AttackState.none,
+                  off: Math.abs(turnBetween(f.target.heading, f.facing + Math.PI)),
+                  strikeAngle: attackStrikeAngle(
+                    f.target.gear?.strikeAngle ?? 0,
+                    false,
+                    settings(),
+                  ),
                 },
                 settings(),
               )
@@ -4224,10 +4289,12 @@ export class ActorCombatAi {
           offensiveBash: (f, run) => {
             const reference = f.mind.reference;
             if (!f.view.state.blocking) {
-              if (run.first) void host.block(reference, true);
+              if (run.first) this.#raiseBlock(f.mind);
               return run.elapsed > OFFENSIVE_BASH_RAISE ? 'failure' : 'running';
             }
             f.mind.blockUntil = this.#clock + OFFENSIVE_BASH_RAISE;
+            // A bash out of the block: a block attack waiting in it is spent.
+            f.mind.blockAttackWait.end();
             const status = this.#melee(f, 'ActionRightAttack', 'Bash');
             if (f.view.gear?.canBlock !== true) void host.block(reference, false);
             return status;
@@ -4295,7 +4362,7 @@ export class ActorCombatAi {
           block: (f) => {
             f.mind.blockUntil = this.#clock + blockTime(style(f), this.#settings);
             f.mind.blockTargetAt = undefined;
-            void host.block(f.mind.reference, true);
+            this.#raiseBlock(f.mind);
             this.#bark(f.mind.reference, 'Block', f.target.reference);
             return 'success';
           },
@@ -4307,8 +4374,16 @@ export class ActorCombatAi {
             f.mind.blockAttacked = this.#blowAt(f);
             return 'success';
           },
-          // The block attack: the shield bash out of the block, against the target's swing.
-          blockAttack: (f) => this.#melee(f, 'ActionRightAttack', 'Bash'),
+          // The block attack taken: it waits on its opening (blockAttackDelay: 1 .. 2 s).
+          openBlockAttack: (f) => {
+            f.mind.blockAttackWait.open(this.#clock, this.#random());
+            return 'success';
+          },
+          // The block attack: the shield bash out of the block.
+          blockAttack: (f) => {
+            f.mind.blockAttackWait.end();
+            return this.#melee(f, 'ActionRightAttack', 'Bash');
+          },
           // Held, the block meets each blow that comes at it (ActionBlockAnticipate: its graph's
           // block anticipation raises the shield or weapon at the attacker's weapon).
           holdBlock: (f) => {
@@ -4444,7 +4519,14 @@ export class ActorCombatAi {
     );
   }
 
+  /** Its block raised: a new block, with no block attack waiting in it. */
+  #raiseBlock(mind: Mind): void {
+    mind.blockAttackWait.end();
+    void this.#options.host.block(mind.reference, true);
+  }
+
   #releaseBlock(mind: Mind, view: FighterView | undefined): void {
+    mind.blockAttackWait.end();
     if (view?.state.blocking !== true) return;
     mind.blockUntil = 0;
     void this.#options.host.block(mind.reference, false);
@@ -4699,32 +4781,35 @@ export class ActorCombatAi {
     return blocked;
   }
 
-  /** The actors that may stand in its shot's way: not its target, nor one of its side's targets. */
+  /**
+   * The actors on a shot's way: all but itself and its target; one of its side's targets it may
+   * hit (passes). TODO(M13): whom a shot may meet is the group's targets here; the original asks
+   * the shooter's hostility to the one met, under a flag of its aim read only from its use.
+   */
   #shotObstacles(f: CombatFrame): ShotObstacle[] {
     const others: ShotObstacle[] = [];
     for (const other of this.#options.host.fighters()) {
       const { reference, feet } = other;
       if (reference === f.mind.reference || reference === f.target.reference || !feet) continue;
       if (other.state.life === LifeState.dead) continue;
-      if (this.#groups.target(f.mind.reference, reference) !== undefined) continue;
-      others.push({ reference, feet, radius: other.radius, height: other.height });
+      const passes = this.#groups.target(f.mind.reference, reference) !== undefined;
+      others.push({ reference, feet, radius: other.radius, height: other.height, passes });
     }
     return others;
   }
 
   /**
    * What blocks the line of fire from a place (its own feet, or one it might shoot from) to its
-   * target, both at AIM_HEIGHT_SHARE of their heights: an actor it must not hit (not its target,
-   * nor one of its side's targets: it may hit those), else the world (a ray on the line-of-sight
-   * layer that passes every actor's bodies: a wall, a pillar, the ground between; actors are
-   * weighed by the first rule alone, so it still shoots past its target's foes, and a line from
-   * an ally's place is not blocked by that ally). Undefined: clear.
+   * target, both at AIM_HEIGHT_SHARE of their heights (lineOfFire: the first thing met decides):
+   * an actor it must not hit, or the world (a ray on the line-of-sight layer past every actor's
+   * bodies: a wall, a pillar, the ground between) met before any actor it may hit. A line from an
+   * ally's place is not blocked by that ally. Undefined: clear.
    */
   #lineOfFireFrom(f: CombatFrame, feet: Vec3, others: readonly ShotObstacle[]) {
     const from: Vec3 = [feet[0], feet[1], feet[2] + f.view.height * AIM_HEIGHT_SHARE];
     const to: Vec3 = [f.there[0], f.there[1], f.there[2] + f.target.height * AIM_HEIGHT_SHARE];
     const senses = this.#options.senses?.();
-    return lineOfFire(from, to, others, (a, b) => senses?.lineClear(a, b));
+    return lineOfFire(from, to, others, (a, b) => senses?.lineHit(a, b));
   }
 
   /** Its own line of fire to its target, looked at again each DECIDE_SECONDS. */

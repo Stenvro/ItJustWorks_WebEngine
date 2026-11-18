@@ -13,6 +13,7 @@ import { AttackFlag, type AttackData } from '../../../src/ai/race-combat-records
 import { COMBAT_DEFAULTS } from '../../../src/gameplay/combat/combat-settings.ts';
 import {
   attackReaches,
+  clearWayNeeded,
   chooseAttackData,
   DEFAULT_ATTACK,
   reachExtents,
@@ -261,6 +262,18 @@ describe('an attack’s reach at its hit frame (attackReaches: closing in)', () 
     expect(attackReaches(forward, lunge, walled)).toBe(false);
     const nearly = { ...context(400), clearTo: () => 180 };
     expect(attackReaches(forward, lunge, nearly)).toBe(true);
+  });
+
+  it('below twice the overrun: none at the moving distance, the whole overrun at twice it  [original]', () => {
+    // fCombatAttackMovingAttackDistance 32, fCombatAttackAllowedOverrunDistance 128.
+    const s = COMBAT_DEFAULTS;
+    expect(s.attackMovingAttackDistance).toBe(32);
+    expect(s.attackAllowedOverrunDistance).toBe(128);
+    expect(clearWayNeeded(32, s)).toBe(0);
+    expect(clearWayNeeded(144, s)).toBe(64);
+    expect(clearWayNeeded(256, s)).toBe(128);
+    // Beyond twice the overrun: all of it but the overrun.
+    expect(clearWayNeeded(300, s)).toBe(172);
   });
 });
 

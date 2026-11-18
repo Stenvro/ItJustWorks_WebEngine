@@ -1087,10 +1087,21 @@ export class ActorSenses implements ScriptSenses {
    * starts inside that ally. Undefined while the physics cannot be asked.
    */
   lineClear(from: Vec3, to: Vec3): boolean | undefined {
+    const hit = this.lineHit(from, to);
+    return hit === undefined ? undefined : hit === Infinity;
+  }
+
+  /**
+   * Where the world first stands between two points (the ray of lineClear): the share of the
+   * way (0 .. 1) to its first hit, Infinity when nothing does; undefined while the physics
+   * cannot be asked. A shot's line of fire weighs it against the actors on the way: the first
+   * thing met decides (lineOfFire, src/ai/combat-tactics.ts).
+   */
+  lineHit(from: Vec3, to: Vec3): number | undefined {
     const physics = this.#world?.physics;
     if (!physics?.queriesCurrent) return undefined;
     const length = distance(from, to);
-    if (length < 1) return true;
+    if (length < 1) return Infinity;
     const direction: Vec3 = [
       (to[0] - from[0]) / length,
       (to[1] - from[1]) / length,
@@ -1105,7 +1116,7 @@ export class ActorSenses implements ScriptSenses {
       undefined,
       (collider) => physics.isActor(collider),
     );
-    return !hit || hit.distance >= length - RAY_SLACK;
+    return !hit || hit.distance >= length - RAY_SLACK ? Infinity : hit.distance / length;
   }
 
   /**

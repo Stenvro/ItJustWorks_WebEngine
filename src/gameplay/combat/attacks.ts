@@ -250,8 +250,8 @@ export function reachExtents(ownRadius: number, targetRadius: number): number {
  * fCombatAttackMovingAttackReachMult if it moved past fCombatAttackMovingAttackDistance, plus the
  * extents. One moving that far must also have its target within the strike angle ×
  * fCombatAttackMovingStrikeAngleMult from there. So a forward power attack, whose clip goes
- * hundreds of units, is an attack from afar and no attack at arm's length.
- * TODO(M13): the inferred curve of the way that must be clear below twice the overrun.
+ * hundreds of units, is an attack from afar and no attack at arm's length. How far its way must
+ * be clear: clearWayNeeded.
  */
 export function attackReaches(
   attack: AttackData,
@@ -280,13 +280,7 @@ export function attackReaches(
         attacker.feet[2] + hit.motion[2],
       ];
       if (lunge > settings.attackMovingAttackDistance && context.clearTo) {
-        const overrun = settings.attackAllowedOverrunDistance;
-        const least = settings.attackMovingAttackDistance;
-        const wanted =
-          lunge > overrun * 2
-            ? lunge - overrun
-            : least + ((lunge - least) * (overrun - least)) / (overrun * 2 - least);
-        if (context.clearTo(at) < wanted) return false;
+        if (context.clearTo(at) < clearWayNeeded(lunge, settings)) return false;
       }
     }
   } else {
@@ -310,6 +304,27 @@ export function attackReaches(
   const bearing = angleBetween(context.heading, Math.atan2(there[0] - at[0], there[1] - at[1]));
   const off = Math.abs(angleBetween(bearing, (attack.attackAngle * Math.PI) / 180));
   return (off * 180) / Math.PI <= attack.strikeAngle * settings.attackMovingStrikeAngleMult;
+}
+
+/**
+ * How far a moving attack's way must be clear towards where its clip takes it (observed in the
+ * original): a lunge beyond twice fCombatAttackAllowedOverrunDistance needs all of it but the
+ * overrun; a shorter one needs a share of the overrun, none at fCombatAttackMovingAttackDistance
+ * rising evenly to the whole overrun at twice it (so the two meet there).
+ */
+export function clearWayNeeded(
+  lunge: number,
+  settings: {
+    readonly attackMovingAttackDistance: number;
+    readonly attackAllowedOverrunDistance: number;
+  },
+): number {
+  const overrun = settings.attackAllowedOverrunDistance;
+  if (lunge > overrun * 2) return lunge - overrun;
+  const least = settings.attackMovingAttackDistance;
+  const span = overrun * 2 - least;
+  const share = span > 0 ? Math.min(1, Math.max(0, (lunge - least) / span)) : 1;
+  return share * overrun;
 }
 
 function flatDistance(a: readonly number[], b: readonly number[]): number {

@@ -10,8 +10,11 @@
 import { describe, expect, it } from 'vitest';
 import { COMBAT_AI_DEFAULTS } from '../../../src/ai/combat-ai.ts';
 import {
+  anticipatedApart,
   chooseCloseMovement,
+  closeOutOfRange,
   COMBAT_MOVEMENT_DEFAULTS,
+  type RangeBody,
   surroundGoal,
   TargetLocations,
 } from '../../../src/ai/combat-movement.ts';
@@ -48,6 +51,55 @@ describe('the close movement selector’s split', () => {
   it('having left its place, it goes back first', () => {
     const tries = chooseCloseMovement({ ...near, outOfPosition: true }, () => 0, movement);
     expect(tries[0]).toBe('reposition');
+  });
+
+  it('out of range: both bodies fCombatAnticipateTime ahead beyond its range  [original]', () => {
+    const body = (x: number, ahead = x): RangeBody => ({
+      feet: [x, 0, 0],
+      ahead: [ahead, 0, 0],
+      height: 128,
+    });
+    // 160 apart now, its target coming to 120 apart: in range (150) ahead.
+    expect(
+      closeOutOfRange({ own: body(0), target: body(160, 120), range: 150, inPlace: false }),
+    ).toBe(false);
+    // Itself backing off: out of range ahead, though in range now.
+    expect(
+      closeOutOfRange({ own: body(0, -60), target: body(140), range: 150, inPlace: false }),
+    ).toBe(true);
+    // Standing in its place and within its range now: in range, whatever comes ahead.
+    expect(
+      closeOutOfRange({ own: body(0, -60), target: body(140), range: 150, inPlace: true }),
+    ).toBe(false);
+  });
+
+  it('the height counts once their middles lie half the taller apart  [original]', () => {
+    const low = { feet: [0, 0, 0], ahead: [0, 0, 0], height: 128 } as const;
+    // 100 flat; 60 up (under half of 128): flat alone.
+    expect(
+      anticipatedApart(low, { feet: [100, 0, 60], ahead: [100, 0, 60], height: 128 }),
+    ).toBeCloseTo(100);
+    // 100 up: the whole distance.
+    expect(
+      anticipatedApart(low, { feet: [100, 0, 100], ahead: [100, 0, 100], height: 128 }),
+    ).toBeCloseTo(Math.hypot(100, 100));
+  });
+
+  it('out of position: no place held, or half its width × 0.67 off it  [original]', () => {
+    const places = new TargetLocations();
+    expect(places.outOfPosition(1, 9, [0, 100, 0], [0, 0, 0], movement)).toBe(true);
+    places.reserve(1, { target: 9, angle: 0, width: 1 });
+    // Half the width (0.5) × fCombatTargetLocationRepositionAngleMult (0.67): 0.335 rad.
+    const at = (angle: number): [number, number, number] => [
+      100 * Math.sin(angle),
+      100 * Math.cos(angle),
+      0,
+    ];
+    expect(places.outOfPosition(1, 9, at(0.3), [0, 0, 0], movement)).toBe(false);
+    expect(places.outOfPosition(1, 9, at(0.4), [0, 0, 0], movement)).toBe(true);
+    // In its place for the range split: within half the width.
+    expect(places.inPlace(1, 9, at(0.4), [0, 0, 0], 1)).toBe(true);
+    expect(places.inPlace(1, 9, at(0.6), [0, 0, 0], 1)).toBe(false);
   });
 });
 

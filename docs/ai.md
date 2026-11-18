@@ -2728,11 +2728,12 @@ meanwhile.
   lies within fCombatRangedProjectileFiringArc (30°) of its aim, looking again a quarter second
   later; held past fCombatRangedAttackMaximumHoldTime (10 s) it lets the bow down unloosed
   (ActionRightInterrupt: CancelBowAttack). Its facing gates only a new draw: a drawn bow waiting
-  on its archer's turn was never loosed. Nor is it loosed down a blocked line of fire (an actor
-  it must not hit, i.e. not its target nor one of its side's targets, which it may hit: observed
-  in the original; a wall or the ground between: ours, a ray on the line-of-sight layer that
-  passes every actor's bodies, so actors are weighed by the first rule alone and it still shoots
-  past its target's foes), let down once blocked past fCombatAimProjectileBlockedTime (1.5 s); a
+  on its archer's turn was never loosed. Nor is it loosed down a blocked line of fire (observed
+  in the original: one trace from its aim to its target, the first thing met deciding: an actor it
+  must not hit, i.e. not its target nor one of its side's targets, blocks it, one it may hit
+  leaves it clear, a wall or the ground met first blocks it; ours traces the world on the
+  line-of-sight layer past every actor's bodies and weighs the actors on the way against that
+  hit), let down once blocked past fCombatAimProjectileBlockedTime (1.5 s); a
   spell from a hand is not cast down a blocked line either, and its Ranged Movement looks for a
   place with a clear one (Find Attack Location, "The combat behaviour tree"). A shout is not held
   by a blocked line (inferred, TODO(M13): followers of the original are widely reported to shout
@@ -3148,7 +3149,9 @@ its recovery time starts. Its target must also be in reach of it at its hit fram
 its reach, the extents (`reachExtents`: the larger of its own and its target's radius, see
 below) and the target's way by then; then, from where it
 will be (the clip's offset turned by its facing past fCombatAttackStationaryAttackDistance, its
-way clear past fCombatAttackMovingAttackDistance short of fCombatAttackAllowedOverrunDistance)
+way clear past fCombatAttackMovingAttackDistance short of fCombatAttackAllowedOverrunDistance; a
+lunge up to twice the overrun needs a share of it, none at the moving distance rising evenly to the
+whole overrun at twice it: `clearWayNeeded`)
 to where the target will be (the player, unless going away from it, ×
 fCombatAttackPlayerAnticipateMult), its reach, × fCombatAttackMovingAttackReachMult if it moved,
 plus those extents, and if it moved the strike angle × fCombatAttackMovingStrikeAngleMult. (The
@@ -3374,8 +3377,10 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   potion below its restore share, a magicka potion below its magicka share, then a ward against
   what comes at it with
   fCombatMagicWardMagickaCastLimit of its magicka, held at least fCombatMagicWardMinCastTime;
-  restore below its restore share, a held healing spell cast on until its health is
-  fCombatRestoreStopCastThreshold past that share (inferred); a summons (not within
+  restore below its restore share, a held healing spell cast on while its health is below that
+  share plus fCombatRestoreStopCastThreshold (observed in the original, `restoreWanted`,
+  `holdsRestore`: no stop at full health of its own; its health is wanted whatever its share
+  while it bleeds out); a summons (not within
   fCombatMagicSummonRestrictTime); the nearest corpse raised within
   fCombatMagicReanimateDistance (its reanimation spell, a cast purpose of its own, cast at it;
   not within fCombatMagicReanimateRestrictTime); a buff. Potions come before the hands' spells:
@@ -3859,8 +3864,13 @@ nearest to itself whose way out from the target the navmesh allows (cut short to
 fCombatTargetLocationMinDistanceMult of the distance); its own place counts
 fCombatTargetLocationCurrentReservationDistanceMult nearer. So a group spreads round its target
 instead of piling onto one point. TODO(M13): the second size of the width rule (a cached size of
-the actor's) is read as its radius. Out of range (observed in the original) is beyond its range
-at its target's place fCombatAnticipateTime ahead, unless a place it holds nearer keeps it there.
+the actor's) is read as its radius. Out of range (observed in the original, `closeOutOfRange`):
+the two bodies, each where it will be fCombatAnticipateTime ahead, lie farther apart than its
+range (flat, with the height between them too once their middles lie half the taller one's height
+apart or more); one standing in its place round its target (its bearing within half the place's
+width) and within its range now stays in range. Out of position: it holds no place, or its
+bearing has left the place by half its width × fCombatTargetLocationRepositionAngleMult (0.67).
+In range otherwise.
 Fallback To Ranged's condition: it has something reaching past fCombatRangedDistance; it backs to
 that distance from its target ("Check Unreachable Target", above) while the equipment choice takes
 up its weapon.

@@ -1051,6 +1051,76 @@ export function blockAttackOpening(
   return input.distance < limit || input.distanceSoon < limit;
 }
 
+/**
+ * How long a block attack waits on its opening at most (observed in the original): drawn at
+ * random from 1 to 2 seconds as the opening is taken (`random`: 0 .. 1).
+ */
+export function blockAttackDelay(random: number): number {
+  return 1 + random;
+}
+
+/**
+ * The block attack's wait on an opening, kept for the one block it was taken in: the Block
+ * Attack is a child of the block, so a block that ends (lowered by the tree or an offensive
+ * bash, dropped by the graph as the actor staggers) or a bash out of it takes the wait along,
+ * and the next block has none until a new opening is taken.
+ */
+export class BlockAttackWait {
+  #open: { readonly at: number; readonly delay: number } | undefined;
+
+  /** The wait under way (when its opening was taken, and its delay), if any. */
+  get pending(): { readonly at: number; readonly delay: number } | undefined {
+    return this.#open;
+  }
+
+  /** An opening taken at `at` (seconds), its wait drawn by blockAttackDelay(`random`). */
+  open(at: number, random: number): void {
+    this.#open = { at, delay: blockAttackDelay(random) };
+  }
+
+  /** The block raised anew, a bash struck out of it, or the wait's strike taken: it ends. */
+  end(): void {
+    this.#open = undefined;
+  }
+
+  /** What the actor does now: not blocking, the wait goes with its block. */
+  seen(blocking: boolean): void {
+    if (!blocking) this.#open = undefined;
+  }
+}
+
+/**
+ * Whether a block attack taken at an opening strikes now (observed in the original: the Block
+ * Attack behaviour, after its opening, looks each update): once its wait (blockAttackDelay) is
+ * over, or sooner as its target staggers or recoils; and then only while it is not bashing
+ * already and its target is not swinging at it with it inside that swing's strike angle ×
+ * fCombatBlockAttackStrikeAngleMult. Until then it holds its block and waits. TODO(M13): which
+ * of the recoils counts (the original reads one of its two values; ours: either); the node's
+ * 0.25 s timer is not modelled (not identified: the each-update look here, or a rest after it).
+ */
+export function blockAttackStrikes(
+  input: {
+    /** Seconds since the opening was taken, and its wait. */
+    readonly sinceOpening: number;
+    readonly delay: number;
+    readonly targetStaggered: boolean;
+    readonly targetRecoiling: boolean;
+    /** It is bashing already. */
+    readonly bashing: boolean;
+    /** Its target attacks, how far it stands off its target's facing, the swing's strike angle. */
+    readonly targetAttacking: boolean;
+    readonly off: number;
+    readonly strikeAngle: number;
+  },
+  settings: CombatAiSettings,
+): boolean {
+  const opened = input.sinceOpening > input.delay || input.targetStaggered || input.targetRecoiling;
+  if (!opened || input.bashing) return false;
+  return !(
+    input.targetAttacking && input.off <= input.strikeAngle * settings.blockAttackStrikeAngleMult
+  );
+}
+
 export interface ShotInput extends Opponent {
   /** Seconds since its last attack (undefined: none yet in this fight). */
   readonly sinceLastAttack: number | undefined;
@@ -1276,6 +1346,8 @@ export interface ShotObstacle {
   readonly feet: Vec3;
   readonly radius: number;
   readonly height: number;
+  /** The shot may meet it (its target, or one it may hit): met first, the line is clear. */
+  readonly passes?: boolean;
 }
 
 /**
@@ -1289,12 +1361,22 @@ export function lineOfFireBlocker(
   to: Vec3,
   others: readonly ShotObstacle[],
 ): number | undefined {
+  const met = firstActorMet(from, to, others);
+  return met && met.obstacle.passes !== true ? met.obstacle.reference : undefined;
+}
+
+/** The first actor on the way from `from` to `to`, and its share of the way (0 .. 1). */
+function firstActorMet(
+  from: Vec3,
+  to: Vec3,
+  others: readonly ShotObstacle[],
+): { readonly obstacle: ShotObstacle; readonly along: number } | undefined {
   const dx = to[0] - from[0];
   const dy = to[1] - from[1];
   const dz = to[2] - from[2];
   const lengthSquared = dx * dx + dy * dy;
   if (lengthSquared <= 0) return undefined;
-  let nearest: number | undefined;
+  let nearest: ShotObstacle | undefined;
   let nearestAlong = Infinity;
   for (const other of others) {
     const along = ((other.feet[0] - from[0]) * dx + (other.feet[1] - from[1]) * dy) / lengthSquared;
@@ -1306,27 +1388,39 @@ export function lineOfFireBlocker(
     if (off > other.radius) continue;
     const height = from[2] + dz * along;
     if (height < other.feet[2] || height > other.feet[2] + other.height) continue;
-    nearest = other.reference;
+    nearest = other;
     nearestAlong = along;
   }
-  return nearest;
+  return nearest && { obstacle: nearest, along: nearestAlong };
 }
 
 /**
- * What blocks a shot's line of fire: an actor in its way (lineOfFireBlocker), else the world
- * (`worldClear`: whether nothing of the world stands between the two points, a wall, a pillar,
- * the ground; undefined when it cannot be asked now, taken as clear). Undefined: the line is
- * clear. A shooter neither looses nor casts down a blocked line; its Ranged Movement then looks
- * for a place with a clear one (Find Attack Location: combat-subtrees.ts).
+ * What blocks a shot's line of fire (observed in the original: one trace from the aim to the
+ * target, the first thing it meets deciding): an actor met first leaves it clear when the shot
+ * may meet it (`passes`: its target, or one it may hit), else blocks it ('actor'); the world met
+ * first blocks it ('world'). `world`: the share of the way (0 .. 1) to the world's first hit (a
+ * wall, a pillar, the ground), Infinity when none, undefined when it cannot be asked now (taken
+ * as clear); a plain false (no place known) blocks it after the actor rule. Undefined: clear. So
+ * a foe it may hit standing before a wall takes the shot, and a wall behind its target does not
+ * matter. A shooter neither looses nor casts down a blocked line; its Ranged Movement then looks
+ * for a place with a clear one (Find Attack Location: combat-subtrees.ts). TODO(M13): the
+ * original also lets a world hit within an allowance of the target's point through when just
+ * before it lies inside the target (the allowance is the aim's own, not read here: none).
  */
 export function lineOfFire(
   from: Vec3,
   to: Vec3,
   others: readonly ShotObstacle[],
-  worldClear?: (from: Vec3, to: Vec3) => boolean | undefined,
+  world?: (from: Vec3, to: Vec3) => number | boolean | undefined,
 ): 'actor' | 'world' | undefined {
-  if (lineOfFireBlocker(from, to, others) !== undefined) return 'actor';
-  return worldClear?.(from, to) === false ? 'world' : undefined;
+  const met = firstActorMet(from, to, others);
+  const hit = world?.(from, to);
+  const worldAt = typeof hit === 'number' ? hit : hit === false ? -1 : Infinity;
+  if (met && (worldAt < 0 || met.along <= worldAt)) {
+    if (met.obstacle.passes !== true) return 'actor';
+    if (worldAt >= 0) return undefined;
+  }
+  return worldAt === Infinity ? undefined : 'world';
 }
 
 /**
