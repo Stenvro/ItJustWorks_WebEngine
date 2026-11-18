@@ -166,14 +166,15 @@ export class DestructionLooks {
     const play = this.#play();
     for (const entry of this.#entries.values()) {
       // A base without destruction data never takes a stage's look (DestructionEngine.look):
-      // nothing to ask of it again (most of a cell's statics, trees and clutter).
+      // nothing to ask of it again (most of a cell's statics, trees and clutter). Read once
+      // per base.
       if (entry.destructible === false) continue;
       if (entry.destructible === undefined && runtime) {
         entry.destructible = 'asking';
-        runtime.destruction.destructible(entry.object.reference).then(
-          (destructible) => {
+        runtime.destruction.data(entry.object.base).then(
+          (data) => {
             entry.destructible =
-              destructible || entry.look !== undefined || entry.hiding || entry.touched;
+              data !== undefined || entry.look !== undefined || entry.hiding || entry.touched;
           },
           // Unknown: it is looked at every frame as before.
           () => undefined,

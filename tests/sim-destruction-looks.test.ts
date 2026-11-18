@@ -43,7 +43,7 @@ describe('destructible objects each frame', () => {
     const runtime = {
       state: { references: counted },
       destruction: {
-        destructible: (reference: number) => Promise.resolve(reference === 0x2),
+        data: (base: number) => Promise.resolve(base === 0x20 ? {} : undefined),
         look: () => Promise.resolve(undefined),
       },
     };
@@ -55,7 +55,7 @@ describe('destructible objects each frame', () => {
     );
     const add = (reference: number): void => {
       looks.add(
-        { reference, baseType: 'STAT' } as CellObject,
+        { reference, base: reference * 0x10, baseType: 'STAT' } as CellObject,
         new Float32Array(16),
         { hidden: false },
         () => true,
