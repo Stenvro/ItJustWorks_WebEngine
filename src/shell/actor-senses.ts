@@ -423,7 +423,8 @@ export class ActorSenses implements ScriptSenses {
       for (const target of bodies.values()) {
         if (target.reference === body.reference) continue;
         // A pair waiting for a turn of its own keeps it; one tested within the round's keep time
-        // and with a priority waits for its turn by it.
+        // and with a priority waits for its turn by it. TODO(M13): that keep is ours, inferred
+        // (detection-states.ts PRIORITY_ROUND_KEEP); the original's round priority was not read.
         const key = `${String(body.reference)}:${String(target.reference)}`;
         if (this.#pairDue.has(key)) continue;
         const last = this.#tested.get(key);

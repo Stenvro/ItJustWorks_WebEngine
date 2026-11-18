@@ -23,8 +23,12 @@ export type DetectionState = 'unseen' | 'noticed' | 'searching' | 'detected';
  * target asks those who listen to the pair (a combat group: CombatGroups.detectionPriority) for
  * a priority, 1 .. 5, and the highest sets the pair's next test this many seconds on: 2, 1.5, 1,
  * 0.5, 0.25. With none (0) the pair is tested only with its observer's own round
- * (fDetectionUpdateTimeMin .. Max). A round that finds a pair tested within its keep time (that
- * of priority 3, 2 s) leaves it to its own turn.
+ * (fDetectionUpdateTimeMin .. Max).
+ *
+ * Ours, inferred: a round that finds a pair with a priority tested within its keep time (that of
+ * priority 3, 2 s) leaves it to its own turn. TODO(M13): the priority the original's own round
+ * asks for (its listener for the observer's round) was not read; until then this keep time
+ * stands in for it.
  */
 const PRIORITY_DELAYS: readonly number[] = [0, 2, 1.5, 1, 0.5, 0.25];
 export const PRIORITY_ROUND_KEEP = 2;

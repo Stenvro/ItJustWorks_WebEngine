@@ -549,6 +549,10 @@ const HIDE_VIEW_CONE = Math.PI / 6;
  * fCombatHideCheckViewConeDistanceMin at 30°, past their radii; 0 outside those 30°. No line
  * of sight is asked, and only a hider beyond fCombatRangedDistance counts as found so (nearer
  * the failed-target distances end a hide: hideFails).
+ *
+ * TODO(M13): the original's check also holds a hider found within a second of its last
+ * engagement, holds one under a blackboard flag, and runs only under a condition on its combat
+ * inventory's ranges that was not identified. Ours weighs the look every time (hideFails).
  */
 export function hideSpottedDistance(
   watched: NonNullable<HideCheck['watched']>,
@@ -574,6 +578,8 @@ export function hideFails(
   const near = check.sees
     ? check.distanceAhead < check.radii + settings.hideFailedTargetLosDistance
     : check.distance < check.radii + settings.hideFailedTargetDistance;
+  // TODO(M13): the original's engagement and blackboard holds and its combat-inventory range
+  // condition on this look are not built (hideSpottedDistance).
   const spotted =
     check.watched !== undefined &&
     check.distance > settings.rangedDistance &&
@@ -1014,7 +1020,11 @@ export function dualCastHold(
 
 /** How far a place given by the navmesh's point nearest it may lie off it (units). */
 const ATTACK_PLACE_SNAP = 64;
-/** At most this many places of the navmesh search are offered (each costs a ray). */
+/**
+ * At most this many places of the navmesh search are offered (each costs a ray). TODO(M13): ours,
+ * a budget for the line-of-fire rays; the original's own bound on the keys its way search tries
+ * was not read.
+ */
 const ATTACK_PLACES_MAX = 24;
 
 /** A place on the navmeshes (its height theirs), undefined off them; without navmeshes, as it is. */

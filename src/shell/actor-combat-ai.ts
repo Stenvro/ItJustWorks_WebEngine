@@ -522,7 +522,11 @@ interface Mind {
   yieldedAt: number;
   /** It yielded to the player in this fight (combat-ai.ts yields: once a fight). */
   yieldedThisFight: boolean;
-  /** A script's target (StartCombat): the Fixed selector's (combat-ai.ts fixedTarget). */
+  /**
+   * A fixed target: the Fixed selector's (combat-ai.ts fixedTarget), set only by a fight started
+   * with the `fixed` option (the original's two makers: a mount's rider's set target and a flier's
+   * Flying Attack). Papyrus StartCombat sets none.
+   */
   fixedTarget: number | undefined;
   /** The torch it took up in this fight, and when (torchInFight). */
   torch: { readonly form: number; readonly at: number } | undefined;

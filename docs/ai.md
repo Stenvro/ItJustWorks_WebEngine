@@ -2762,9 +2762,11 @@ runs the rules.
   when that is the player), the player otherwise and a target whose group level is this
   member's 3 (1 s), others 3 within fCombatDetectionLowPriorityDistance (2048), 2 (1.5 s) beyond
   it, 1 (2 s) beyond fCombatDetectionVeryLowPriorityDistance (4096; weighed after the first, so
-  never with the vanilla values). A pair waiting for its turn is not put off by a round; one with
-  a priority tested within 2 s waits for its turn (`CombatGroups.detectionPriority`,
-  `detectionTestDelay`, `ActorSenses` pair turns). So a fighter weighs its combat target's level
+  never with the vanilla values). A pair waiting for its turn is not put off by a round
+  (`CombatGroups.detectionPriority`, `detectionTestDelay`, `ActorSenses` pair turns). Ours,
+  inferred: a round also leaves alone a pair with a priority that was tested within 2 s, so it
+  waits for its turn (`PRIORITY_ROUND_KEEP`). TODO(M13): the priority the original's own round
+  asks for was not read. So a fighter weighs its combat target's level
   twice as often as its round would, and its group knows sooner: the combat tree's inn fight
   (`tests/conformance/combat/behaviour-tree.test.ts`), whose tank sees its wolf at level 20 in
   the Bannered Mare's light, below the threshold, detects it within the first seconds.
