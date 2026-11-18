@@ -2557,8 +2557,10 @@ export class ActorCombat implements CombatBridge {
       // attack's hit frame raised again (two clips of a blend, within a frame or two) knocked the
       // clutter twice over, recoiled twice, sounded its impact twice and told the object's OnHit
       // and took its destructible health twice (seen in the playtest and in the physics work: a
-      // player's one blow on an object landed twice). The world itself (the
-      // landscape, a wall of no reference) counts as one thing met.
+      // player's one blow on an object landed twice).
+      // Inferred, not confirmed in the original (TODO(M13)): the world itself (the landscape, a
+      // wall of no reference) counts as one thing met, and a later hit frame of the same attack
+      // that meets a different object still strikes it, as a different actor is.
       if (wall) {
         const met = wall.owner?.reference ?? 0;
         if (current.struck.has(met)) return;

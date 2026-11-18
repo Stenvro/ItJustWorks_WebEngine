@@ -267,6 +267,9 @@ and 290 built-in ones the readers ask for by name.
       attack's hit frame is raised (actor-combat.ts #strike; tests/conformance/combat/
       object-blow.test.ts). A shot ends at the first thing it meets and a spell projectile at its
       impact, so each lands once by itself (combat-projectiles.ts, magic-projectiles.ts).
+      Inferred, not confirmed in the original (TODO(M13)): the world itself (the landscape, a
+      wall of no reference) counts as one thing met an attack, and a later hit frame that meets
+      a different object still strikes it, as a different actor is.
 - [x] Ranged combat: draw, hold, release, strafe, cover (ranged.test.ts).
 - [x] Line of fire: an actor in the way holds the shot, given up after
       fCombatAimProjectileBlockedTime (ranged.test.ts).
