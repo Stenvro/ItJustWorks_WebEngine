@@ -539,7 +539,9 @@ function solvePivot({ a, b, ra, rb, k }: Pivot): void {
   const dx = b.v.x + btx - a.v.x - atx;
   const dy = b.v.y + bty - a.v.y - aty;
   const dz = b.v.z + btz - a.v.z - atz;
-  const [k0, k1, k2] = k;
+  const k0 = k[0];
+  const k1 = k[1];
+  const k2 = k[2];
   const px = -(k0.x * dx + k0.y * dy + k0.z * dz);
   const py = -(k1.x * dx + k1.y * dy + k1.z * dz);
   const pz = -(k2.x * dx + k2.y * dy + k2.z * dz);

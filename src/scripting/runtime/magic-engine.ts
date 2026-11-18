@@ -510,6 +510,20 @@ export class MagicEngine {
     return this.effectsOn(actor).some(([, entry]) => entry.item === item && !entry.inactive);
   }
 
+  /**
+   * Whether an Invisibility effect is on an actor (aiState's `invisible` alone: the veil asks it
+   * of every loaded actor each frame).
+   */
+  invisible(actor: number): boolean {
+    const on = this.#runtime.state.activeEffects.on(actor);
+    if (!on) return false;
+    for (const [key, entry] of on) {
+      if (entry.inactive || this.#ending.has(key)) continue;
+      if (this.#effects.get(entry.effect)?.archetype === EffectArchetype.invisibility) return true;
+    }
+    return false;
+  }
+
   /** What the AI reads of an actor's effects (the combat AI acts on them). */
   aiState(actor: number): MagicAiState {
     // The archetypes of its active effects, gathered in one walk over the effects (asked of

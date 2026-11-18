@@ -90,6 +90,11 @@ export class DestructionLooks {
   readonly #renderer: RenderPort;
   readonly #play: () => PlaySession | undefined;
   readonly #entries = new Map<number, Destructible>();
+  /**
+   * The entries not known to lack destruction data, in the order added: the ones each frame
+   * looks at (the others never change).
+   */
+  readonly #watched = new Set<Destructible>();
   readonly #debris = new Set<DebrisPiece>();
   readonly #textureSets = new Map<number, Promise<readonly string[] | undefined>>();
   readonly #warn: (message: string) => void;
@@ -114,7 +119,7 @@ export class DestructionLooks {
     enabled: () => boolean,
   ): void {
     if (!DESTRUCTIBLE.has(object.baseType) || this.#entries.has(object.reference)) return;
-    this.#entries.set(object.reference, {
+    const entry: Destructible = {
       object,
       world,
       visibility,
@@ -127,7 +132,9 @@ export class DestructionLooks {
       frames: 0,
       touched: false,
       destructible: undefined,
-    });
+    };
+    this.#entries.set(object.reference, entry);
+    this.#watched.add(entry);
   }
 
   /** It is no longer shown (its cell unloaded). */
@@ -135,6 +142,7 @@ export class DestructionLooks {
     const entry = this.#entries.get(reference);
     if (!entry) return;
     this.#entries.delete(reference);
+    this.#watched.delete(entry);
     entry.token++;
     this.#drop(entry);
   }
@@ -167,7 +175,7 @@ export class DestructionLooks {
     const now = performance.now() / 1000;
     const runtime = this.#session.scriptsReady;
     const play = this.#play();
-    for (const entry of this.#entries.values()) {
+    for (const entry of this.#watched) {
       // A base without destruction data never takes a stage's look (DestructionEngine.look):
       // nothing to ask of it again (most of a cell's statics, trees and clutter). Read once
       // per base.
@@ -178,6 +186,7 @@ export class DestructionLooks {
           (data) => {
             entry.destructible =
               data !== undefined || entry.look !== undefined || entry.hiding || entry.touched;
+            if (!entry.destructible) this.#watched.delete(entry);
           },
           // Unknown: it is looked at every frame as before.
           () => undefined,
