@@ -331,9 +331,12 @@ what fills it was not found).
       runs no feeding procedure; VampireFeedEnd ends the feeder's GetVampireFeed (inferred).
 - [x] Kill moves (docs/animation.md, "Killmoves").
 - [x] Dismemberment and decapitation (the head's flight, the stump, persistence).
-- [ ] The severed head's flight into MQ101's basket: it reaches the rim's height over the near
-      wall and rolls off (docs/animation.md, "Dismemberment"). TODO(M13): where the original's
-      flight starts.
+- [ ] The severed head's flight into MQ101's basket: it lies in the basket in the simulation (at
+      4 and 11 frames a second with the chop clips read late; 596 of 624 launches of a sweep of
+      20 to 240) and in the browser (checked at 7 frames
+      a second; docs/animation.md, "Dismemberment", "Helgen's block in the browser").
+      TODO(M13): where the original's flight starts (the pose of the blow or of the cut's turn)
+      is inferred.
 - [x] Ragdolls: death, powered ragdolls, get-up, keyframed ragdolls.
 - [x] The powered ragdoll's root (world-from-model mode); the paralysed's stiff fall
       (PhysicsWorld.stiffen, physics round 8); the dying life state between death and dead
