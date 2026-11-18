@@ -4689,32 +4689,35 @@ export class ActorCombatAi {
     return blocked;
   }
 
-  /** The actors that may stand in its shot's way: not its target, nor one of its side's targets. */
+  /**
+   * The actors on a shot's way: all but itself and its target; one of its side's targets it may
+   * hit (passes). TODO(M13): whom a shot may meet is the group's targets here; the original asks
+   * the shooter's hostility to the one met, under a flag of its aim read only from its use.
+   */
   #shotObstacles(f: CombatFrame): ShotObstacle[] {
     const others: ShotObstacle[] = [];
     for (const other of this.#options.host.fighters()) {
       const { reference, feet } = other;
       if (reference === f.mind.reference || reference === f.target.reference || !feet) continue;
       if (other.state.life === LifeState.dead) continue;
-      if (this.#groups.target(f.mind.reference, reference) !== undefined) continue;
-      others.push({ reference, feet, radius: other.radius, height: other.height });
+      const passes = this.#groups.target(f.mind.reference, reference) !== undefined;
+      others.push({ reference, feet, radius: other.radius, height: other.height, passes });
     }
     return others;
   }
 
   /**
    * What blocks the line of fire from a place (its own feet, or one it might shoot from) to its
-   * target, both at AIM_HEIGHT_SHARE of their heights: an actor it must not hit (not its target,
-   * nor one of its side's targets: it may hit those), else the world (a ray on the line-of-sight
-   * layer that passes every actor's bodies: a wall, a pillar, the ground between; actors are
-   * weighed by the first rule alone, so it still shoots past its target's foes, and a line from
-   * an ally's place is not blocked by that ally). Undefined: clear.
+   * target, both at AIM_HEIGHT_SHARE of their heights (lineOfFire: the first thing met decides):
+   * an actor it must not hit, or the world (a ray on the line-of-sight layer past every actor's
+   * bodies: a wall, a pillar, the ground between) met before any actor it may hit. A line from an
+   * ally's place is not blocked by that ally. Undefined: clear.
    */
   #lineOfFireFrom(f: CombatFrame, feet: Vec3, others: readonly ShotObstacle[]) {
     const from: Vec3 = [feet[0], feet[1], feet[2] + f.view.height * AIM_HEIGHT_SHARE];
     const to: Vec3 = [f.there[0], f.there[1], f.there[2] + f.target.height * AIM_HEIGHT_SHARE];
     const senses = this.#options.senses?.();
-    return lineOfFire(from, to, others, (a, b) => senses?.lineClear(a, b));
+    return lineOfFire(from, to, others, (a, b) => senses?.lineHit(a, b));
   }
 
   /** Its own line of fire to its target, looked at again each DECIDE_SECONDS. */

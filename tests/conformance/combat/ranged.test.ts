@@ -236,6 +236,24 @@ describe('the line of fire and Find Attack Location', () => {
     expect(lineOfFire(from, to, [])).toBeUndefined();
   });
 
+  it('one trace: the first thing met decides  [original]', () => {
+    const from: P = [0, 0, 90];
+    const to: P = [1000, 0, 90];
+    const foe = { reference: 1, feet: [500, 0, 0] as P, radius: 30, height: 120, passes: true };
+    const friend = { ...foe, passes: false };
+    // A wall at 0.8 of the way, behind a foe it may hit at 0.5: the foe takes the shot.
+    expect(lineOfFire(from, to, [foe], () => 0.8)).toBeUndefined();
+    // A wall at 0.3, before the foe: the wall holds it.
+    expect(lineOfFire(from, to, [foe], () => 0.3)).toBe('world');
+    // One it must not hit, met first, holds it; behind the wall it does not matter.
+    expect(lineOfFire(from, to, [friend], () => 0.8)).toBe('actor');
+    expect(lineOfFire(from, to, [friend], () => 0.3)).toBe('world');
+    // A friend behind a foe it may hit: the foe is met first.
+    const behind = { ...friend, reference: 2, feet: [700, 0, 0] as P };
+    expect(lineOfFire(from, to, [foe, behind], () => Infinity)).toBeUndefined();
+    expect(lineOfFire(from, to, [behind], () => Infinity)).toBe('actor');
+  });
+
   it('a spell from a hand waits for a clear line; a shout does not (inferred)', () => {
     expect(castWaitsForLineOfFire(false)).toBe(true);
     expect(castWaitsForLineOfFire(true)).toBe(false);
