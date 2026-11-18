@@ -89,14 +89,19 @@ describe.skipIf(!hasGamedata())('a script’s idles on an actor, in the order ca
     await vfs.close();
   });
 
-  /** An ActorFurniture on the data, its scripts' conditions all holding a moment later. */
-  const stage = (): ActorFurniture => {
+  /**
+   * An ActorFurniture on the data, its scripts' conditions all holding a moment later (`gate`:
+   * a condition check may wait on it).
+   */
+  const stage = (gate: () => Promise<void> = () => Promise.resolve()): ActorFurniture => {
     const runtime = {
       conditionsHold: async (): Promise<boolean> => {
         await pause(5);
+        await gate();
         return true;
       },
       referenceHandle: (reference: number) => ({ reference }),
+      state: { realTime: 0 },
       placement: () => Promise.resolve({ position: [0, 0, 0], rotation: [0, 0, 0] }),
       baseOf: (reference: number) => Promise.resolve(reference === FURNITURE ? base : undefined),
       hasKeyword: () => Promise.resolve(false),
@@ -163,6 +168,45 @@ describe.skipIf(!hasGamedata())('a script’s idles on an actor, in the order ca
     expect(await later).toBe(true);
     expect(await earlier).toBe(false);
     expect(actor.sent).toEqual([own.event]);
+  });
+
+  it('drops a held one whose idle stop (bForceIdleStop) is still looked up when a later one comes', async () => {
+    // Found in review 2026-11-18: the held idle, let go, left its turn before it looked up the
+    // stop its graph's bForceIdleStop asks for; a later one called during that lookup was sent
+    // first, and the held one, sent after, overrode it.
+    let hold: Promise<void> | undefined;
+    let release = (): void => undefined;
+    let held = 0;
+    const furniture = stage(async () => {
+      if (!hold) return;
+      const waiting = hold;
+      hold = undefined;
+      held++;
+      await waiting;
+    });
+    const actor = new Actor();
+    await seat(furniture, actor);
+    const behavior = actor.placed.behavior as unknown as {
+      variable: (name: string) => number | undefined;
+    };
+    behavior.variable = (name) =>
+      name === 'bAnimationDriven' || name === 'bForceIdleStop' ? 1 : 0;
+    actor.takes = false;
+    const earlier = furniture.playIdle(actor, own.formId, undefined, { inFurniture: true });
+    await pause(200);
+    expect(actor.sent).toEqual([]);
+    // Taken now: the held one goes on and its stop's first condition check waits.
+    hold = new Promise((resolve) => (release = resolve));
+    actor.takes = true;
+    for (let i = 0; i < 100 && held === 0; i++) await pause(20);
+    expect(held).toBe(1);
+    const later = furniture.playIdle(actor, other.formId, undefined, { inFurniture: true });
+    expect(await later).toBe(true);
+    release();
+    expect(await earlier).toBe(false);
+    expect(actor.sent.filter((event) => event === own.event || event === other.event)).toEqual([
+      other.event,
+    ]);
   });
 
   it('keeps a held one when the later one plays nothing', async () => {

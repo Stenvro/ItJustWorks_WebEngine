@@ -545,11 +545,16 @@ export class ActorFurniture {
         await this.#backIn(user, event, ticket);
       }
       if (this.#latestIdle.get(actor) !== ticket) return false;
-      this.#latestIdle.delete(actor);
       // Observed in the original: while its graph's bForceIdleStop is set, the idle that plays is
       // stopped first (ActionIdleStop), and the PickNewIdle that stop raises is no request.
       const stopped = (user.placed.behavior?.variable('bForceIdleStop') ?? 0) !== 0;
-      if (stopped) await this.actionEvent(user, 'ActionIdleStop', undefined, true);
+      if (stopped) {
+        // The turn is kept through the stop's lookup: a later idle called meanwhile supersedes
+        // this one (sent after it, this one would override it).
+        await this.actionEvent(user, 'ActionIdleStop', undefined, true);
+        if (this.#latestIdle.get(actor) !== ticket) return false;
+      }
+      this.#latestIdle.delete(actor);
       const sent = user.send(event);
       this.#options.specificIdle?.(actor, stopped, sent);
       for (const dependent of options.dependents ?? []) dependent.send(event);
