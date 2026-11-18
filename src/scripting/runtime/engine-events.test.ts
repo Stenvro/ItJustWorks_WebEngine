@@ -184,6 +184,33 @@ describe('the events the runtime sends', () => {
     ]);
   });
 
+  // Found 2026-11-18: PlayerVampireQuestScript.VampireChange (Harkon's gift) hung in
+  // SendVampirismStateChanged, the native waiting for the player's handlers, which waited for
+  // the quest the calling thread held.
+  it('returns from the vampirism and lycanthropy natives without waiting for the handlers', async () => {
+    const { runtime: scripts, sent } = runtime();
+    const forever = new Promise<void>(() => undefined);
+    const send = scripts.vm.sendEvent.bind(scripts.vm);
+    scripts.vm.sendEvent = (target, event, args) => {
+      void send(target, event, args);
+      return forever;
+    };
+    const actor = scripts.actorHandle(NPC);
+    const waited = Symbol('waited');
+    const returned = (work: Promise<Value>): Promise<Value | symbol> =>
+      Promise.race([work, new Promise<symbol>((resolve) => setTimeout(resolve, 50, waited))]);
+    expect(
+      await returned(callNative(scripts, 'actor', 'sendvampirismstatechanged', actor, [true])),
+    ).not.toBe(waited);
+    expect(
+      await returned(callNative(scripts, 'actor', 'sendlycanthropystatechanged', actor, [true])),
+    ).not.toBe(waited);
+    expect(sent).toEqual([
+      'OnVampirismStateChanged 200 (True)',
+      'OnLycanthropyStateChanged 200 (True)',
+    ]);
+  });
+
   it('puts the Vampire Feed and Cannibal packages on the feeder; one with no AI here feeds at once', async () => {
     const { runtime: scripts } = runtime();
     const put: string[] = [];

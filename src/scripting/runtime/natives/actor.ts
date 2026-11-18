@@ -672,13 +672,16 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
 
   // --- Lycanthropy and vampirism (their scripts listen for these) ----------------------------
   // The scripts that make the player a werewolf or a vampire, or cure them, tell the actor's
-  // scripts (OnLycanthropyStateChanged / OnVampirismStateChanged: Survival Mode's needs).
-  act('sendlycanthropystatechanged', (actor, call) =>
-    runtime.sendEvent(actor, 'OnLycanthropyStateChanged', [bool(call.args[0])]),
-  );
-  act('sendvampirismstatechanged', (actor, call) =>
-    runtime.sendEvent(actor, 'OnVampirismStateChanged', [bool(call.args[0])]),
-  );
+  // scripts (OnLycanthropyStateChanged / OnVampirismStateChanged: Survival Mode's needs). As
+  // every event, its handlers run on threads of their own: the native does not wait for them
+  // (the caller, PlayerVampireQuestScript.VampireChange, holds its quest, which the handlers
+  // may ask for).
+  act('sendlycanthropystatechanged', (actor, call) => {
+    runtime.detach(runtime.sendEvent(actor, 'OnLycanthropyStateChanged', [bool(call.args[0])]));
+  });
+  act('sendvampirismstatechanged', (actor, call) => {
+    runtime.detach(runtime.sendEvent(actor, 'OnVampirismStateChanged', [bool(call.args[0])]));
+  });
   // Feeding on a target (a vampire's bite, Namira's cannibalism): the native makes the Vampire
   // Feed (Cannibal) package and puts it in front of the feeder's own (src/ai/engine-packages.ts
   // feedOn); while it feeds GetVampireFeed (GetCannibal) holds, and the action's idle tree gives
