@@ -26,6 +26,11 @@ export interface PlacedHazard {
   nextHit: number;
   /** Units. */
   readonly radius: number;
+  /**
+   * Placed in a cell by the plugin (PHZD: a campfire's fire, a fire plate's flames): it stands
+   * while its cell is attached, for no lifetime and under no limit, and its cell brings it back.
+   */
+  readonly inCell?: boolean;
 }
 
 /** A hazard standing as the game was saved (its reference is the game's; src/save/game-save.ts). */
@@ -119,7 +124,8 @@ export class HazardEngine {
     // Beyond its limit the source's oldest of it go.
     if (hazard.limit > 0) {
       const same = [...this.#placed.values()].filter(
-        (other) => other.hazard.formId === formId && other.source === source,
+        (other) =>
+          other.hazard.formId === formId && other.source === source && other.inCell !== true,
       );
       while (same.length >= hazard.limit) {
         const oldest = same.shift();
@@ -137,17 +143,50 @@ export class HazardEngine {
     });
   }
 
-  /** The hazards standing, for a save. */
+  /**
+   * A hazard the plugin placed in a cell (PHZD), its cell attached and it enabled: it stands
+   * there and its spell hits those within its radius every target interval, as a placed one's
+   * does, until its cell detaches or it is disabled (`leave`). Its limit is a spawned
+   * hazard's (the oldest of a source's go). From the data: most placed ones are campfires
+   * (FireLgPlacedHazard, 307 references, lifetime 0: for good) and fire plates' flames
+   * (TrapFirePlateFXHaz01-06, lifetime 0). TODO(M13): inferred that a placed hazard whose record
+   * has a lifetime (FireSmLongHazard, 7 s, 18 references) stands for good too.
+   */
+  async standing(reference: number, formId: number): Promise<boolean> {
+    if (this.#placed.has(reference)) return true;
+    const hazard = await this.record(formId);
+    if (!hazard) return false;
+    this.#placed.set(reference, {
+      reference,
+      hazard,
+      source: undefined,
+      age: 0,
+      lifetime: undefined,
+      nextHit: 0,
+      radius: hazard.radius * UNITS_PER_FOOT,
+      inCell: true,
+    });
+    return true;
+  }
+
+  /** A cell's placed hazard no longer stands (its cell detached, it was disabled). */
+  leave(reference: number): void {
+    if (this.#placed.get(reference)?.inCell === true) this.#placed.delete(reference);
+  }
+
+  /** The hazards standing, for a save (a cell's own come back with their cell). */
   save(): SavedHazard[] {
-    return [...this.#placed.values()].map((placed) => ({
-      reference: placed.reference,
-      hazard: placed.hazard.formId,
-      source: placed.source,
-      age: placed.age,
-      lifetime: placed.lifetime,
-      nextHit: placed.nextHit,
-      radius: placed.radius,
-    }));
+    return [...this.#placed.values()]
+      .filter((placed) => placed.inCell !== true)
+      .map((placed) => ({
+        reference: placed.reference,
+        hazard: placed.hazard.formId,
+        source: placed.source,
+        age: placed.age,
+        lifetime: placed.lifetime,
+        nextHit: placed.nextHit,
+        radius: placed.radius,
+      }));
   }
 
   /**
@@ -217,7 +256,12 @@ export class HazardEngine {
     for (const placed of due) {
       const spell = placed.hazard.spell;
       const item = spell === undefined ? undefined : await runtime.magic.item(spell);
-      const at = world.livePlacement?.(placed.reference)?.position;
+      // Where it stands (a cell's own, with no 3D the world moves, where the plugin put it).
+      const at =
+        world.livePlacement?.(placed.reference)?.position ??
+        (placed.inCell === true
+          ? (await runtime.placement(placed.reference))?.position
+          : undefined);
       if (!item || !at) continue;
       const onlyPlayer = (placed.hazard.flags & HazardFlag.affectsPlayerOnly) !== 0;
       for (const reference of new Set(loaded)) {

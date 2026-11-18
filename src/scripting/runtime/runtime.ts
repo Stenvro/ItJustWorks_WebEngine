@@ -1490,6 +1490,11 @@ export class ScriptRuntime implements VmHost {
       this.#initialized.add(reference);
       await this.#initializeReference(reference);
     }
+    // The hazards the plugin placed in it stand while it is attached (a disabled one once it
+    // is enabled: referenceShown).
+    for (const reference of references) {
+      if (await this.isEnabled(reference)) await this.#cellHazard(reference, true);
+    }
     // The hub tells every reference of the cell that it attached (TESCellAttachDetachEvent,
     // observed in the original: with scripts or not, for every consumer of the event); the
     // relay's OnCellAttach reaches those with scripts, their own or those of an alias that
@@ -1517,6 +1522,20 @@ export class ScriptRuntime implements VmHost {
     this.events.emit('cellReadyToApplyDecals', { cell });
     this.events.emit('cellFullyLoaded', { cell, references: shown });
     return scripted;
+  }
+
+  /** A hazard the plugin placed in a cell (PHZD) stands, or no longer (HazardEngine.standing). */
+  async #cellHazard(reference: number, shown: boolean): Promise<void> {
+    if (!shown) {
+      this.hazards.leave(reference);
+      return;
+    }
+    // Only a reference of the plugins' (one a script or a spell made is the engine's to track).
+    if (this.state.created.has(reference)) return;
+    const record = await this.forms.record(reference);
+    if (record?.type !== 'PHZD') return;
+    const base = record.formIdField('NAME');
+    if (base !== undefined) await this.hazards.standing(reference, base);
   }
 
   /**
@@ -1554,6 +1573,7 @@ export class ScriptRuntime implements VmHost {
     // Its 3D gone (disabled), its behavior graph goes with it, and the animation events
     // registered on it (OnAnimationEventUnregistered), as when its cell detaches.
     if (!shown) this.animationGraphUnloaded(reference);
+    await this.#cellHazard(reference, shown);
     if (await this.#hearsEvents(reference)) {
       this.events.emit('objectLoaded', { reference, loaded: shown });
     }
@@ -1567,6 +1587,7 @@ export class ScriptRuntime implements VmHost {
     // Before the view lets go of their 3D (no wait): each loaded object's animated state is
     // kept (a chest's lid open, a lever pulled) and the animation events registered on it go
     // with its graph.
+    for (const reference of references) this.hazards.leave(reference);
     for (const reference of references) {
       if (!loaded(reference)) continue;
       const graph = this.world.savedGraph?.(reference);

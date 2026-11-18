@@ -359,6 +359,8 @@ const MODEL_FIELD: Readonly<Record<string, string>> = {
   DOOR: 'MODL',
   FLOR: 'MODL',
   FURN: 'MODL',
+  // A hazard placed in a cell (PHZD): a campfire's flames, a fire plate's.
+  HAZD: 'MODL',
   IDLM: 'MODL',
   INGR: 'MODL',
   KEYM: 'MODL',
