@@ -37,7 +37,7 @@ import { SceneTrace } from './shell/scene-trace.ts';
 import { PlayMode, type PlayWorld } from './shell/play-mode.ts';
 import type { PlayerStance } from './shell/player.ts';
 import { Launcher } from './shell/launcher.ts';
-import { applyDetailPreset, DETAIL_PRESET_FILES } from './world/detail-presets.ts';
+import { applyDetailPreset, DETAIL_PRESET_FILES, PresetWrites } from './world/detail-presets.ts';
 import { keepPointerLockInPage } from './shell/automation-pointer-lock.ts';
 
 keepPointerLockInPage();
@@ -882,12 +882,14 @@ async function main(): Promise<void> {
     launcher.useIni(session.vfs.ini);
     launcher.show();
   });
-  // A detail preset chosen: its file of the installation written into the prefs.
+  // A detail preset chosen: its file of the installation written into the prefs. The game
+  // started by the same click (the first start's Play) waits for it to be written.
+  const presets = new PresetWrites();
   launcher.onDetailChosen = (detail) => {
     const current = session;
     if (!current) return;
     const file = DETAIL_PRESET_FILES[detail];
-    current.vfs
+    const write = current.vfs
       .readRootText(file)
       .then((text) => {
         if (text === undefined) {
@@ -901,6 +903,7 @@ async function main(): Promise<void> {
       .catch((error: unknown) => {
         terminal.log('sys', `${file}: ${describeError(error)}`, 'warn');
       });
+    presets.writing(write);
   };
   launcher.onExit = () => {
     launcher.hide();
@@ -921,10 +924,14 @@ async function main(): Promise<void> {
     ui.brand.tabIndex = -1;
     ui.brand.blur();
     play.onQuit = leavePlay;
-    play.start().catch((error: unknown) => {
-      terminal.log('ui', `the main menu does not open: ${describeError(error)}`, 'error');
-      leavePlay();
-    });
+    const starting = play;
+    // The preset the click chose is in the prefs before the game reads them.
+    presets
+      .afterWritten(() => starting.start())
+      .catch((error: unknown) => {
+        terminal.log('ui', `the main menu does not open: ${describeError(error)}`, 'error');
+        leavePlay();
+      });
   };
   // The brand in the corner leads back to the main menu (from the sandbox).
   ui.brand.addEventListener('click', () => {

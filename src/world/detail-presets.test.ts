@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { Preferences } from '../shell/preferences.ts';
-import { applyDetailPreset, DETAIL_PRESET_FILES, presetSettings } from './detail-presets.ts';
+import {
+  applyDetailPreset,
+  DETAIL_PRESET_FILES,
+  presetSettings,
+  PresetWrites,
+} from './detail-presets.ts';
 import { IniSettings } from './ini-settings.ts';
 import { parseIni } from '../formats/ini/ini.ts';
 
@@ -59,5 +64,29 @@ describe('the launcher detail presets', () => {
     expect(ini.number('Display', 'iNumFocusShadow')).toBe(1);
     // The player's other settings stay.
     expect(preferences.number('Interface', 'bDialogueSubtitles')).toBe(0);
+  });
+
+  it('starts the game the first click starts once its preset is written', async () => {
+    const writes = new PresetWrites();
+    const order: string[] = [];
+    let finish = (): void => undefined;
+    writes.writing(
+      new Promise<void>((resolve) => {
+        finish = () => {
+          order.push('written');
+          resolve();
+        };
+      }),
+    );
+    const started = writes.afterWritten(() => order.push('started'));
+    await Promise.resolve();
+    expect(order).toEqual([]);
+    finish();
+    await started;
+    expect(order).toEqual(['written', 'started']);
+    // A write that failed lets the game start.
+    writes.writing(Promise.reject(new Error('unreachable')));
+    await writes.afterWritten(() => order.push('started again'));
+    expect(order.at(-1)).toBe('started again');
   });
 });

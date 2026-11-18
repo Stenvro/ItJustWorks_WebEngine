@@ -1,8 +1,12 @@
 // The launcher's detail presets (Options: Low, Medium, High, Ultra). Each is a file of the
 // installation beside Skyrim_Default.ini (Low.ini, Medium.ini, High.ini, Ultra.ini); choosing
 // one writes its settings into SkyrimPrefs.ini over what the player had there, keeping the
-// player's other settings, as the original launcher does. The engine then reads them as it
-// reads the prefs (IniSettings over Preferences). Platform-independent.
+// player's other settings. The engine then reads them as it reads the prefs (IniSettings over
+// Preferences). Platform-independent.
+// TODO(M13): inferred: the files and their sections are the installation's, but how the
+// launcher merges a preset into an existing SkyrimPrefs.ini (over the player's values, the
+// rest kept) is our reading of it (the files hold only prefs settings), not confirmed in the
+// launcher itself.
 
 import { INI_DEFAULTS } from './ini-settings.ts';
 
@@ -63,4 +67,22 @@ export function applyDetailPreset(text: string, sink: PresetSink): number {
   const settings = presetSettings(text);
   for (const [id, value] of settings) sink.set(id, value);
   return settings.size;
+}
+
+/**
+ * The preset being written: the game a click starts (the first start's Play writes its preset
+ * in the same click) starts once that preset is in the prefs, so its first session reads them.
+ */
+export class PresetWrites {
+  #written: Promise<void> = Promise.resolve();
+
+  /** A preset is being written (a failed write lets the game start all the same). */
+  writing(write: Promise<void>): void {
+    this.#written = write.catch(() => undefined);
+  }
+
+  /** Runs a start once the preset being written is in the prefs. */
+  afterWritten<T>(start: () => T | Promise<T>): Promise<T> {
+    return this.#written.then(start);
+  }
 }
