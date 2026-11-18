@@ -13,7 +13,8 @@
 //
 // - one's summons, reanimated and commanded actors (the magic system's commander) are its allies
 //   and share its reactions; the player's teammates are the player's allies and each other's;
-// - one that scripts set to be attacked on sight (SetAttackActorOnSight) is everyone's enemy;
+// - one that scripts set to be attacked on sight (SetAttackActorOnSight) is the enemy of everyone
+//   who does not hold it a friend or an ally by the rules below;
 // - else factions and relationships (docs/gameplay.md, "Factions and reactions"): a relationship
 //   (RELA, SetRelationshipRank) of enemy or worse, or a faction of the actor set as the player's
 //   enemy (SetPlayerEnemy) towards the player: an enemy; a relationship of friend or better, or
@@ -143,8 +144,16 @@ async function combatOnly(
   if (team(actor) && team(other) && (facts.teammate(actor) || facts.teammate(other))) {
     return 'ally';
   }
-  if (facts.attackedOnSight(other)) return 'hostile';
-  return rest(actor, other);
+  const regarded = await rest(actor, other);
+  // One attacked on sight is the enemy of all who do not hold it a friend or an ally: the
+  // Volkihar vampires (DLC1VampireFaction) name the Vampire Lord's faction the player joins as
+  // they change (DLC1PlayerVampireLordFaction) a friend, so Harkon teaches the transformed
+  // player rather than fight them. TODO(M13): that an ally reaction spares them as a friend's
+  // does is inferred (the vanilla Vampire Lord's case is a friend's).
+  if (facts.attackedOnSight(other) && regarded !== 'friend' && regarded !== 'ally') {
+    return 'hostile';
+  }
+  return regarded;
 }
 
 /** The facts of the running game (src/scripting/runtime). */

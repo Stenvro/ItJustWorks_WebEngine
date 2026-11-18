@@ -3,6 +3,7 @@
 // game data.
 
 import { describe, expect, it } from 'vitest';
+import { ObjectHandle } from '../src/scripting/values.ts';
 import { alias, VQ02, walkToFighting } from './helpers/sim-dawnguard.ts';
 import { hasGamedata, loadSim, openSim, PLAYER_REF, type Sim } from './helpers/sim.ts';
 
@@ -24,6 +25,11 @@ const GUILDHALL = 0x2000803;
 const TAMRIEL = 0x3c;
 /** Where a player who refused Harkon wakes (DLC1VQ02PlayerWakeupMarkerReject). */
 const WAKE_REJECTED = 0x20175cd;
+/** Where a player Harkon turned wakes (DLC1VQ02PlayerWakeupMarker), by his shrine. */
+const WAKE_ACCEPTED = 0x20175cc;
+/** DLC1VampireTutorial "Power of the Blood" and its lesson (DLC1VampireTutorialScene1). */
+const TUTORIAL = 0x201909f;
+const LESSON = 0x20191e8;
 
 /** The game with Serana out of the crypt (5, 6). */
 let outOfCrypt: Uint8Array | undefined;
@@ -48,6 +54,12 @@ async function walkUntilSpoken(
     if (topics !== undefined) return topics;
   }
   return undefined;
+}
+
+/** The player's race now (Actor.GetRace). */
+async function raceOf(sim: Sim): Promise<number | undefined> {
+  const race = await sim.native(new ObjectHandle(PLAYER_REF, 'Actor'), 'Actor', 'GetRace', []);
+  return race instanceof ObjectHandle ? race.formId : undefined;
 }
 
 /** Harkon's questions answered, to his offer ("And if I refuse your gift?"; 15). */
@@ -186,6 +198,106 @@ describe.skipIf(!hasGamedata())('DLC1VQ02 Bloodline', () => {
         away = await sim.distance(PLAYER_REF, WAKE_REJECTED);
       }
       expect(away).toBeLessThan(300);
+    } finally {
+      await sim.close();
+    }
+  }, 900_000);
+
+  // Accepted, Harkon bites the player (DLC1VampireTurnScript.HarkonBitesPlayer): they wake a
+  // vampire by the shrine (40), and Power of the Blood begins (DLC1VampireTutorial 10). Leaving
+  // the spot they woke in (DLC1VampireTutorialStartTrigger: 20), Harkon comes to them ("Awake at
+  // last"); ready to learn (30), his scene teaches the Vampire Lord: the player transforms with
+  // the power he gave them, lands when he tells them to, and listens to the end (50). His task
+  // asked for (100), Bloodline ends (180, 200) on the vampires' side.
+  // Found 2026-11-18: VampireChange hung in SendVampirismStateChanged, which waited for the
+  // player's handlers; transformed, the player was attacked on sight by Harkon himself, his
+  // scene ended in the fight, until a friend's reaction (DLC1VampireFaction to
+  // DLC1PlayerVampireLordFaction) kept him from it.
+  it('has Harkon turn a player who accepts his gift and teach them the Vampire Lord (40, 200)', async () => {
+    if (!beforeHarkon) return;
+    const sim = await loadSim(beforeHarkon);
+    try {
+      await sim.step(2);
+      expect(await hearHarkon(sim)).toBe(true);
+      const offer = await harkonAsks(sim);
+      expect(offer?.some((topic) => topic.includes('accept your gift'))).toBe(true);
+      expect(await sim.choose(/accept your gift/)).toEqual([]);
+      sim.goodbye();
+      expect(await sim.until(() => sim.stageDone(VQ02, 40), 60)).toBe(true);
+      expect(sim.stageDone(VQ02, 30)).toBe(false);
+      expect(await sim.until(() => sim.stage(TUTORIAL) === 10, 10)).toBe(true);
+      expect(await sim.distance(PLAYER_REF, WAKE_ACCEPTED)).toBeLessThan(150);
+      const vampire = await sim.formId('RACE', 'NordRaceVampire');
+      expect(await raceOf(sim)).toBe(vampire);
+      const power = await sim.formId('SPEL', 'DLC1VampireChange');
+      expect(await sim.runtime.actors.hasSpell(PLAYER_REF, power)).toBe(true);
+
+      // Up from where they woke, to Harkon: he greets them.
+      const harkon = alias(sim, VQ02, HARKON);
+      let topics: string[] | undefined;
+      for (let i = 0; i < 20 && !topics; i++) {
+        const at = await sim.position(harkon);
+        if (at) await sim.walkPath(at, 2, 150);
+        topics = await sim.listen(harkon, 0.5);
+      }
+      expect(sim.stageDone(TUTORIAL, 20)).toBe(true);
+      expect(topics).toContain("I'm ready to learn about my new powers.");
+      expect(await sim.choose(/ready to learn/)).toEqual([]);
+      sim.goodbye();
+      expect(await sim.until(() => sim.stageDone(TUTORIAL, 30), 20)).toBe(true);
+
+      // His lesson: the player transforms, and lands when he tells them to (phase 6: "Do so
+      // now"); he goes on to the end of it.
+      const since = sim.time;
+      expect(await sim.cast(power)).toBe(true);
+      const beast = await sim.formId('RACE', 'DLC1VampireBeastRace');
+      let race = await raceOf(sim);
+      for (let i = 0; i < 10 && race !== beast; i++) {
+        await sim.step(1);
+        race = await raceOf(sim);
+      }
+      expect(race).toBe(beast);
+      const phaseBegun = (index: number): boolean =>
+        sim
+          .records(since)
+          .some(
+            (record) =>
+              record.kind === 'game' &&
+              record.type === 'scene' &&
+              record.event.scene === LESSON &&
+              record.event.type === 'phaseBegin' &&
+              record.event.index === index,
+          );
+      expect(await sim.until(() => phaseBegun(6), 120)).toBe(true);
+      sim.press('Ready Weapon', true);
+      await sim.step(0.2);
+      sim.press('Ready Weapon', false);
+      expect(await sim.until(() => sim.stageDone(TUTORIAL, 50), 240)).toBe(true);
+      // No fight broke his lesson off.
+      expect(phaseBegun(14)).toBe(true);
+      expect(
+        sim
+          .records(since)
+          .some(
+            (record) =>
+              record.kind === 'game' && record.type === 'combat' && record.event.actor === harkon,
+          ),
+      ).toBe(false);
+
+      // His task: Bloodline done on the vampires' side.
+      topics = undefined;
+      for (let i = 0; i < 20 && !topics; i++) {
+        const at = await sim.position(harkon);
+        if (at) await sim.walkPath(at, 2, 150);
+        topics = await sim.listen(harkon, 0.5);
+      }
+      expect(topics).toContain("I'm ready to carry out this task.");
+      await sim.choose(/ready to carry out this task/);
+      sim.goodbye();
+      expect(await sim.until(() => sim.stageDone(VQ02, 200), 30)).toBe(true);
+      expect(sim.stageDone(VQ02, 180)).toBe(true);
+      expect(sim.stageDone(TUTORIAL, 200)).toBe(true);
+      expect(sim.stageDone(HUNTER_INTRO, 20)).toBe(false);
     } finally {
       await sim.close();
     }
