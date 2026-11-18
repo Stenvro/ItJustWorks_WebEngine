@@ -51,6 +51,14 @@ describe('Vfs', () => {
     expect(vfs.hasCreationClubList).toBe(true);
   });
 
+  it("reads the installation folder's own files (the launcher's presets) beside Data", async () => {
+    const vfs = await Vfs.mount(
+      new MemoryGameFolder(installation(), { ...root, 'Low.ini': '[Display]\r\nbUseTAA=0' }),
+    );
+    expect(await vfs.readRootText('low.ini')).toBe('[Display]\r\nbUseTAA=0');
+    expect(await vfs.readRootText('Ultra.ini')).toBeUndefined();
+  });
+
   it('lets later-loaded archives win, and loose files always', async () => {
     const vfs = await Vfs.mount(
       new MemoryGameFolder(installation({ 'Meshes/C.nif': 'loose-c' }), root),

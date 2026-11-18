@@ -37,6 +37,7 @@ import { SceneTrace } from './shell/scene-trace.ts';
 import { PlayMode, type PlayWorld } from './shell/play-mode.ts';
 import type { PlayerStance } from './shell/player.ts';
 import { Launcher } from './shell/launcher.ts';
+import { applyDetailPreset, DETAIL_PRESET_FILES } from './world/detail-presets.ts';
 import { keepPointerLockInPage } from './shell/automation-pointer-lock.ts';
 
 keepPointerLockInPage();
@@ -881,6 +882,26 @@ async function main(): Promise<void> {
     launcher.useIni(session.vfs.ini);
     launcher.show();
   });
+  // A detail preset chosen: its file of the installation written into the prefs.
+  launcher.onDetailChosen = (detail) => {
+    const current = session;
+    if (!current) return;
+    const file = DETAIL_PRESET_FILES[detail];
+    current.vfs
+      .readRootText(file)
+      .then((text) => {
+        if (text === undefined) {
+          terminal.log('sys', `${file} is not reachable (only the Data folder was picked)`, 'warn');
+          return;
+        }
+        const count = applyDetailPreset(text, current.preferences);
+        current.preferences.save();
+        terminal.log('sys', `detail preset ${file}: ${String(count)} settings`);
+      })
+      .catch((error: unknown) => {
+        terminal.log('sys', `${file}: ${describeError(error)}`, 'warn');
+      });
+  };
   launcher.onExit = () => {
     launcher.hide();
     showScreen('menu');
