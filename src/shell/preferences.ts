@@ -28,6 +28,11 @@ export interface PreferenceStorage {
 
 export class Preferences implements IniOverrides {
   readonly #values = new Map<string, number>();
+  /**
+   * The same by section, then key: what number() reads (asked every frame by systems reading
+   * their settings, a key made of the two each time was most of its cost).
+   */
+  readonly #bySection = new Map<string, Map<string, number>>();
   readonly #storage: PreferenceStorage | undefined;
   readonly #listeners = new Set<(key: string, value: number) => void>();
 
@@ -38,7 +43,7 @@ export class Preferences implements IniOverrides {
       if (saved && typeof saved === 'object') {
         for (const [key, value] of Object.entries(saved)) {
           if (typeof value === 'number' && Number.isFinite(value)) {
-            this.#values.set(MOVED[key] ?? key, value);
+            this.#keep(MOVED[key] ?? key, value);
           }
         }
       }
@@ -49,12 +54,25 @@ export class Preferences implements IniOverrides {
 
   /** A setting the player changed ("Section:key"), if any. */
   number(section: string, key: string): number | undefined {
-    return this.#values.get(`${section}:${key}`);
+    return this.#bySection.get(section)?.get(key);
+  }
+
+  #keep(id: string, value: number): void {
+    this.#values.set(id, value);
+    const colon = id.indexOf(':');
+    if (colon < 0) return;
+    const section = id.slice(0, colon);
+    let keys = this.#bySection.get(section);
+    if (!keys) {
+      keys = new Map();
+      this.#bySection.set(section, keys);
+    }
+    keys.set(id.slice(colon + 1), value);
   }
 
   set(id: string, value: number): void {
     if (this.#values.get(id) === value) return;
-    this.#values.set(id, value);
+    this.#keep(id, value);
     for (const listener of this.#listeners) listener(id, value);
   }
 
