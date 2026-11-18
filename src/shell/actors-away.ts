@@ -1,11 +1,11 @@
 // Actors away (docs/ai.md, "Actors away"; docs/m10-plan.md, 3.4): the middle-low and low
 // processes (src/ai/process-levels.ts). Actors that are not in the loaded area still keep their
 // schedules: as the game's hour changes and every fEvaluatePackageTimer seconds, those of the
-// player's space and of the cells one door from it (the middle-low process) and the load
-// order's persistent actors wherever they are (the low process) are asked where their packages
-// have them (src/ai/package-start.ts, its look resolved but no 3D made), in
-// iLowProcessingMilliseconds slices of the frames; one that should be elsewhere sets out along
-// its route (src/ai/routes.ts) and walks it, unseen, at its walking speed: through each load
+// player's space and of the cells behind the loaded area's load doors (the middle-low process)
+// and the load order's persistent actors wherever they are (the low process) are asked where
+// their packages have them (src/ai/package-start.ts, its look resolved but no 3D made), in
+// slices of what the frame's process lists' budget left; one that should be elsewhere sets out
+// along its route (src/ai/routes.ts) and walks it, unseen, at its walking speed: through each load
 // door to the other side, as many as its route has, until it reaches its place or comes into
 // the loaded area (a door into a loaded cell, a loaded cell of a worldspace it walks across),
 // where it appears and its AI goes on. An actor walking out of the loaded area through a load
@@ -106,7 +106,7 @@ interface ScheduleRun {
 /**
  * A run of the schedules asked for: `jump` puts actors where their packages have them at once,
  * `walk` sends them on their way; `far`: the low process's actors too (else the middle-low's:
- * those of the player's space and the spaces one door from it).
+ * those of the player's space and the spaces behind the loaded area's load doors).
  */
 interface Ask {
   readonly mode: 'jump' | 'walk';
@@ -478,8 +478,9 @@ export class ActorsAway {
   }
 
   /**
-   * Where the actors of the player's space and of the cells one door from it should be now,
-   * and (`far`) the persistent actors of the whole world: `jump` puts them there at once,
+   * Where the actors of the player's space and of the cells behind the loaded area's load
+   * doors should be now, and (`far`) the persistent actors of the whole world: `jump` puts
+   * them there at once,
    * `walk` sends those that should be elsewhere on their way (through any number of doors).
    */
   async #schedule({ mode, far }: Ask): Promise<void> {
@@ -496,7 +497,7 @@ export class ActorsAway {
     const player = await runtime.placement(PLAYER_REF);
     if (!player) return;
     const here = spaceOf(player);
-    const spaces = [here, ...spacesNextTo(routes, here)];
+    const spaces = [here, ...spacesNextTo(routes, here, this.#options.loaded)];
     const begun = performance.now();
     const candidates = await this.#candidates(
       runtime,
@@ -974,10 +975,22 @@ export function spaceOf(placement: {
     : { kind: 'interior', cell: placement.cell ?? 0 };
 }
 
-/** The spaces one load door from a space. */
-function spacesNextTo(routes: RouteMap, space: Space): Space[] {
+/**
+ * The spaces behind the load doors of the loaded area (`loaded`) in a space: observed in the
+ * original, a load door whose 3D loads marks the cell on its other side for the middle-low
+ * process (and unmarks it as it unloads), so the actors there keep the middle-low process's
+ * schedule while the player is near the door's side. Not every door of a worldspace: those of
+ * its unloaded cells mark nothing. Ours in form: a worldspace behind a door is taken whole (the
+ * original marks the one cell the door leads into).
+ */
+export function spacesNextTo(
+  routes: Pick<RouteMap, 'doorsInSpace'>,
+  space: Space,
+  loaded: (place: AwayPlace) => boolean,
+): Space[] {
   const found: Space[] = [];
   for (const door of routes.doorsInSpace(space)) {
+    if (!loaded({ space: door.space, position: door.position })) continue;
     if (!found.some((other) => sameSpace(other, door.arrivalSpace))) found.push(door.arrivalSpace);
   }
   return found;

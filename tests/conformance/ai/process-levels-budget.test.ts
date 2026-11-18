@@ -25,7 +25,10 @@ import {
   processListsBudget,
   ProcessSlicer,
 } from '../../../src/ai/process-levels.ts';
+import type { Space } from '../../../src/ai/package-start.ts';
+import type { RouteDoor } from '../../../src/ai/routes.ts';
 import { PLAYER_REF } from '../../../src/scripting/runtime/forms.ts';
+import { spacesNextTo, type AwayPlace } from '../../../src/shell/actors-away.ts';
 import { hasGamedata, openSim, type Sim } from '../../helpers/sim.ts';
 
 describe('process lists: the update budget by frame rate', () => {
@@ -150,6 +153,28 @@ describe('process levels: the middle-high list within the budget', () => {
     const levels = new Map<number, ProcessLevel>([[7, ProcessLevel.middleHigh]]);
     slicer.begin(levels, 0);
     expect([...slicer.turns]).toEqual([7]);
+  });
+});
+
+describe('process levels: the middle-low process’s cells', () => {
+  /** A worldspace with two load doors: one in the loaded area, one far off in it. */
+  const world: Space = { kind: 'world', world: 0x3c };
+  const door = (destination: number, x: number): RouteDoor => ({
+    door: destination + 1,
+    space: world,
+    position: [x, 0, 0],
+    navmeshes: [],
+    destination,
+    arrivalSpace: { kind: 'interior', cell: destination },
+    arrival: [0, 0, 0],
+    arrivalHeading: 0,
+    arrivalNavmeshes: [],
+  });
+  const routes = { doorsInSpace: () => [door(0x100, 1000), door(0x200, 90000)] };
+  const loaded = (place: AwayPlace): boolean => Math.abs(place.position[0]) < 10240;
+
+  it('marks the cells behind the loaded area’s load doors, not those behind every door of the worldspace', () => {
+    expect(spacesNextTo(routes, world, loaded)).toEqual([{ kind: 'interior', cell: 0x100 }]);
   });
 });
 
