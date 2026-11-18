@@ -335,8 +335,9 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   original then does and how near counts, half its width, were not identified).
   TODO(M13): the turn is ours: how the velocity obstacles (below) choose the velocity was not
   read. Tested in tests/conformance/ai/actors-in-the-way.test.ts (Korvanjund01's hall: a slow
-  walker meeting another head-on fails its path; with the player behind it, it arrives; one
-  standing on its goal ends its way done).
+  walker meeting another head-on fails its path; with the player behind it, it arrives, which
+  failed under the earlier measure; one standing on its goal does not fail its travel, though
+  that case ends before the `done` answer is reached, which only the unit cases test).
 - **Whom it avoids** (observed in the original, 2026-11-18; `avoidanceKey`, src/ai/avoidance.ts):
   each actor has a key in the engine's avoidance manager and avoids (steers round, is blocked
   by) only those whose key is greater. One on its way (following a path, faster than 5 units a
@@ -356,7 +357,8 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   With the advanced avoidance one with a node that sets off has it taken away and the way is
   searched again without it (observed; `clear`). The actor's width is twice its radius (an
   earlier round passed its radius as its width, so a node went only on one within half its
-  radius and the other's of the way; tested in actors-in-the-way.test.ts).
+  radius and the other's of the way). The node's laying and dropping in the movers are run in
+  actors-in-the-way.test.ts; that case does not tell the width from the radius.
   Ours leaves the player to the line above. TODO(M13): the order of that line and the node.
 - **Round one standing in its way** (observed in the original): the path request the engine
   makes then lays an avoid node on each actor it records near the way, where it stands, its
