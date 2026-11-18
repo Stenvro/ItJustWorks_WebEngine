@@ -18,7 +18,8 @@ import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { afterInfo } from '../scripting/runtime/dialogue-rules.ts';
 import { InfoFlag } from '../world/dialogue-records.ts';
 import { silentLineSeconds } from '../world/dialogue.ts';
-import type { PlacedActor, SpokenLine } from './actors.ts';
+import type { SpokenLine } from './actors.ts';
+import { speakerName, speakerReference, type DialogueSpeaker } from './hud-signals.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
 
@@ -36,7 +37,7 @@ export class DialogueMenu {
   readonly #session: GameSession;
   readonly #terminal: Terminal;
   #menu: Menu | undefined;
-  #speaker: PlacedActor | undefined;
+  #speaker: DialogueSpeaker | undefined;
   #choices: TopicChoice[] = [];
   /** The topic said as the player walks away from the topics listed now (INFO Walk Away). */
   #walkAway: TopicChoice | undefined;
@@ -104,13 +105,13 @@ export class DialogueMenu {
    * in the game: a guard's line as the player talks to them).
    */
   async talk(
-    speaker: PlacedActor,
+    speaker: DialogueSpeaker,
     events: { readonly opened: () => void; readonly closed: () => void },
     opening?: number,
   ): Promise<void> {
     const engine = this.#engine();
     const runtime = this.#session.scriptsReady;
-    const reference = speaker.actor.reference;
+    const reference = speakerReference(speaker);
     if (!engine || !runtime || this.#menu || this.#starting || this.#greeting.has(reference)) {
       return;
     }
@@ -146,7 +147,7 @@ export class DialogueMenu {
     ) {
       runtime.dialogueSpeaker = before;
       if (!greeting) {
-        this.#terminal.log('ui', `${speaker.look.name} has nothing to say`);
+        this.#terminal.log('ui', `${speakerName(speaker)} has nothing to say`);
         return;
       }
       runtime.state.actor(reference).talkedToPlayer = true;
@@ -203,7 +204,7 @@ export class DialogueMenu {
         await menu.waitFor('_root.InitExtensions');
         menu.invoke('_root.InitExtensions');
         menu.tellPlatform('_root.SetPlatform');
-        menu.call('SetSpeakerName', speaker.look.name);
+        menu.call('SetSpeakerName', speakerName(speaker));
         // With the speaker named the other voices and effects duck (fNonDialogVoiceDucking).
         this.#session.soundSystem?.duckForDialogue(true);
       },
@@ -242,10 +243,10 @@ export class DialogueMenu {
       // Invisible Continue, or choices the menu could list none of (goesOnUnlisted).
       if (
         afterInfo(current.info) !== 'continue' &&
-        !(await engine.goesOnUnlisted(current, speaker.actor.reference))
+        !(await engine.goesOnUnlisted(current, speakerReference(speaker)))
       )
         break;
-      const next = await engine.continueAfter(current, speaker.actor.reference);
+      const next = await engine.continueAfter(current, speakerReference(speaker));
       if (!next) {
         offered = undefined;
         break;
@@ -294,7 +295,7 @@ export class DialogueMenu {
     this.#busy = true;
     this.#lastChosen = choice.text;
     try {
-      const spoken = await engine.choose(choice, speaker.actor.reference);
+      const spoken = await engine.choose(choice, speakerReference(speaker));
       if (!spoken) {
         this.#menu?.call('StartHideMenu');
         return;
@@ -315,7 +316,7 @@ export class DialogueMenu {
     const speaker = this.#speaker;
     const menu = this.#menu;
     if (!engine || !speaker || !menu) return;
-    const all = await engine.topics(speaker.actor.reference, offered);
+    const all = await engine.topics(speakerReference(speaker), offered);
     this.#walkAway = all.find((choice) => choice.walkAway === true);
     this.#choices = all.filter((choice) => choice.hidden !== true);
     if (this.#choices.length === 0) {
@@ -352,25 +353,35 @@ export class DialogueMenu {
     const speaker = this.#speaker;
     const runtime = this.#session.scriptsReady;
     if (!engine || !speaker || !runtime) return;
-    const reference = speaker.actor.reference;
+    const reference = speakerReference(speaker);
     await this.#fragment(engine, spoken, 'begin', reference);
     const placer = await this.#session.actors();
     const settings = await this.#session.settings();
     const perCharacter = settings.number('fAIDefaultSpeechMult') ?? DEFAULT_SPEECH_MULT;
     for (const response of spoken.source.info.responses) {
       if (!this.#menu) break;
-      const voiceType = speaker.look.voiceType;
+      const actor = 'actor' in speaker ? speaker : undefined;
+      const object = 'actor' in speaker ? undefined : speaker;
+      const voiceType = actor ? actor.look.voiceType : object?.voiceType;
       const path =
         voiceType === undefined
           ? undefined
           : await this.#session.lines.voiceFile(spoken, response.number, voiceType);
-      const line: SpokenLine | undefined = path
-        ? await placer.say(speaker, path, false, spoken.source.info.audioOutputOverride)
-        : response.sound !== 0
-          ? await placer.saySound(speaker, response.sound)
-          : undefined;
+      const override = spoken.source.info.audioOutputOverride;
+      // A talking activator's voice comes from where it stands; it has no face to lip-sync.
+      const line: SpokenLine | undefined = object
+        ? path
+          ? await placer.sayAt([object.at[0], object.at[1], object.at[2]], path, override)
+          : undefined
+        : !actor
+          ? undefined
+          : path
+            ? await placer.say(actor, path, false, override)
+            : response.sound !== 0
+              ? await placer.saySound(actor, response.sound)
+              : undefined;
       // Its face shows the response's emotion (src/animation/face.ts).
-      speaker.face?.showEmotion(response.emotion, response.emotionValue);
+      actor?.face?.showEmotion(response.emotion, response.emotionValue);
       this.#session.lines.responseBegins(reference, spoken, response, undefined);
       // Its text shows with the setting Dialogue Subtitles (off by default, as in the game), or
       // when the info forces it (INFO flag Force Subtitle).
@@ -403,7 +414,7 @@ export class DialogueMenu {
       const after: Menu | undefined = this.#openMenu();
       after?.call('HideDialogueText');
     }
-    speaker.face?.showEmotion(undefined);
+    if ('actor' in speaker) speaker.face?.showEmotion(undefined);
     this.#session.lines.lineEnds(reference);
     engine.said(spoken.info);
     await this.#fragment(engine, spoken, 'end', reference);

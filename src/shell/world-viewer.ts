@@ -103,7 +103,7 @@ import { controlsRequest, keepOffsetRequest } from '../ai/movement-overrides.ts'
 import { terrainEffectPlacement } from '../world/terrain-effect.ts';
 import { summonPlace, type NavmeshSet } from '../ai/pathfinding.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
-import { talkOnActivate } from './script-talk.ts';
+import { talkingActivation, talkOnActivate } from './script-talk.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
 import { noteMoved, placedAsMoved, type MovedFromExterior } from './moved-objects.ts';
 import {
@@ -1137,7 +1137,7 @@ export class WorldViewer {
     instance: ModelInstance | undefined,
     activator?: number,
   ): Activatable | undefined {
-    return objectActivation(
+    const target = objectActivation(
       object,
       instance,
       {
@@ -1149,6 +1149,8 @@ export class WorldViewer {
       this.#seat,
       activator,
     );
+    // A talking activator talks to the player who activates it.
+    return target && talkingActivation(target, object, this.#session, activator);
   }
 
   /** Whether the collision under a point is in place (the player can stand there). */

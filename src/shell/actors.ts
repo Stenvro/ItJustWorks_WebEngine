@@ -752,6 +752,23 @@ export class ActorPlacer {
   }
 
   /**
+   * A voice file said from a place, with no face (a talking activator's line: the Whispering
+   * Door's). Undefined if the file cannot be read.
+   */
+  async sayAt(at: Vec3, path: string, outputOverride?: number): Promise<SpokenLine | undefined> {
+    const voices = await this.#session.voices();
+    const line = await voices.voiceLine(path, false, outputOverride);
+    if (!line) return undefined;
+    const instance = line.play(() => at);
+    return {
+      duration: line.duration,
+      stop: () => {
+        void instance.then((playing) => playing?.stop());
+      },
+    };
+  }
+
+  /**
    * The actor says a response's sound (INFO TRDT's: a creature's attack vocal, a bard's flute)
    * at its head, as a response without a voice file of its own does; undefined if it does not
    * play (its conditions, no sound system).

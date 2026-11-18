@@ -15,6 +15,31 @@ import type { PlacedActor } from './actors.ts';
 import type { StealthReading } from './hud-stealth.ts';
 import type { ObjectUses } from './play-session.ts';
 
+/**
+ * A talking activator the player talks to (TACT: the Whispering Door in Dragonsreach, a
+ * Daedric prince's shrine): its dialogue is the speaker's, with its own name and voice type
+ * (VNAM), said from where it stands. It has no face and no body.
+ */
+export interface ObjectSpeaker {
+  readonly reference: number;
+  readonly name: string;
+  /** Its voice type's editor id (as an actor's look names it: the voice files' folder). */
+  readonly voiceType: string | undefined;
+  /** Where its voice comes from. */
+  readonly at: readonly [number, number, number];
+}
+
+/** Who the player talks to in the dialogue menu: an actor, or a talking activator. */
+export type DialogueSpeaker = PlacedActor | ObjectSpeaker;
+
+/** A speaker's reference. */
+export const speakerReference = (speaker: DialogueSpeaker): number =>
+  'actor' in speaker ? speaker.actor.reference : speaker.reference;
+
+/** A speaker's name. */
+export const speakerName = (speaker: DialogueSpeaker): string =>
+  'actor' in speaker ? speaker.look.name : speaker.name;
+
 export interface HudTarget {
   /** "Open", "Take", ... */
   readonly verb: string;
@@ -75,12 +100,11 @@ export interface MenuSink {
   messageBox(text: string, buttons: readonly string[]): Promise<number>;
   /** A gameplay user event the player pressed (the tween menu's Tab, the journal's J). */
   userEvent(name: string): void;
-  /** The player talks to an actor (the dialogue menu). */
   /**
-   * A conversation with an actor; `opening`: it begins with that topic's line (a package's
-   * ForceGreet) instead of its greeting.
+   * A conversation with an actor or a talking activator (the dialogue menu); `opening`: it
+   * begins with that topic's line (a package's ForceGreet) instead of its greeting.
    */
-  talk(speaker: PlacedActor, opening?: number): void;
+  talk(speaker: DialogueSpeaker, opening?: number): void;
   /** A container's menu (a chest, a corpse searched); `closed` once it has closed. */
   container(reference: number, closed: () => void): void;
   /** A menu a script opens; resolves once it has closed, with what it returns. */

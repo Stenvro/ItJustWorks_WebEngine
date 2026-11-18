@@ -28,7 +28,7 @@ import { GRAVITY, initPhysics, PhysicsWorld } from '../physics/physics-world.ts'
 import type { Vec3 } from '../render/math.ts';
 import type { InstanceVisibility } from '../render/scene-renderer.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
-import { talkOnActivate } from '../shell/script-talk.ts';
+import { talkingActivation, talkOnActivate } from '../shell/script-talk.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ActorStage, type StageObstacleCell, type StagePlace } from '../shell/actor-stage.ts';
 import type { AdoptedVehicle } from '../shell/actor-vehicles.ts';
@@ -1674,6 +1674,10 @@ export class SimWorld {
       this.#seat,
       activator,
     );
+    // A talking activator talks to the player who activates it.
+    if (target && object.baseType === 'TACT') {
+      return talkingActivation(target, object, this.session, activator);
+    }
     const playback = instance?.playback;
     if (!target || !playback || this.session.hud.uses?.swung) return target;
     // A container the player searches: its lid opens as its menu does (Play's object uses).
