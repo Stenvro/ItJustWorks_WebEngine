@@ -12,6 +12,8 @@
 
 import { afterAll } from 'vitest';
 import { findPath, type PathOptions } from '../../src/ai/pathfinding.ts';
+import type { Space } from '../../src/ai/package-start.ts';
+import { findRoute, type Route, type RouteEnd } from '../../src/ai/routes.ts';
 import { WeaponState } from '../../src/gameplay/combat/combat-state.ts';
 import { Layer } from '../../src/physics/collision-layers.ts';
 import { readGameSave, restoreAmbience, saveGame } from '../../src/save/game-save.ts';
@@ -112,6 +114,8 @@ const DOOR_REACH = 160;
  * them (units): as an actor's to a door shut to it (actor-movers.ts DOOR_BLOCKED).
  */
 const LOCKED_DOOR_BLOCKED = 64;
+/** A goal this far off (units: past the cells loaded round the player) is walked towards straight. */
+const FAR_GOAL = 4096;
 /** How far the player steps aside round someone standing in their way (doubling each time). */
 const SIDESTEP = 48;
 /**
@@ -551,6 +555,79 @@ export class Sim {
     if (placed?.object.baseType !== 'DOOR' || !(await this.#lockedToPlayer(door))) return false;
     this.#lockedDoors.set(door, [hit.point[0], hit.point[1], feet[2]]);
     return true;
+  }
+
+  /**
+   * The player goes to a reference wherever it is, as one who knows the way: the load doors of
+   * the route there (src/ai/routes.ts) walked to and gone through in turn, then the way to it
+   * (walkPath). `between`: run after each stretch walked (fighting off attackers). True once
+   * within `reach` of it; false if there is no route or it was not reached in `seconds`.
+   */
+  async travelTo(
+    reference: number,
+    seconds: number,
+    reach = 150,
+    between?: () => Promise<void>,
+  ): Promise<boolean> {
+    const until = this.time + seconds;
+    const routes = await this.world.session.routeMap();
+    const spaceOf = (place: Placement | undefined): Space | undefined =>
+      place?.world !== undefined
+        ? { kind: 'world', world: place.world }
+        : place?.cell !== undefined
+          ? { kind: 'interior', cell: place.cell }
+          : undefined;
+    const endOf = (place: Placement | undefined): RouteEnd | undefined => {
+      const space = spaceOf(place);
+      if (!place || !space) return undefined;
+      const navmesh = routes.nearestNavmesh(space, place.position);
+      return navmesh === undefined ? undefined : { space, position: place.position, navmesh };
+    };
+    // The route last found: walked on where none is found from where they stand (a navmesh the
+    // routes do not join up, under them on the way there).
+    let last: { readonly space: string; readonly doors: Route['doors'] } | undefined;
+    while (this.time < until) {
+      const [here, there] = await Promise.all([
+        this.runtime.placement(PLAYER_REF),
+        this.runtime.placement(reference),
+      ]);
+      const from = endOf(here);
+      const to = endOf(there);
+      if (!from || !to || !there) return false;
+      const space = JSON.stringify(from.space);
+      const found = findRoute(routes, from, to);
+      if (found) last = { space, doors: found.doors };
+      else if (last?.space !== space) return false;
+      const door = (found ?? last).doors[0];
+      const started = this.time;
+      const goal = door?.position ?? there.position;
+      const arrived = await this.walkPath(
+        [goal[0], goal[1], goal[2]],
+        Math.min(10, until - this.time),
+        door ? 100 : reach,
+      );
+      await between?.();
+      if (arrived && !door) return true;
+      if (arrived && door) {
+        // A locked one is opened as the player does (its key, else picked).
+        if ((await this.runtime.lock(door.door)).locked) await this.pickLock(door.door);
+        if (!this.activate(door.door)) return false;
+        last = undefined;
+        await this.world.settle();
+        await this.step(1);
+      } else if (this.time === started) {
+        // No way over the navmeshes loaded now (the goal lies beyond them, cells away): straight
+        // towards it a while, the cells on the way loading, then the way is searched again.
+        const [x, y] = this.world.player.feet;
+        if (Math.hypot(goal[0] - x, goal[1] - y) > FAR_GOAL) {
+          await this.walkTo([goal[0], goal[1], goal[2]], Math.min(5, until - this.time), reach);
+          await this.world.settle();
+        } else {
+          await this.step(0.5);
+        }
+      }
+    }
+    return false;
   }
 
   /** One way over the navmeshes loaded now ('short': it ended short of the point). */
