@@ -87,12 +87,11 @@ export async function travelTo(
     const navmesh = map.nearestNavmesh(space, at.position);
     return navmesh === undefined ? undefined : { space, position: at.position, navmesh };
   };
-  for (let leg = 0; leg < 12 && sim.time < until; leg++) {
-    const [from, to] = await Promise.all([endOf(PLAYER_REF), endOf(target)]);
-    if (!from || !to) return false;
-    const route = findRoute(map, from, to);
-    const door = route?.doors[0]?.door;
-    if (door === undefined) break;
+  // The way as planned from the start, its doors in turn (planned again from an arrival, a place's
+  // other doors may look nearer than the stair to the next: the College's tower doors).
+  const [from, to] = await Promise.all([endOf(PLAYER_REF), endOf(target)]);
+  if (!from || !to) return false;
+  for (const { door } of findRoute(map, from, to)?.doors ?? []) {
     const at = await sim.position(door);
     if (!at || !(await walkFighting(sim, at, until - sim.time, 150))) return false;
     if (!sim.activate(door)) return false;
@@ -120,7 +119,8 @@ export async function solvePillars(
     const handle = new ObjectHandle(pillar, 'defaultpuzzlepillarnofurn');
     const at = await sim.position(pillar);
     if (at) await walkFighting(sim, at, 60, 180);
-    const want = `position0${String(await vm.getVariable(handle, '::solveState_var'))}`;
+    const solve = await vm.getVariable(handle, '::solveState_var');
+    const want = `position0${typeof solve === 'number' ? String(solve) : '?'}`;
     for (let turn = 0; turn < 4 && (await vm.stateOf(handle)) !== want; turn++) {
       sim.activate(pillar);
       for (let wait = 0; wait < 10 && (await vm.stateOf(handle)) === 'busy'; wait++) {
