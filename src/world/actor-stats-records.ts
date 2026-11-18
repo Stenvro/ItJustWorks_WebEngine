@@ -435,6 +435,11 @@ export interface LocationRecord {
   readonly references: readonly LocationReference[];
   /** Unique actors (NPC_ → its ACHR). */
   readonly uniques: ReadonlyMap<number, number>;
+  /**
+   * The editor locations its unique actors are given (LCUN, ACUN: NPC_, its ACHR, the editor
+   * location; xEdit "Editor Location"), by actor reference.
+   */
+  readonly uniqueEditorLocations: ReadonlyMap<number, number>;
   /** Persistent actors of the location (ACHR). */
   readonly persistent: readonly number[];
   /** MNAM: the world location marker. */
@@ -457,6 +462,7 @@ export function parseLocation(versions: readonly RecordSource[]): LocationRecord
   if (!record) return undefined;
   const references = new Map<number, LocationReference>();
   const uniques = new Map<number, number>();
+  const uniqueEditorLocations = new Map<number, number>();
   const persistent = new Set<number>();
   const forms = (source: RecordSource, type: string): number[] =>
     source.fields.all(type).flatMap((data) => {
@@ -486,7 +492,10 @@ export function parseLocation(versions: readonly RecordSource[]): LocationRecord
       for (let at = 0; at + 12 <= data.length; at += 12) {
         const npc = formAt(source, data, at);
         const actor = formAt(source, data, at + 4);
-        if (npc !== undefined && actor !== undefined) uniques.set(npc, actor);
+        if (npc === undefined || actor === undefined) continue;
+        uniques.set(npc, actor);
+        const editor = formAt(source, data, at + 8);
+        if (editor !== undefined) uniqueEditorLocations.set(actor, editor);
       }
     }
   };
@@ -500,7 +509,10 @@ export function parseLocation(versions: readonly RecordSource[]): LocationRecord
   };
   for (const version of versions) {
     if (version.fields.has('LCSR')) references.clear();
-    if (version.fields.has('LCUN')) uniques.clear();
+    if (version.fields.has('LCUN')) {
+      uniques.clear();
+      uniqueEditorLocations.clear();
+    }
     if (version.fields.has('LCPR')) persistent.clear();
     special(version, 'LCSR');
     special(version, 'ACSR');
@@ -509,7 +521,11 @@ export function parseLocation(versions: readonly RecordSource[]): LocationRecord
     actors(version, 'LCPR');
     actors(version, 'ACPR');
     for (const removed of forms(version, 'RCSR')) references.delete(removed);
-    for (const removed of forms(version, 'RCUN')) uniques.delete(removed);
+    for (const removed of forms(version, 'RCUN')) {
+      const actor = uniques.get(removed);
+      if (actor !== undefined) uniqueEditorLocations.delete(actor);
+      uniques.delete(removed);
+    }
     for (const removed of forms(version, 'RCPR')) persistent.delete(removed);
   }
   const rnam = record.fields.first('RNAM');
@@ -519,6 +535,7 @@ export function parseLocation(versions: readonly RecordSource[]): LocationRecord
     keywords: keywords(record),
     references: [...references.values()],
     uniques,
+    uniqueEditorLocations,
     persistent: [...persistent],
     marker: formField(record, 'MNAM'),
     radius: rnam && rnam.length >= 4 ? view(rnam).getFloat32(0, true) : 0,

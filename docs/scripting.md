@@ -666,6 +666,15 @@ DLC2SolstheimLocation through their worldspace, Sovngarde's and the Soul Cairn's
 reference's location is that of the cell it stands in (in a worldspace, the exterior cell at its
 place). GetInCurrentLocation, the aliases and the events all read it so.
 
+A reference's editor location (GetIsEditorLocation, HasSameEditorLocAsRef): for a unique actor
+the editor location the locations' unique actor lists give it (LCUN, ACUN: the actor, its
+reference, its editor location), else its own persist location (XLCN), else its cell's
+location. From the data: Aeri's persist location is Anga's Mill and she stands in its exterior
+cells, and AngasMillLocation's list gives her AngasMillAerisHouseLocation; Favor001's
+QuestGiverHouse alias asks for the dwelling of the quest giver's editor location, and with the
+mill no favor quest giver had one (the house is inside the mill, so a check for the mill holds).
+TODO(M13): inferred from the data (xEdit names the list's third field "Editor Location").
+
 ### Actor location change
 
 `actor-locations.ts` emits `actorLocationChange` (actor, old location, new; none is the
@@ -725,6 +734,14 @@ stats go to every object registered for them. What each kind becomes:
 | switchRaceComplete                     | OnRaceSwitchComplete                                                                                                                                            |
 | trapHit                                | to the trap, only for a living actor hit: OnTrapHitStart, OnTrapHit (target, velocity, position, material, first hit, motion type), OnTrapHitStop (target)      |
 | trigger, triggerEnterLeave             | OnTrigger, OnTriggerEnter / OnTriggerLeave to the trigger (who is inside)                                                                                       |
+
+An item whose base has scripts of its own that AddItem puts in a container is a reference
+there (one standing for the count given): its scripts start (OnInit) and hear each move
+(OnContainerChanged), as the Creation Kit's ObjectReference scripts on inventory items do.
+From the data: DA08's Whispering Door key is given to Farengar and the Jarl by AddItem, and its
+own OnContainerChanged sets the quest's stage 40 as it reaches the player (picked from a pocket,
+taken from a corpse). TODO(M13): the items of a container's own inventory (CNTO) with scripts
+are not references yet, and whether one AddItem's items are one reference is inferred.
 
 **The producers**, each where the engine raises its event (observed in the original):
 

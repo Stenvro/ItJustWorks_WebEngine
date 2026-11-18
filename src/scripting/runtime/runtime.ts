@@ -795,6 +795,20 @@ const MAGIC_ITEM_TYPES: ReadonlySet<string> = new Set(['SPEL', 'SCRL', 'ENCH', '
 /** How often the joints scripts made are looked at, as their references come back (seconds). */
 const SCRIPT_CONSTRAINT_CHECK = 0.5;
 
+/** The record types an inventory holds as items (those whose own scripts can run there). */
+const INVENTORY_ITEM_TYPES = new Set([
+  'ALCH',
+  'AMMO',
+  'ARMO',
+  'BOOK',
+  'INGR',
+  'KEYM',
+  'LIGH',
+  'MISC',
+  'SCRL',
+  'SLGM',
+  'WEAP',
+]);
 const CELL_INTERIOR = 0x01;
 /** MESG DNAM: shown as a message box (else, without buttons, as a notification). */
 const MESSAGE_BOX_FLAG = 0x01;
@@ -1370,6 +1384,14 @@ export class ScriptRuntime implements VmHost {
   /** Whether a reference is an actor that lives (the relay: a trap's hits reach only those). */
   async livingActor(reference: number): Promise<boolean> {
     return (await this.actors.isActor(reference)) && !(await this.actors.isDead(reference));
+  }
+
+  /** Whether an item an inventory holds has scripts of its own (a reference there: addItem). */
+  async #scriptedItem(item: number): Promise<boolean> {
+    const type = (await this.forms.record(item))?.type;
+    return (
+      INVENTORY_ITEM_TYPES.has(type ?? '') && (await this.forms.attachments(item)) !== undefined
+    );
   }
 
   /** Whether an equipped item's own scripts hear of it (OnEquipped: an item's, with scripts). */
@@ -2743,6 +2765,14 @@ export class ScriptRuntime implements VmHost {
    * in (for a worldspace's persistent references, the exterior cell at its place).
    */
   async editorLocation(reference: number): Promise<number | undefined> {
+    // A unique actor's is the one the locations' unique actor lists give it (LCUN's editor
+    // location), before its persist location (XLCN): Aeri's is her house at Anga's Mill, though
+    // her persist location is the mill and she stands in its exterior cells; Favor001's
+    // QuestGiverHouse (HasSameEditorLocAsRefAlias with LocTypeDwelling) looks for it. The house
+    // is inside the mill, so what asks for the mill still finds her there. Inferred from the
+    // data (xEdit names the field "Editor Location"), TODO(M13).
+    const unique = (await this.#uniqueEditorLocations()).get(reference);
+    if (unique !== undefined) return unique;
     const indexed = this.#index?.flags.has(reference) === true;
     const own = indexed
       ? this.#index?.persistLocation.get(reference)
@@ -2761,6 +2791,23 @@ export class ScriptRuntime implements VmHost {
     }
     return cell === undefined ? undefined : this.#cellLocation(cell);
   }
+
+  /** The unique actors' editor locations of every location's list (LCUN, ACUN), read once. */
+  #uniqueEditorLocations(): Promise<ReadonlyMap<number, number>> {
+    this.#uniqueEditors ??= (async () => {
+      const editors = new Map<number, number>();
+      for (const formId of this.forms.db.formIdsOfType('LCTN')) {
+        const location = await this.location(formId);
+        for (const [actor, editor] of location?.uniqueEditorLocations ?? []) {
+          editors.set(actor, editor);
+        }
+      }
+      return editors;
+    })();
+    return this.#uniqueEditors;
+  }
+
+  #uniqueEditors: Promise<ReadonlyMap<number, number>> | undefined;
 
   /**
    * A cell's location, read once per cell, as the engine finds it (observed in the
@@ -3369,13 +3416,28 @@ export class ScriptRuntime implements VmHost {
       } else {
         items.set(item, (items.get(item) ?? 0) + count);
       }
+      // An item whose base has scripts of its own is a reference in the container: its scripts
+      // run there (OnInit) and hear it move (OnContainerChanged), as the Creation Kit's
+      // ObjectReference scripts on inventory items do. From the data: DA08's Whispering Door key,
+      // given to Farengar and the Jarl by AddItem, sets the quest's stage 40 from its
+      // OnContainerChanged as it reaches the player. TODO(M13): inferred that the items one
+      // AddItem gives are one reference standing for their count.
+      const reference =
+        record?.type !== 'LVLI' && (await this.#scriptedItem(item))
+          ? this.state.create(item, count)
+          : undefined;
+      if (reference !== undefined) {
+        this.state.reference(reference).container = { holder: container, base: item, count };
+        this.#initialized.add(reference);
+        await this.#initializeReference(reference);
+      }
       if (!silent && container === PLAYER_REF) this.detach(this.#itemMessage(item, count, true));
       this.events.emit('containerChanged', {
         from: undefined,
         to: container,
         item,
         count,
-        reference: undefined,
+        reference,
       });
       if (takeUp) await this.equipment.itemsGiven(container, item);
     }
