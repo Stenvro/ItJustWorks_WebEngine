@@ -69,7 +69,8 @@ export class CartTether {
     // The cart stood settled on its wheels in the engine before its tether (its cell's warm
     // start); here it waited where it was placed, a little above or in the ground: for its first
     // half second it is only moved out of what it overlaps, not thrown (PhysicsWorld.settle).
-    physics.settle(collision);
+    // Set going on its tether, it is no part of its cell's warm start (whose end would stop it).
+    physics.settle(collision, false);
     // Every body weighs fMass:Cart. Havok's setMass leaves the inertia as authored (the
     // carriage's, for its 12,000 kg body); there the tether holds the body's pitch and roll to
     // the spine, here the wheels do (below), and a body that slow to turn followed them late (it

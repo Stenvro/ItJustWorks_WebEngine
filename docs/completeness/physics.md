@@ -18,7 +18,7 @@ settings reader or named in the code. A field with one value in every mesh that 
 the physics counts as done with that reason. The mechanics are kept by hand below, against
 docs/physics.md. The count after an item is how many blocks (records) use it.
 
-## Count (2026-11-12, round 11)
+## Count (2026-11-18, round 12)
 
 | Part                          | Items | Done | Open |
 | ----------------------------- | ----: | ---: | ---: |
@@ -156,6 +156,18 @@ and 46 while the cone's push still went aside on a twisted joint, which held som
 still short of where their load lies straight across the cone: they now slide there, slowly,
 see docs/physics.md, "A limit's give"); that this
 tip without it no longer reaches the 48, 51 and 50 of the earlier rounds was not looked into.
+
+Round 12 (375, unchanged): the warm start's end, observed in the original (every island
+deactivated once fWarmStartMaxTime is stepped), is built by islands for the warm start's own
+bodies and measured alone: 62 of the 64,248 through against 38, so it stays off in the play
+(below, "Objects placed into what they lie on"). Checked, already done: a keyframed door's leaf
+swinging into the player puts them out of its way and never through it, from both sides
+(`sim-helgen-keep-bodies`, character-controller.test.ts "a keyframed body that swings into
+it"), and actors set on one spot part at the character proxy's penetration recovery speed, not
+at the 1,900 units a second Rapier's sweep moved them (character-overlap.test.ts). The three
+open items and the inferred rules of the rows (the bumper's share, the warp, the good position,
+the drowning sound's repeat, the leg's damage, the gameplay impulses, an object pushed out of
+its exterior cell) need the original read and stay as they were.
 
 ## Meshes
 
@@ -323,7 +335,11 @@ tip without it no longer reaches the 48, 51 and 50 of the earlier rounds was not
       simulating what still moves), and Havok's one-sided contacts with meshes (ours are
       two-sided: a body more than half into a surface is pushed out below it). Tried in round 9,
       both worse: sleeping what still moves at 4 s (159 through), holding what is placed past a
-      surface's middle where it was placed (130, what lay on or in those among them).
+      surface's middle where it was placed (130, what lay on or in those among them). Round 12:
+      the end built by islands as the original's (PhysicsWorld.#endWarmStart, the warm start's
+      bodies only; settling.test.ts) and measured alone: 62 through against 38, the coins, eggs
+      and baskets still on their way out at 4 s stopped under the surface; it stays off
+      (deactivateAtWarmStartEnd) until Rapier's push out of meshes is Havok's recovery.
 - [x] Traps: the material of the trap's shape touched; the initial flag clear on the contact
       listener's entries, as observed in the original; cloud traps (L_CLOUDTRAP) as traps (round 8;
       no vanilla mesh has a body on it, round 10).
