@@ -50,6 +50,7 @@ import {
   type MeterStep,
 } from './hud-elements.ts';
 import type { HelpMessage, HudSignals, HudSink, HudTarget } from './hud-signals.ts';
+import { HelpMessages, type WaitingHelp } from '../gameplay/help-messages.ts';
 import { StealthMeter } from './hud-stealth.ts';
 import {
   AimedHands,
@@ -132,13 +133,6 @@ interface QuestNotice {
   readonly dragon?: string;
 }
 
-/** A help message being shown: its timers. */
-interface ShownHelp {
-  readonly message: HelpMessage;
-  shown: number;
-  timer: ReturnType<typeof setTimeout> | undefined;
-}
-
 export class HudController implements HudSink {
   readonly #host: MenuHost;
   readonly #signals: HudSignals;
@@ -171,17 +165,23 @@ export class HudController implements HudSink {
   #readingMeters = false;
   #settings: GameSettings | undefined;
   readonly #notices: QuestNotice[] = [];
-  /** Help messages by their event (lower case). */
-  readonly #help = new Map<string, ShownHelp>();
-  /** Without a game: the events whose help was done here. */
+  /** Without a game: the help messages waiting here, and the events whose help was done. */
+  readonly #helpWaitingHere = new Map<string, WaitingHelp>();
   readonly #helpDoneHere = new Set<string>();
+  /** The waiting list the HUD shows (undefined: none shown yet), and when it last advanced. */
+  #helpShownFor: Map<string, WaitingHelp> | undefined;
+  #helpTime = 0;
 
   /**
-   * Events whose help the player has done (they are not shown again until reset): the game
-   * state's, which a save keeps.
+   * The help messages waiting and the events whose help the player has done: the game state's,
+   * which a save keeps (help-messages.ts), so a loaded game shows them on from where they were.
    */
-  get #helpDone(): Set<string> {
-    return this.#source.runtime()?.state.helpDone ?? this.#helpDoneHere;
+  #helpMessages(): HelpMessages {
+    const state = this.#source.runtime()?.state;
+    return new HelpMessages(
+      state?.helpWaiting ?? this.#helpWaitingHere,
+      state?.helpDone ?? this.#helpDoneHere,
+    );
   }
 
   /** The stealth meter (hud-stealth.ts). */
@@ -229,6 +229,8 @@ export class HudController implements HudSink {
         this.#cartMode = false;
         this.#movementSeen = undefined;
         this.#stealth.reset();
+        // The help messages showing are shown again (as after a load).
+        this.#helpShownFor = undefined;
         // (The HUD is not this.#menu yet as it first opens.)
         this.#applySettings(menu);
       },
@@ -299,8 +301,7 @@ export class HudController implements HudSink {
     this.#stopSettings?.();
     this.#stopSettings = undefined;
     cancelAnimationFrame(this.#frame);
-    for (const help of this.#help.values()) clearTimeout(help.timer);
-    this.#help.clear();
+    this.#helpShownFor = undefined;
     if (this.#signals.sink === this) this.#signals.sink = undefined;
     if (this.#menu) this.#host.close(this.#menu);
     this.#menu = undefined;
@@ -441,57 +442,62 @@ export class HudController implements HudSink {
    * limit), until the player does its event; one done is not shown again until reset.
    */
   helpMessage(message: HelpMessage): void {
-    const key = message.event.toLowerCase();
-    if (this.#helpDone.has(key)) return;
-    this.#hideHelp(key);
-    const help: ShownHelp = { message, shown: 0, timer: undefined };
-    this.#help.set(key, help);
-    this.#showHelp(key, help);
+    const { hide, started } = this.#helpMessages().start(message);
+    const menu = this.#menu;
+    if (!menu || this.#helpShownFor === undefined) return;
+    for (const ended of hide) this.#helpShow(menu, ended, false);
+    if (started) this.#helpShow(menu, started, true);
   }
 
   resetHelpMessage(event: string): void {
-    this.#helpDone.delete(event.toLowerCase());
+    this.#helpMessages().reset(event);
   }
 
   userEvent(name: string): void {
-    const key = name.toLowerCase();
-    if (!this.#help.has(key)) return;
-    this.#hideHelp(key);
-    this.#helpDone.add(key);
+    const done = this.#helpMessages().done(name);
+    const menu = this.#menu;
+    if (done?.showing && menu && this.#helpShownFor !== undefined) {
+      this.#helpShow(menu, done, false);
+    }
   }
 
   /** A help message's text with its keys written out (Ruffle draws no key art in text). */
-  #helpText(message: HelpMessage): string {
-    return this.#source.keyLabels?.(message.text) ?? message.text;
+  #helpText(help: WaitingHelp): string {
+    return this.#source.keyLabels?.(help.text) ?? help.text;
   }
 
-  #showHelp(key: string, help: ShownHelp): void {
-    const { message } = help;
-    help.shown++;
-    this.#menu?.call('ShowTutorialHintText', this.#helpText(message), true);
-    help.timer = setTimeout(() => {
-      this.#menu?.call('ShowTutorialHintText', this.#helpText(message), false);
-      if (message.times > 0 && help.shown >= message.times) {
-        this.#help.delete(key);
-        return;
+  #helpShow(menu: Menu, help: WaitingHelp, show: boolean): void {
+    menu.call('ShowTutorialHintText', this.#helpText(help), show);
+  }
+
+  /**
+   * The help messages' time passes with the HUD's frames; another game's list (a load, a new
+   * game) or a HUD opened anew hides what showed and shows the game's own.
+   */
+  #updateHelp(menu: Menu): void {
+    const help = this.#helpMessages();
+    const waiting = this.#source.runtime()?.state.helpWaiting ?? this.#helpWaitingHere;
+    const now = performance.now();
+    if (waiting !== this.#helpShownFor) {
+      for (const old of this.#helpShownFor?.values() ?? []) {
+        if (old.showing) this.#helpShow(menu, old, false);
       }
-      help.timer = setTimeout(() => {
-        if (this.#help.get(key) === help) this.#showHelp(key, help);
-      }, message.interval * 1000);
-    }, message.seconds * 1000);
-  }
-
-  #hideHelp(key: string): void {
-    const help = this.#help.get(key);
-    if (!help) return;
-    clearTimeout(help.timer);
-    this.#help.delete(key);
-    this.#menu?.call('ShowTutorialHintText', this.#helpText(help.message), false);
+      this.#helpShownFor = waiting;
+      this.#helpTime = now;
+      const showing = help.showing();
+      if (showing) this.#helpShow(menu, showing, true);
+      return;
+    }
+    const { show, hide } = help.advance((now - this.#helpTime) / 1000);
+    this.#helpTime = now;
+    for (const ended of hide) this.#helpShow(menu, ended, false);
+    for (const shown of show) this.#helpShow(menu, shown, true);
   }
 
   #update(): void {
     const menu = this.#menu;
     if (!menu) return;
+    this.#updateHelp(menu);
     const heading = this.#source.heading();
     if (heading !== undefined) {
       const degrees = ((((heading * 180) / Math.PI) % 360) + 360) % 360;

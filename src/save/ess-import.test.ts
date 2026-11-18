@@ -669,7 +669,7 @@ describe('the global data tables of controls, references and sky cells', () => {
             .done(),
         },
         // 102: the journal's tutorial shown (252), nothing used, the journal's tabs switched
-        // off; the help part: no messages waiting, "Look" done, none showing (−2).
+        // off; the help part: two messages waiting (the first showing), "Look" done.
         {
           type: 102,
           data: new EssWriter()
@@ -680,10 +680,22 @@ describe('the global data tables of controls, references and sky cells', () => {
             .vsval(0)
             .vsval(0)
             .u8(1)
-            .vsval(0)
+            .vsval(2)
+            .wstring('Jump')
+            .wstring('Press Jump')
+            .f32(3)
+            .f32(10)
+            .u32(2)
+            .f32(1.5)
+            .wstring('Sprint')
+            .wstring('Hold Sprint')
+            .f32(0)
+            .f32(4)
+            .u32(0xffffffff)
+            .f32(2)
             .vsval(1)
             .wstring('Look')
-            .u32(0xfffffffe)
+            .u32(0)
             .done(),
         },
         // 105: an actor dead, last seen at hour 30.
@@ -732,6 +744,27 @@ describe('the global data tables of controls, references and sky cells', () => {
     // The tutorials shown by their default objects' places, the next crime's number.
     expect([...state.tutorialsShown]).toEqual(['HBJL']);
     expect(state.helpDone.has('look')).toBe(true);
+    // The help messages waiting go on as the save had them: the one showing, times left.
+    expect([...state.helpWaiting.values()]).toEqual([
+      {
+        event: 'Jump',
+        text: 'Press Jump',
+        seconds: 3,
+        interval: 10,
+        timesLeft: 2,
+        since: 1.5,
+        showing: true,
+      },
+      {
+        event: 'Sprint',
+        text: 'Hold Sprint',
+        seconds: 0,
+        interval: 4,
+        timesLeft: -1,
+        since: 2,
+        showing: false,
+      },
+    ]);
     expect(state.nextCrime).toBe(6);
     expect(imported.skipped.some((line) => line.startsWith('interface'))).toBe(false);
     for (const type of [8, 100, 102, 105, 110, 113]) {
@@ -740,6 +773,8 @@ describe('the global data tables of controls, references and sky cells', () => {
   });
 
   it('send the OnDeath of an actor saved dying as the load ends, none for the dead', () => {
+    const DOWN = 0x1c1b6;
+    const ESSENTIAL = 0x1c1b7;
     const DYING = 0x1c1b2;
     const SLAIN = 0x1c1b3;
     const BURNT = 0x1c1b4;
@@ -777,6 +812,9 @@ describe('the global data tables of controls, references and sky cells', () => {
         // Dying and dead by another actor's hand, and by the player's (0x14).
         { refId: [1, SLAIN], type: 1, flags, data: actor(1, [1, KILLER]) },
         { refId: [1, BURNT], type: 1, flags, data: actor(2, [1, 0x14]) },
+        // Bleeding out (8) and an essential one down (7).
+        { refId: [1, DOWN], type: 1, flags, data: actor(8) },
+        { refId: [1, ESSENTIAL], type: 1, flags, data: actor(7) },
         // A living actor keeps none, whatever the reference says.
         { refId: [1, KILLER], type: 1, flags, data: actor(0, [1, DEAD]) },
       ],
@@ -800,6 +838,13 @@ describe('the global data tables of controls, references and sky cells', () => {
     expect(state.actors.get(DEAD)?.killer).toBeUndefined();
     expect(state.actors.get(KILLER)?.dead).toBe(false);
     expect(state.actors.get(KILLER)?.killer).toBeUndefined();
+    // Those bleeding out bleed on as they are placed (SavedActor.down), alive; no other is down.
+    const actors = imported.save.world?.actors ?? [];
+    for (const down of [DOWN, ESSENTIAL]) {
+      expect(actors.find((saved) => saved.reference === down)?.down).toEqual({ bleedout: 0 });
+      expect(state.actors.get(down)?.dead ?? false).toBe(false);
+    }
+    expect(actors.filter((saved) => saved.down !== undefined)).toHaveLength(2);
   });
 
   it("take the Miscellaneous objectives' byte as the journal's choice once one is shown", () => {
