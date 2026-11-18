@@ -12,6 +12,7 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { CellObject } from '../world/cell-loader.ts';
 import { parseItem } from '../world/item-records.ts';
+import { takeFromWorld } from './world-take.ts';
 import { DefaultObjectUse } from '../world/default-objects.ts';
 import { itemSound } from '../gameplay/inventory.ts';
 import {
@@ -1373,11 +1374,7 @@ export class PlayMode {
   async #take(object: CellObject): Promise<void> {
     const runtime = this.#session.scriptsReady;
     if (!runtime) return;
-    const stealing = !(await runtime.crime.mayTake(PLAYER_REF, object.reference));
-    await runtime.pickUp(object.reference, PLAYER_REF);
-    const taken = runtime.state.references.get(object.reference)?.container?.count ?? 1;
-    if (stealing) await runtime.crime.steal(PLAYER_REF, object.base, taken, object.reference);
-    runtime.detach(runtime.storyEvents.pickedUp(object.base, object.reference, stealing));
+    await takeFromWorld(runtime, object);
     const record = await runtime.forms.record(object.base);
     const item = record && parseItem(record);
     const sounds = this.#session.soundSystem;

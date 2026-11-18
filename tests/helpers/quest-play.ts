@@ -103,6 +103,50 @@ export async function follow(
 }
 
 /**
+ * The player answers the conversation open now: the first listed topic each time that one of
+ * `answers` matches, until none does (or it ends). The topics chosen.
+ */
+export async function converse(sim: Sim, answers: readonly RegExp[]): Promise<string[]> {
+  const chosen: string[] = [];
+  for (let turn = 0; turn < 12; turn++) {
+    // A topic once asked is not asked again (its answer is known).
+    const topic = sim.topics.find(
+      (each) => !chosen.includes(each) && answers.some((answer) => answer.test(each)),
+    );
+    if (topic === undefined) break;
+    chosen.push(topic);
+    if ((await sim.choose(topic)).length === 0) break;
+  }
+  sim.goodbye();
+  return chosen;
+}
+
+/**
+ * The player keeps up with an actor who leads (follow), what fights them falling (fendOff), and
+ * answers with `answers` whoever comes to talk (a force greet, a scene's), until `done`. The
+ * topics chosen on the way.
+ */
+export async function keepUp(
+  sim: Sim,
+  actor: number,
+  answers: readonly RegExp[],
+  done: () => boolean | Promise<boolean>,
+  seconds: number,
+  reach = 200,
+): Promise<string[]> {
+  const until = sim.time + seconds;
+  const chosen: string[] = [];
+  while (sim.time < until && !(await done())) {
+    await follow(sim, actor, done, Math.min(4, until - sim.time), reach);
+    await fendOff(sim);
+    await catchBreath(sim);
+    const topics = await sim.listen(undefined, 0.5);
+    if (topics !== undefined) chosen.push(...(await converse(sim, answers)));
+  }
+  return chosen;
+}
+
+/**
  * Those fighting the player fall to the player's blows (TODO(M13): the player's own blows, where
  * the fight is not what the segment tests).
  */

@@ -25,6 +25,7 @@ import type { StagedActor } from '../../src/shell/actor-stage.ts';
 import { barterModel } from '../../src/shell/barter-menu.ts';
 import { craftingModel, workbenchOf } from '../../src/shell/crafting-models.ts';
 import { openBookUnseen } from '../../src/shell/book-reading.ts';
+import { takeFromWorld } from '../../src/shell/world-take.ts';
 import { fastTravelJourney, fastTravelWay } from '../../src/shell/fast-travel-journey.ts';
 import { giftModel } from '../../src/shell/gift-menu.ts';
 import { containerModel } from '../../src/shell/container-menu.ts';
@@ -1016,6 +1017,17 @@ export class Sim {
       ),
     );
     return opened;
+  }
+
+  /**
+   * The player opens a book lying in the world and takes it (the book menu's Take:
+   * src/shell/world-take.ts). False if it does not open.
+   */
+  async takeBook(reference: number): Promise<boolean> {
+    const base = await this.runtime.baseOf(reference);
+    if (base === undefined || !(await this.read(base, reference))) return false;
+    await this.#stepUntil(takeFromWorld(this.runtime, { reference, base }));
+    return true;
   }
 
   /**

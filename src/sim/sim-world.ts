@@ -66,6 +66,7 @@ import {
   type ScriptView,
 } from '../shell/script-world.ts';
 import { connectPlayerTime } from '../shell/time-flow.ts';
+import { openBookUnseen } from '../shell/book-reading.ts';
 import { FlyCamera } from '../render/fly-camera.ts';
 import type { Vfs } from '../vfs/vfs.ts';
 import { cellSceneLighting, pointLights } from '../world/cell-lighting.ts';
@@ -101,6 +102,7 @@ import { weatherRegionAt } from '../world/sky-weather.ts';
 import { parseClimate, type ClimateRecord } from '../world/weather.ts';
 import { skyState } from '../world/sky-state.ts';
 import { skyLighting } from '../shell/world-sky.ts';
+import { takeFromWorld } from '../shell/world-take.ts';
 import { cellKey, WorldFlag, type Arrival, type Worldspace } from '../world/worldspace.ts';
 import type { GameSave } from '../save/game-save.ts';
 import type { SaveHeader } from '../save/save-codec.ts';
@@ -1679,6 +1681,26 @@ export class SimWorld {
       this.#seat,
       activator,
     );
+    // Without Play's object uses, an item lying in the world is taken as Play takes it
+    // (world-take.ts); a book is opened in the headless book menu, which takes nothing unless
+    // its Take is chosen (Sim.takeBook).
+    if (
+      target &&
+      !this.session.hud.uses &&
+      object.item &&
+      (activator ?? PLAYER_REF) === PLAYER_REF
+    ) {
+      const runtime = this.runtime;
+      return {
+        ...target,
+        activate: () => {
+          target.activate();
+          if (object.readable) {
+            void openBookUnseen(runtime, { book: object.base, reference: object.reference });
+          } else void takeFromWorld(runtime, object);
+        },
+      };
+    }
     const playback = instance?.playback;
     if (!target || !playback || this.session.hud.uses?.swung) return target;
     // A container the player searches: its lid opens as its menu does (Play's object uses).
