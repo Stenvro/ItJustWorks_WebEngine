@@ -263,6 +263,19 @@ export function catchUpPlace(
   ];
 }
 
+/** A human's character controller radius (the narrow half extent of the people's skeleton's "BBX"). */
+export const HUMAN_RADIUS = 14;
+
+/**
+ * A follower's radius as its leader's followers' places are shared out: its own character
+ * controller's (the narrow half extent of its skeleton's bound "BBX" at its size,
+ * src/shell/player.ts controllerShape: a dog's 20.1, a horse's 31.8); a human's only while that
+ * bound is still being read.
+ */
+export function followerRadius(controller: { readonly radius: number } | undefined): number {
+  return controller?.radius ?? HUMAN_RADIUS;
+}
+
 /** A follower of a leader, as their places are shared out. */
 export interface FollowerPlace {
   readonly reference: number;

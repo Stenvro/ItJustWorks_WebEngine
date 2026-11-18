@@ -53,7 +53,7 @@ import {
 import { RaceSize } from '../ai/race-combat-records.ts';
 import type { Gait } from '../ai/locomotion.ts';
 import type { FlightRequest } from '../ai/flight.ts';
-import { followOffset } from '../ai/followers.ts';
+import { followerRadius, followOffset } from '../ai/followers.ts';
 import { swimsNow } from '../ai/race-ai-flags.ts';
 import {
   mergedInputs,
@@ -147,9 +147,6 @@ export interface PackageFlight {
 
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
-
-/** A follower's bound radius as the followers' places are shared out (a human's). */
-const FOLLOWER_RADIUS = 14;
 
 export class ActorAi {
   readonly #session: GameSession;
@@ -936,8 +933,7 @@ export class ActorAi {
                   reference: actor,
                   position: other.position,
                   wanted: this.#followWanted.get(actor) ?? 0,
-                  // TODO(M13): the actor's own bound radius (a human's here).
-                  radius: FOLLOWER_RADIUS,
+                  radius: followerRadius(this.#movers.controllerShapeOf(other)),
                 },
               ]
             : [];

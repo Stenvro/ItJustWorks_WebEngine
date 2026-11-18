@@ -292,8 +292,10 @@ the readers ask for by name.
 - [x] Followers, horses, vehicles (followers.ts, mounts.ts, vehicles.ts).
 - [x] Followers: the follow offset (their places by distance, both radii and the spacing between:
       followOffset), the path to the leader itself, the walk zone (the middle of the radii,
-      fFollowWalkZoneMult built-in 1) and the gait: observed; src/ai/followers.test.ts. Inferred: a
-      follower's radius is a human's.
+      fFollowWalkZoneMult built-in 1) and the gait: observed; src/ai/followers.test.ts. Each
+      follower's radius is its own controller's (its skeleton's "BBX": a dog 20.1;
+      tests/conformance/ai/followers.test.ts); inferred: that the engine reads the controller's
+      radius there.
 - [ ] Mounting from the right: the data has one Mount idle and one paired clip, from the left. That
       there is no mount from the right is read from the data, not from the code.
 - [x] Dialogue-driven AI: greetings, force greet, dialogue activate, conversations (talk.ts).
