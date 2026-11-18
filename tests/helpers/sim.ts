@@ -15,7 +15,11 @@ import { findPath } from '../../src/ai/pathfinding.ts';
 import { WeaponState } from '../../src/gameplay/combat/combat-state.ts';
 import { Layer } from '../../src/physics/collision-layers.ts';
 import { readGameSave, restoreAmbience, saveGame } from '../../src/save/game-save.ts';
-import type { SpokenInfo, TopicChoice } from '../../src/scripting/runtime/dialogue-engine.ts';
+import type {
+  OfferingInfo,
+  SpokenInfo,
+  TopicChoice,
+} from '../../src/scripting/runtime/dialogue-engine.ts';
 import { afterInfo } from '../../src/scripting/runtime/dialogue-rules.ts';
 import type { GameEvents } from '../../src/scripting/runtime/event-hub.ts';
 import { PLAYER_REF } from '../../src/scripting/runtime/forms.ts';
@@ -788,7 +792,7 @@ export class Sim {
       await this.#stepUntil(engine.runFragment(spoken.info, 'end', actor));
     };
     // An info, then the infos Invisible Continue says after it; the choices it leaves.
-    const goOn = async (first: SpokenInfo | undefined): Promise<readonly number[] | undefined> => {
+    const goOn = async (first: SpokenInfo | undefined): Promise<OfferingInfo | undefined> => {
       let current = first;
       for (let step = 0; current && step < 16; step++) {
         await say(current);
@@ -797,7 +801,7 @@ export class Sim {
           afterInfo(current.info) !== 'continue' &&
           !(await engine.goesOnUnlisted(current, actor))
         )
-          return current.info.choices;
+          return current.info;
         current = await engine.continueAfter(current, actor);
       }
       return undefined;
@@ -1296,7 +1300,7 @@ export class Sim {
   async #goOn(spoken: SpokenInfo | undefined, speaker: number): Promise<string[]> {
     const engine = this.runtime.dialogue;
     let current = spoken;
-    let offered = spoken?.info.choices;
+    let offered: OfferingInfo | undefined = spoken?.info;
     for (let step = 0; current && step < MAX_CONTINUES; step++) {
       if (
         afterInfo(current.info) !== 'continue' &&
@@ -1310,7 +1314,7 @@ export class Sim {
       }
       await this.#say(next, speaker);
       current = next;
-      offered = next.info.choices;
+      offered = next.info;
     }
     if (current && (current.info.flags & InfoFlag.goodbye) !== 0) return this.goodbye();
     const choices = await this.#drive(engine.topics(speaker, offered));

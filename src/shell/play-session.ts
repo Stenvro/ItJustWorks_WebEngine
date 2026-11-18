@@ -257,6 +257,8 @@ export function objectActivation(
   travel: {
     readonly name: (teleport: Teleport) => string;
     readonly go: (teleport: Teleport) => void;
+    /** The player talks to a talking activator (src/shell/talking-activator.ts). */
+    readonly talk?: (object: CellObject) => void;
   },
   /** Plays a sound (SNDR) at the object. */
   sound?: (descriptor: number, at: Vec3) => void,
@@ -404,6 +406,17 @@ export function objectActivation(
         const opened = playback.sequence === 'open';
         play(opened ? object.sounds?.close : object.sounds?.open);
         sequence(opened ? 'close' : 'open');
+      },
+    };
+  }
+  // A talking activator talks to the player who activates it (its conversation).
+  if (byPlayer && object.baseType === 'TACT' && travel.talk) {
+    const talk = travel.talk;
+    return {
+      ...shown('sTalk'),
+      activate: () => {
+        play(object.sounds?.activate);
+        talk(object);
       },
     };
   }

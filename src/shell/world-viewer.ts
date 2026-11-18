@@ -153,6 +153,7 @@ import {
   type CollisionGroup,
 } from './play-session.ts';
 import { worldSaveParts } from './world-save-parts.ts';
+import { talkToActivator } from './talking-activator.ts';
 
 /**
  * Cells loaded around the cell of the streaming centre (#streamCenter: the player while playing)
@@ -1143,6 +1144,10 @@ export class WorldViewer {
       {
         name: (teleport) => this.#destinations.get(teleport.door)?.name ?? '',
         go: (teleport) => this.onTravel?.(teleport),
+        talk: (object) => {
+          const session = this.#session;
+          if (session) void talkToActivator(session, object);
+        },
       },
       (descriptor, at) => void this.#session?.playSound(descriptor, at),
       this.#session?.hud.uses,

@@ -1150,11 +1150,13 @@ The info's flags and timers (`src/scripting/runtime/dialogue-rules.ts`, UESP and
   too).
 - **Goodbye**: the conversation ends after the info (a Goodbye greeting is said where the actor
   stands, no menu).
-- **Walk Away** (709) / **Walk Away Invisible In Menu** (261): Tab while the topics are listed
-  says the listed Walk Away topic's info where the actor stands, its fragments running as if
-  chosen. One marked invisible without text is kept for that alone; one with text is listed (175 of
-  the 261 are choices the player makes in the original: Brynjolf's "Tell me about the Goldenglow
-  job.", Delphine's questions in MQ106). TODO(M13): what the flag does to a listed topic.
+- **Walk Away** / **Walk Away Invisible In Menu**: flags of the info that offers the choices,
+  not of a topic's own info. Such an info names its Walk Away topic (TWAT: 665 infos, every one among
+  their own choices, all with the Walk Away flag); Tab while its choices are listed says that
+  topic's info where the actor stands, its fragments running as if chosen. With Walk Away Invisible
+  In Menu (252 of the 665) the topic is not listed: DB02's Astrid offers "DB02AstridWalkAwayTopic",
+  a topic whose text is its editor id, so. The top-level topics have no offering info and no Walk
+  Away topic.
 - **Requires Player Activation**: said only in a conversation the player starts (none in
   vanilla), never as a passing greeting or bark.
 

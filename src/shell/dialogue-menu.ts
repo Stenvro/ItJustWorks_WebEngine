@@ -11,6 +11,7 @@
 
 import {
   type DialogueEngine,
+  type OfferingInfo,
   type SpokenInfo,
   type TopicChoice,
 } from '../scripting/runtime/dialogue-engine.ts';
@@ -18,7 +19,7 @@ import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { afterInfo } from '../scripting/runtime/dialogue-rules.ts';
 import { InfoFlag } from '../world/dialogue-records.ts';
 import { silentLineSeconds } from '../world/dialogue.ts';
-import type { PlacedActor, SpokenLine } from './actors.ts';
+import type { Speaker, SpokenLine } from './actors.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
 
@@ -36,7 +37,7 @@ export class DialogueMenu {
   readonly #session: GameSession;
   readonly #terminal: Terminal;
   #menu: Menu | undefined;
-  #speaker: PlacedActor | undefined;
+  #speaker: Speaker | undefined;
   #choices: TopicChoice[] = [];
   /** The topic said as the player walks away from the topics listed now (INFO Walk Away). */
   #walkAway: TopicChoice | undefined;
@@ -104,7 +105,7 @@ export class DialogueMenu {
    * in the game: a guard's line as the player talks to them).
    */
   async talk(
-    speaker: PlacedActor,
+    speaker: Speaker,
     events: { readonly opened: () => void; readonly closed: () => void },
     opening?: number,
   ): Promise<void> {
@@ -126,7 +127,7 @@ export class DialogueMenu {
         opening === undefined
           ? await engine.greeting(reference)
           : await engine.topicLine(opening, reference);
-      choices = await engine.topics(reference, greeting?.info.choices);
+      choices = await engine.topics(reference, greeting?.info);
     } catch (error) {
       runtime.dialogueSpeaker = before;
       throw error;
@@ -236,7 +237,7 @@ export class DialogueMenu {
     if (!engine || !speaker) return;
     let current = spoken;
     let closing = false;
-    let offered = spoken?.info.choices;
+    let offered: OfferingInfo | undefined = spoken?.info;
     for (let step = 0; current && step < MAX_CONTINUES; step++) {
       if ((current.info.flags & InfoFlag.goodbye) !== 0) closing = true;
       // Invisible Continue, or choices the menu could list none of (goesOnUnlisted).
@@ -253,7 +254,7 @@ export class DialogueMenu {
       if (!this.#menu) return;
       await this.#say(next);
       current = next;
-      offered = next.info.choices;
+      offered = next.info;
     }
     if (!this.#menu) return;
     if (closing || (current && (current.info.flags & InfoFlag.goodbye) !== 0)) {
@@ -310,7 +311,7 @@ export class DialogueMenu {
    * The topics the player may choose now (an info's choices, else the actor's topics); with
    * none left (what was said changed the game) the conversation ends.
    */
-  async #showTopics(offered: readonly number[] | undefined): Promise<void> {
+  async #showTopics(offered: OfferingInfo | undefined): Promise<void> {
     const engine = this.#engine();
     const speaker = this.#speaker;
     const menu = this.#menu;

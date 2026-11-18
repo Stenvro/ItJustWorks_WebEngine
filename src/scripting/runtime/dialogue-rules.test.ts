@@ -61,11 +61,24 @@ describe('dialogue info rules', () => {
     expect(afterInfo(info(0, 0, [0x50]))).toBe('topics');
   });
 
-  it('says Walk Away topics as the player walks off, hiding those marked invisible', () => {
-    expect(saidOnWalkAway(info(InfoFlag.walkAway))).toBe(true);
-    expect(hiddenInMenu(info(InfoFlag.walkAway))).toBe(false);
-    expect(hiddenInMenu(info(InfoFlag.walkAway | InfoFlag.walkAwayInvisibleInMenu))).toBe(true);
-    expect(saidOnWalkAway(info(0))).toBe(false);
+  it("says the offering info's Walk Away topic as the player walks off, unlisted if invisible", () => {
+    // DB02's Astrid as the player wakes (DBAstridWakeUpTopic's info 0005254A): flags Walk Away
+    // and Walk Away Invisible In Menu, TWAT DB02AstridWalkAwayTopic [000CEFB8], choices
+    // 00052547 and 000CEFB8.
+    const WALK_AWAY = 0xcefb8;
+    const OTHER = 0x52547;
+    const astrid = (flags: number) => ({ flags, walkAwayTopic: WALK_AWAY });
+    const both = InfoFlag.walkAway | InfoFlag.walkAwayInvisibleInMenu;
+    expect(saidOnWalkAway(astrid(both), WALK_AWAY)).toBe(true);
+    expect(hiddenInMenu(astrid(both), WALK_AWAY)).toBe(true);
+    expect(saidOnWalkAway(astrid(both), OTHER)).toBe(false);
+    expect(hiddenInMenu(astrid(both), OTHER)).toBe(false);
+    // Walk Away alone: said as the player walks off, and listed.
+    expect(saidOnWalkAway(astrid(InfoFlag.walkAway), WALK_AWAY)).toBe(true);
+    expect(hiddenInMenu(astrid(InfoFlag.walkAway), WALK_AWAY)).toBe(false);
+    // Without the flag, or with no offering info (the top-level topics), nothing is.
+    expect(saidOnWalkAway(astrid(0), WALK_AWAY)).toBe(false);
+    expect(hiddenInMenu(undefined, WALK_AWAY)).toBe(false);
   });
 
   it('keeps a Requires Player Activation info for the conversation the player starts', () => {
