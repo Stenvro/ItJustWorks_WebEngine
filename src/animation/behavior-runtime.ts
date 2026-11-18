@@ -4960,7 +4960,7 @@ export class BehaviorRuntime {
     // A mirrored clip: its pose mirrored across the character (src/animation/mirror.ts).
     const mirror = this.#mirror;
     if (mirror && ((node.flags ?? 0) & CLIP_FLAGS.mirror) !== 0) {
-      if (sampled.additive) mirror.mirrorAdditive(sampled.pose, this.skeleton.referencePose);
+      if (sampled.additive) mirror.mirrorAdditive(sampled.pose);
       else mirror.mirrorPose(sampled.pose);
     }
     return sampled;

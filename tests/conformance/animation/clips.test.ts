@@ -15,6 +15,7 @@ import type { AnimationDataLibrary } from '../../../src/animation/animation-data
 import { BehaviorRuntime } from '../../../src/animation/behavior-runtime.ts';
 import { CLIP_MODE } from '../../../src/animation/clip-playback.ts';
 import { pitchedMotion } from '../../../src/animation/extracted-motion.ts';
+import { MirroredSkeleton } from '../../../src/animation/mirror.ts';
 import { INI_DEFAULTS } from '../../../src/world/ini-settings.ts';
 import {
   readAnimationContainer,
@@ -414,10 +415,75 @@ describe.skipIf(!hasGamedata())('every vanilla graph (a data sweep)', () => {
     expect(missing.size).toBe(17);
     expect([...missing].filter((path) => /jump|land|fall|sprint/.test(path))).toEqual([]);
   });
-  // Our mirroring of an additive clip is our own rule (docs/animation.md, "Mirrored clips"). The
-  // engine's would differ from it only on such a clip, and no vanilla graph plays one mirrored.
+  // The engine mirrors an additive clip by its own rule (observed in the original: docs/
+  // animation.md, "Mirrored clips"), which only a mod's graph would reach: no vanilla graph plays
+  // one mirrored.
   it('no mirrored clip of a vanilla graph is additive', () => {
     expect([...mirrored]).toEqual([]);
+  });
+});
+
+describe('a mirrored additive clip (original: the mirrored skeleton’s additive path)', () => {
+  // A root and an arm turned a quarter about z in the reference pose: the arm's own invariant
+  // differs from its parent's, so the additive rule (the parent's on both sides) shows.
+  const s = Math.SQRT1_2;
+  const skeleton: HkxSkeleton = {
+    name: 'Two',
+    bones: [
+      { name: 'Root', lockTranslation: false },
+      { name: 'Arm', lockTranslation: false },
+    ],
+    parents: Int16Array.of(-1, 0),
+    referencePose: Float32Array.of(0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, s, s, 1, 1, 1),
+    floatSlots: [],
+    referenceFloats: new Float32Array(0),
+  };
+  const mirror = new MirroredSkeleton(skeleton, { axis: [1, 0, 0, 0], pairs: new Int16Array(0) });
+  const a = 0.3;
+  const delta = (): Float32Array =>
+    Float32Array.of(
+      // The root: a turn about z, a step along x.
+      1,
+      0,
+      0,
+      0,
+      0,
+      Math.sin(a / 2),
+      Math.cos(a / 2),
+      1,
+      1,
+      1,
+      // The arm: a turn about x, a step along y.
+      0,
+      1,
+      0,
+      Math.sin(a / 2),
+      0,
+      0,
+      Math.cos(a / 2),
+      1,
+      1,
+      1,
+    );
+
+  it('each rotation is turned by its parent’s invariant on both sides; translations negated', () => {
+    const pose = delta();
+    mirror.mirrorAdditive(pose);
+    // The root's turn about z reverses (across x = 0), its step along x is mirrored.
+    expect(pose[0]).toBeCloseTo(-1, 6);
+    expect(pose[5]).toBeCloseTo(-Math.sin(a / 2), 6);
+    expect(pose[6]).toBeCloseTo(Math.cos(a / 2), 6);
+    // The arm's turn about x is the root's invariant's (half a turn about x) on both sides: kept.
+    expect(pose[13]).toBeCloseTo(Math.sin(a / 2), 6);
+    expect(pose[16]).toBeCloseTo(Math.cos(a / 2), 6);
+    expect(pose[11]).toBeCloseTo(1, 6);
+  });
+  it('differs from the full pose’s rule on a bone whose invariant is not its parent’s', () => {
+    const additive = delta();
+    const full = delta();
+    mirror.mirrorAdditive(additive);
+    mirror.mirrorPose(full);
+    expect(Math.abs((additive[13] ?? 0) - (full[13] ?? 0))).toBeGreaterThan(0.01);
   });
 });
 
