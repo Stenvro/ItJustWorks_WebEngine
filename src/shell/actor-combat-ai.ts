@@ -1172,6 +1172,12 @@ export class ActorCombatAi {
     senses.tested = (observer, target, report) => {
       this.#report(observer, target, report);
     };
+    // Its group's say in how soon a member tests a target again (its combat target most often).
+    senses.testPriority = (observer, target) => {
+      const mind = this.#minds.get(observer);
+      if (!mind || mind.mode === 'idle') return 0;
+      return this.#groups.detectionPriority(observer, target, this.#groupWorld, PLAYER_REF);
+    };
   }
 
   /** An actor's combat target (the player's: whom they fight), undefined: none. */

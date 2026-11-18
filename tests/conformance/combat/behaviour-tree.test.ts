@@ -701,6 +701,9 @@ describe.skipIf(!hasGamedata())('the combat tree in a fight (headless simulation
   let mage = 0;
   let wolves: number[] = [];
   let banditTold: number | undefined;
+  let banditWatched = 0;
+  let banditTests = 0;
+  let lastAgo: number | undefined;
   const mageDistances: number[] = [];
 
   beforeAll(async () => {
@@ -735,6 +738,14 @@ describe.skipIf(!hasGamedata())('the combat tree in a fight (headless simulation
       combat.startCombat(wolves[1] ?? 0, mage);
       await sim.step(0.25);
       if (i === 0) banditTold = combat.targetOf(bandit);
+      // Its combat target's detection is tested every half second (its group's priority 4).
+      const ago = sim.world.stage.senses.testedAgo(bandit, wolves[0] ?? 0);
+      if (i >= 8 && combat.targetOf(bandit) === wolves[0] && ago !== undefined) {
+        banditWatched += 0.25;
+        // Tested since the last step: its time since the test grew by less than the step.
+        if (lastAgo !== undefined && ago < lastAgo + 0.25 - 1e-6) banditTests++;
+      }
+      lastAgo = ago;
       const d = await sim.distance(mage, wolves[1] ?? 0);
       if (d !== undefined) mageDistances.push(d);
     }
@@ -751,6 +762,14 @@ describe.skipIf(!hasGamedata())('the combat tree in a fight (headless simulation
     expect(sim.world.session.render.view?.camera).toBeDefined();
     // Told to fight its wolf as it was placed (before it was a fighter), it takes that fight up.
     expect(banditTold).toBe(wolves[0]);
+    // Detection in the fight is the original's: a fighter tests its combat target each 0.5 s
+    // (its combat group's priority 4), not only on its own round (1 s this near the player), so
+    // the tank's wolf, seen at level 20 in the inn's light (below
+    // iCombatStealthPointDetectionThreshold, 25), drains its stealth points and is detected
+    // within the first seconds whatever the rounds' dice.
+    // Measured: 15 tests in 7.25 s (0.48 s apart); on the rounds alone 11 in 10.5 s (0.95 s).
+    expect(banditWatched).toBeGreaterThan(2);
+    expect(banditWatched / banditTests).toBeLessThan(0.7);
     expect(hits().some((hit) => hit.aggressor === bandit && wolves.includes(hit.target))).toBe(
       true,
     );

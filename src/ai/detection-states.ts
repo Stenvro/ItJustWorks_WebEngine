@@ -18,6 +18,23 @@ const copy = (at: Vec3): Vec3 => [at[0], at[1], at[2]];
 
 export type DetectionState = 'unseen' | 'noticed' | 'searching' | 'detected';
 
+/**
+ * A pair's test priorities (observed in the original): each test of an observer's detection of a
+ * target asks those who listen to the pair (a combat group: CombatGroups.detectionPriority) for
+ * a priority, 1 .. 5, and the highest sets the pair's next test this many seconds on: 2, 1.5, 1,
+ * 0.5, 0.25. With none (0) the pair is tested only with its observer's own round
+ * (fDetectionUpdateTimeMin .. Max). A round that finds a pair tested within its keep time (that
+ * of priority 3, 2 s) leaves it to its own turn.
+ */
+const PRIORITY_DELAYS: readonly number[] = [0, 2, 1.5, 1, 0.5, 0.25];
+export const PRIORITY_ROUND_KEEP = 2;
+
+/** The seconds to a pair's next test for its priority (undefined: none; 0 .. 5). */
+export function detectionTestDelay(priority: number): number | undefined {
+  const index = Math.min(PRIORITY_DELAYS.length - 1, Math.floor(priority));
+  return index > 0 ? PRIORITY_DELAYS[index] : undefined;
+}
+
 /** Crimes and acts detection reports when an actor is seen doing them (crime, M11). */
 export type WitnessedAct = 'steal' | 'pickpocket' | 'trespass' | 'attack' | 'murder' | 'lockpick';
 

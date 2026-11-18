@@ -2755,6 +2755,19 @@ runs the rules.
   [Detection](#detection)) and each event of it the member notices (level 0 at the place)
   updates it; members out of the high process detect the targets within
   fCombatDetectionLowDetectionDistance (4096) fully (level 100) every second.
+- **How often a member tests a target** (observed in the original): the group has a say in each
+  of its members' detection tests of its targets: after each test it answers with a priority, and
+  the pair is tested again that much later, beside its observer's own round (every 1–2 s,
+  [Detection](#detection)): its own combat target priority 4 (every 0.5 s; 5, every 0.25 s,
+  when that is the player), the player otherwise and a target whose group level is this
+  member's 3 (1 s), others 3 within fCombatDetectionLowPriorityDistance (2048), 2 (1.5 s) beyond
+  it, 1 (2 s) beyond fCombatDetectionVeryLowPriorityDistance (4096; weighed after the first, so
+  never with the vanilla values). A pair waiting for its turn is not put off by a round; one with
+  a priority tested within 2 s waits for its turn (`CombatGroups.detectionPriority`,
+  `detectionTestDelay`, `ActorSenses` pair turns). So a fighter weighs its combat target's level
+  twice as often as its round would, and its group knows sooner: the combat tree's inn fight
+  (`tests/conformance/combat/behaviour-tree.test.ts`), whose tank sees its wolf at level 20 in
+  the Bannered Mare's light, below the threshold, detects it within the first seconds.
 - **Detected:** a level above 0 detects the target, but while it has stealth points only above
   iCombatStealthPointDetectionThreshold (25; iCombatStealthPointSneakDetectionThreshold, 70,
   for a sneaking target); then its points are gone. Detected, it is known: the group follows it
