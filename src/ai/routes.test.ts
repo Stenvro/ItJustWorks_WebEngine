@@ -115,6 +115,49 @@ describe('routes', () => {
     expect(town().nearestNavmesh(TOWN, [1900, 0, 0])).toBe(21);
   });
 
+  it("end on a navmesh a door joins, not on a stray one beside the place (Honningbrew's vat)", () => {
+    // The brewery's floor is one navmesh with its doors, its middle far off; a navmesh of one
+    // triangle, joined to nothing, lies by the vat.
+    const BREWERY: Space = { kind: 'interior', cell: 4 };
+    const map = new RouteMap(
+      new Map([
+        [10, navmesh(HOUSE, [0, 0, 0])],
+        [50, navmesh(BREWERY, [0, 0, 0])],
+        [51, navmesh(BREWERY, [600, -300, 0])],
+      ]),
+      [
+        door(
+          100,
+          { space: HOUSE, at: [0, 200, 0], navmesh: 10 },
+          { space: BREWERY, at: [0, 100, 0], navmesh: 50, door: 101 },
+        ),
+        door(
+          101,
+          { space: BREWERY, at: [0, 50, 0], navmesh: 50 },
+          { space: HOUSE, at: [0, 150, 0], navmesh: 10, door: 100 },
+        ),
+      ],
+    );
+    const vat: [number, number, number] = [640, -320, 0];
+    expect(map.nearestNavmesh(BREWERY, vat)).toBe(50);
+    const route = findRoute(
+      map,
+      { space: HOUSE, position: [0, 0, 0], navmesh: 10 },
+      { space: BREWERY, position: vat, navmesh: map.nearestNavmesh(BREWERY, vat) ?? 0 },
+    );
+    expect(route?.doors.map((step) => step.door)).toEqual([100]);
+    // A space whose navmeshes no door joins: the nearest of them all, as before.
+    expect(
+      new RouteMap(
+        new Map([
+          [60, navmesh(SHOP, [0, 0, 0])],
+          [61, navmesh(SHOP, [500, 0, 0])],
+        ]),
+        [],
+      ).nearestNavmesh(SHOP, [450, 0, 0]),
+    ).toBe(61);
+  });
+
   it('find none through a load door shut to the one going', () => {
     const from = { space: HOUSE, position: [0, 0, 0] as [number, number, number], navmesh: 10 };
     const to = { space: SHOP, position: [0, 0, 0] as [number, number, number], navmesh: 30 };

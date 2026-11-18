@@ -181,13 +181,18 @@ export class RouteMap {
 
   /**
    * The navmesh of a space whose middle is nearest a point (where a place is in a cell that is
-   * not loaded: no triangles to find it on). TODO(M13): the triangle under it (the navmeshes'
-   * own data for places away).
+   * not loaded: no triangles to find it on). Where some of the space's navmeshes are joined to a
+   * load door, those are taken: a stray navmesh nothing joins (Honningbrew's brewery has two of
+   * one triangle each, beside the vat, apart from the one the whole floor is) is no route's end,
+   * and taken for the vat's it left the vat unreachable. TODO(M13): the triangle under it (the
+   * navmeshes' own data for places away).
    */
   nearestNavmesh(space: Space, point: Vec3): number | undefined {
+    const ids = this.#bySpace.get(spaceKey(space)) ?? [];
+    const joined = ids.filter((id) => this.#doors.has(this.#areas.get(id) ?? id));
     let best: number | undefined;
     let nearest = Infinity;
-    for (const id of this.#bySpace.get(spaceKey(space)) ?? []) {
+    for (const id of joined.length > 0 ? joined : ids) {
       const navmesh = this.#navmeshes.get(id);
       if (!navmesh) continue;
       const d = squared(navmesh.location, point);
