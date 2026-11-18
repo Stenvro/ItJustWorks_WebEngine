@@ -25,17 +25,30 @@ both machine-checkable parts:
 The world beside the scripts (the stage's actors, graphs, physics, audio, the sky) is kept by
 hand below, against docs/formats/save.md.
 
-## Count (2026-11-03, round 10)
+## Count (2026-11-18, round 12)
 
 | Part                          | Items | Done | Open |
 | ----------------------------- | ----: | ---: | ---: |
 | .ess header                   |     4 |    4 |    0 |
 | .ess global data              |    30 |   30 |    0 |
 | .ess change forms (flags)     |    68 |   68 |    0 |
-| .ess other (import and hand)  |    11 |   11 |    0 |
+| .ess other (import and hand)  |    13 |   13 |    0 |
 | Own save: runtime fields      |   162 |  162 |    0 |
-| Own save: the world (by hand) |    30 |   29 |    1 |
-| Total                         |   305 |  304 |    1 |
+| Own save: the world (by hand) |    32 |   31 |    1 |
+| Total                         |   309 |  308 |    1 |
+
+The one open: what an actor off the stage would have done in the time since it left (below,
+"Next biggest open items" 1).
+
+Round 12 built: the help messages waiting for their input event (Message.ShowAsHelpMessage)
+kept in the game state and shown on after a load, one at a time as the original keeps them
+(`GameState.helpWaiting`), and an imported .ess's waiting ones (global data 102) put back;
+an imported actor saved bleeding out or down as an essential bleeds on (`SavedActor.down`);
+an object of several bodies keeps each simulated body's place, turn and velocities
+(`SavedMotion.bodies`); each save says whether it was made with mods and the Load list keeps
+a character's saves with mods apart (`SaveHeader.modded`). Tests: help-messages.test.ts,
+ess-import.test.ts "apply the controls ...", "send the OnDeath ...", "keep the created
+objects ...", articulation.test.ts "an articulated object across a save", character-id.test.ts.
 
 Round 10 settled from the original and built: table 100's number (the next crime's serial,
 `GameState.nextCrime`, which our crime ledger numbers from), table 102's list (the tutorials
@@ -365,6 +378,8 @@ By type, each change flag the saves use (forms counted over both saves).
 | ACHR extra DismemberedLimbs                                         | done   | ActorState.dismembered                                                      |
 | REFR extra NonActorMagicTarget                                      | done   | no effects on the objects read (TODO(M13): the effects' data)               |
 | ACHR item extra CannotWear                                          | done   | the head a cut limb took (follows from DismemberedLimbs)                    |
+| Interface: help messages waiting, the one showing                   | done   | GameState.helpWaiting (the values' encoding inferred: none in the saves)    |
+| ACHR life state 7, 8 (essential down, bleedout)                     | done   | SavedActor.down: bleeds on (its seconds bled: from the load, TODO(M13))     |
 
 ## Our own save
 
@@ -416,6 +431,8 @@ loadData (RuntimeSave.engines; src/scripting/runtime/engine-save.test.ts):
 | Bleedout and paired animations' engine side                      | done   | SavedActor.down, deferred kills (engines)               |
 | The dying (OnDeath still to come)                                | done   | engines.dying, OnDeath sent as the load ends (inferred) |
 | Physics bodies in motion (loose objects knocked about)           | done   | WorldSave.motions, given back as each body settles      |
+| An articulated object's bodies each (place, turn, velocities)    | done   | SavedMotion.bodies (PhysicsWorld.bodyStates)            |
+| Help messages waiting for their event (ShowAsHelpMessage)        | done   | GameState.helpWaiting (src/gameplay/help-messages.ts)   |
 | The sky's transition between weathers                            | done   | GameSave.sky (SkyWeather save, restore)                 |
 | The music playing (audio state)                                  | done   | GameSave.music, musicTrack: the track and its position  |
 | Combat groups' searches                                          | done   | SavedActor.fight (the group's knowledge, the search)    |
@@ -433,12 +450,11 @@ loadData (RuntimeSave.engines; src/scripting/runtime/engine-save.test.ts):
    fight and a paired animation are not kept, a script's move ends a package's progress, the 512
    that left last), and what an actor would have done in the time since it left is not played
    out while its package stays the one saved.
-2. The import's side of round 10's own-save work: the .ess Sandbox state's activity times, an
-   actor's bleedout (its life state's dying, its bleedout seconds) and a paired animation
-   (global data 1004, empty in the saves read), the help part's waiting messages into the HUD
-   (none in the saves read; ours does not save them yet) (TODO(M13)).
+2. The import's side of round 10's own-save work: the .ess Sandbox state's activity times
+   (which of its values are which is not known), the seconds an actor had bled out, and a
+   paired animation (global data 1004, empty in the saves read) (TODO(M13)).
 3. Tutorials of a save written by an earlier runtime (1.5: numbered one lower).
 4. The decals' details the .ess leaves unsettled: their age (none written: a whole lifetime from
    the load), the land entries' u32 (it differs between an entry's copies, one per shape it was
    made on), float1 and the second texture set (none in the saves read) (TODO(M13)).
-5. What sets the cells' Hand Changed (0x40) at run time; the character's "modded" key.
+5. What sets the cells' Hand Changed (0x40) at run time; which plugins make a save "modded".

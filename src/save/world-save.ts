@@ -13,6 +13,7 @@ import type { CastVia } from '../scripting/runtime/casting-engine.ts';
 import type { DetectionSave } from '../ai/detection-states.ts';
 import type { SavedGroupTarget } from '../ai/combat-groups.ts';
 import type { SavedCombatSearch } from '../ai/combat-search.ts';
+import type { BodyState } from '../physics/physics-world.ts';
 
 /** A worldspace or an interior (as src/ai/package-start.ts Space; this file stays portable). */
 export type SavedSpace =
@@ -251,6 +252,11 @@ export interface SavedMotion {
   readonly reference: number;
   readonly linear: readonly [number, number, number];
   readonly angular: readonly [number, number, number];
+  /**
+   * An articulated object's simulated bodies each on its own (a swinging cage's, a chain's):
+   * where each was, turned and moving as it was (none in saves made before, or for one body).
+   */
+  readonly bodies?: readonly BodyState[] | undefined;
 }
 
 /** The parts of the world a view keeps beside its actors and graphs (merged by the world). */
