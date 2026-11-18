@@ -16,7 +16,7 @@ code (comments left out), or the sweep's own table says why nothing more reads i
 each item is how many records (triangles, attacks) use it. The mechanics part is kept by hand
 against docs/ai.md and the conformance suites (tests/conformance/ai/).
 
-## Count (2026-11-03, round 4b)
+## Count (2026-11-18)
 
 | Part                    | Items | Done | Open |
 | ----------------------- | ----: | ---: | ---: |
@@ -25,8 +25,8 @@ against docs/ai.md and the conformance suites (tests/conformance/ai/).
 | Idle markers, furniture |    25 |   24 |    1 |
 | Navmeshes (data)        |    12 |   11 |    1 |
 | Game settings           |   190 |  190 |    0 |
-| Mechanics (by hand)     |    39 |   27 |   12 |
-| Total                   |   471 |  457 |   14 |
+| Mechanics (by hand)     |    44 |   33 |   11 |
+| Total                   |   476 |  463 |   13 |
 
 Round 1 wrote the sweep and this list; Can Pickup Items (RACE DATA) became read: only a race that
 can pick up items runs the combat tree's Acquire Weapon.
@@ -258,7 +258,13 @@ the readers ask for by name.
       arresting actor set at the force greet.
 - [ ] Crime: the pursuit lines DialogueCrimeGuards keeps for the arresting actor
       (GetArrestingActor: "That'll teach you to break the law on my watch."); when the original
-      says them is not known.
+      says them is not known. The data: the four come first in the PursueIdleTopic topic, each on
+      GetArrestingActor == 1 alone, so a guard that is the arresting actor while it pursues says
+      only them; where the engine sets the arresting actor (ours: at the force greet) decides it,
+      and that was not found.
+- [ ] Flee: observed only that the engine's Flee package reads fFleeDistanceExterior /
+      Interior (5000 / 3000) as how far it gets from what it flees, and fFleeDoneDistance\* (a
+      package value may stand in) as done; its steps were not followed (ours: fleeFrom).
 - [ ] Crime: a guard of another faction taking an NPC's crime over.
 - [x] fCrimeFavorMult, iCrimeFavorBaseValue: the favor check, a favor's price (the base value plus
       the cost × the mult) within the favor points of the relationship rank (factions.ts doesFavor,
