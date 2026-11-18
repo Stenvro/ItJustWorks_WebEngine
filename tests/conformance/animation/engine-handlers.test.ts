@@ -13,6 +13,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { hasGamedata, openSim, type Sim } from '../../helpers/sim.ts';
+import { CAMERA_NODE } from '../../../src/shell/first-person-body.ts';
 import {
   DAMPENING_DEFAULTS,
   FirstPersonDampening,
@@ -164,6 +165,35 @@ describe.skipIf(!hasGamedata())('the handler classes of the response files (data
       expect(sim.world.stage.graphEvents.dispatch.answered(handler)).toBe(false);
     });
   }
+
+  it('first person on a walk: the arms’ Camera1st node stays at the dampened view', async () => {
+    // The dampening (CameraOverride's flag fades it) lags the camera behind the walking player's
+    // place; the camera rides the first-person skeleton's Camera1st node, so the arms take the
+    // same offset (inferred: src/shell/player.ts, firstPersonOffset). Placed on the feet alone,
+    // they ran several units ahead of the view at a walk.
+    const player = sim.world.player;
+    player.setPov('first');
+    sim.world.press('Forward', true);
+    try {
+      await sim.step(1.5);
+      const arms = sim.world.playerView?.avatar?.firstPersonBody;
+      expect(arms).toBeDefined();
+      const node = arms?.skeleton.pose.world(CAMERA_NODE);
+      expect(node).toBeDefined();
+      if (!arms || !node) return;
+      const w = arms.world;
+      const [x, y, z] = [node[12] ?? 0, node[13] ?? 0, node[14] ?? 0];
+      const at = [0, 1, 2].map(
+        (i) => (w[i] ?? 0) * x + (w[4 + i] ?? 0) * y + (w[8 + i] ?? 0) * z + (w[12 + i] ?? 0),
+      );
+      // The view lags the walk by some units; the arms' camera node is where the view is.
+      expect(Math.hypot(...player.firstPersonOffset)).toBeGreaterThan(2);
+      expect(Math.hypot(...at.map((v, i) => v - (player.position[i] ?? 0)))).toBeLessThan(0.5);
+    } finally {
+      sim.world.press('Forward', false);
+      player.setPov('third');
+    }
+  });
 });
 
 describe('CameraOverride: the first-person dampening it fades (original)', () => {

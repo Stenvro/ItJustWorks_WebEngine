@@ -1566,6 +1566,7 @@ export class Player implements Camera {
     const { ini, physics } = this.#setup;
     const body = this.#body;
     const feet = this.character.feetAt(alpha);
+    this.#firstPersonOffset = [0, 0, 0];
     if (this.pov === 'first') {
       this.#collided = undefined;
       // The camera rides the first-person skeleton's Camera1st node (sneaking lowers it).
@@ -1578,6 +1579,7 @@ export class Player implements Camera {
         paired: this.paired?.() === true,
         ownControls: this.pilot === undefined,
       });
+      this.#firstPersonOffset = [dx, dy, dz];
       this.position = [
         feet[0] + x * cos + y * sin + dx,
         feet[1] - x * sin + y * cos + dy,
@@ -1697,6 +1699,19 @@ export class Player implements Camera {
 
   /** The first-person camera's dampening of the player's place (observed in the original). */
   readonly dampening: FirstPersonDampening;
+
+  #firstPersonOffset: Vec3 = [0, 0, 0];
+
+  /**
+   * The dampening's offset as the camera was last placed (world units; zero in third person).
+   * The camera rides the first-person skeleton's Camera1st node, so the first-person arms take
+   * the same offset: they stay where the view has them instead of running ahead of it on a walk
+   * or a stair. TODO(M13): inferred from the camera riding that node; whether the original moves
+   * the first-person skeleton by the offset is not confirmed.
+   */
+  get firstPersonOffset(): readonly [number, number, number] {
+    return this.#firstPersonOffset;
+  }
 
   /** Whether the player is in a paired interaction (a killmove): the dampening fades. */
   paired: (() => boolean) | undefined;
