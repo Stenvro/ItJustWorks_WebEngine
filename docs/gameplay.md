@@ -493,7 +493,7 @@ the player in a runtime on the game data, `--audit` reads every record).
   Painless) is their pain (src/gameplay/player-pain.ts), at most once every fPainDelay (1.5 s).
   Its hit blur is the image-space modifier GetHit (Skyrim.esm IMAD 0x00000162, among the forms
   below 0x800 the engine refers to by id: a radial blur from 0.4 to none over 0.25 s;
-  `node tools/imad-info.ts GetHit`) at full strength. Its cry is the player's Hit line (the Hit
+  `node tools/imad-info.ts GetHit`) at fGetHitPainMult (1.5) (observed in the original). Its cry is the player's Hit line (the Hit
   topic subtype, as an NPC hit has; the combat's talk.bark): the generic Hit topic (DIAL
   0x13EBB) begins with six grunts ("Agh!", "Oof!", "Nargh!", "Argh!", "Weergh!", "Yeagh!", each
   at GetRandomPercent <= 30), the only infos of it not barred from the player (the rest name
@@ -504,8 +504,9 @@ the player in a runtime on the game data, `--audit` reads every record).
   TODO(M13): inferred).
   Its rumble is the gamepad's, fRumblePainStrength (0.75) on both motors for fRumblePainTime
   (0.5 s), with the Vibration setting on (none of the three settings a GMST of the load order:
-  the engine's built-in defaults). TODO(M13): inferred that every painful hit gives all three
-  and that fPainDelay spaces all of them (the settings' names say only "pain"). The blow's own
+  the engine's built-in defaults). Observed in the original: one pain gives all three and
+  fPainDelay spaces them all (the actor's pain, the player's blur and rumble with it); TODO(M13):
+  inferred that every painful hit asks for its blur and cry both. The blow's own
   impact sound on the player is the impact's second sound (IPCT NAM1, src/audio/impacts.ts
   blowSound): an arrow's on flesh is WPNImpactArrowVsFleshPLAYER (SNDR 0x000EA9F8, in
   WPNArrowVsFleshImpact, WPNArrowVsFleshDraugrImpact and BloodSprayImpactArrowInsect), where
@@ -1026,7 +1027,9 @@ same aim; what differs is where they leave from and, for an NPC, what it aims at
 - Lobbers (the runes; CommonLibSSE GrenadeProjectile): meeting a surface a lobber bounces off it
   by fGrenadeRestitution (0.01 of its speed into the surface: too little to bounce, it lands) and
   fGrenadeFriction (5, a coefficient per contact on its speed along it: projectile-flight.ts
-  bounceLobber); one with an alternative trigger then lies, or slides down a slope steeper than
+  bounceLobber; observed in the original: neither setting is read by any code, both only
+  registered, so the original's bounce and slide are its body's own simulation, and ours with
+  these two numbers stays inferred, TODO(M13)); one with an alternative trigger then lies, or slides down a slope steeper than
   the friction's angle (78.7°) until one holds it, and waits at rest for an actor within its
   proximity (the runes' 150) or its timer, then bursts; without one it bursts on the surface.
   An actor it meets in flight sets it off. A lobber's age (observed in the original, asked at
