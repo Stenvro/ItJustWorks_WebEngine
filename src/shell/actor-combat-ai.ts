@@ -123,6 +123,9 @@ import {
   beyondNavmeshReach,
   fallbackPlace,
   fleeRunStatus,
+  HIDE_CHECK_INTERVAL,
+  HIDE_FIRST_CHECK,
+  HIDE_TIME_LIMIT,
   hideEnd,
   hideFails,
   pickFleeDoor,
@@ -296,6 +299,11 @@ export interface CombatAiHost {
     action: string,
     melee?: { readonly powerCooling: boolean; readonly left?: boolean },
   ): Promise<boolean>;
+  /**
+   * Low Combat's blow (Attack Low): the attacker's hit with what its hands hold lands on the
+   * target as it is, without a swing.
+   */
+  lowBlow?(attacker: number, target: number): Promise<void>;
   release(reference: number, action: string): Promise<void>;
   block(reference: number, on: boolean): Promise<void>;
   /** A blocking fighter sees a blow come at it: its block meets it (ActionBlockAnticipate). */
@@ -318,7 +326,10 @@ export interface CombatAiHost {
 export interface StartCombatOptions {
   /** A loaded save's fight keeps the confidence modifier it drew. */
   readonly modifier?: number | undefined;
-  /** A script's StartCombat: the actor keeps its target (the Fixed selector). */
+  /**
+   * The engine's own fixed target (the Fixed selector: combat-ai.ts fixedTarget): the actor
+   * keeps it whatever the scores. Not Papyrus StartCombat's.
+   */
   readonly fixed?: boolean | undefined;
 }
 
@@ -512,7 +523,11 @@ interface Mind {
   yieldedAt: number;
   /** It yielded to the player in this fight (combat-ai.ts yields: once a fight). */
   yieldedThisFight: boolean;
-  /** A script's target (StartCombat): the Fixed selector's (combat-ai.ts fixedTarget). */
+  /**
+   * A fixed target: the Fixed selector's (combat-ai.ts fixedTarget), set only by a fight started
+   * with the `fixed` option (the original's two makers: a mount's rider's set target and a flier's
+   * Flying Attack). Papyrus StartCombat sets none.
+   */
   fixedTarget: number | undefined;
   /** The torch it took up in this fight, and when (torchInFight). */
   torch: { readonly form: number; readonly at: number } | undefined;
@@ -579,6 +594,8 @@ interface Mind {
   sheatheAt: number | undefined;
   /** Where its targets were last known, by target. */
   readonly lastKnown: Map<number, Vec3>;
+  /** Its last detection test of each actor: whether it had a line of sight, and when. */
+  readonly sight: Map<number, { readonly clear: boolean; readonly at: number }>;
   /** A combat style its combat override package gives (PACK CNAM). */
   packageStyle: number | undefined;
   /** The combat override package it runs as it fights (ECOR's first that holds). */
@@ -682,8 +699,7 @@ const ATTACK_LOCATION_ARRIVE = 32;
 const ALLY_LINES = 4;
 /** fCombatCoverSecondaryThreatLastSeenTime: its other enemies seen this lately count. */
 const COVER_SECONDARY_THREAT_SECONDS = 5;
-/** A hide and a fallback weigh again this often (observed in the original). */
-const HIDE_CHECK_SECONDS = 0.5;
+/** A fallback weighs again this often (observed in the original). */
 const FALLBACK_RECHECK_SECONDS = 0.5;
 /** Fallback To Ranged backs off only turned to its target within this (60°). */
 const FALLBACK_FACING = Math.PI / 3;
@@ -894,10 +910,12 @@ export class ActorCombatAi {
   }
 
   /**
-   * StartCombat: the actor fights the target (whatever its reaction). Only a script's (`fixed`:
-   * Papyrus StartCombat) puts the Fixed selector on its target (combat-ai.ts fixedTarget); the
-   * engine's own fights (a summons taking up its commander's, guards answering a crime, a
-   * follower's attack command, a package's, a save's) choose by the standard selector.
+   * StartCombat: the actor fights the target (whatever its reaction). `fixed` puts the Fixed
+   * selector on its target (combat-ai.ts fixedTarget), as the engine does for the target the
+   * player's mount is set on and a flier's Flying Attack; Papyrus StartCombat, a summons taking
+   * up its commander's fight, guards answering a crime, a follower's attack command, a package's
+   * fight choose by the standard selector (observed in the original). A save's fight keeps a
+   * fixed target it had.
    */
   startCombat(actor: number, target: number, options: StartCombatOptions = {}): void {
     if (actor === target || actor === PLAYER_REF) return;
@@ -1175,6 +1193,12 @@ export class ActorCombatAi {
     senses.tested = (observer, target, report) => {
       this.#report(observer, target, report);
     };
+    // Its group's say in how soon a member tests a target again (its combat target most often).
+    senses.testPriority = (observer, target) => {
+      const mind = this.#minds.get(observer);
+      if (!mind || mind.mode === 'idle') return 0;
+      return this.#groups.detectionPriority(observer, target, this.#groupWorld, PLAYER_REF);
+    };
   }
 
   /** An actor's combat target (the player's: whom they fight), undefined: none. */
@@ -1187,8 +1211,18 @@ export class ActorCombatAi {
   /** A member's detection of a target: its group's knowledge of it moves. */
   #report(member: number, target: number, report: DetectionReport): void {
     const mind = this.#minds.get(member);
+    // A test (not an event's notice, level 0): its line of sight, for target selection.
+    if (mind && report.level !== 0) {
+      mind.sight.set(target, { clear: report.lineOfSight, at: this.#clock });
+    }
     if (!mind || mind.mode === 'idle') return;
     this.#groups.report(member, target, report, this.#groupWorld, this.#clock);
+  }
+
+  /** Whether its last detection test of an actor, within 2 s, had a line of sight to it. */
+  #inSight(mind: Mind, reference: number): boolean {
+    const sight = mind.sight.get(reference);
+    return sight !== undefined && sight.clear && this.#clock - sight.at <= TARGET_SENSED_SECONDS;
   }
 
   /** What the combat groups ask of the fight (combat-groups.ts CombatGroupWorld). */
@@ -1314,6 +1348,7 @@ export class ActorCombatAi {
         lowTree: undefined,
         sheatheAt: undefined,
         lastKnown: new Map(),
+        sight: new Map(),
         packageStyle: undefined,
         armed: false,
         nextSupport: 0,
@@ -1403,12 +1438,15 @@ export class ActorCombatAi {
     // at once when its target is gone.
     const kept = candidates.some((candidate) => candidate.reference === mind.target);
     let target = mind.target;
-    // A script's target (StartCombat) is kept while it is there: the Fixed selector's. Dead or
-    // gone, the selector goes; not yet known to its side, the standard one chooses meanwhile.
-    if (mind.fixedTarget !== undefined && !this.#groupWorld.present(mind.fixedTarget)) {
-      mind.fixedTarget = undefined;
+    // A fixed target (the Fixed selector's) is kept while it is there and its group's target;
+    // dead, gone or given up by its group, the selector is done.
+    if (mind.fixedTarget !== undefined) {
+      mind.fixedTarget = fixedTarget(mind.fixedTarget, {
+        present: this.#groupWorld.present(mind.fixedTarget),
+        ofGroup: this.#groups.target(mind.reference, mind.fixedTarget) !== undefined,
+      });
     }
-    const fixed = fixedTarget(candidates, mind.fixedTarget);
+    const fixed = mind.fixedTarget;
     if (!kept || fixed !== undefined || this.#clock >= mind.nextSelect) {
       mind.nextSelect = this.#clock + this.#settings.selectTargetUpdateTime;
       target = fixed ?? selectTarget(candidates, mind.target);
@@ -1600,7 +1638,7 @@ export class ActorCombatAi {
           (reference === mind.target &&
             tracked !== undefined &&
             this.#clock - tracked.detectedTime < TARGET_SENSED_SECONDS),
-        hears: tracked !== undefined && this.#clock - tracked.eventTime < TARGET_SENSED_SECONDS,
+        inSight: this.#inSight(mind, reference),
         sameKind: fightsByMelee(view.gear) === fightsByMelee(other.gear),
         fleeing: this.#minds.get(reference)?.mode === 'flee',
         sinceKnown: tracked && this.#clock - tracked.lastKnownTime,
@@ -3404,13 +3442,20 @@ export class ActorCombatAi {
     const now = this.#clock;
     if (mind.hideSince === undefined) {
       mind.hideSince = now;
-      mind.nextHideCheck = now;
+      mind.nextHideCheck = now + HIDE_FIRST_CHECK;
       this.#options.movers.sneak(mind.reference, true);
+    }
+    // Its own time over, unfound, the hide is done (the Hide Selector succeeds without Boost
+    // Confidence: it flees on).
+    if (now - mind.hideSince > HIDE_TIME_LIMIT) {
+      mind.hideSince = undefined;
+      this.#options.movers.sneak(mind.reference, false);
+      return 'success';
     }
     this.#stopRun(mind);
     this.#options.movers.request(mind.reference, this.#standing(headingTo(f.there, f.feet)));
     if (now < mind.nextHideCheck) return 'running';
-    mind.nextHideCheck = now + HIDE_CHECK_SECONDS;
+    mind.nextHideCheck = now + HIDE_CHECK_INTERVAL;
     const anticipate = this.#movement.anticipateTime;
     const target = this.#options.movers.motion(f.target.reference)?.velocity ?? [0, 0, 0];
     const ahead: Vec3 = [
@@ -3420,14 +3465,11 @@ export class ActorCombatAi {
     ];
     const senses = this.#options.senses?.();
     const sees = senses?.sees(mind.reference, f.there) ?? false;
-    // Its enemy's eyes: the way it faces against the way to the hider, and the line between.
+    // Its enemy's look: the way it faces against the way to the hider.
     const enemy = f.target.feet;
-    const watched = senses &&
-      enemy && {
-        offAngle: turnBetween(f.target.heading, headingTo(enemy, f.feet)),
-        halfCone: (senses.settings.viewCone * Math.PI) / 360,
-        clear: senses.sees(f.target.reference, f.feet),
-      };
+    const watched = enemy && {
+      offAngle: turnBetween(f.target.heading, headingTo(enemy, f.feet)),
+    };
     if (
       !hideFails(
         {
@@ -3767,8 +3809,12 @@ export class ActorCombatAi {
             const fleeing = this.#minds.get(f.target.reference)?.mode === 'flee';
             const lands = lowCombatBlow(f.distance, fleeing, this.#random, this.#subtrees);
             if (lands === undefined) return 'failure';
-            // TODO(M13): the low process's blow lands without a swing (its damage); ours swings.
-            if (lands && run.elapsed >= 0) this.#strike(f, 'ActionRightAttack');
+            // Its blow lands without a swing (observed in the original: a hit with its weapon put
+            // on the target as it is).
+            if (lands && run.elapsed >= 0) {
+              f.mind.lastAttack = this.#clock;
+              void this.#options.host.lowBlow?.(f.mind.reference, f.target.reference);
+            }
             return 'running';
           },
           search: (f) => {
@@ -3801,7 +3847,8 @@ export class ActorCombatAi {
                 lateralAttackPlaces(
                   f.feet,
                   f.there,
-                  f.mind.side < 0 ? -1 : 1,
+                  turnBetween(f.view.heading, headingTo(f.feet, f.there)),
+                  f.range,
                   this.#random,
                   this.#navmeshes(),
                   this.#subtrees,
@@ -3816,7 +3863,14 @@ export class ActorCombatAi {
               this.#findAttackLocation(f, () => {
                 const set = this.#navmeshes();
                 return set
-                  ? attackLocationPlaces(set, f.feet, f.there, f.range, this.#subtrees)
+                  ? attackLocationPlaces(
+                      set,
+                      f.feet,
+                      f.there,
+                      f.range,
+                      this.#subtrees,
+                      f.target.radius,
+                    )
                   : [];
               }),
             halt: (f) => {
@@ -3830,6 +3884,8 @@ export class ActorCombatAi {
                   f.feet,
                   f.there,
                   this.#alliesInLine(f, others),
+                  f.range,
+                  f.view.radius,
                   this.#navmeshes(),
                   this.#subtrees,
                 ),

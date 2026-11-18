@@ -2829,6 +2829,21 @@ runs the rules.
   [Detection](#detection)) and each event of it the member notices (level 0 at the place)
   updates it; members out of the high process detect the targets within
   fCombatDetectionLowDetectionDistance (4096) fully (level 100) every second.
+- **How often a member tests a target** (observed in the original): the group has a say in each
+  of its members' detection tests of its targets: after each test it answers with a priority, and
+  the pair is tested again that much later, beside its observer's own round (every 1–2 s,
+  [Detection](#detection)): its own combat target priority 4 (every 0.5 s; 5, every 0.25 s,
+  when that is the player), the player otherwise and a target whose group level is this
+  member's 3 (1 s), others 3 within fCombatDetectionLowPriorityDistance (2048), 2 (1.5 s) beyond
+  it, 1 (2 s) beyond fCombatDetectionVeryLowPriorityDistance (4096; weighed after the first, so
+  never with the vanilla values). A pair waiting for its turn is not put off by a round
+  (`CombatGroups.detectionPriority`, `detectionTestDelay`, `ActorSenses` pair turns). Ours,
+  inferred: a round also leaves alone a pair with a priority that was tested within 2 s, so it
+  waits for its turn (`PRIORITY_ROUND_KEEP`). TODO(M13): the priority the original's own round
+  asks for was not read. So a fighter weighs its combat target's level
+  twice as often as its round would, and its group knows sooner: the combat tree's inn fight
+  (`tests/conformance/combat/behaviour-tree.test.ts`), whose tank sees its wolf at level 20 in
+  the Bannered Mare's light, below the threshold, detects it within the first seconds.
 - **Detected:** a level above 0 detects the target, but while it has stealth points only above
   iCombatStealthPointDetectionThreshold (25; iCombatStealthPointSneakDetectionThreshold, 70,
   for a sneaking target); then its points are gone. Detected, it is known: the group follows it
@@ -3259,21 +3274,26 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   shooter's line of fire is blocked (each 0.25 s, both ends at three quarters of the actors'
   heights: an actor it must not hit, else the world: a ray on the line-of-sight layer that
   passes every actor's bodies, so neither its target's foes nor an ally whose place it asks from
-  block it); Lateral
-  offers places square to its line to the target, each fCombatFindLateralAttackLocationIntervalMin
-  .. Max (64 .. 128, at random) past the last, out to fCombatFindLateralAttackLocationDistance
-  (512) either side, nearest first, only where its way reaches over the navmeshes; Find Attack
-  Location the navmesh places its way search reaches within fCombatFindAttackLocationDistance
-  (1024), none within fCombatFindAttackLocationAvoidTargetRadius (384) of the target nor beyond
-  its weapon's range (at most 24, spaced 64 apart); Ally the places beside a member of its group
-  whose own line is clear and who stands fCombatFindAllyAttackLocationDistanceMin .. Max (256 .. 4096) from the target, fCombatFindAllyAttackLocationAllyRadius (64) past its body. The first
-  place with a clear line it runs to; none, the failed search is noted with where its target
-  stood, and it does not look again while the target stays within
-  fCombatFindAttackLocationKeyAngle (5°) of that bearing and fCombatFindAttackLocationKeyHeight
-  (128) of that height, as seen from the shooter (it strafes meanwhile). TODO(M13): the settings
-  are the engine's, their use is inferred from their names: when the search runs (ours: a
-  blocked line), the places' order and spacing, the key, and that the failed search fails the
-  subtree so the strafing below it runs.
+  block it). Each leaf observed in the original: Lateral, only for a shooter facing its target
+  within 60° and within its weapon's maximum range of it, one side square to its line first at
+  an even roll, then the other: its way out to fCombatFindLateralAttackLocationDistance (512),
+  cut where it leaves the navmeshes it reaches, and on it the places
+  fCombatFindLateralAttackLocationIntervalMin (64) out, then every
+  fCombatFindLateralAttackLocationIntervalMax (128), each within its range of the target
+  (`lateralAttackPlaces`); Find Attack Location a way search over the navmeshes out to
+  fCombatFindAttackLocationDistance (1024) whose way keeps out of the target's radius plus
+  fCombatFindAttackLocationAvoidTargetRadius (384) round it, its goal the first place within its
+  range with a clear line of fire; the places are keyed by the target's bearing from them in
+  whole steps of fCombatFindAttackLocationKeyAngle (5°) and its height in steps of
+  fCombatFindAttackLocationKeyHeight (128), one line-of-fire test a key (`attackLocationPlaces`,
+  `attackPlaceKey`; ours tries at most 24 keys, a budget); Ally to a member of its group with a
+  line of sight to the target that stands fCombatFindAllyAttackLocationDistanceMin .. Max (256 .. 4096) from the shooter and within its range of the target, its way ending the two radii and
+  fCombatFindAllyAttackLocationAllyRadius (64) from that ally, the nearest first
+  (`allyAttackPlaces`). The first place with a clear line it runs to; none, Set Failed Timestamp
+  notes the failure, and the subtree fails so the strafing below it runs. TODO(M13), inferred:
+  when the search runs (ours: a blocked line of fire) and what reads the failed timestamp (ours:
+  it does not look again while its target stays in the key's steps it had, as seen from the
+  shooter; it strafes meanwhile).
 - **Flee** (Flee Context: Start Flee; the Flee Selector's Flee To Ally, Flee Through Door, Flee
   To Cover, Flee, Unrestricted Flee, Boost Confidence; then Hide): through a door (observed in
   the original) by fCombatFleeUseDoorChance (0.33), with a race that opens doors, not within
@@ -3294,17 +3314,22 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   no fight of the game left is forced on the one loaded. To cover hidden from its enemy (Find Hide Cover: cover at least
   its crouched height, no ledge) at least fCombatFleeCoverMinDistance from it within
   fCombatFleeCoverSearchRadius, where it hides (Hide Parallel: Track Target, Turn Around, the Hide
-  Selector with Boost Confidence last): down, its back to the enemy, weighing each half second:
-  the enemy within fCombatHideFailedTargetDistance of it out of sight, or in sight
+  Selector with Boost Confidence last): down, its back to the enemy, weighing a second after it
+  began and then each half second (observed in the original): the enemy within
+  fCombatHideFailedTargetDistance of it out of sight, or in sight
   fCombatHideFailedTargetLOSDistance fCombatAnticipateTime ahead, or a blow since it began ends the
   hide, and Boost Confidence turns it to fight. Down, it sneaks: its enemies' detection weighs it
   as sneaking, and an enemy group that loses it searches for it. Its enemy looking its way finds it
-  too: within its view cone (fDetectionViewCone) with nothing between, out to
-  fCombatHideCheckViewConeDistanceMax straight ahead, falling to fCombatHideCheckViewConeDistanceMin
-  at the cone's edge (`hideSpottedDistance`; inferred from the settings' names, TODO(M13): the
-  original's scale between the two). TODO(M13): the Hide behaviour's own time limit (ours: the hide
-  lasts until it is found, or until its fight ends as its group gives up an enemy it lost, after
-  fCombatDetectionFleeingLostRemoveTime while all of it flees).
+  too (observed in the original: the only reader of the two settings): beyond
+  fCombatRangedDistance, within 30° of the enemy's facing, out to
+  fCombatHideCheckViewConeDistanceMax straight ahead past their radii, falling evenly to
+  fCombatHideCheckViewConeDistanceMin at 30°; no line of sight is asked (`hideSpottedDistance`).
+  TODO(M13): that check also holds a hider found within a second of its last engagement and
+  under a blackboard flag, and runs only under a condition on its combat inventory's ranges that
+  was not identified (ours weighs it always). The Hide behaviour's own time limit is 10000 s:
+  unfound, it is done then and the Hide Selector succeeds without Boost Confidence (it flees on);
+  in play the hide lasts until it is found, or until its fight ends as its group gives up an
+  enemy it lost, after fCombatDetectionFleeingLostRemoveTime while all of it flees.
   A run to a door or to cover that ends short of it (no way there, its way taken from it) fails
   its node, and the selector goes on to its next entry (`fleeRunStatus`): only one that got to
   its cover hides, only one at its door goes through. A coward's hide that is found fails too,
@@ -3321,11 +3346,13 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   Target): far off the chase; else the maneuver (flank or stalk), out of range Flank Distant
   (circling at a distance), else the close movement selector.
 - **Low Combat**, the low process's own root (the Low Combat Selector, every second): Flee while
-  it flees; Attack (blows without their animations, landing by fCombatLowTargetHitPercent, 0.5,
-  fCombatLowFleeingTargetHitPercent, 0.25, on one that flees) within
-  fCombatLowMaxAttackDistance (2048); else Pursue; Search once its group searches. Ours runs it
-  for a fighter the movers do not run (TODO(M13): ours keeps nearly every fighter of the loaded
-  area in the high process, and its blow still swings).
+  it flees; Attack (landing by fCombatLowTargetHitPercent, 0.5, fCombatLowFleeingTargetHitPercent,
+  0.25, on one that flees) within fCombatLowMaxAttackDistance (2048); else Pursue; Search once its
+  group searches. Its blow (observed in the original) is a hit of the attacker with the weapon it
+  holds put on the target as it stands: no swing, no attack event to its graph
+  (`ActorCombat.lowBlow`; the damage #hit's, as a plain blow's). It runs for a fighter out of the
+  high process; a fighter in the loaded area stays in the high process (see "The actors of the
+  loaded area"), so in play it is the fighters the movers do not run.
 - **Search** (Wait to Start Search; Search Repeat: the Search Selector's Search Location,
   Search, Search Unimportant Location, Search Wander, Search Center, Search Idle and Fail Search,
   then the Investigate Selector's Investigating Door, Investigating, Looking): ours stands
@@ -3484,20 +3511,25 @@ engine's ([Combat movement](#combat-movement)).
   alerted), gets off its horse (one on a mount that fights ridden stays on: "Horses and
   followers" below), its detection reaction or override
   package ends, and its package's way stops.
-- **A script's target** (StartCombat): the controller holds its target selectors in a list, the
-  standard one first (both seen as classes and in saves: CombatTargetSelectorStandard, Fixed);
-  StartCombat puts a fixed one for its target on top, and while that target is one of its
-  candidates it is kept whatever the scores; while it is not (not yet known, given up by its
-  group) the standard selector chooses, and once it is dead or gone the fixed one goes
-  (`fixedTarget`; inferred, TODO(M13)). Only Papyrus StartCombat puts it there: the engine's own
-  fights (a summons taking up its commander's, guards answering a crime, a follower's attack
-  command, a package's, the horse's target lock) choose by the standard one. A save keeps the
-  fixed target with the fight (SavedFight.fixed).
+- **A fixed target** (observed in the original): the controller holds its target selectors in a
+  list, the standard one first (CombatTargetSelectorStandard, Fixed), and the top one chooses. A
+  fixed one names its target whatever the scores, lost or not, and is done once that target is
+  dead, disabled or deleted, or no longer one of its group's targets (`fixedTarget`). The engine
+  makes one in two places only: for the target the player's mount is set on while they ride it,
+  and in a flier's Flying Attack. Papyrus StartCombat makes none: it adds the target to the
+  actor's group and makes it its current target, and from then on the standard selector chooses
+  (the current target's 100 counting for it); so do a summons taking up its commander's fight,
+  guards answering a crime, a follower's attack command and a package's fight. A save keeps a
+  fixed target with the fight (SavedFight.fixed). The flight stage's Flying Attack holds its
+  victim through its grab (src/shell/actor-flight.ts) rather than by a selector. TODO(M13): the
+  player's lock on a target from a dragon's back is not built, so nothing puts a fixed target on
+  in play yet (the `fixed` option of startCombat is there for it).
 - **Targets** (`selectTarget`, observed in the original: the standard selector): among those
   its group knows and has not lost, and its current target if known, the highest sum wins; a
   group's sole target needs none; with none known, the one known most recently. The sum: its own
-  senses have it within the last 2 s 1000 (its current target also if seen 2 s ago), heard 100,
-  its current target 100, fighting the same way as the actor (melee or not) 100, nearness up to
+  last detection test of it, within 2 s, saw it 1000 (its current target also if detected within
+  2 s), that test had a line of sight to it 100 (before, read here as hearing it), its current
+  target 100, fighting the same way as the actor (melee or not) 100, nearness up to
   1000 (nothing from 2048 units; in another space counted as that far, its current target as
   near); less 2000 if out of reach (a weapon short of fCombatRangedDistance, or in another space),
   2500 in another space with no way there, 500 if it flees. How many allies fight it is added with
@@ -3634,7 +3666,10 @@ engine's ([Combat movement](#combat-movement)).
 - **Fleeing** (`shouldFlee`, observed in the original): with its odds below the flee ratio of its
   confidence level (fConfidenceCowardly 1000, Cautious 0.375, Average 0.15, Brave 0.0375,
   Foolhardy 0, interpolated between two levels); the fight's roll
-  (fCombatConfidenceModifierMin .. Max, drawn once) moves the level only for the three in between.
+  (fCombatConfidenceModifierMin .. Max) is drawn once, as the fight's combat state is made with
+  its controller, and is added to the level (its boosts counted) only for the three in between,
+  before the ratio is interpolated; the odds must be strictly below it (observed in the original:
+  the roll's only use is this check).
   A child always, or with Fear or Turn Undead on it; Rally and frenzy keep it in the fight.
   Nowhere left to go, Boost Confidence raises its level by one for the rest of the fight, below
   foolhardy and from a level whose ratio is under 100 (never a coward's, which fights cornered a

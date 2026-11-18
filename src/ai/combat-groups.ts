@@ -76,6 +76,13 @@ export interface CombatGroupSettings {
    * within this fully (level 100) each update.
    */
   readonly lowDetectionDistance: number;
+  /**
+   * fCombatDetectionLowPriorityDistance, VeryLowPriorityDistance: a group's target farther than
+   * the first from a member is tested by it at the low priority, farther than the second at the
+   * very low one (detectionPriority).
+   */
+  readonly lowPriorityDistance: number;
+  readonly veryLowPriorityDistance: number;
 }
 
 const SETTINGS: readonly (readonly [keyof CombatGroupSettings, string, number])[] = [
@@ -100,6 +107,8 @@ const SETTINGS: readonly (readonly [keyof CombatGroupSettings, string, number])[
   ['lostRemoveDistanceTime', 'fCombatDetectionLostRemoveDistanceTime', 60],
   ['lostRemoveDistance', 'fCombatDetectionLostRemoveDistance', 4096],
   ['lowDetectionDistance', 'fCombatDetectionLowDetectionDistance', 4096],
+  ['lowPriorityDistance', 'fCombatDetectionLowPriorityDistance', 2048],
+  ['veryLowPriorityDistance', 'fCombatDetectionVeryLowPriorityDistance', 4096],
 ];
 
 /** The groups' settings: the load order's values, else the engine's built-in ones. */
@@ -349,6 +358,35 @@ export class CombatGroups {
     known.eventAt = saved.eventAt && copy(saved.eventAt);
     known.eventTime = time(saved.eventAgo);
     if (saved.searching) group.searching = true;
+  }
+
+  /**
+   * How soon a member tests one of its group's targets again (observed in the original: the
+   * group answers each detection test of its members with a priority, and the pair's next test
+   * follows by it: detectionTestDelay in src/ai/detection-states.ts). 0: not its group's target
+   * (no say); 4 its own combat target, 5 when that is the player; 3 the player otherwise, or a
+   * target whose level in the group is this member's; else 2 beyond
+   * fCombatDetectionLowPriorityDistance, 1 beyond fCombatDetectionVeryLowPriorityDistance
+   * (weighed in that order, so with the vanilla values a target is never 1), 3 nearer.
+   */
+  detectionPriority(
+    member: number,
+    target: number,
+    world: Pick<CombatGroupWorld, 'combatTarget' | 'position'>,
+    player: number,
+  ): number {
+    const known = this.#of.get(member)?.targets.get(target);
+    if (!known) return 0;
+    if (world.combatTarget(member) === target) return target === player ? 5 : 4;
+    if (target === player) return 3;
+    const own = known.levels.get(member);
+    if (own !== undefined && own === known.level) return 3;
+    const from = world.position(member);
+    const at = world.position(target);
+    const away = from && at ? distance(from, at) : 0;
+    if (away > this.settings.lowPriorityDistance) return 2;
+    if (away > this.settings.veryLowPriorityDistance) return 1;
+    return 3;
   }
 
   /** Whether an actor's group searches for its targets. */

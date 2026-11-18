@@ -42,7 +42,9 @@ import { aliasOverrideLists } from '../ai/detection-records.ts';
 import { commanderOf } from '../ai/combat-profile.ts';
 import type { DetectionReport } from '../ai/combat-groups.ts';
 import {
+  detectionTestDelay,
   Detections,
+  PRIORITY_ROUND_KEEP,
   type DetectionEvent,
   type DetectionSave,
   type WitnessedAct,
@@ -241,6 +243,14 @@ export class ActorSenses implements ScriptSenses {
    * at the event's place): the combat groups keep their targets by it (src/ai/combat-groups.ts).
    */
   tested: ((observer: number, target: number, report: DetectionReport) => void) | undefined;
+  /**
+   * The priority of a pair's next test, asked after each test (0: none; the combat groups':
+   * CombatGroups.detectionPriority): with one, the pair is tested again detectionTestDelay later,
+   * apart from its observer's round.
+   */
+  testPriority: ((observer: number, target: number) => number) | undefined;
+  /** The pairs ("observer:target") with a test of their own due, and when. */
+  readonly #pairDue = new Map<string, number>();
   #world: SensesWorld | undefined;
   #clock = 0;
   readonly #due = new Map<number, number>();
@@ -417,11 +427,36 @@ export class ActorSenses implements ScriptSenses {
       if (due === undefined) continue;
       for (const target of bodies.values()) {
         if (target.reference === body.reference) continue;
+        // A pair waiting for a turn of its own keeps it; one tested within the round's keep time
+        // and with a priority waits for its turn by it. TODO(M13): that keep is ours, inferred
+        // (detection-states.ts PRIORITY_ROUND_KEEP); the original's round priority was not read.
+        const key = `${String(body.reference)}:${String(target.reference)}`;
+        if (this.#pairDue.has(key)) continue;
+        const last = this.#tested.get(key);
+        if (last !== undefined && now - last < PRIORITY_ROUND_KEEP) {
+          this.#scheduleTest(key, body.reference, target.reference);
+          if (this.#pairDue.has(key)) continue;
+        }
         this.#test(runtime, body, target);
         tests++;
       }
       this.#projectilesSeen(body, bodies, flying);
       this.#lookForTheDead(body, now);
+    }
+    // The pairs whose own turn has come (a fighter's combat target every half second).
+    for (const [key, at] of [...this.#pairDue]) {
+      if (!detecting || at > now) continue;
+      if (tests >= allowed) break;
+      const [observer, target] = key.split(':').map(Number);
+      const watcher = observer === undefined ? undefined : bodies.get(observer);
+      const watched = target === undefined ? undefined : bodies.get(target);
+      if (!watcher || !watched || !this.#options.movers.runsAi(watcher.reference)) {
+        this.#pairDue.delete(key);
+        continue;
+      }
+      this.#pairDue.delete(key);
+      this.#test(runtime, watcher, watched);
+      tests++;
     }
     this.detections.tick(now);
     this.#watchLineOfSight(runtime, bodies);
@@ -537,9 +572,9 @@ export class ActorSenses implements ScriptSenses {
     const result = this.#level(runtime, observer, target);
     const level = result?.inReach === true ? result.level : undefined;
     this.detections.observe(observer.reference, target.reference, level, target.feet, this.#clock);
-    const pair = `${String(observer.reference)}:${String(target.reference)}`;
-    this.#tested.set(pair, this.#clock);
-    this.#lastSight.set(pair, {
+    const key = `${String(observer.reference)}:${String(target.reference)}`;
+    this.#tested.set(key, this.#clock);
+    this.#lastSight.set(key, {
       lineOfSight: result?.lineOfSight === true,
       inView: result?.seen === true,
     });
@@ -548,7 +583,24 @@ export class ActorSenses implements ScriptSenses {
       lineOfSight: result?.lineOfSight === true,
       at: target.feet,
     });
+    this.#scheduleTest(key, observer.reference, target.reference);
     return result;
+  }
+
+  /**
+   * A pair's own next test by its priority (testPriority), or none; one already due keeps its
+   * time (observed in the original: a pair waiting for its turn is not put off).
+   */
+  #scheduleTest(key: string, observer: number, target: number): void {
+    const delay = detectionTestDelay(this.testPriority?.(observer, target) ?? 0);
+    if (delay === undefined) this.#pairDue.delete(key);
+    else if (!this.#pairDue.has(key)) this.#pairDue.set(key, this.#clock + delay);
+  }
+
+  /** Seconds since an observer last tested a target (undefined: never). */
+  testedAgo(observer: number, target: number): number | undefined {
+    const tested = this.#tested.get(`${String(observer)}:${String(target)}`);
+    return tested === undefined ? undefined : this.#clock - tested;
   }
 
   /**

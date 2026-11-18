@@ -437,14 +437,15 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     return (await world.pathTo?.(actor, target, num(call.args[1], 0.5))) ?? false;
   });
   // StartCombat: it fights the target whatever it thought of it, hostile to it (the reaction:
-  // crime-engine.ts) until StopCombat or its combat ends.
+  // crime-engine.ts) until StopCombat or its combat ends. Observed in the original: the target
+  // is not fixed (no Fixed selector): its fight chooses by the standard selector from then on.
   act('startcombat', (actor, call) => {
     const target = ref(call.args[0]);
     if (target === undefined || target === actor) return;
     const state = runtime.state.actor(actor);
     state.combatTargets = [...new Set([...(state.combatTargets ?? []), target])];
     runtime.actors.reactionsChanged();
-    world.startCombat?.(actor, target, { fixed: true });
+    world.startCombat?.(actor, target);
   });
   act('stopcombat', (actor) => {
     delete runtime.state.actor(actor).combatTargets;

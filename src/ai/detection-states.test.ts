@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { readDetectionSettings } from './detection.ts';
-import { Detections, type DetectionEvent } from './detection-states.ts';
+import {
+  detectionTestDelay,
+  Detections,
+  PRIORITY_ROUND_KEEP,
+  type DetectionEvent,
+} from './detection-states.ts';
 
 const settings = readDetectionSettings();
 const GUARD = 0x1001;
@@ -17,6 +22,11 @@ function book(): { detections: Detections; events: DetectionEvent[] } {
 }
 
 describe('detection states', () => {
+  it("time a pair's next test by its priority (none at 0)", () => {
+    expect([0, 1, 2, 3, 4, 5].map(detectionTestDelay)).toEqual([undefined, 2, 1.5, 1, 0.5, 0.25]);
+    expect(PRIORITY_ROUND_KEEP).toBe(2);
+  });
+
   it('go from unseen to noticed to detected, and lost to searching, then unseen', () => {
     const { detections, events } = book();
     expect(detections.state(GUARD, PLAYER)).toBe('unseen');

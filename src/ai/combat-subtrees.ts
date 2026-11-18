@@ -235,9 +235,15 @@ function middleOf(navmesh: Navmesh, triangle: number): Vec3 {
 /**
  * The triangles an actor at `from` reaches over the navmeshes (across their edges and the
  * portals between meshes) whose middle lies within `radius` of it, nearest the actor first by
- * the order they are reached. Undefined off the navmeshes.
+ * the order they are reached; with `avoid`, the way passes no triangle whose middle lies within its
+ * radius of its centre. Undefined off the navmeshes.
  */
-function reachable(set: NavmeshSet, from: Vec3, radius: number): Visit[] | undefined {
+function reachable(
+  set: NavmeshSet,
+  from: Vec3,
+  radius: number,
+  avoid?: { readonly center: Vec3; readonly radius: number },
+): Visit[] | undefined {
   const start = set.locate(from);
   if (!start) return undefined;
   const seen = new Set<string>([`${start.navmesh.formId}:${start.triangle}`]);
@@ -265,6 +271,7 @@ function reachable(set: NavmeshSet, from: Vec3, radius: number): Visit[] | undef
       if (!t || (t.flags & NavmeshFlag.deleted) !== 0) continue;
       const middle = middleOf(navmesh, triangle);
       if (flat(middle, from) > radius) continue;
+      if (avoid && flat(middle, avoid.center) < avoid.radius) continue;
       out.push({ navmesh, triangle, middle });
     }
   }
@@ -518,29 +525,44 @@ export interface HideCheck {
   readonly engagedSince: boolean;
   /**
    * How its enemy looks at it: the angle between the enemy's facing and the way to it
-   * (radians), half the enemy's view cone (radians), and whether nothing stands between the
-   * enemy's eyes and it. Without it, the view cone is not weighed.
+   * (radians). Without it, the enemy's look is not weighed.
    */
-  readonly watched?:
-    { readonly offAngle: number; readonly halfCone: number; readonly clear: boolean } | undefined;
+  readonly watched?: { readonly offAngle: number } | undefined;
 }
 
 /**
- * How far an enemy looking at a hider finds it (the view cone check of a hide): out to
- * fCombatHideCheckViewConeDistanceMax straight ahead, falling to fCombatHideCheckViewConeDistanceMin
- * at the cone's edge; 0 outside the cone or with something between them. Inferred from the
- * settings' names, TODO(M13): the original's scale between the two.
+ * The Hide behaviour's own times (observed in the original): it is done, unfound, after
+ * HIDE_TIME_LIMIT seconds (10000: in play, never), weighs its end first a second after it began
+ * and then each half second (hideFails).
+ */
+export const HIDE_TIME_LIMIT = 10000;
+export const HIDE_FIRST_CHECK = 1;
+export const HIDE_CHECK_INTERVAL = 0.5;
+
+/** The hide's look check's cone: within this of its enemy's facing (radians; 30°). */
+const HIDE_VIEW_CONE = Math.PI / 6;
+
+/**
+ * How far an enemy looking at a hider finds it (observed in the original: the combat state's
+ * check of its target looking at it, the only reader of the two settings): within 30° of the
+ * enemy's facing, out to fCombatHideCheckViewConeDistanceMax straight ahead, falling evenly to
+ * fCombatHideCheckViewConeDistanceMin at 30°, past their radii; 0 outside those 30°. No line
+ * of sight is asked, and only a hider beyond fCombatRangedDistance counts as found so (nearer
+ * the failed-target distances end a hide: hideFails).
+ *
+ * TODO(M13): the original's check also holds a hider found within a second of its last
+ * engagement, holds one under a blackboard flag, and runs only under a condition on its combat
+ * inventory's ranges that was not identified. Ours weighs the look every time (hideFails).
  */
 export function hideSpottedDistance(
   watched: NonNullable<HideCheck['watched']>,
   settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
 ): number {
-  if (!watched.clear || watched.halfCone <= 0) return 0;
   const off = Math.abs(watched.offAngle);
-  if (off > watched.halfCone) return 0;
-  const min = settings.hideCheckViewConeDistanceMin;
+  if (!(off < HIDE_VIEW_CONE)) return 0;
   const max = settings.hideCheckViewConeDistanceMax;
-  return min + (max - min) * (1 - off / watched.halfCone);
+  const min = settings.hideCheckViewConeDistanceMin;
+  return max + (min - max) * (off / HIDE_VIEW_CONE);
 }
 
 /**
@@ -556,8 +578,12 @@ export function hideFails(
   const near = check.sees
     ? check.distanceAhead < check.radii + settings.hideFailedTargetLosDistance
     : check.distance < check.radii + settings.hideFailedTargetDistance;
+  // TODO(M13): the original's engagement and blackboard holds and its combat-inventory range
+  // condition on this look are not built (hideSpottedDistance).
   const spotted =
-    check.watched !== undefined && check.distance < hideSpottedDistance(check.watched, settings);
+    check.watched !== undefined &&
+    check.distance > settings.rangedDistance &&
+    check.distance < check.radii + hideSpottedDistance(check.watched, settings);
   return near || check.engagedSince || spotted;
 }
 
@@ -994,7 +1020,11 @@ export function dualCastHold(
 
 /** How far a place given by the navmesh's point nearest it may lie off it (units). */
 const ATTACK_PLACE_SNAP = 64;
-/** At most this many places of the navmesh search are offered (each costs a ray). */
+/**
+ * At most this many places of the navmesh search are offered (each costs a ray). TODO(M13): ours,
+ * a budget for the line-of-fire rays; the original's own bound on the keys its way search tries
+ * was not read.
+ */
 const ATTACK_PLACES_MAX = 24;
 
 /** A place on the navmeshes (its height theirs), undefined off them; without navmeshes, as it is. */
@@ -1017,17 +1047,23 @@ function reachableKeys(set: NavmeshSet, from: Vec3, radius: number): Set<string>
   return visits && new Set(visits.map((v) => `${v.navmesh.formId}:${v.triangle}`));
 }
 
+/** Find Lateral Attack Location asks its shooter to face its target within this (radians; 60°). */
+const LATERAL_FACING = Math.PI / 3;
+
 /**
- * Find Lateral Attack Location: places beside the shooter, square to its line to the target, each
- * fCombatFindLateralAttackLocationIntervalMin .. Max (at random) past the last, out to
- * fCombatFindLateralAttackLocationDistance on either side, the nearer first and `side` (1 its
- * right, −1 its left) first at each step. With navmeshes, only places its way reaches over them.
- * TODO(M13): the order and the random step are inferred from the settings' names.
+ * Find Lateral Attack Location (observed in the original): only for a shooter facing its target
+ * within 60° (`facing`: the angle between its facing and the way to the target, radians) and within `range` (its weapon's maximum) of it. Square to its line to the target,
+ * one side first at random (an even roll), then the other: the way out to
+ * fCombatFindLateralAttackLocationDistance (512) that side, cut where it leaves what it reaches
+ * over the navmeshes, and on it the places fCombatFindLateralAttackLocationIntervalMin (64) out,
+ * then every fCombatFindLateralAttackLocationIntervalMax (128: 128, 256, 384, 512), each still
+ * within `range` of the target. The first with a clear line of fire is taken (the shell's part).
  */
 export function lateralAttackPlaces(
   feet: Vec3,
   target: Vec3,
-  side: 1 | -1,
+  facing: number,
+  range: number,
   random: () => number,
   set?: NavmeshSet,
   settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
@@ -1035,23 +1071,32 @@ export function lateralAttackPlaces(
   const dx = target[0] - feet[0];
   const dy = target[1] - feet[1];
   const length = Math.hypot(dx, dy);
-  if (length <= 1e-6) return [];
+  if (length <= 1e-6 || length >= range) return [];
+  if (Math.abs(facing) >= LATERAL_FACING) return [];
   // Square to the line: (y, −x) is its right on the compass (x east, y north).
   const right = [dy / length, -dx / length] as const;
   const far = settings.findLateralAttackLocationDistance;
   const keys = set && reachableKeys(set, feet, far + ATTACK_PLACE_SNAP);
   const min = settings.findLateralAttackLocationIntervalMin;
-  const max = settings.findLateralAttackLocationIntervalMax;
+  const step = settings.findLateralAttackLocationIntervalMax;
+  const first = random() <= 0.5 ? 1 : -1;
   const places: Vec3[] = [];
-  for (let out = min + random() * (max - min); out <= far; out += min + random() * (max - min)) {
-    for (const s of [side, -side]) {
-      const point: Vec3 = [feet[0] + right[0] * out * s, feet[1] + right[1] * out * s, feet[2]];
+  for (const side of [first, -first]) {
+    for (let k = 0; k <= Math.floor(far / step); k++) {
+      const out = k === 0 ? min : k * step;
+      const point: Vec3 = [
+        feet[0] + right[0] * out * side,
+        feet[1] + right[1] * out * side,
+        feet[2],
+      ];
       const at = onNavmesh(set, point);
-      if (!at) continue;
+      // The way out that side ends where it leaves the navmeshes it reaches.
+      if (!at) break;
       if (set && keys) {
         const located = set.locate(at);
-        if (!located || !keys.has(`${located.navmesh.formId}:${located.triangle}`)) continue;
+        if (!located || !keys.has(`${located.navmesh.formId}:${located.triangle}`)) break;
       }
+      if (Math.hypot(at[0] - target[0], at[1] - target[1], at[2] - target[2]) >= range) continue;
       places.push(at);
     }
   }
@@ -1059,11 +1104,14 @@ export function lateralAttackPlaces(
 }
 
 /**
- * Find Attack Location: the places of the navmeshes the shooter's way reaches within
- * fCombatFindAttackLocationDistance, in the order the way search reaches them, none within
- * fCombatFindAttackLocationAvoidTargetRadius of the target nor beyond `range` of it (it shoots
- * from there), each at least fCombatFindLateralAttackLocationIntervalMin from those before.
- * TODO(M13): the spacing and the cap on the places tried are ours.
+ * Find Attack Location (observed in the original: a way search whose goal is a place with a clear
+ * line of fire): the places of the navmeshes the shooter's way reaches within
+ * fCombatFindAttackLocationDistance, in the order the way search reaches them, its way kept out of
+ * the target's radius plus fCombatFindAttackLocationAvoidTargetRadius round it, none beyond
+ * `range` (its weapon's maximum) of it; the first with a clear line is taken (the shell's part).
+ * A place whose key (attackPlaceKey) was tried already is not tried again: it shares that one's
+ * answer. Ours tries at most ATTACK_PLACES_MAX keys (a budget for the line-of-fire rays: the
+ * original's search goes on to its distance).
  */
 export function attackLocationPlaces(
   set: NavmeshSet,
@@ -1071,19 +1119,47 @@ export function attackLocationPlaces(
   target: Vec3,
   range: number,
   settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+  targetRadius = 0,
 ): Vec3[] {
   const places: Vec3[] = [];
-  const spacing = settings.findLateralAttackLocationIntervalMin;
-  for (const visit of reachable(set, feet, settings.findAttackLocationDistance) ?? []) {
+  const tried = new Set<number>();
+  const avoid = {
+    center: target,
+    radius: targetRadius + settings.findAttackLocationAvoidTargetRadius,
+  };
+  for (const visit of reachable(set, feet, settings.findAttackLocationDistance, avoid) ?? []) {
     const at = visit.middle;
-    const off = flat(at, target);
-    if (off < settings.findAttackLocationAvoidTargetRadius || off > range) continue;
-    if (flat(at, feet) < spacing) continue;
-    if (places.some((place) => flat(place, at) < spacing)) continue;
+    if (flat(at, target) > range) continue;
+    // One line-of-fire test a key: a place in the bearing and height steps of one tried shares
+    // its answer (the original keeps the answers by key).
+    const key = attackPlaceKey(target, at, settings);
+    if (tried.has(key)) continue;
+    tried.add(key);
     places.push(at);
     if (places.length >= ATTACK_PLACES_MAX) break;
   }
   return places;
+}
+
+/**
+ * The key of a place in Find Attack Location's way search (observed in the original): the
+ * target's bearing from the place in whole steps of fCombatFindAttackLocationKeyAngle (5°) and
+ * its height above it in whole steps of fCombatFindAttackLocationKeyHeight (128), each cut
+ * towards zero. Places of one key share one line-of-fire test.
+ */
+export function attackPlaceKey(
+  target: Vec3,
+  place: Vec3,
+  settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+): number {
+  const x = target[0] - place[0];
+  const y = target[1] - place[1];
+  // The bearing as the engine takes it: from +y, clockwise, in [−90°, 270°).
+  const bearing =
+    y === 0 ? (x > 0 ? Math.PI / 2 : (3 * Math.PI) / 2) : Math.atan(x / y) + (y < 0 ? Math.PI : 0);
+  const angle = Math.trunc((-bearing * 180) / Math.PI / settings.findAttackLocationKeyAngle);
+  const height = Math.trunc((target[2] - place[2]) / settings.findAttackLocationKeyHeight);
+  return height - angle * 0x10000;
 }
 
 /** An ally with a clear line to the shooter's target (Find Ally Attack Location). */
@@ -1093,41 +1169,49 @@ export interface AttackLocationAlly {
 }
 
 /**
- * Find Ally Attack Location: beside an ally that has a clear line to the target and stands
- * fCombatFindAllyAttackLocationDistanceMin .. Max from it: a place square to the ally's line,
- * fCombatFindAllyAttackLocationAllyRadius past its body, either side, the nearest to the shooter
- * first. TODO(M13): inferred from the settings' names.
+ * Find Ally Attack Location (observed in the original): to a member of its group with a line of
+ * sight to the target that stands fCombatFindAllyAttackLocationDistanceMin .. Max (256 .. 4096)
+ * from the shooter and within the shooter's `range` (its weapon's maximum) of the target: its way
+ * goes to within the two radii and fCombatFindAllyAttackLocationAllyRadius of that ally, the
+ * nearest first. The place is where that way ends, on the ally's side towards the shooter.
  */
 export function allyAttackPlaces(
   feet: Vec3,
   target: Vec3,
   allies: readonly AttackLocationAlly[],
+  range: number,
+  radius: number,
   set?: NavmeshSet,
   settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
 ): Vec3[] {
   const places: Vec3[] = [];
   for (const ally of allies) {
-    const dx = target[0] - ally.feet[0];
-    const dy = target[1] - ally.feet[1];
-    const length = Math.hypot(dx, dy);
+    const away = Math.hypot(ally.feet[0] - feet[0], ally.feet[1] - feet[1], ally.feet[2] - feet[2]);
     if (
-      length < settings.findAllyAttackLocationDistanceMin ||
-      length > settings.findAllyAttackLocationDistanceMax
+      away < settings.findAllyAttackLocationDistanceMin ||
+      away > settings.findAllyAttackLocationDistanceMax
     ) {
       continue;
     }
-    const out = ally.radius + settings.findAllyAttackLocationAllyRadius;
-    for (const s of [1, -1]) {
-      const point: Vec3 = [
-        ally.feet[0] + (dy / length) * out * s,
-        ally.feet[1] - (dx / length) * out * s,
-        ally.feet[2],
-      ];
-      const at = onNavmesh(set, point);
-      if (at) places.push(at);
-    }
+    const toTarget = Math.hypot(
+      target[0] - ally.feet[0],
+      target[1] - ally.feet[1],
+      target[2] - ally.feet[2],
+    );
+    if (toTarget > range) continue;
+    const out = ally.radius + radius + settings.findAllyAttackLocationAllyRadius;
+    const dx = feet[0] - ally.feet[0];
+    const dy = feet[1] - ally.feet[1];
+    const flatAway = Math.hypot(dx, dy) || 1;
+    const point: Vec3 = [
+      ally.feet[0] + (dx / flatAway) * out,
+      ally.feet[1] + (dy / flatAway) * out,
+      ally.feet[2],
+    ];
+    const at = onNavmesh(set, point);
+    if (at) places.push(at);
   }
-  return places.sort((a, b) => flat(a, feet) - flat(b, feet));
+  return places.sort((p, q) => flat(p, feet) - flat(q, feet));
 }
 
 /** The first place whose line to the target is clear, trying at most `limit` of them. */
@@ -1158,8 +1242,10 @@ export function attackLocationKey(feet: Vec3, target: Vec3): AttackLocationKey {
  * A failed search stands while its target, seen from the shooter, stays within
  * fCombatFindAttackLocationKeyAngle of the bearing and fCombatFindAttackLocationKeyHeight of the
  * height it had then: from there no place was found, so it is not looked for again until either
- * moved (by the shooter's strafing or the target's way). TODO(M13): the key's use is inferred
- * from the settings' names.
+ * moved (by the shooter's strafing or the target's way). Inferred, TODO(M13): the original notes
+ * the failure's time on the blackboard (FindAttackLocationFailedTimeStamp); the condition that
+ * reads it was not found, so this gate takes the key's steps (whose observed use is
+ * attackPlaceKey's) as its measure of "moved".
  */
 export function attackLocationKeyHolds(
   failed: AttackLocationKey,

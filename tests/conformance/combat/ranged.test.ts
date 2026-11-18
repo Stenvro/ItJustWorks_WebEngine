@@ -23,6 +23,7 @@ import {
   attackLocationKey,
   attackLocationKeyHolds,
   attackLocationPlaces,
+  attackPlaceKey,
   COMBAT_SUBTREE_DEFAULTS,
   firstClearPlace,
   lateralAttackPlaces,
@@ -241,32 +242,42 @@ describe('the line of fire and Find Attack Location', () => {
     expect(castWaitsForLineOfFire(true)).toBe(false);
   });
 
-  it('Find Lateral Attack Location: beside it, square to its line, out to 512 units', () => {
+  it('Find Lateral Attack Location: beside it, square to its line, out to 512 units  [original]', () => {
     const feet: P = [500, 500, 0];
     const target: P = [500, 1500, 0];
-    // The shortest step each time (fCombatFindLateralAttackLocationIntervalMin, 64): 8 a side,
-    // its right (east of a line north) first at each.
-    const places = lateralAttackPlaces(feet, target, 1, () => 0);
-    expect(places).toHaveLength(16);
-    expect(places[0]).toEqual([564, 500, 0]);
-    expect(places[1]).toEqual([436, 500, 0]);
-    expect(places.at(-2)).toEqual([1012, 500, 0]);
+    // 64 out (fCombatFindLateralAttackLocationIntervalMin), then every 128 (…IntervalMax) to 512:
+    // one side whole, then the other; the first side by an even roll (its right, east of a line
+    // north, on a low roll).
+    const places = lateralAttackPlaces(feet, target, 0, 2000, () => 0);
+    expect(places.map((place) => place[0])).toEqual([
+      564, 628, 756, 884, 1012, 436, 372, 244, 116, -12,
+    ]);
     expect(places.every((place) => place[1] === 500)).toBe(true);
-    // The longest (…IntervalMax, 128): 4 a side; its left first when asked.
-    const wide = lateralAttackPlaces(feet, target, -1, () => 1);
-    expect(wide).toHaveLength(8);
-    expect(wide[0]).toEqual([372, 500, 0]);
+    expect(lateralAttackPlaces(feet, target, 0, 2000, () => 1)[0]).toEqual([436, 500, 0]);
+    // Each within its weapon's range of the target: 1050 keeps those out to 256 a side.
+    expect(lateralAttackPlaces(feet, target, 0, 1050, () => 0)).toHaveLength(6);
+    // Only facing its target within 60°, and within its range.
+    expect(lateralAttackPlaces(feet, target, (61 * Math.PI) / 180, 2000, () => 0)).toEqual([]);
+    expect(lateralAttackPlaces(feet, target, (59 * Math.PI) / 180, 2000, () => 0)).toHaveLength(10);
+    expect(lateralAttackPlaces(feet, target, 0, 900, () => 0)).toEqual([]);
   });
 
-  it('Find Lateral Attack Location: only where its way reaches over the navmeshes', () => {
+  it('Find Lateral Attack Location: only where its way reaches over the navmeshes  [original]', () => {
     const set = navmeshes(grid(1, 0, 10), grid(2, 1000, 10));
-    const places = lateralAttackPlaces([500, 500, 0], [500, 1500, 0], 1, () => 0, set);
-    // 1012 lies on the other navmesh, which its way does not reach; −12 off the navmeshes.
+    const places = lateralAttackPlaces([500, 500, 0], [500, 1500, 0], 0, 2000, () => 0, set);
+    // Its way out east ends where it leaves the navmesh it stands on (1012 lies on the other,
+    // which its way does not reach), west where the navmeshes end (−12).
     expect(places.some((place) => place[0] > 1000 || place[0] < 0)).toBe(false);
-    expect(places).toHaveLength(14);
+    expect(places).toHaveLength(8);
   });
 
-  it('Find Attack Location: over the navmeshes within 1024, off the target, within range', () => {
+  it('Find Attack Location: over the navmeshes within 1024, off the target, within range  [original]', () => {
+    // The key: 3° and 100 units off the target's line are one; 6° or 130 units are another.
+    const t: P = [0, 1000, 0];
+    expect(attackPlaceKey(t, [0, 0, 0])).toBe(attackPlaceKey(t, [-52, 0, 0]));
+    expect(attackPlaceKey(t, [0, 0, 0])).not.toBe(attackPlaceKey(t, [-106, 0, 0]));
+    expect(attackPlaceKey(t, [0, 0, -100])).toBe(attackPlaceKey(t, [0, 0, 0]));
+    expect(attackPlaceKey(t, [0, 0, -130])).not.toBe(attackPlaceKey(t, [0, 0, 0]));
     const set = navmeshes(grid(1, 0, 30));
     const feet: P = [1500, 300, 0];
     const target: P = [1500, 1300, 0];
@@ -279,31 +290,45 @@ describe('the line of fire and Find Attack Location', () => {
       expect(flat(place, target)).toBeGreaterThanOrEqual(S.findAttackLocationAvoidTargetRadius);
       expect(flat(place, target)).toBeLessThanOrEqual(range);
     }
-    // Spread: none within fCombatFindLateralAttackLocationIntervalMin of another.
-    for (const [i, a] of places.entries()) {
-      for (const b of places.slice(i + 1)) {
-        expect(flat(a, b)).toBeGreaterThanOrEqual(S.findLateralAttackLocationIntervalMin);
-      }
-    }
+    // One a key: the target's bearing from it in 5° steps and its height in 128-unit steps
+    // (fCombatFindAttackLocationKeyAngle, KeyHeight): no two places share one.
+    const keys = places.map((place) => attackPlaceKey(target, place));
+    expect(new Set(keys).size).toBe(keys.length);
     // The first clear one is taken: here, with a wall west of x = 1700, the first east of it.
     const clear = firstClearPlace(places, (place) => place[0] > 1700);
     expect(clear?.[0]).toBeGreaterThan(1700);
     expect(firstClearPlace(places, () => false)).toBeUndefined();
+    // The way keeps out of the target's radius plus fCombatFindAttackLocationAvoidTargetRadius:
+    // with a target 116 units wide, nothing within 500 of it, where a point target allows 384.
+    const near = (radius: number) =>
+      Math.min(
+        ...attackLocationPlaces(set, [1500, 700, 0], target, range, S, radius).map((place) =>
+          flat(place, target),
+        ),
+      );
+    expect(near(0)).toBeLessThan(500);
+    expect(near(116)).toBeGreaterThanOrEqual(500);
   });
 
-  it('Find Ally Attack Location: beside an ally with a clear line, 256 .. 4096 off the target', () => {
+  it('Find Ally Attack Location: to an ally 256 .. 4096 off, within its range of the target  [original]', () => {
     const target: P = [0, 0, 0];
     const feet: P = [400, 1000, 0];
     const ally = { feet: [0, 1000, 0] as P, radius: 30 };
-    const places = allyAttackPlaces(feet, target, [ally]);
-    // Its radius and fCombatFindAllyAttackLocationAllyRadius out, either side; the shooter's first.
-    expect(places).toEqual([
-      [94, 1000, 0],
-      [-94, 1000, 0],
-    ]);
-    // Too near the target, or too far from it: none.
-    expect(allyAttackPlaces(feet, target, [{ feet: [0, 200, 0], radius: 30 }])).toEqual([]);
-    expect(allyAttackPlaces(feet, target, [{ feet: [0, 5000, 0], radius: 30 }])).toEqual([]);
+    // Its way ends the two radii and fCombatFindAllyAttackLocationAllyRadius (64) from the ally,
+    // on its side towards the shooter.
+    expect(allyAttackPlaces(feet, target, [ally], 2000, 30)).toEqual([[124, 1000, 0]]);
+    // An ally within 256 of the shooter or beyond 4096 of it: none.
+    expect(
+      allyAttackPlaces(feet, target, [{ feet: [300, 1000, 0], radius: 30 }], 2000, 30),
+    ).toEqual([]);
+    expect(allyAttackPlaces(feet, target, [{ feet: [0, -4000, 0], radius: 30 }], 9000, 30)).toEqual(
+      [],
+    );
+    // One beyond the shooter's range of the target: none.
+    expect(allyAttackPlaces(feet, target, [ally], 900, 30)).toEqual([]);
+    // The nearer first.
+    const far = { feet: [-2000, 1000, 0] as P, radius: 30 };
+    expect(allyAttackPlaces(feet, target, [far, ally], 3000, 30)[0]).toEqual([124, 1000, 0]);
   });
 
   it('a failed search stands while its target stays within 5° and 128 units of where it was', () => {

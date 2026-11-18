@@ -117,6 +117,36 @@ describe('combat groups', () => {
     expect(known?.level).toBe(-10);
   });
 
+  it('gives its targets their detection test priority: its combat target most often', () => {
+    const { groups, world, at, targets } = fight();
+    const WOLF = 0x2001;
+    const FAR = 0x2002;
+    at.set(WOLF, [100, 0, 0]);
+    at.set(FAR, [3000, 0, 0]);
+    groups.join(BANDIT, []);
+    groups.join(ARCHER, [BANDIT]);
+    // Not its group's target: no say.
+    expect(groups.detectionPriority(BANDIT, WOLF, world, PLAYER)).toBe(0);
+    groups.addTarget(BANDIT, PLAYER);
+    groups.addTarget(BANDIT, WOLF);
+    groups.addTarget(BANDIT, FAR);
+    // Its own combat target: 5 for the player, 4 for another.
+    expect(groups.detectionPriority(BANDIT, PLAYER, world, PLAYER)).toBe(5);
+    targets.set(BANDIT, WOLF);
+    expect(groups.detectionPriority(BANDIT, WOLF, world, PLAYER)).toBe(4);
+    // The player otherwise 3; a near target 3, one beyond fCombatDetectionLowPriorityDistance 2.
+    expect(groups.detectionPriority(BANDIT, PLAYER, world, PLAYER)).toBe(3);
+    expect(groups.detectionPriority(ARCHER, WOLF, world, PLAYER)).toBe(3);
+    expect(groups.detectionPriority(BANDIT, FAR, world, PLAYER)).toBe(2);
+    // The member whose level the group keeps tests it at 3, however far.
+    groups.report(BANDIT, FAR, unseen(-5, [3000, 0, 0]), world, 0);
+    expect(groups.detectionPriority(BANDIT, FAR, world, PLAYER)).toBe(3);
+    expect(groups.detectionPriority(ARCHER, FAR, world, PLAYER)).toBe(2);
+    // Out of its group, no say.
+    groups.leave(ARCHER);
+    expect(groups.detectionPriority(ARCHER, WOLF, world, PLAYER)).toBe(0);
+  });
+
   it('drains the stealth points of a target sensed below the threshold, then detects it', () => {
     const { groups, world } = fight();
     groups.join(BANDIT, []);

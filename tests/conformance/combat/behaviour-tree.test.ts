@@ -30,6 +30,7 @@ import {
   type CombatAction,
   type CombatValue,
 } from '../../../src/ai/combat-tree.ts';
+import { ActorValue } from '../../../src/world/actor-values.ts';
 import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 // --- The node classes, on a small tree --------------------------------------------------------
@@ -701,6 +702,9 @@ describe.skipIf(!hasGamedata())('the combat tree in a fight (headless simulation
   let mage = 0;
   let wolves: number[] = [];
   let banditTold: number | undefined;
+  let banditWatched = 0;
+  let banditTests = 0;
+  let lastAgo: number | undefined;
   const mageDistances: number[] = [];
 
   beforeAll(async () => {
@@ -735,6 +739,14 @@ describe.skipIf(!hasGamedata())('the combat tree in a fight (headless simulation
       combat.startCombat(wolves[1] ?? 0, mage);
       await sim.step(0.25);
       if (i === 0) banditTold = combat.targetOf(bandit);
+      // Its combat target's detection is tested every half second (its group's priority 4).
+      const ago = sim.world.stage.senses.testedAgo(bandit, wolves[0] ?? 0);
+      if (i >= 8 && combat.targetOf(bandit) === wolves[0] && ago !== undefined) {
+        banditWatched += 0.25;
+        // Tested since the last step: its time since the test grew by less than the step.
+        if (lastAgo !== undefined && ago < lastAgo + 0.25 - 1e-6) banditTests++;
+      }
+      lastAgo = ago;
       const d = await sim.distance(mage, wolves[1] ?? 0);
       if (d !== undefined) mageDistances.push(d);
     }
@@ -751,6 +763,14 @@ describe.skipIf(!hasGamedata())('the combat tree in a fight (headless simulation
     expect(sim.world.session.render.view?.camera).toBeDefined();
     // Told to fight its wolf as it was placed (before it was a fighter), it takes that fight up.
     expect(banditTold).toBe(wolves[0]);
+    // Detection in the fight is the original's: a fighter tests its combat target each 0.5 s
+    // (its combat group's priority 4), not only on its own round (1 s this near the player), so
+    // the tank's wolf, seen at level 20 in the inn's light (below
+    // iCombatStealthPointDetectionThreshold, 25), drains its stealth points and is detected
+    // within the first seconds whatever the rounds' dice.
+    // Measured: 15 tests in 7.25 s (0.48 s apart); on the rounds alone 11 in 10.5 s (0.95 s).
+    expect(banditWatched).toBeGreaterThan(2);
+    expect(banditWatched / banditTests).toBeLessThan(0.7);
     expect(hits().some((hit) => hit.aggressor === bandit && wolves.includes(hit.target))).toBe(
       true,
     );
@@ -843,4 +863,39 @@ describe.skipIf(!hasGamedata())('a near target off the navmesh, beyond reach of 
   it('the bandit falls back to fight from range instead of standing on the edge', () => {
     expect(farthest).toBeGreaterThan(start + 200);
   });
+});
+
+// --- Low Combat's blow: a hit put on its target, no swing ------------------------------------
+
+describe.skipIf(!hasGamedata())('Low Combat’s blow (headless simulation)', () => {
+  it('lands its weapon’s hit on the target as it stands, with no attack of its graph  [original]', async () => {
+    const sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
+    try {
+      await sim.step(1);
+      for (const actor of sim.actors()) {
+        if (actor.reference !== PLAYER_REF) await sim.kill(actor.reference);
+      }
+      const bandit = await sim.place(
+        await sim.formId('NPC_', 'EncBandit01Melee1HTankNordM'),
+        PLAYER_REF,
+      );
+      const wolf = await sim.place(await sim.formId('NPC_', 'EncWolf'), PLAYER_REF);
+      await sim.step(0.5);
+      const health = async (): Promise<number> =>
+        (await sim.runtime.actors.value(wolf, ActorValue.health)).current;
+      const before = await health();
+      // Observed in the original: Attack Low builds a hit of the attacker with its weapon and
+      // puts it on its target; no attack event goes to the attacker's graph.
+      await sim.world.stage.combat.lowBlow(bandit, wolf);
+      await sim.step(0.25);
+      const hit = sim.world.log
+        .game('hit')
+        .find((entry) => entry.aggressor === bandit && entry.target === wolf);
+      expect(hit).toBeDefined();
+      expect(hit?.powerAttack).toBe(false);
+      expect(await health()).toBeLessThan(before);
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
 });

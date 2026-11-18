@@ -25,6 +25,9 @@ import {
   coverRange,
   fallbackPlace,
   fleeRunStatus,
+  HIDE_CHECK_INTERVAL,
+  HIDE_FIRST_CHECK,
+  HIDE_TIME_LIMIT,
   hideEnd,
   hideFails,
   pickCover,
@@ -219,24 +222,34 @@ describe('who flees (formula)', () => {
     expect(hideFails({ ...check, engagedSince: true })).toBe(true);
   });
 
-  it('a hide is found as its enemy looks its way (fCombatHideCheckViewCone*)  [inferred]', () => {
+  it('a hide is found as its enemy looks its way (fCombatHideCheckViewCone*)  [original]', () => {
     expect(COMBAT_SUBTREE_DEFAULTS.hideCheckViewConeDistanceMin).toBe(1024);
     expect(COMBAT_SUBTREE_DEFAULTS.hideCheckViewConeDistanceMax).toBe(4096);
-    const halfCone = (190 / 2) * (Math.PI / 180);
     const check = { distance: 2000, distanceAhead: 2000, radii: 64, sees: false };
-    const watched = (degrees: number, clear = true) => ({
+    const watched = (degrees: number, distance = 2000) => ({
       ...check,
+      distance,
+      distanceAhead: distance,
       engagedSince: false,
-      watched: { offAngle: degrees * (Math.PI / 180), halfCone, clear },
+      watched: { offAngle: degrees * (Math.PI / 180) },
     });
-    // Looked at straight on with nothing between, 2000 units off: found.
+    // Looked at straight on, 2000 units off: found (no line of sight is asked).
     expect(hideFails(watched(0))).toBe(true);
-    // Something between them, or behind its enemy: still hidden.
-    expect(hideFails(watched(0, false))).toBe(false);
-    expect(hideFails(watched(120))).toBe(false);
-    // Near the cone's edge it is found only nearer: 80° off reaches about 1509 units.
-    expect(hideFails(watched(80))).toBe(false);
-    expect(hideFails({ ...watched(80), distance: 1400, distanceAhead: 1400 })).toBe(true);
+    // Out to 4096 past the radii straight on; within 30° only, falling evenly to 1024 there.
+    expect(hideFails(watched(0, 4150))).toBe(true);
+    expect(hideFails(watched(0, 4170))).toBe(false);
+    expect(hideFails(watched(31))).toBe(false);
+    // 20° off reaches 2048 + the radii: 2100 found, 2120 not.
+    expect(hideFails(watched(20, 2100))).toBe(true);
+    expect(hideFails(watched(20, 2120))).toBe(false);
+    // Within fCombatRangedDistance (1024) the look finds nothing (the near distances decide).
+    expect(hideFails(watched(0, 1000))).toBe(false);
+  });
+
+  it('the Hide behaviour’s own times: done after 10000 s, first weighed after 1 s, then each 0.5 s  [original]', () => {
+    expect(HIDE_TIME_LIMIT).toBe(10000);
+    expect(HIDE_FIRST_CHECK).toBe(1);
+    expect(HIDE_CHECK_INTERVAL).toBe(0.5);
   });
 
   // Found 2026-11-12 (MQ104, tests/sim-prey-flees.int.test.ts): an elk's run to cover ended where

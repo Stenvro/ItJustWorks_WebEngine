@@ -48,9 +48,9 @@ describe('target selection', () => {
     expect(targetScore(at(1, { distance: 1024 }), false)).toBe(500);
     expect(targetScore(at(1, { distance: 4096 }), false)).toBe(0);
     const far = at(1, { distance: 4096 });
-    // Its senses having it 1000, heard 100, its current target 100, fighting the same way 100.
+    // Its senses having it 1000, in sight 100, its current target 100, fighting the same way 100.
     expect(targetScore({ ...far, sees: true }, false)).toBe(1000);
-    expect(targetScore({ ...far, hears: true }, false)).toBe(100);
+    expect(targetScore({ ...far, inSight: true }, false)).toBe(100);
     expect(targetScore(far, true)).toBe(100);
     expect(targetScore({ ...far, sameKind: true }, false)).toBe(100);
     // Unreachable −2000, in another space with no way there −2500, fleeing −500.
@@ -127,29 +127,31 @@ describe('target selection', () => {
     // Its own zone decides, not the other's.
     expect(zonesAllow(zone(1), zone(2, true))).toBe(false);
   });
-  // The Fixed selector (CombatTargetSelectorFixed, a target in a save's controller) is StartCombat's
-  // (inferred: combat-ai.ts fixedTarget; the shell keeps it as the actor's fixedTarget).
-  it('a scripted target (StartCombat) is kept while it is there, then the standard selector  [CK StartCombat] (inferred)', () => {
+  // The Fixed selector (CombatTargetSelectorFixed, observed in the original: combat-ai.ts
+  // fixedTarget; the shell keeps it as the actor's fixedTarget).
+  it('a fixed target is kept while it is there and its group’s target, then the standard selector  [original]', () => {
     const near = at(1, { distance: 64, sees: true });
     const far = at(2, { distance: 2000 });
     // Scores alone take the near one ...
     expect(selectTarget([near, far], undefined)).toBe(1);
-    // ... the fixed one holds against them.
-    expect(fixedTarget([near, far], 2)).toBe(2);
-    // Gone (dead, given up by its side): the standard selector chooses again.
-    expect(fixedTarget([near], 2)).toBeUndefined();
-    expect(fixedTarget([near, far], undefined)).toBeUndefined();
+    // ... the fixed one holds against them, lost or not, while its group has it.
+    expect(fixedTarget(2, { present: true, ofGroup: true })).toBe(2);
+    // Dead or gone, or given up by its group: done, the standard selector chooses again.
+    expect(fixedTarget(2, { present: false, ofGroup: true })).toBeUndefined();
+    expect(fixedTarget(2, { present: true, ofGroup: false })).toBeUndefined();
+    expect(fixedTarget(undefined, { present: true, ofGroup: true })).toBeUndefined();
   });
 });
 
-// Only a script's StartCombat (Papyrus) puts the Fixed selector on its target; the engine's own
-// fights (a summons taking up its commander's, guards answering a crime, a follower's attack
-// command, a package's) choose by the standard selector. A save keeps the fixed target with the
-// fight, through a save and a load. Two bandits in the Bannered Mare, its patrons gone.
+// The engine puts the Fixed selector on the target the player's mount is set on and a flier's
+// Flying Attack; Papyrus StartCombat does not (observed in the original: the selector's two
+// makers), so a script's fight chooses by the standard selector. A save keeps a fixed target with
+// the fight, through a save and a load. Two bandits in the Bannered Mare, its patrons gone: one
+// set on the player as the engine fixes a target, one by a script's StartCombat.
 
 const BANNERED_MARE = 0x1605e;
 
-describe.skipIf(!hasGamedata())('the Fixed selector is a script’s (headless simulation)', () => {
+describe.skipIf(!hasGamedata())('the Fixed selector is the engine’s (headless simulation)', () => {
   let sim: Sim;
   let engines = 0;
   let scripts = 0;
@@ -164,7 +166,7 @@ describe.skipIf(!hasGamedata())('the Fixed selector is a script’s (headless si
     engines = await sim.place(bandit, PLAYER_REF);
     scripts = await sim.place(bandit, PLAYER_REF);
     await sim.step(0.5);
-    sim.world.stage.combat.startCombat(engines, PLAYER_REF);
+    sim.world.stage.combat.startCombat(engines, PLAYER_REF, { fixed: true });
     await sim.native(new ObjectHandle(scripts, 'actor'), 'Actor', 'StartCombat', [
       new ObjectHandle(PLAYER_REF, 'actor'),
     ]);
@@ -174,18 +176,18 @@ describe.skipIf(!hasGamedata())('the Fixed selector is a script’s (headless si
     await sim.close();
   });
 
-  it('a script’s StartCombat keeps its target, an engine’s fight does not  [CK StartCombat] (inferred)', () => {
+  it('a script’s StartCombat does not fix its target, the engine’s fixed fight does  [original]', () => {
     const combat = sim.world.stage.combat;
     expect(combat.targetOf(scripts)).toBe(PLAYER_REF);
     expect(combat.targetOf(engines)).toBe(PLAYER_REF);
-    expect(combat.saveFight(scripts)?.fixed).toBe(PLAYER_REF);
-    expect(combat.saveFight(engines)?.fixed).toBeUndefined();
+    expect(combat.saveFight(engines)?.fixed).toBe(PLAYER_REF);
+    expect(combat.saveFight(scripts)?.fixed).toBeUndefined();
   });
 
   // Through a real save and load: the loaded stage takes each saved fight up again (actor-stage
   // #restoreCombat: startCombat with the save's confidence modifier, then resumeFight once the
-  // target is taken up), and the script's fight keeps its fixed target, the engine's has none.
-  it('a save’s fight keeps its fixed target through a save and a load  [CK StartCombat] (inferred)', async () => {
+  // target is taken up), and the fixed fight keeps its fixed target, the script's has none.
+  it('a save’s fight keeps its fixed target through a save and a load  [original]', async () => {
     const bytes = await sim.save();
     // One simulation at a time: the loaded one goes on for the case after this.
     await sim.close();
@@ -196,19 +198,19 @@ describe.skipIf(!hasGamedata())('the Fixed selector is a script’s (headless si
       if (
         combat.targetOf(scripts) === PLAYER_REF &&
         combat.targetOf(engines) === PLAYER_REF &&
-        combat.saveFight(scripts)?.fixed !== undefined
+        combat.saveFight(engines)?.fixed !== undefined
       )
         break;
     }
     expect(combat.targetOf(scripts)).toBe(PLAYER_REF);
     expect(combat.targetOf(engines)).toBe(PLAYER_REF);
-    expect(combat.saveFight(scripts)?.fixed).toBe(PLAYER_REF);
-    expect(combat.saveFight(engines)?.fixed).toBeUndefined();
+    expect(combat.saveFight(engines)?.fixed).toBe(PLAYER_REF);
+    expect(combat.saveFight(scripts)?.fixed).toBeUndefined();
   }, 600_000);
 
   it('resumeFight puts a saved fight’s fixed target back on the live fight', () => {
     const combat = sim.world.stage.combat;
-    combat.resumeFight(engines, { fixed: PLAYER_REF });
-    expect(combat.saveFight(engines)?.fixed).toBe(PLAYER_REF);
+    combat.resumeFight(scripts, { fixed: PLAYER_REF });
+    expect(combat.saveFight(scripts)?.fixed).toBe(PLAYER_REF);
   });
 });
