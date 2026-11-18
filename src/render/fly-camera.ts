@@ -5,21 +5,9 @@
 import type { Camera } from './renderer.ts';
 import { lookAt, multiply, perspectiveReversedZ, type Mat4, type Vec3 } from './math.ts';
 
+import { flightStep, VIEWER_SPEED, wheelSpeed, type FreeCameraSettings } from './free-flight.ts';
+
 const MAX_PITCH = 1.55;
-
-/** The viewers' free camera's speed, units per second (the mouse wheel changes it). */
-const VIEWER_SPEED = 260;
-
-/**
- * The game's free camera (tfc) moves as the original's: each update the move keys carry it
- * fFreeCameraTranslationSpeed units (whatever the update's length), times fFreeCameraRunSpeed
- * while running (Shift); the console's SetUFOCamSpeedMult sets that setting. Observed in the
- * original.
- */
-export interface FreeCameraSettings {
-  readonly translation: number;
-  readonly run: number;
-}
 
 export class FlyCamera implements Camera {
   fovY = (65 * Math.PI) / 180;
@@ -51,11 +39,7 @@ export class FlyCamera implements Camera {
   }
 
   update(deltaSeconds: number): void {
-    const running = this.#keys.has('shift');
-    const game = this.game?.();
-    const step = game
-      ? game.translation * (running ? game.run : 1)
-      : this.speed * (running ? 3 : 1) * deltaSeconds;
+    const step = flightStep(this.speed, this.#keys.has('shift'), deltaSeconds, this.game?.());
     const forward = this.forward;
     const right: Vec3 = [Math.cos(this.yaw), -Math.sin(this.yaw), 0];
     const move = (axis: Vec3, amount: number): void => {
@@ -109,8 +93,7 @@ export class FlyCamera implements Camera {
     };
     const onWheel = (event: WheelEvent): void => {
       event.preventDefault();
-      if (this.game) return;
-      this.speed = Math.max(20, Math.min(5000, this.speed * Math.exp(-event.deltaY * 0.001)));
+      this.speed = wheelSpeed(this.speed, event.deltaY, this.game !== undefined);
     };
     element.addEventListener('mousedown', onDown);
     document.addEventListener('mousemove', onMove);

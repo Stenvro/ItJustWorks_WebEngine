@@ -40,6 +40,7 @@ import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { flashKeyCode } from '../ui/key-codes.ts';
 import { ActorValue, SKILL_COUNT } from '../world/actor-values.ts';
 import type { Menu, MenuCallHandler, MenuHost } from '../ui/menu-host.ts';
+import { nameBoxHandlers } from '../ui/text-input.ts';
 import type { GameSettings } from '../world/game-settings.ts';
 import type { GameSession } from './game-session.ts';
 import type { PlaySession } from './play-session.ts';
@@ -230,25 +231,16 @@ class Editing {
         const index = Number(args[1]);
         this.#enqueue(() => this.#changeRace(menu, index));
       },
-      // Each name the box sends takes back what SetAllowTextInput allowed (observed in the
-      // original).
-      ChangeName: (menu, args) => {
-        this.#session.textInput.allow(false);
-        void this.#changeName(menu, args[1]);
-      },
+      // The name box allows text input (src/ui/text-input.ts).
+      ...nameBoxHandlers<Menu>(this.#session.textInput, (menu, name) => {
+        void this.#changeName(menu, name);
+      }),
       ConfirmDone: (menu) => {
         void this.#confirmDone(menu);
       },
       ZoomPC: (_menu, args) => {
         this.#camera.zoom(args[1] === true);
       },
-      // The name field took the focus: text input is allowed, once more each call, whatever
-      // the arguments (observed in the original); the menu host gives the focused field the keys.
-      SetAllowTextInput: () => {
-        this.#session.textInput.allow(true);
-      },
-      // Consoles' on-screen keyboard; the PC types into the name box.
-      ShowVirtualKeyboard: () => undefined,
     };
     for (const callback of Object.values(SliderCallback)) handlers[callback] = slider;
     let menu: Menu;

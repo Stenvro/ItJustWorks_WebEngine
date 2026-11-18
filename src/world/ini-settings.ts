@@ -141,11 +141,11 @@ export const INI_DEFAULTS = {
     fCollisionRecoveryMinDist: 4000,
     fCollisionRecoverySpeed: 3,
     fDefaultAutoVanityZoom: 300,
-    // The free camera (tfc: src/render/fly-camera.ts): units an update, the running factor, and
-    // its turn rate (the original's defaults).
+    // The game's free camera (tfc: src/shell/free-camera.ts): units an update and the running
+    // factor (the original's defaults). TODO(M13): its turn rate (fFreeCameraRotationSpeed),
+    // not yet confirmed how the original applies it to the mouse.
     fFreeCameraTranslationSpeed: 20,
     fFreeCameraRunSpeed: 2,
-    fFreeCameraRotationSpeed: 3,
     // The furniture camera (phase 7): fFurnitureCameraZoom out, pitched fFurnitureCameraAngle
     // radians; a workbench's own (fWorkbenchCamera*).
     fFurnitureCameraAngle: 0.39269909262657166,

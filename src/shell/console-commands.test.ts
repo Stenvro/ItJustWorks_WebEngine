@@ -459,6 +459,210 @@ describe('the game command table', () => {
   });
 });
 
+describe("the console's quest and global lines", () => {
+  const MQ101 = 0x3372b;
+  const MQ102 = 0x3372c;
+  const HADVAR = 0x1a2b;
+  const RALOF = 0x1a2c;
+  const DOOR = 0x5555;
+  const KEEP = 0x5000;
+
+  /** Two quests: MQ101's aliases Hadvar (filled), Ralof (empty) and the location Keep. */
+  const questRuntime = (extra: Record<string, unknown> = {}) => ({
+    forms: {
+      record: (formId: number) =>
+        Promise.resolve(
+          formId === MQ101
+            ? { type: 'QUST', editorId: 'MQ101' }
+            : formId === MQ102
+              ? { type: 'QUST', editorId: 'MQ102' }
+              : formId === KEEP
+                ? { type: 'LCTN', editorId: 'HelgenKeepLocation' }
+                : undefined,
+        ),
+      quest: (formId: number) =>
+        Promise.resolve(
+          formId === MQ101
+            ? {
+                priority: 70,
+                aliases: [
+                  { id: 0, name: 'Hadvar', location: false },
+                  { id: 1, name: 'Ralof', location: false },
+                  { id: 2, name: 'Keep', location: true },
+                ],
+              }
+            : undefined,
+        ),
+    },
+    state: {
+      created: new Map(),
+      actors: new Map(),
+      references: new Map([
+        [HADVAR, { displayName: 'Hadvar' }],
+        [RALOF, { displayName: 'Ralof' }],
+        [DOOR, { displayName: 'Helgen Keep Door' }],
+      ]),
+      quests: new Map([
+        [
+          MQ101,
+          {
+            running: true,
+            stage: 10,
+            aliases: new Map([
+              [0, HADVAR],
+              [2, KEEP],
+            ]),
+          },
+        ],
+      ]),
+    },
+    aliasDisplayName: () => undefined,
+    quests: { starting: new Set<number>() },
+    vm: { scriptVariables: () => Promise.resolve([]) },
+    updateInterval: () => undefined,
+    ...extra,
+  });
+
+  it("prints a quest's aliases in the original's lines (ShowQuestAliases)", async () => {
+    const commands = new ConsoleCommands(fakeContext({}, questRuntime()));
+    expect(await commands.run('ShowQuestAliases 3372b')).toEqual([
+      "- 3 Aliases for quest 'MQ101' (0003372B)-",
+      "REF 'Hadvar'-> 'Hadvar' (00001A2B)",
+      "REF 'Ralof'-> NONE",
+      "LOC 'Keep'-> 'HelgenKeepLocation' (00005000)",
+    ]);
+  });
+
+  it("prints a quest's scripts, aliases and state in that order (sqv)", async () => {
+    const runtime = questRuntime({
+      vm: {
+        scriptVariables: (handle: ObjectHandle) =>
+          Promise.resolve(
+            handle.formId === MQ101 && handle.type === 'quest'
+              ? [
+                  {
+                    script: 'MQ101QuestScript',
+                    state: '',
+                    variables: [{ name: 'Count', type: 'Int', value: 3 }],
+                  },
+                ]
+              : [],
+          ),
+      },
+      updateInterval: (handle: ObjectHandle, gameTime: boolean) =>
+        handle.formId === MQ101 && gameTime ? 1 : undefined,
+    });
+    const commands = new ConsoleCommands(fakeContext({}, runtime));
+    const aliases = [
+      "- 3 Aliases for quest 'MQ101' (0003372B)-",
+      "REF 'Hadvar'-> 'Hadvar' (00001A2B)",
+      "REF 'Ralof'-> NONE",
+      "LOC 'Keep'-> 'HelgenKeepLocation' (00005000)",
+    ];
+    expect(await commands.run('sqv 3372b')).toEqual([
+      '--- Papyrus ---------------------------------',
+      '\tRegistered for game-time update every 1.00 hours',
+      'MQ101QuestScript:',
+      '\tScript state = ""',
+      '\tCount = 3',
+      ...aliases,
+      '--- Quest state -----------------------------',
+      'Enabled?\t\t\tYes',
+      'State:\t\t\tRunning',
+      'Current stage:\t10',
+      'Priority:\t\t70',
+    ]);
+    // A quest whose start waits to run is Waiting For Stage.
+    runtime.quests.starting.add(MQ101);
+    expect((await commands.run('sqv 3372b')).at(-3)).toBe('State:\t\t\tWaiting For Stage');
+  });
+
+  it("prints each quest's targets and the load door toward each (sqt)", async () => {
+    const asked: number[] = [];
+    const commands = new ConsoleCommands(
+      fakeContext(
+        {
+          questTargets: () =>
+            Promise.resolve([
+              { quest: MQ101, reference: HADVAR },
+              { quest: MQ102, reference: DOOR },
+              { quest: MQ101, reference: RALOF },
+            ]),
+          questTargetDoor: (target: { reference: number }) => {
+            asked.push(target.reference);
+            return Promise.resolve(
+              target.reference === HADVAR
+                ? DOOR
+                : target.reference === RALOF
+                  ? 'same'
+                  : 'unreachable',
+            );
+          },
+        },
+        questRuntime(),
+      ),
+    );
+    expect(await commands.run('sqt')).toEqual([
+      'Current quest: MQ101',
+      '2 current targets',
+      'Target 1:  Reference: Hadvar (00001A2B), load door: Helgen Keep Door (00005555)',
+      'Target 2:  Reference: Ralof (00001A2C), load door: Same cell/exterior',
+      'Current quest: MQ102',
+      '1 current targets',
+      'Target 1:  Reference: Helgen Keep Door (00005555), load door: UNREACHABLE',
+    ]);
+    expect(asked).toEqual([HADVAR, RALOF, DOOR]);
+  });
+
+  it('prints every float, long and short global, skipping any other type (sglv)', async () => {
+    const record = (formId: number, editorId: string, type: string, deleted = false) => ({
+      formId,
+      editorId,
+      deleted,
+      fields: {
+        first: (name: string) => (name === 'FNAM' ? new TextEncoder().encode(type) : undefined),
+      },
+    });
+    const records = [
+      record(0x38, 'GameHour', 'f'),
+      record(0x39, 'GameDaysPassed', 'l'),
+      record(0x3a, 'Wrapped', 's'),
+      record(0x3b, 'Unknown', 'x'),
+      record(0x3c, 'Gone', 'f', true),
+    ];
+    const values = new Map([
+      [0x38, 8.5],
+      [0x39, 3],
+      [0x3a, 40000],
+      [0x3b, 1],
+      [0x3c, 1],
+    ]);
+    const commands = new ConsoleCommands(
+      fakeContext(
+        {
+          db: {
+            scan: (types: string[], _accept: unknown, visit: (r: unknown) => void) => {
+              if (types.includes('GLOB')) for (const r of records) visit(r);
+              return Promise.resolve();
+            },
+          },
+        },
+        {
+          formHandle: (formId: number) => new ObjectHandle(formId, 'form'),
+          native: () => (call: { self: ObjectHandle | null }) =>
+            values.get(call.self?.formId ?? 0) ?? 0,
+        },
+      ),
+    );
+    expect(await commands.run('sglv')).toEqual([
+      '--- Global Variables -----------------------------',
+      'GameHour = 8.5000',
+      'GameDaysPassed = 3',
+      'Wrapped = -25536',
+    ]);
+  });
+});
+
 describe('parseConsoleLine', () => {
   it('splits a command and its arguments, quotes keeping spaces and commas', () => {
     expect(parseConsoleLine('help "iron sword, fine" 4')).toMatchObject({

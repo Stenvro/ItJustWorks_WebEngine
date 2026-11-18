@@ -7,6 +7,7 @@
 // src/shell/console-commands.ts.
 
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
+import type { TextInputCount } from '../ui/text-input.ts';
 import type { IniSettings } from '../world/ini-settings.ts';
 import type { Terminal } from './terminal.ts';
 
@@ -30,15 +31,21 @@ export class ConsoleMenu {
   readonly #host: MenuHost;
   readonly #terminal: Terminal;
   readonly #ini: IniSettings;
+  /**
+   * The console allows text input from its opening until it has closed, or failed to open
+   * (observed in the original).
+   */
+  readonly #textInput: ReturnType<TextInputCount['whileOpen']>;
   #menu: Menu | undefined;
   #hiding = false;
   /** The history the console showed, kept between openings (the game keeps it). */
   readonly #history: string[] = [];
 
-  constructor(host: MenuHost, terminal: Terminal, ini: IniSettings) {
+  constructor(host: MenuHost, terminal: Terminal, ini: IniSettings, textInput: TextInputCount) {
     this.#host = host;
     this.#terminal = terminal;
     this.#ini = ini;
+    this.#textInput = textInput.whileOpen();
   }
 
   get isOpen(): boolean {
@@ -61,7 +68,8 @@ export class ConsoleMenu {
         add(menu, line);
       }
     };
-    const menu = await this.#host.open('console.swf', {
+    this.#textInput.opened();
+    const opening = this.#host.open('console.swf', {
       depth,
       interactive: true,
       onKey: (_menu, event) => {
@@ -110,6 +118,7 @@ export class ConsoleMenu {
         HideComplete: (opened) => {
           this.#host.close(opened);
           this.#menu = undefined;
+          this.#textInput.closed();
           closed();
         },
       },
@@ -126,6 +135,13 @@ export class ConsoleMenu {
         opened.invoke('Console.Show');
       },
     });
+    let menu: Menu;
+    try {
+      menu = await opening;
+    } catch (error) {
+      this.#textInput.closed();
+      throw error;
+    }
     this.#menu = menu;
     return menu;
   }
@@ -141,5 +157,6 @@ export class ConsoleMenu {
   close(): void {
     if (this.#menu) this.#host.close(this.#menu);
     this.#menu = undefined;
+    this.#textInput.closed();
   }
 }

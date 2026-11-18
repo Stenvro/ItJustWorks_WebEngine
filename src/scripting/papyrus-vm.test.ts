@@ -419,3 +419,37 @@ describe('Papyrus VM', () => {
     expect(host.warnings.some((w) => w.includes('Form.GetFormID is not implemented'))).toBe(true);
   });
 });
+
+describe("the VM's script variables (the console's sv and sqv)", () => {
+  it("lists a script's parents' variables first, then its own, with their declared names and types", async () => {
+    const { vm, house } = setup();
+    // Nothing attached yet: no scripts.
+    expect(await vm.scriptVariables(house)).toEqual([]);
+    await vm.call(house, 'BuildAll');
+    const [script] = await vm.scriptVariables(house);
+    expect(script?.script).toBe('HouseScript');
+    expect(script?.variables.map(({ name, type }) => `${name}:${type}`)).toEqual([
+      '::Built_var:Int',
+      '::Markers_var:ObjectReference[]',
+      '::Self_var:HouseScript',
+    ]);
+    expect(script?.variables[0]?.value).toBe(2);
+    expect(script?.variables[1]?.value).toBeInstanceOf(PapyrusArray);
+  });
+
+  it('names the state as the script declares it, though the VM keeps it lowercase', async () => {
+    const { vm, house } = setup();
+    await vm.call(house, 'Busy');
+    expect(await vm.stateOf(house)).toBe('working');
+    expect((await vm.scriptVariables(house))[0]?.state).toBe('Working');
+  });
+
+  it('gives a variable nothing set None', async () => {
+    const { vm } = setup();
+    const gate = new ObjectHandle(0x30, 'Gate');
+    await vm.initialize(gate);
+    const [script] = await vm.scriptVariables(gate);
+    expect(script?.state).toBe('');
+    expect(script?.variables.find((variable) => variable.name === '::Lever_var')?.value).toBeNull();
+  });
+});

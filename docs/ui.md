@@ -1004,7 +1004,10 @@ function index. Every name the game knows is known; how each runs:
     (the player's, as Actor.SetRace).
   - sucsm sets the INI setting fFreeCameraTranslationSpeed:Camera (default 20), the units the
     free camera moves each update with a move key held, whatever the update's length, times
-    fFreeCameraRunSpeed (2) while running (src/render/fly-camera.ts).
+    fFreeCameraRunSpeed (2) while running (src/render/fly-camera.ts); the mouse wheel does
+    not change it. Only the game's tfc in Play moves so (src/shell/free-camera.ts); the
+    Sandbox's free camera keeps the viewers' speed in units per second, which the wheel
+    adjusts.
 - **Cast** takes the casting source the game's table marks as needed (its "(Optional)" name
   notwithstanding). TODO(M13): the node the spell leaves from by that source.
 

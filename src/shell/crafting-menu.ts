@@ -31,7 +31,7 @@ import {
 import type { GameSession } from './game-session.ts';
 import { Item3D } from './item-3d.ts';
 import type { Terminal } from './terminal.ts';
-import type { TextInputCount } from '../ui/text-input.ts';
+import { editItemName, endItemRename, type TextInputCount } from '../ui/text-input.ts';
 
 export type { CraftingHost } from './crafting-models.ts';
 
@@ -242,8 +242,7 @@ export class CraftingMenu {
         },
         EndItemRename: (opened, args) => {
           submenu = undefined;
-          session.textInput.allow(false);
-          model.rename?.(args[1] === true && typeof args[2] === 'string' ? args[2] : undefined);
+          endItemRename(session.textInput, (name) => model.rename?.(name), args);
           showSelected(opened).catch(log);
         },
         StartMouseRotation: () => {
@@ -306,8 +305,7 @@ function viewOf(menu: Menu, textInput: TextInputCount): CraftingView {
       menu.invoke(`${MENU}.ShowSlider`, max, min, value, step);
     },
     rename: (name, maxLength) => {
-      textInput.allow(true);
-      menu.invoke(`${MENU}.EditItemName`, name, maxLength);
+      editItemName(menu, textInput, name, maxLength);
     },
   };
 }

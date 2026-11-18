@@ -56,7 +56,9 @@ import { DialogueMenu } from './dialogue-menu.ts';
 import { cellPlacement, exteriorCells } from './cell-placement.ts';
 import { ConsoleMenu, isConsoleKey, type ConsoleRunner } from './console-menu.ts';
 import { ConsoleCommands, parseConsoleLine } from './console-commands.ts';
-import { Compass, firstDoorToward, questTargets } from './compass.ts';
+import { Compass, questTargets } from './compass.ts';
+import { toggleGameFreeCamera } from './free-camera.ts';
+import { questTargetDoor } from './quest-door.ts';
 import { MenuHost, type Menu } from '../ui/menu-host.ts';
 import { CUSTOM_MENU, MenuName } from '../ui/menu-stack.ts';
 import { CustomMenu } from './custom-menu.ts';
@@ -389,7 +391,7 @@ export class PlayMode {
       long: ini.number('Interface', 'fMenuKeyRepeatLong'),
       short: ini.number('Interface', 'fMenuKeyRepeatShort'),
     };
-    this.#console = new ConsoleMenu(this.#host, terminal, ini);
+    this.#console = new ConsoleMenu(this.#host, terminal, ini, session.textInput);
     // SKSE's custom menu, as scripts open it (UI.OpenCustomMenu).
     this.#customMenu = new CustomMenu(
       this.#host,
@@ -1137,13 +1139,8 @@ export class PlayMode {
     // Not while a place loads.
     if (this.#session.loading) return;
     event.preventDefault();
-    const leaveMenuMode = this.#enterMenuMode();
-    // The console allows text input while it shows (observed in the original).
-    const releaseTextInput = this.#session.textInput.hold();
-    const leave = (): void => {
-      releaseTextInput();
-      leaveMenuMode();
-    };
+    // The console holds text input itself while it shows (src/shell/console-menu.ts).
+    const leave = this.#enterMenuMode();
     this.#console
       .open(
         CONSOLE_DEPTH,
@@ -1236,12 +1233,10 @@ export class PlayMode {
             player.noClip = !player.noClip;
             return !player.noClip;
           },
+          // The game's free camera moves by the game's settings (src/shell/free-camera.ts).
           toggleFreeCamera: () => {
             const play = this.#world.player()?.play;
-            if (!play) return false;
-            const free = play.freeCamera;
-            play.setFreeCamera(!free);
-            return !free;
+            return play ? toggleGameFreeCamera(play, session.ini) : false;
           },
           toggleGrass: () => {
             this.#renderer.showGrass = !this.#renderer.showGrass;
@@ -1263,17 +1258,12 @@ export class PlayMode {
           gameSettings: () => session.settings(),
           questTargets: () => questTargets(runtime),
           // The load door toward a target in another space, as the compass finds it.
-          questTargetDoor: async (target) => {
-            const at = await runtime.placement(PLAYER_REF);
-            const to = target.placement ?? (await runtime.placement(target.reference));
-            if (!at || !to) return 'unreachable';
-            const same =
-              at.world !== undefined
-                ? to.world === at.world
-                : to.cell !== undefined && to.cell === at.cell;
-            if (same) return 'same';
-            return firstDoorToward(await session.routeMap(), at, to)?.door ?? 'unreachable';
-          },
+          questTargetDoor: (target) =>
+            questTargetDoor(
+              (reference) => runtime.placement(reference),
+              () => session.routeMap(),
+              target,
+            ),
           pick: (x, y, aspect) => this.#world.player()?.play.pickAt(x, y, aspect),
           forceWeather: (weather, override) => {
             session.sky.forceWeather(weather, override);
