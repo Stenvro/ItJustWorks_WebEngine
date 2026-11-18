@@ -25,6 +25,7 @@ import {
   type BehaviorGraph,
   type BehaviorModifier,
   type Bindable,
+  type ClipTrigger,
   type FootIkGains,
   type FootIkSetup,
   type LookAtBone,
@@ -37,7 +38,9 @@ import {
 } from '../formats/hkx/behavior.ts';
 import { evaluateNode, parseExpression, type Expression } from './behavior-expression.ts';
 import {
+  acyclicPassed,
   CLIP_MODE,
+  clipSpeed,
   clipStartTime,
   stepClip,
   timesPassed,
@@ -498,6 +501,11 @@ interface ClipState {
   cycle: number;
   /** The last update moved it backward in its time (its root motion is taken backward). */
   reverse: boolean;
+  /**
+   * The time it has played since it became active, its speed applied (negative counting back):
+   * its acyclic triggers raise as this passes their time (clip-playback.ts acyclicPassed).
+   */
+  played?: number;
 }
 
 /**
@@ -3737,6 +3745,7 @@ export class BehaviorRuntime {
             this.#clipDuration(node, animation),
             read,
             this.#read(node.speed ?? { value: node.playbackSpeed }, scope),
+            node.enforcedDuration ?? 0,
           )
         : read;
       state = {
@@ -3757,8 +3766,17 @@ export class BehaviorRuntime {
     let previous = state.time;
     let wrapped: boolean;
     let sweeps: readonly ClipSweep[];
-    // Its first step since it became active: what lies at its start time is passed too.
-    const first = state.updated < 0;
+    // Its speed in its own time (at least MIN_CLIP_SPEED either way), an enforced duration
+    // playing it in that time; on a ping-pong's way back it counts back.
+    const enforced = node.enforcedDuration && node.enforcedDuration > 0 ? node.enforcedDuration : 0;
+    const scale = enforced > 0 ? duration / enforced : 1;
+    const speed = clipSpeed(this.#read(node.speed ?? { value: node.playbackSpeed }, scope));
+    const playedFrom = state.played ?? 0;
+    const playedStep =
+      node.mode === CLIP_MODE.userControlled
+        ? 0
+        : dt * speed * scale * (node.mode === CLIP_MODE.pingPong && state.backward ? -1 : 1);
+    state.played = playedFrom + playedStep;
     if (state.phase !== undefined) {
       const time = state.phase * duration;
       // Joining a syncing blender's cycle, it starts at its phase: it has not moved the
@@ -3775,32 +3793,29 @@ export class BehaviorRuntime {
       state.time = time;
       if (wrapped) state.cycle++;
       state.reverse = false;
-      // Forward through its cycle (over the seam into the next one). A step back passes nothing:
-      // what lies behind it it passed already, and passes again as its phase moves on (read as
-      // passed backward, a walk and run blend raised its FootLeft and FootRight twice).
+      // Forward through its cycle (over the seam into the next one: the way to the cycle's end
+      // with both ends). A step back passes nothing: what lies behind it it passed already, and
+      // passes again as its phase moves on (read as passed backward, a walk and run blend raised
+      // its FootLeft and FootRight twice).
       sweeps = wrapped
         ? [
-            { from: previous, to: duration, includeFrom: first, cycle: state.cycle - 1 },
-            { from: 0, to: time, includeFrom: true, cycle: state.cycle },
+            { from: previous, to: duration, closed: true, cycle: state.cycle - 1 },
+            { from: 0, to: time, closed: false, cycle: state.cycle },
           ]
-        : time > previous || (first && time === previous)
-          ? [{ from: previous, to: time, includeFrom: first, cycle: state.cycle }]
+        : time > previous
+          ? [{ from: previous, to: time, closed: false, cycle: state.cycle }]
           : [];
     } else {
       // The step in the clip's own time (src/animation/clip-playback.ts): its speed (negative
-      // plays it backward), an enforced duration playing it in that time; a user-controlled
-      // clip goes where its variable puts it.
+      // plays it backward); a user-controlled clip goes where its variable puts it.
       let step: number;
       if (node.mode === CLIP_MODE.userControlled) {
         const fraction = this.#read(node.userControlledTimeFraction ?? { value: 0 }, scope);
         step = Math.min(1, Math.max(0, fraction)) * duration - state.time;
       } else {
-        const speed = this.#read(node.speed ?? { value: node.playbackSpeed }, scope);
-        const scale =
-          node.enforcedDuration && node.enforcedDuration > 0 ? duration / node.enforcedDuration : 1;
         step = dt * speed * scale;
       }
-      const stepped = stepClip(node.mode, duration, state, step, first);
+      const stepped = stepClip(node.mode, duration, state, step);
       state.time = stepped.time;
       state.backward = stepped.backward;
       state.cycle = stepped.cycle;
@@ -3812,55 +3827,88 @@ export class BehaviorRuntime {
     state.wrapped = wrapped;
     state.updated = this.#updates;
     // Triggers (and the animation's annotations) passed in this step raise their events, once
-    // for every time the step passed them, in the direction the clip plays. The first step of a
-    // clip just activated takes in its start: a trigger at its local time 0 fires as it starts
-    // (the tower wall's opening clip raises Begin there, which MQ101DragonAttack's stage 103
-    // waits for; skipped, it never came). An acyclic trigger fires in the first cycle only.
-    if (sweeps.length === 0) return;
-    // How long before the update's end a passed time fell (GraphEvent.late), by the share of the
-    // step's way through the clip that came after its nth passing.
-    const swept = sweeps.reduce((sum, sweep) => sum + Math.abs(sweep.to - sweep.from), 0);
-    const lateOf = (time: number, nth: number, onlyCycle?: number): number | undefined => {
-      if (!(swept > 1e-9) || !(dt > 0)) return undefined;
-      let after = 0;
-      let seen = -1;
-      for (const sweep of sweeps) {
-        if (seen >= nth) after += Math.abs(sweep.to - sweep.from);
-        else if (timesPassed([sweep], time, onlyCycle) > 0 && ++seen === nth)
-          after += Math.abs(sweep.to - time);
-      }
-      const late = Math.min(dt, Math.max(0, (dt * after) / swept));
-      return late > 0 ? late : undefined;
-    };
-    // A clip does not raise an event its graph flags silent (EVENT_FLAGS.silent: the horse's,
-    // troll's, vampire lord's and werewolf's SyncLeft and SyncRight annotations).
+    // for every time the step passed them, in the direction the clip plays. A step takes in the
+    // time it starts from: a trigger at its local time 0 fires as the clip first moves (the
+    // tower wall's opening clip raises Begin there, which MQ101DragonAttack's stage 103 waits
+    // for; skipped, it never came). An acyclic trigger raises by the time played since the clip
+    // became active (acyclicPassed), not by its cycles. A clip does not raise an event its graph
+    // flags silent (EVENT_FLAGS.silent: the horse's, troll's, vampire lord's and werewolf's
+    // SyncLeft and SyncRight annotations).
     const flags = scope.graph.eventFlags ?? [];
     // A paired clip's: its side's own events (#ownEvent).
     const sync = this.#syncOf.get(node);
     const own = sync && ownEventPrefix(sync.syncPrefix);
+    // The acyclic triggers raise after the cyclic ones (observed in the original).
+    this.#raiseClipEvents(node, animation, scope, own, sweeps, dt, duration, scale);
     for (const trigger of node.triggers ?? []) {
-      const time = trigger.relativeToEndOfClip ? duration + trigger.localTime : trigger.localTime;
+      if (!trigger.acyclic || playedStep <= 0) continue;
       if (((flags[trigger.event.id] ?? 0) & EVENT_FLAGS.silent) !== 0) continue;
-      const onlyCycle = trigger.acyclic ? 0 : undefined;
-      const times = timesPassed(sweeps, time, onlyCycle);
-      for (let n = 0; n < times; n++)
-        this.#raise(trigger.event, scope, own, lateOf(time, n, onlyCycle));
-    }
-    if (((node.flags ?? 0) & CLIP_FLAGS.dontConvertAnnotationsToTriggers) === 0) {
-      for (const annotation of animation.annotations) {
-        const time = annotation.time - (node.cropStart ?? 0);
-        const times = timesPassed(sweeps, time);
-        if (times === 0) continue;
-        if (silentEvents(scope.graph).has(annotation.text.toLowerCase())) continue;
-        for (let n = 0; n < times; n++) {
-          // A graph declares an annotation's whole text as its event (SoundPlay.NPCCowMoo); the
-          // engine hears it as tag and payload (graphEvent: AnimObjLoad.DecapitationHeadGore).
-          const id = this.#eventIndex.get(annotation.text.toLowerCase());
-          if (id !== undefined) this.#queue.push({ id });
-          this.#ownEvent(annotation.text, undefined, own, lateOf(time, n));
-        }
+      if (acyclicPassed(playedFrom, playedStep, trigger.localTime)) {
+        const late = dt > 0 ? (dt * (playedFrom + playedStep - trigger.localTime)) / playedStep : 0;
+        this.#raise(trigger.event, scope, own, late > 0 ? Math.min(dt, late) : undefined);
       }
     }
+  }
+
+  /** The cyclic triggers and the annotations a clip's step passed (#advanceClip). */
+  #raiseClipEvents(
+    node: Clip,
+    animation: AnimationBinding['animation'],
+    scope: Scope,
+    own: string | undefined,
+    sweeps: readonly ClipSweep[],
+    dt: number,
+    duration: number,
+    scale: number,
+  ): void {
+    const flags = scope.graph.eventFlags ?? [];
+    if (sweeps.length === 0) return;
+    // How long before the update's end a passed time fell (GraphEvent.late): the share of the
+    // step's way through the clip that came after it.
+    const lengths = sweeps.map((sweep) => Math.abs(sweep.to - sweep.from));
+    const swept = lengths.reduce((sum, length) => sum + length, 0);
+    let after = swept;
+    // A trigger's time is in the clip's played time (its enforced duration's, where it has one),
+    // from its end if relative to it, kept within it; the step's times are in the clip's own.
+    const played = duration / scale;
+    const triggers: { readonly time: number; readonly trigger: ClipTrigger }[] = [];
+    for (const trigger of node.triggers ?? []) {
+      if (trigger.acyclic) continue;
+      if (((flags[trigger.event.id] ?? 0) & EVENT_FLAGS.silent) !== 0) continue;
+      const local = trigger.relativeToEndOfClip ? played + trigger.localTime : trigger.localTime;
+      triggers.push({ time: Math.min(played, Math.max(0, local)) * scale, trigger });
+    }
+    // The annotations within the clip's crop become triggers as it activates (after its own;
+    // those outside it never raise), at their time in the cropped clip, taken as triggers' are.
+    const annotations: { readonly time: number; readonly text: string }[] = [];
+    if (((node.flags ?? 0) & CLIP_FLAGS.dontConvertAnnotationsToTriggers) === 0) {
+      for (const annotation of animation.annotations) {
+        const local = annotation.time - (node.cropStart ?? 0);
+        if (local < 0 || local > duration) continue;
+        if (silentEvents(scope.graph).has(annotation.text.toLowerCase())) continue;
+        annotations.push({ time: Math.min(played, local) * scale, text: annotation.text });
+      }
+    }
+    // Stretch by stretch (observed in the original: each loop's in turn), its triggers in order.
+    sweeps.forEach((sweep, index) => {
+      after -= lengths[index] ?? 0;
+      const lateOf = (time: number): number | undefined => {
+        if (!(swept > 1e-9) || !(dt > 0)) return undefined;
+        const late = Math.min(dt, Math.max(0, (dt * (after + Math.abs(sweep.to - time))) / swept));
+        return late > 0 ? late : undefined;
+      };
+      for (const { time, trigger } of triggers) {
+        if (timesPassed([sweep], time) > 0) this.#raise(trigger.event, scope, own, lateOf(time));
+      }
+      for (const { time, text } of annotations) {
+        if (timesPassed([sweep], time) === 0) continue;
+        // A graph declares an annotation's whole text as its event (SoundPlay.NPCCowMoo); the
+        // engine hears it as tag and payload (graphEvent: AnimObjLoad.DecapitationHeadGore).
+        const id = this.#eventIndex.get(text.toLowerCase());
+        if (id !== undefined) this.#queue.push({ id });
+        this.#ownEvent(text, undefined, own, lateOf(time));
+      }
+    });
   }
 
   /** A clip's duration as it plays: its animation's, less what it crops. */

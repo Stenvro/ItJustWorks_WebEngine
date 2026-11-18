@@ -225,7 +225,7 @@ describe('the behavior runtime', () => {
     expect(names(runtime.takeRaised())).toEqual([]);
   });
 
-  it("raises a clip's trigger at its start as the clip starts, once", () => {
+  it("raises a clip's trigger at its start as the clip first moves, once", () => {
     const once: BehaviorGenerator = {
       ...(clip('open') as Extract<BehaviorGenerator, { kind: 'clip' }>),
       mode: 0,
@@ -244,9 +244,11 @@ describe('the behavior runtime', () => {
       host: host({ open: animation(0, 1) }),
       skeleton,
     });
+    // A step passes where it starts from (observed in the original); one of no time passes nothing.
     runtime.update(0);
-    expect(names(runtime.takeRaised())).toEqual(['Begin']);
+    expect(names(runtime.takeRaised())).toEqual([]);
     runtime.update(0.3);
+    expect(names(runtime.takeRaised())).toEqual(['Begin']);
     runtime.update(0.3);
     expect(names(runtime.takeRaised())).toEqual([]);
   });

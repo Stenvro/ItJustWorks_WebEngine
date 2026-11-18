@@ -63,9 +63,10 @@ describe.skipIf(!hasGamedata())('the animation data of the load order (data)', (
 
 // The clip generator's triggers and its animation's annotations (Havok's hkbClipGenerator, its
 // modes: src/animation/clip-playback.ts): an event raises as the clip passes its time, in the
-// direction it plays, once each time it passes it. Inferred where Havok's rule is not documented
-// (TODO(M13)): a clip played at a negative speed starts at its end; an acyclic trigger fires in
-// the first cycle only.
+// direction it plays, once each time it passes it. Observed in the original: a step passes where
+// it starts from and not where it ends, a stretch to a cycle's end (or a single play's end) both;
+// a clip played at a negative speed from 0 starts at its end; an acyclic trigger raises by the
+// time played since the clip began, after the cyclic ones.
 
 /** One bone, moved along x by the clip's time: the pose shows where the clip is. */
 const ONE_BONE: HkxSkeleton = {
@@ -139,7 +140,7 @@ const raised = (runtime: BehaviorRuntime): string[] =>
   runtime.takeRaised().map((event) => event.text);
 
 describe('clip triggers and annotations (Havok)', () => {
-  it('single play: each raises once as the clip passes it, its start as it starts', () => {
+  it('single play: each raises once as the clip passes it, its start as it first moves', () => {
     const runtime = playClip({
       mode: CLIP_MODE.singlePlay,
       triggers: [trigger(0, 0), trigger(1, 0.5), trigger(2, 0, { relativeToEndOfClip: true })],
@@ -147,9 +148,9 @@ describe('clip triggers and annotations (Havok)', () => {
       events: ['Begin', 'Halfway', 'End', 'FootLeft'],
     });
     runtime.update(0);
-    expect(raised(runtime)).toEqual(['Begin']);
+    expect(raised(runtime)).toEqual([]);
     runtime.update(0.3);
-    expect(raised(runtime)).toEqual(['FootLeft']);
+    expect(raised(runtime)).toEqual(['Begin', 'FootLeft']);
     runtime.update(0.3);
     expect(raised(runtime)).toEqual(['Halfway']);
     runtime.update(0.6);
@@ -171,11 +172,13 @@ describe('clip triggers and annotations (Havok)', () => {
     runtime.update(0.6); // over 0.9 and the seam, to 0.2
     expect(raised(runtime)).toEqual(['FootLeft']);
     runtime.update(2.5); // 0.2 to 0.7, two cycles later
-    expect(raised(runtime)).toEqual(['Halfway', 'Halfway', 'Halfway', 'FootLeft', 'FootLeft']);
+    // Cycle by cycle (observed in the original): the rest of this one, a whole one, the next's
+    // way to 0.7.
+    expect(raised(runtime)).toEqual(['Halfway', 'FootLeft', 'Halfway', 'FootLeft', 'Halfway']);
     expect(runtime.pose[0]).toBeCloseTo(0.7);
   });
 
-  it('looping: an acyclic trigger raises in the first cycle only', () => {
+  it('looping: an acyclic trigger raises once, by the time played, after the cyclic ones', () => {
     const runtime = playClip({
       mode: CLIP_MODE.looping,
       triggers: [trigger(0, 0.2, { acyclic: true }), trigger(1, 0.4)],
@@ -183,10 +186,47 @@ describe('clip triggers and annotations (Havok)', () => {
     });
     runtime.update(0);
     runtime.update(0.5);
-    expect(raised(runtime)).toEqual(['Once', 'Every']);
+    expect(raised(runtime)).toEqual(['Every', 'Once']);
     runtime.update(1);
     runtime.update(1);
     expect(raised(runtime)).toEqual(['Every', 'Every']);
+  });
+
+  it('an acyclic trigger goes by the time played, not the clip’s place; never played backward', () => {
+    // Started halfway: its acyclic trigger at 0.2 raises 0.2 s in (at the clip's 0.7), where the
+    // first cycle's rule would have raised it at none (its 0.2 lies in the second cycle).
+    const node: BehaviorGenerator = {
+      kind: 'clip',
+      name: 'clip',
+      animation: 'clip',
+      mode: CLIP_MODE.looping,
+      playbackSpeed: 1,
+      startTime: { value: 0.5 },
+      triggers: [trigger(0, 0.2, { acyclic: true })],
+    };
+    const binding = timeline(1);
+    const runtime = new BehaviorRuntime({
+      root: { name: 'test', events: ['Once'], variables: [], root: node },
+      host: { clip: () => binding, behavior: () => undefined },
+      skeleton: ONE_BONE,
+    });
+    runtime.update(0);
+    runtime.update(0.1);
+    expect(raised(runtime)).toEqual([]);
+    runtime.update(0.15);
+    expect(raised(runtime)).toEqual(['Once']);
+    expect(runtime.pose[0]).toBeCloseTo(0.75);
+    runtime.update(1);
+    expect(raised(runtime)).toEqual([]);
+    const back = playClip({
+      mode: CLIP_MODE.looping,
+      speed: -1,
+      triggers: [trigger(0, 0.2, { acyclic: true })],
+      events: ['Once'],
+    });
+    back.update(0);
+    back.update(0.9);
+    expect(raised(back)).toEqual([]);
   });
 
   it('ping-pong: raised on the way out and again on the way back, turning at the ends', () => {
@@ -253,8 +293,11 @@ describe('clip triggers and annotations (Havok)', () => {
 });
 
 describe.skipIf(!hasGamedata())('a clip of the people’s graph played backward (data)', () => {
-  // 0_master's Stf_Unequip plays the staff's equip clip at speed -1: it starts at the equip's end
-  // and raises its end-relative trigger there, its other triggers (at 0.2 s) 0.2 s before it ends.
+  // 0_master's Stf_Unequip plays the staff's equip clip at speed -1: it starts at the equip's end,
+  // its other triggers (at 0.2 s: Unequip_Out, Unequip_OutMoving) raise 0.2 s before it ends.
+  // Its end-relative trigger (BeginWeaponSheathe, at the clip's end) is never passed: a step
+  // passes where it starts from and not where it ends, and a backward step starts from the end's
+  // far side (observed in the original). Before, ours raised it as the clip started.
   let runtime: BehaviorRuntime;
   let duration = 0;
   let names: readonly string[] = [];
@@ -298,16 +341,18 @@ describe.skipIf(!hasGamedata())('a clip of the people’s graph played backward 
     });
   }, 600_000);
 
-  it('starts at the end, raising its end trigger; its 0.2 s triggers come 0.2 s before it ends', () => {
+  it('starts at the end, its end trigger not passed; its 0.2 s triggers come 0.2 s before it ends', () => {
     runtime.update(0);
-    const atStart = raised(runtime);
-    expect(atStart.length).toBeGreaterThan(0);
+    expect(raised(runtime)).toEqual([]);
+    expect(runtime.pose.length).toBeGreaterThan(0);
     runtime.update(duration - 0.3);
     expect(raised(runtime)).toEqual([]);
     runtime.update(0.2);
     const late = raised(runtime);
-    expect(late.length).toBeGreaterThanOrEqual(2);
-    for (const name of [...atStart, ...late]) expect(names).toContain(name);
+    expect([...late].sort()).toEqual(['Unequip_Out', 'Unequip_OutMoving']);
+    for (const name of late) expect(names).toContain(name);
+    runtime.update(0.2);
+    expect(raised(runtime)).not.toContain('BeginWeaponSheathe');
   });
 });
 
