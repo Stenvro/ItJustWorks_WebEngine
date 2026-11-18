@@ -3814,7 +3814,8 @@ export class ActorCombatAi {
                 lateralAttackPlaces(
                   f.feet,
                   f.there,
-                  f.mind.side < 0 ? -1 : 1,
+                  turnBetween(f.view.heading, headingTo(f.feet, f.there)),
+                  f.range,
                   this.#random,
                   this.#navmeshes(),
                   this.#subtrees,

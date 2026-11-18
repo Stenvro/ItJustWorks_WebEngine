@@ -241,29 +241,33 @@ describe('the line of fire and Find Attack Location', () => {
     expect(castWaitsForLineOfFire(true)).toBe(false);
   });
 
-  it('Find Lateral Attack Location: beside it, square to its line, out to 512 units', () => {
+  it('Find Lateral Attack Location: beside it, square to its line, out to 512 units  [original]', () => {
     const feet: P = [500, 500, 0];
     const target: P = [500, 1500, 0];
-    // The shortest step each time (fCombatFindLateralAttackLocationIntervalMin, 64): 8 a side,
-    // its right (east of a line north) first at each.
-    const places = lateralAttackPlaces(feet, target, 1, () => 0);
-    expect(places).toHaveLength(16);
-    expect(places[0]).toEqual([564, 500, 0]);
-    expect(places[1]).toEqual([436, 500, 0]);
-    expect(places.at(-2)).toEqual([1012, 500, 0]);
+    // 64 out (fCombatFindLateralAttackLocationIntervalMin), then every 128 (…IntervalMax) to 512:
+    // one side whole, then the other; the first side by an even roll (its right, east of a line
+    // north, on a low roll).
+    const places = lateralAttackPlaces(feet, target, 0, 2000, () => 0);
+    expect(places.map((place) => place[0])).toEqual([
+      564, 628, 756, 884, 1012, 436, 372, 244, 116, -12,
+    ]);
     expect(places.every((place) => place[1] === 500)).toBe(true);
-    // The longest (…IntervalMax, 128): 4 a side; its left first when asked.
-    const wide = lateralAttackPlaces(feet, target, -1, () => 1);
-    expect(wide).toHaveLength(8);
-    expect(wide[0]).toEqual([372, 500, 0]);
+    expect(lateralAttackPlaces(feet, target, 0, 2000, () => 1)[0]).toEqual([436, 500, 0]);
+    // Each within its weapon's range of the target: 1050 keeps those out to 256 a side.
+    expect(lateralAttackPlaces(feet, target, 0, 1050, () => 0)).toHaveLength(6);
+    // Only facing its target within 60°, and within its range.
+    expect(lateralAttackPlaces(feet, target, (61 * Math.PI) / 180, 2000, () => 0)).toEqual([]);
+    expect(lateralAttackPlaces(feet, target, (59 * Math.PI) / 180, 2000, () => 0)).toHaveLength(10);
+    expect(lateralAttackPlaces(feet, target, 0, 900, () => 0)).toEqual([]);
   });
 
-  it('Find Lateral Attack Location: only where its way reaches over the navmeshes', () => {
+  it('Find Lateral Attack Location: only where its way reaches over the navmeshes  [original]', () => {
     const set = navmeshes(grid(1, 0, 10), grid(2, 1000, 10));
-    const places = lateralAttackPlaces([500, 500, 0], [500, 1500, 0], 1, () => 0, set);
-    // 1012 lies on the other navmesh, which its way does not reach; −12 off the navmeshes.
+    const places = lateralAttackPlaces([500, 500, 0], [500, 1500, 0], 0, 2000, () => 0, set);
+    // Its way out east ends where it leaves the navmesh it stands on (1012 lies on the other,
+    // which its way does not reach), west where the navmeshes end (−12).
     expect(places.some((place) => place[0] > 1000 || place[0] < 0)).toBe(false);
-    expect(places).toHaveLength(14);
+    expect(places).toHaveLength(8);
   });
 
   it('Find Attack Location: over the navmeshes within 1024, off the target, within range', () => {

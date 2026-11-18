@@ -1030,17 +1030,23 @@ function reachableKeys(set: NavmeshSet, from: Vec3, radius: number): Set<string>
   return visits && new Set(visits.map((v) => `${v.navmesh.formId}:${v.triangle}`));
 }
 
+/** Find Lateral Attack Location asks its shooter to face its target within this (radians; 60°). */
+const LATERAL_FACING = Math.PI / 3;
+
 /**
- * Find Lateral Attack Location: places beside the shooter, square to its line to the target, each
- * fCombatFindLateralAttackLocationIntervalMin .. Max (at random) past the last, out to
- * fCombatFindLateralAttackLocationDistance on either side, the nearer first and `side` (1 its
- * right, −1 its left) first at each step. With navmeshes, only places its way reaches over them.
- * TODO(M13): the order and the random step are inferred from the settings' names.
+ * Find Lateral Attack Location (observed in the original): only for a shooter facing its target
+ * within 60° (`facing`: the angle between its facing and the way to the target, radians) and within `range` (its weapon's maximum) of it. Square to its line to the target,
+ * one side first at random (an even roll), then the other: the way out to
+ * fCombatFindLateralAttackLocationDistance (512) that side, cut where it leaves what it reaches
+ * over the navmeshes, and on it the places fCombatFindLateralAttackLocationIntervalMin (64) out,
+ * then every fCombatFindLateralAttackLocationIntervalMax (128: 128, 256, 384, 512), each still
+ * within `range` of the target. The first with a clear line of fire is taken (the shell's part).
  */
 export function lateralAttackPlaces(
   feet: Vec3,
   target: Vec3,
-  side: 1 | -1,
+  facing: number,
+  range: number,
   random: () => number,
   set?: NavmeshSet,
   settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
@@ -1048,23 +1054,32 @@ export function lateralAttackPlaces(
   const dx = target[0] - feet[0];
   const dy = target[1] - feet[1];
   const length = Math.hypot(dx, dy);
-  if (length <= 1e-6) return [];
+  if (length <= 1e-6 || length >= range) return [];
+  if (Math.abs(facing) >= LATERAL_FACING) return [];
   // Square to the line: (y, −x) is its right on the compass (x east, y north).
   const right = [dy / length, -dx / length] as const;
   const far = settings.findLateralAttackLocationDistance;
   const keys = set && reachableKeys(set, feet, far + ATTACK_PLACE_SNAP);
   const min = settings.findLateralAttackLocationIntervalMin;
-  const max = settings.findLateralAttackLocationIntervalMax;
+  const step = settings.findLateralAttackLocationIntervalMax;
+  const first = random() <= 0.5 ? 1 : -1;
   const places: Vec3[] = [];
-  for (let out = min + random() * (max - min); out <= far; out += min + random() * (max - min)) {
-    for (const s of [side, -side]) {
-      const point: Vec3 = [feet[0] + right[0] * out * s, feet[1] + right[1] * out * s, feet[2]];
+  for (const side of [first, -first]) {
+    for (let k = 0; k <= Math.floor(far / step); k++) {
+      const out = k === 0 ? min : k * step;
+      const point: Vec3 = [
+        feet[0] + right[0] * out * side,
+        feet[1] + right[1] * out * side,
+        feet[2],
+      ];
       const at = onNavmesh(set, point);
-      if (!at) continue;
+      // The way out that side ends where it leaves the navmeshes it reaches.
+      if (!at) break;
       if (set && keys) {
         const located = set.locate(at);
-        if (!located || !keys.has(`${located.navmesh.formId}:${located.triangle}`)) continue;
+        if (!located || !keys.has(`${located.navmesh.formId}:${located.triangle}`)) break;
       }
+      if (Math.hypot(at[0] - target[0], at[1] - target[1], at[2] - target[2]) >= range) continue;
       places.push(at);
     }
   }
