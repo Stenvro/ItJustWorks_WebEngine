@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { lasting, pack, packageActor, procedure, tick } from '../../tests/helpers/packages.ts';
 import {
   ALARM_CALL_SECONDS,
-  ALARM_SECONDS,
+  PURSUE_GIVE_UP_SECONDS,
   alarmConfronts,
   alarmPackage,
   avoidPlayer,
@@ -384,15 +384,16 @@ describe('an NPC criminal, the guard that answers', () => {
     expect(actor.engine()).toBeUndefined();
   });
 
-  it('Alarm gives up on a dead criminal, or one it does not find in its time', async () => {
+  it('Alarm gives up on a dead criminal, or one lost beyond fAIPursueDistanceLineOfSight for 30 s (original)', async () => {
     let alive = false;
+    let away = 5000;
     const fights: number[] = [];
     const { actor } = packageActor(
       [pack(1, procedure('lasting'))],
       { lasting },
       {
         mind: {
-          livePosition: () => [5000, 0, 0],
+          livePosition: () => [away, 0, 0],
           alive: () => Promise.resolve(alive),
         },
         body: { position: () => [0, 0, 0], travel: () => new Promise<boolean>(() => undefined) },
@@ -410,10 +411,15 @@ describe('an NPC criminal, the guard that answers', () => {
     expect(actor.engine()).toBeUndefined();
     alive = true;
     expect(actor.push('alarm', alarmPackage(hooks), CRIMINAL)).toBe(true);
-    for (let i = 0; i < ALARM_SECONDS * 4 - 2; i++) await tick(actor, 0.25);
+    for (let i = 0; i < PURSUE_GIVE_UP_SECONDS * 4 - 2; i++) await tick(actor, 0.25);
     expect(actor.engine()).toBe('alarm');
     for (let i = 0; i < 4; i++) await tick(actor, 0.25);
     expect(actor.engine()).toBeUndefined();
+    // Within fAIPursueDistanceLineOfSight (2500) it is never lost, however long the chase.
+    away = 2000;
+    expect(actor.push('alarm', alarmPackage(hooks), CRIMINAL)).toBe(true);
+    for (let i = 0; i < PURSUE_GIVE_UP_SECONDS * 8; i++) await tick(actor, 0.25);
+    expect(actor.engine()).toBe('alarm');
     expect(fights).toEqual([]);
   });
 

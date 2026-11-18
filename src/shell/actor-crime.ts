@@ -328,6 +328,7 @@ export class ActorCrime {
     };
     const alarm = alarmPackage({
       detects: (actor, other) => senses.detects(actor, other),
+      inView: (actor, other) => senses.sight(actor, other)?.inView === true,
       confront: fight,
     });
     if (!ai.pushEngine(guard, 'alarm', alarm, criminal)) fight(guard, criminal);
@@ -454,6 +455,7 @@ export class ActorCrime {
     const arrest: Arrest = { guard, since: this.#clock, talking: false };
     const alarm = alarmPackage({
       detects: (actor, other) => senses.detects(actor, other),
+      inView: (actor, other) => senses.sight(actor, other)?.inView === true,
       reach: () => this.#greetReach,
       confront: () => this.#forceGreet(runtime, staged, arrest),
     });

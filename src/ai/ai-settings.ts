@@ -44,6 +44,11 @@ export interface AiSettings {
   readonly fleeDoneDistanceExterior: number;
   readonly fleeDoneDistanceInterior: number;
   /**
+   * The Pursue procedure (the engine's Alarm): its target lost while farther than this and out of
+   * its view cone, for PURSUE_GIVE_UP_SECONDS (engine-packages.ts), it gives up.
+   */
+  readonly pursueDistanceLineOfSight: number;
+  /**
    * fAIDistanceRadiusMinLocation, fAIMarkerDestinationRadius, fAIFurnitureDestinationRadius:
    * an actor is at a place, a marker or furniture within this (or the place's radius if larger).
    */
@@ -228,6 +233,7 @@ const SETTINGS: readonly (readonly [keyof AiSettings, string, number])[] = [
   ['fleeIsSafeTimer', 'fFleeIsSafeTimer', 30],
   ['fleeDoneDistanceExterior', 'fFleeDoneDistanceExterior', 2500],
   ['fleeDoneDistanceInterior', 'fFleeDoneDistanceInterior', 600],
+  ['pursueDistanceLineOfSight', 'fAIPursueDistanceLineOfSight', 2500],
   ['distanceRadiusMinLocation', 'fAIDistanceRadiusMinLocation', 100],
   ['markerDestinationRadius', 'fAIMarkerDestinationRadius', 25],
   ['furnitureDestinationRadius', 'fAIFurnitureDestinationRadius', 25],

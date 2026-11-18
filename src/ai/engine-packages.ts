@@ -418,17 +418,19 @@ export const followCommander: EngineRunner = async (run) => {
 //   (the combat AI takes it on) and the package ends, or it arrests the player with its force
 //   greet (the dialogue quest's ForceGreet topic, whose lines ask GetAlarmed: an actor on its
 //   Alarm is alarmed) and stays on the package until the arrest is over. It gives up once the
-//   criminal is dead, in another cell or worldspace, gone from the stage, or not confronted in
-//   ALARM_SECONDS.
+//   criminal is dead, in another cell or worldspace, gone from the stage, or lost: farther than
+//   fAIPursueDistanceLineOfSight (2500) and out of its view cone for PURSUE_GIVE_UP_SECONDS (30),
+//   near or seen starting the count again (the engine's Alarm package runs its Pursue procedure,
+//   whose give-up is this: observed in the original).
 // - **Flee.** The criminal runs from the guard, counting as fleeing (IsFleeing), until it has
 //   been beyond fFleeDoneDistanceExterior (inside: fFleeDoneDistanceInterior) of it for
 //   fFleeIsSafeTimer (the Flee procedure's rule: procedure-runs.ts fleeSafe), running off again
 //   whenever the guard comes nearer; the guard dead or in another space, it is over. Caught, the
 //   guard's combat takes it on (it fights or flees by its confidence, the combat AI's).
 //
-// Inferred, TODO(M13): the original's two procedures were not followed: the Alarm's way to the
-// criminal (ours: its live position, as the alarm tells where the crime was), its giving up
-// (ALARM_SECONDS), how often it calls (ALARM_CALL_SECONDS), that a fight starts from wherever it
+// Inferred, TODO(M13): the original's two procedures were not followed further: the Alarm's way to
+// the criminal (ours: its live position, as the alarm tells where the crime was), that its Pursue
+// runs with the give-up switched on (the procedure has it as an option), how often it calls (ALARM_CALL_SECONDS), that a fight starts from wherever it
 // detects the criminal and that the force greet is the package's own step, Flee's spot (ours: on the far side of the guard, the done distance from it,
 // turned up to 60° where the straight one is not walkable) and whether it flees only a guard it
 // detects (ours: as the guard answers).
@@ -437,8 +439,12 @@ export const followCommander: EngineRunner = async (run) => {
 const ALARM_REACH = 128;
 /** The criminal this far from the spot the Alarm heads for, it heads anew (units; ours). */
 const ALARM_RETARGET = 256;
-/** The Alarm gives up after this long without confronting the criminal (real seconds; ours). */
-export const ALARM_SECONDS = 60;
+/**
+ * The Pursue procedure gives up once its target has been lost this long (real seconds, observed
+ * in the original): farther than fAIPursueDistanceLineOfSight and out of its view cone; near or
+ * seen, the count starts again.
+ */
+export const PURSUE_GIVE_UP_SECONDS = 30;
 /** A pursuing guard calls after the criminal this often (real seconds; ours). */
 export const ALARM_CALL_SECONDS = 8;
 /** The pursuit's lines: the topic subtype PursueIdleTopic. */
@@ -463,6 +469,8 @@ async function presentAt(run: EngineRun, reference: number): Promise<Vec3 | unde
 export interface AlarmHooks {
   /** Whether the actor detects the other now. */
   detects(actor: number, other: number): boolean;
+  /** Whether the other is in the actor's view cone with a line of sight (else: as detected). */
+  inView?(actor: number, other: number): boolean;
   /**
    * How near the criminal the guard has to be to confront it (units): an arrest's force greet
    * needs it within the greeting distance; undefined: from wherever it detects it (a fight).
@@ -498,14 +506,17 @@ export function alarmPackage(hooks: AlarmHooks): EngineRunner {
       if (leg && !leg.done && !run.stopped()) run.body.stop();
     };
     let called = 0;
+    let lost = 0;
     for (let searched = 0; !run.stopped(); searched += STEP) {
       const there = await presentAt(run, criminal);
       const here = run.body.position();
-      if (!there || !here || searched >= ALARM_SECONDS || run.stopped()) {
+      if (!there || !here || lost >= PURSUE_GIVE_UP_SECONDS || run.stopped()) {
         halt();
         return;
       }
       const distance = flat(here, there);
+      const seen = hooks.inView?.(run.actor, criminal) ?? hooks.detects(run.actor, criminal);
+      lost = distance <= run.settings.pursueDistanceLineOfSight || seen ? 0 : lost + STEP;
       const reach = hooks.reach?.(run.actor, criminal);
       if (alarmConfronts(hooks.detects(run.actor, criminal), distance, reach)) {
         halt();

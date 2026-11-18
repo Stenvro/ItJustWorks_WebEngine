@@ -254,7 +254,7 @@ the readers ask for by name.
       it calls after the criminal with PursueIdleTopic lines. An engine package put in front while
       the actor's packages are weighed keeps the one chosen from starting under it (what walked
       the guard out of the inn before). src/shell/actor-crime.ts, src/ai/engine-packages.ts,
-      tests/conformance/ai/crime.test.ts. Inferred: the procedure's way, its 60 s and 8 s, the
+      tests/conformance/ai/crime.test.ts. Its give-up: its Pursue procedure's, 30 s lost beyond fAIPursueDistanceLineOfSight and out of view (observed; src/ai/engine-packages.test.ts). Inferred: that the Alarm switches that give-up on, its way, its 8 s, the
       arresting actor set at the force greet.
 - [ ] Crime: the pursuit lines DialogueCrimeGuards keeps for the arresting actor
       (GetArrestingActor: "That'll teach you to break the law on my watch."); when the original
