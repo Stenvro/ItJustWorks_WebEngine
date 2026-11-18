@@ -33,6 +33,9 @@ const HADVAR = 0x2bfa2;
 const GUNJAR = 0xb1694;
 /** MQ101's WardenContainer alias (Hadvar's route opens it at 255; its OnOpen sets 257). */
 const WARDEN_CONTAINER = 62;
+/** MQ101's BarracksRoomSoldier01/02 (Ralof's first fight) and TrophyRoomPrisoner01/02 (Hadvar's). */
+const BARRACKS_SOLDIERS = [173, 174];
+const TROPHY_ROOM_PRISONERS = [152, 170];
 
 /** Where the game stands: MQ101's and MQ102's stages and the scenes' phases. */
 function progress(sim: Sim): string {
@@ -85,6 +88,8 @@ interface Route {
   readonly style: FollowStyle;
   /** Only into the keep and through its first fight (the guide fights it alone). */
   readonly firstFightOnly?: boolean;
+  /** MQ101's aliases of the first fight's enemies. */
+  readonly firstFight: readonly number[];
 }
 
 const ROUTES: readonly Route[] = [
@@ -95,6 +100,7 @@ const ROUTES: readonly Route[] = [
     introScene: 0x4e1e2,
     guide: RALOF,
     gear: () => GUNJAR,
+    firstFight: BARRACKS_SOLDIERS,
     friendQuest: MQ102B,
     style: { fights: true, lagEvery: 45, lagFor: 10 },
   },
@@ -105,6 +111,7 @@ const ROUTES: readonly Route[] = [
     introScene: 0x20167,
     guide: HADVAR,
     gear: (sim) => sim.runtime.state.quest(MQ101).aliases.get(WARDEN_CONTAINER) ?? 0,
+    firstFight: TROPHY_ROOM_PRISONERS,
     friendQuest: MQ102A,
     style: { fights: false, lagEvery: 40, lagFor: 12 },
   },
@@ -116,6 +123,7 @@ const ROUTES: readonly Route[] = [
     introScene: 0x4e1e2,
     guide: RALOF,
     gear: () => GUNJAR,
+    firstFight: BARRACKS_SOLDIERS,
     friendQuest: MQ102B,
     style: { fights: false, lagEvery: 0, lagFor: 0 },
     firstFightOnly: true,
@@ -208,8 +216,8 @@ for (const route of ROUTES) {
         }
         const follower = await play(sim, () => sim.stageDone(MQ101, 305), 420);
         expect(sim.stageDone(MQ101, 305), stalls(follower)).toBe(true);
-        // The guide fought the barracks' soldiers (stage 270 on), the player's fight or not.
-        const soldiers = [173, 174].map((alias) =>
+        // The guide fought the first fight's enemies, whether the player fought or not.
+        const soldiers = route.firstFight.map((alias) =>
           sim.runtime.state.quest(MQ101).aliases.get(alias),
         );
         const hits = sim
