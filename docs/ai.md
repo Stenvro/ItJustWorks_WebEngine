@@ -1713,7 +1713,10 @@ from the original game's behaviour only (in our words):
   as inner and outer (here its minimum and maximum radius). Its path goes to the leader itself,
   stopping within its inner radius, and its radii grow by its place among the leader's followers:
   in order of distance, each next at least both radii and fFollowSpaceBetweenFollowers beyond the
-  one before. Within fFollowWalkZoneMult (built-in 1) times the middle of its radii it walks; beyond
+  one before. Each follower's radius is its own: its character controller's, the narrow half
+  extent of its skeleton's bound "BBX" at its size (a person 14, a dog 20.1, a horse 31.8;
+  `followerRadius`, tests/conformance/ai/followers.test.ts). TODO(M13): that the radius the
+  engine reads there is the controller's, not its 3D's bound sphere, is inferred. Within fFollowWalkZoneMult (built-in 1) times the middle of its radii it walks; beyond
   that it runs with a running leader or farther than the middle plus fFollowMatchSpeedZoneWidth, and
   keeps its package's gait else (observed in the original).
 - **Escort:** it waits once the target is more than its Distance To Wait For Followers behind
