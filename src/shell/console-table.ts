@@ -241,6 +241,13 @@ export const CONSOLE_COMMANDS: readonly ConsoleCommandInfo[] = [
     'Make an actor essential (1) or not (0).',
   ),
   s('GetLocked', undefined, true, [], 'Whether it is locked.'),
+  s(
+    'SetSceneIsComplex',
+    undefined,
+    false,
+    [p('Integer', int)],
+    'Count a complex scene in (1) or out (0): the ambient idles wait longer while any is.',
+  ),
   c('ShowInventory', 'inv', true, [], 'List what it holds.'),
   s(
     'DuplicateAllItems',
