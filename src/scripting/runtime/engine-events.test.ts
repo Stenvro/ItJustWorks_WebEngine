@@ -9,6 +9,7 @@ import type { RecordDatabase } from '../../world/record-db.ts';
 import type { NativeCall } from '../papyrus-vm.ts';
 import { ScriptLibrary } from '../script-library.ts';
 import { formatValue, ObjectHandle, type Value } from '../values.ts';
+import { PLAYER_REF } from './forms.ts';
 import { ScriptRuntime } from './runtime.ts';
 
 const DOOR = 0x100;
@@ -201,5 +202,24 @@ describe('the events the runtime sends', () => {
     accepts = false;
     await callNative(scripts, 'actor', 'startvampirefeed', actor, [scripts.actorHandle(VICTIM)]);
     expect(scripts.state.actors.get(NPC)?.feeding?.kind).toBe('vampire');
+  });
+
+  it('gives the one the player bites a Do Nothing package while the feeding lasts (observed); an NPC’s bite none', async () => {
+    const { runtime: scripts } = runtime();
+    const put: string[] = [];
+    scripts.world.putCreatedPackage = (actor, kind, _runner, target) => {
+      put.push(`${kind} ${actor.toString(16)} on ${target?.toString(16) ?? 'none'}`);
+      // The player runs no packages while not AI-driven: it feeds at once.
+      return actor !== PLAYER_REF;
+    };
+    await callNative(scripts, 'actor', 'startvampirefeed', scripts.actorHandle(PLAYER_REF), [
+      scripts.actorHandle(VICTIM),
+    ]);
+    expect(put).toEqual(['vampireFeed 14 on 400', 'doNothing 400 on none']);
+    put.length = 0;
+    await callNative(scripts, 'actor', 'startvampirefeed', scripts.actorHandle(NPC), [
+      scripts.actorHandle(VICTIM),
+    ]);
+    expect(put).toEqual(['vampireFeed 200 on 400']);
   });
 });

@@ -501,7 +501,8 @@ export type ProcedureRunner = (run: ProcedureRun) => Promise<ProcedureResult>;
 /**
  * The engine's own packages, those no record holds (CommonLibSSE PACKAGE_TYPE: kAvoidPlayer,
  * kReactToDestroyedObject, kStealWarning, kPickPocketWarning, kGetUpFromChairBed, kSurface,
- * kMovementBlocked, kAlarm, kFlee, kVampireFeed, kCannibal; a summon's following of its commander:
+ * kMovementBlocked, kAlarm, kFlee, kVampireFeed, kCannibal, kDoNothing; a summon's following of its
+ * commander:
  * followCommander): the engine creates one and puts it in front of the actor's own package
  * (Actor::PutCreatedPackage); as it ends, the actor's packages are chosen again.
  */
@@ -515,6 +516,7 @@ export type EnginePackage =
   | 'movementBlocked'
   | 'vampireFeed'
   | 'cannibal'
+  | 'doNothing'
   | 'followCommander'
   | 'alarm'
   | 'flee';

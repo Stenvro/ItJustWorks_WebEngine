@@ -192,6 +192,8 @@ export const getUpFromChairBed: EngineRunner = async (run) => {
 const FROM_FURNITURE: ReadonlySet<EnginePackage> = new Set([
   'reactToDestroyedObject',
   'getUpFromChairBed',
+  // The fed-on's Do Nothing: a sleeper is bitten in its bed (the bed's feeding idle). Inferred.
+  'doNothing',
 ]);
 
 /**
@@ -245,6 +247,21 @@ export function feedOn(feeding: Feeding): EngineRunner {
     } finally {
       feeding.end();
     }
+  };
+}
+
+/**
+ * Do Nothing (CommonLibSSE PACKAGE_TYPE kDoNothing): what the one the player feeds on is given,
+ * observed in the original: as the player's Vampire Feed starts, the engine makes the player
+ * their own Vampire Feed package (must complete, on the target) and puts a created Do Nothing
+ * package (must complete) on the target, so it holds still while it is fed on. An NPC feeder
+ * gives its target none. It lasts as long as the feeding (`feeding`); its own packages then go
+ * on.
+ */
+export function doNothingWhile(feeding: () => boolean): EngineRunner {
+  return async (run) => {
+    run.body.stop();
+    while (!run.stopped() && feeding()) await run.wait(FEED_STEP);
   };
 }
 

@@ -300,12 +300,13 @@ export interface WorldBridge {
   evaluatePackage?(actor: number, restart?: boolean): void;
   /**
    * A created package put in front of the actor's own (Actor::PutCreatedPackage: Vampire Feed,
-   * Cannibal; src/ai/engine-packages.ts feedOn), its procedure `runner`, on `target`. False: the
+   * Cannibal, the fed-on's Do Nothing; src/ai/engine-packages.ts), its procedure `runner`, on
+   * `target`. False: the
    * actor runs no AI here (not on the stage, the player while not AI-driven) or runs another.
    */
   putCreatedPackage?(
     actor: number,
-    kind: FeedingPackage,
+    kind: FeedingPackage | 'doNothing',
     runner: EngineRunner,
     target: number | undefined,
   ): boolean;
