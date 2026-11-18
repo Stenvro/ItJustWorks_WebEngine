@@ -7,19 +7,20 @@
 //   menu opens with it as the speaker, its dialogue chosen by conditions on it (GetIsID).
 // - The data (Skyrim.esm): the Falkreath Sanctuary's Black Door is DBBlackDoorActivator
 //   [00025BFA], a TACT placed at [0002B83B]; with DB02 at 40 its DarkBrotherhood dialogue asks
-//   "What is the music of life?" and lists the passphrase, "Silence, my brother.", whose answer
-//   lets the player in (DB02 50).
+//   "What is the music of life?" and lists answers. The passphrase, "Silence, my brother.", is
+//   among them only once Astrid has told it (DarkBrotherhood's BlackDoorPass: the answer's info
+//   asks GetVMQuestVariable); the whole talk from the shack is played in
+//   tests/sim-with-friends-like-these.int.test.ts.
 
 import { describe, expect, it } from 'vitest';
-import { hasGamedata, openSim, PLAYER_REF } from '../../helpers/sim.ts';
+import { hasGamedata, openSim } from '../../helpers/sim.ts';
 
 const DB02 = 0x1ea51;
 const SANCTUARY_MARKER = 0x1c3b0;
 const BLACK_DOOR = 0x2b83b;
-const SANCTUARY = 0xad5a1;
 
 describe.skipIf(!hasGamedata())('a talking activator talks (headless simulation)', () => {
-  it('opens the dialogue menu with the Black Door, whose passphrase lets the player in', async () => {
+  it('opens the dialogue menu with the Black Door as its speaker', async () => {
     const sim = await openSim({ hour: 10 });
     try {
       void sim.runtime.quests.setStage(DB02, 40);
@@ -30,10 +31,9 @@ describe.skipIf(!hasGamedata())('a talking activator talks (headless simulation)
       expect(door && (await sim.walkPath(door, 60, 150))).toBe(true);
       const topics = await sim.talk(BLACK_DOOR);
       expect(sim.menus().at(-1)).toMatchObject({ menu: 'Dialogue Menu', reference: BLACK_DOOR });
-      expect(topics).toContainEqual('Silence, my brother.');
-      await sim.choose(/Silence, my brother/);
-      expect(await sim.until(() => sim.stageDone(DB02, 50), 20)).toBe(true);
-      expect((await sim.runtime.placement(PLAYER_REF))?.cell).toBe(SANCTUARY);
+      expect(topics).toEqual(expect.arrayContaining(['Um... the lute? No, drums!', 'Screaming?']));
+      // Not told the passphrase yet.
+      expect(topics).not.toContainEqual('Silence, my brother.');
     } finally {
       await sim.close();
     }
