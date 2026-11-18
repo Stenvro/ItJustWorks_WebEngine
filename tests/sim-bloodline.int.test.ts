@@ -122,8 +122,8 @@ describe.skipIf(!hasGamedata())('DLC1VQ02 Bloodline', () => {
   // guard's 20), and in through the castle's door: Harkon greets his daughter (8, 9).
   // Found 2026-11-18: the conversation's first line was picked when the test heard it, by then
   // her ForceGreet had ended, and her generic follower topics came instead of hers; the line is
-  // picked as the menu opens now, as the dialogue menu picks it. And her followers' package was
-  // not running yet right after the load: the player waits a moment before fast travelling.
+  // picked as the menu opens now, as the dialogue menu picks it. (Right after the load her Follow
+  // package has not been chosen yet: the player waits a moment before fast travelling.)
   it('has Serana take the player to Castle Volkihar and Harkon (8, 9)', async () => {
     if (!outOfCrypt) return;
     const sim = await loadSim(outOfCrypt);
