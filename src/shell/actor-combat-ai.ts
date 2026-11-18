@@ -3830,7 +3830,14 @@ export class ActorCombatAi {
               this.#findAttackLocation(f, () => {
                 const set = this.#navmeshes();
                 return set
-                  ? attackLocationPlaces(set, f.feet, f.there, f.range, this.#subtrees)
+                  ? attackLocationPlaces(
+                      set,
+                      f.feet,
+                      f.there,
+                      f.range,
+                      this.#subtrees,
+                      f.target.radius,
+                    )
                   : [];
               }),
             halt: (f) => {
@@ -3844,6 +3851,8 @@ export class ActorCombatAi {
                   f.feet,
                   f.there,
                   this.#alliesInLine(f, others),
+                  f.range,
+                  f.view.radius,
                   this.#navmeshes(),
                   this.#subtrees,
                 ),

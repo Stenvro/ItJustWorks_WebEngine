@@ -293,21 +293,37 @@ describe('the line of fire and Find Attack Location', () => {
     const clear = firstClearPlace(places, (place) => place[0] > 1700);
     expect(clear?.[0]).toBeGreaterThan(1700);
     expect(firstClearPlace(places, () => false)).toBeUndefined();
+    // The way keeps out of the target's radius plus fCombatFindAttackLocationAvoidTargetRadius:
+    // with a target 116 units wide, nothing within 500 of it, where a point target allows 384.
+    const near = (radius: number) =>
+      Math.min(
+        ...attackLocationPlaces(set, [1500, 700, 0], target, range, S, radius).map((place) =>
+          flat(place, target),
+        ),
+      );
+    expect(near(0)).toBeLessThan(500);
+    expect(near(116)).toBeGreaterThanOrEqual(500);
   });
 
-  it('Find Ally Attack Location: beside an ally with a clear line, 256 .. 4096 off the target', () => {
+  it('Find Ally Attack Location: to an ally 256 .. 4096 off, within its range of the target  [original]', () => {
     const target: P = [0, 0, 0];
     const feet: P = [400, 1000, 0];
     const ally = { feet: [0, 1000, 0] as P, radius: 30 };
-    const places = allyAttackPlaces(feet, target, [ally]);
-    // Its radius and fCombatFindAllyAttackLocationAllyRadius out, either side; the shooter's first.
-    expect(places).toEqual([
-      [94, 1000, 0],
-      [-94, 1000, 0],
-    ]);
-    // Too near the target, or too far from it: none.
-    expect(allyAttackPlaces(feet, target, [{ feet: [0, 200, 0], radius: 30 }])).toEqual([]);
-    expect(allyAttackPlaces(feet, target, [{ feet: [0, 5000, 0], radius: 30 }])).toEqual([]);
+    // Its way ends the two radii and fCombatFindAllyAttackLocationAllyRadius (64) from the ally,
+    // on its side towards the shooter.
+    expect(allyAttackPlaces(feet, target, [ally], 2000, 30)).toEqual([[124, 1000, 0]]);
+    // An ally within 256 of the shooter or beyond 4096 of it: none.
+    expect(
+      allyAttackPlaces(feet, target, [{ feet: [300, 1000, 0], radius: 30 }], 2000, 30),
+    ).toEqual([]);
+    expect(allyAttackPlaces(feet, target, [{ feet: [0, -4000, 0], radius: 30 }], 9000, 30)).toEqual(
+      [],
+    );
+    // One beyond the shooter's range of the target: none.
+    expect(allyAttackPlaces(feet, target, [ally], 900, 30)).toEqual([]);
+    // The nearer first.
+    const far = { feet: [-2000, 1000, 0] as P, radius: 30 };
+    expect(allyAttackPlaces(feet, target, [far, ally], 3000, 30)[0]).toEqual([124, 1000, 0]);
   });
 
   it('a failed search stands while its target stays within 5° and 128 units of where it was', () => {

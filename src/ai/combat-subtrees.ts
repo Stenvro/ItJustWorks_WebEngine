@@ -235,9 +235,15 @@ function middleOf(navmesh: Navmesh, triangle: number): Vec3 {
 /**
  * The triangles an actor at `from` reaches over the navmeshes (across their edges and the
  * portals between meshes) whose middle lies within `radius` of it, nearest the actor first by
- * the order they are reached. Undefined off the navmeshes.
+ * the order they are reached; with `avoid`, the way passes no triangle whose middle lies within its
+ * radius of its centre. Undefined off the navmeshes.
  */
-function reachable(set: NavmeshSet, from: Vec3, radius: number): Visit[] | undefined {
+function reachable(
+  set: NavmeshSet,
+  from: Vec3,
+  radius: number,
+  avoid?: { readonly center: Vec3; readonly radius: number },
+): Visit[] | undefined {
   const start = set.locate(from);
   if (!start) return undefined;
   const seen = new Set<string>([`${start.navmesh.formId}:${start.triangle}`]);
@@ -265,6 +271,7 @@ function reachable(set: NavmeshSet, from: Vec3, radius: number): Visit[] | undef
       if (!t || (t.flags & NavmeshFlag.deleted) !== 0) continue;
       const middle = middleOf(navmesh, triangle);
       if (flat(middle, from) > radius) continue;
+      if (avoid && flat(middle, avoid.center) < avoid.radius) continue;
       out.push({ navmesh, triangle, middle });
     }
   }
@@ -1087,11 +1094,14 @@ export function lateralAttackPlaces(
 }
 
 /**
- * Find Attack Location: the places of the navmeshes the shooter's way reaches within
- * fCombatFindAttackLocationDistance, in the order the way search reaches them, none within
- * fCombatFindAttackLocationAvoidTargetRadius of the target nor beyond `range` of it (it shoots
- * from there), each at least fCombatFindLateralAttackLocationIntervalMin from those before.
- * TODO(M13): the spacing and the cap on the places tried are ours.
+ * Find Attack Location (observed in the original: a way search whose goal is a place with a clear
+ * line of fire): the places of the navmeshes the shooter's way reaches within
+ * fCombatFindAttackLocationDistance, in the order the way search reaches them, its way kept out of
+ * the target's radius plus fCombatFindAttackLocationAvoidTargetRadius round it, none beyond
+ * `range` (its weapon's maximum) of it; the first with a clear line is taken (the shell's part).
+ * Ours tries at most ATTACK_PLACES_MAX places, each at least
+ * fCombatFindLateralAttackLocationIntervalMin from those before (a budget for the line-of-fire
+ * rays: the original tries each place its search reaches).
  */
 export function attackLocationPlaces(
   set: NavmeshSet,
@@ -1099,13 +1109,17 @@ export function attackLocationPlaces(
   target: Vec3,
   range: number,
   settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+  targetRadius = 0,
 ): Vec3[] {
   const places: Vec3[] = [];
   const spacing = settings.findLateralAttackLocationIntervalMin;
-  for (const visit of reachable(set, feet, settings.findAttackLocationDistance) ?? []) {
+  const avoid = {
+    center: target,
+    radius: targetRadius + settings.findAttackLocationAvoidTargetRadius,
+  };
+  for (const visit of reachable(set, feet, settings.findAttackLocationDistance, avoid) ?? []) {
     const at = visit.middle;
-    const off = flat(at, target);
-    if (off < settings.findAttackLocationAvoidTargetRadius || off > range) continue;
+    if (flat(at, target) > range) continue;
     if (flat(at, feet) < spacing) continue;
     if (places.some((place) => flat(place, at) < spacing)) continue;
     places.push(at);
@@ -1121,41 +1135,49 @@ export interface AttackLocationAlly {
 }
 
 /**
- * Find Ally Attack Location: beside an ally that has a clear line to the target and stands
- * fCombatFindAllyAttackLocationDistanceMin .. Max from it: a place square to the ally's line,
- * fCombatFindAllyAttackLocationAllyRadius past its body, either side, the nearest to the shooter
- * first. TODO(M13): inferred from the settings' names.
+ * Find Ally Attack Location (observed in the original): to a member of its group with a line of
+ * sight to the target that stands fCombatFindAllyAttackLocationDistanceMin .. Max (256 .. 4096)
+ * from the shooter and within the shooter's `range` (its weapon's maximum) of the target: its way
+ * goes to within the two radii and fCombatFindAllyAttackLocationAllyRadius of that ally, the
+ * nearest first. The place is where that way ends, on the ally's side towards the shooter.
  */
 export function allyAttackPlaces(
   feet: Vec3,
   target: Vec3,
   allies: readonly AttackLocationAlly[],
+  range: number,
+  radius: number,
   set?: NavmeshSet,
   settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
 ): Vec3[] {
   const places: Vec3[] = [];
   for (const ally of allies) {
-    const dx = target[0] - ally.feet[0];
-    const dy = target[1] - ally.feet[1];
-    const length = Math.hypot(dx, dy);
+    const away = Math.hypot(ally.feet[0] - feet[0], ally.feet[1] - feet[1], ally.feet[2] - feet[2]);
     if (
-      length < settings.findAllyAttackLocationDistanceMin ||
-      length > settings.findAllyAttackLocationDistanceMax
+      away < settings.findAllyAttackLocationDistanceMin ||
+      away > settings.findAllyAttackLocationDistanceMax
     ) {
       continue;
     }
-    const out = ally.radius + settings.findAllyAttackLocationAllyRadius;
-    for (const s of [1, -1]) {
-      const point: Vec3 = [
-        ally.feet[0] + (dy / length) * out * s,
-        ally.feet[1] - (dx / length) * out * s,
-        ally.feet[2],
-      ];
-      const at = onNavmesh(set, point);
-      if (at) places.push(at);
-    }
+    const toTarget = Math.hypot(
+      target[0] - ally.feet[0],
+      target[1] - ally.feet[1],
+      target[2] - ally.feet[2],
+    );
+    if (toTarget > range) continue;
+    const out = ally.radius + radius + settings.findAllyAttackLocationAllyRadius;
+    const dx = feet[0] - ally.feet[0];
+    const dy = feet[1] - ally.feet[1];
+    const flatAway = Math.hypot(dx, dy) || 1;
+    const point: Vec3 = [
+      ally.feet[0] + (dx / flatAway) * out,
+      ally.feet[1] + (dy / flatAway) * out,
+      ally.feet[2],
+    ];
+    const at = onNavmesh(set, point);
+    if (at) places.push(at);
   }
-  return places.sort((a, b) => flat(a, feet) - flat(b, feet));
+  return places.sort((p, q) => flat(p, feet) - flat(q, feet));
 }
 
 /** The first place whose line to the target is clear, trying at most `limit` of them. */
