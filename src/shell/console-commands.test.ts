@@ -6,6 +6,7 @@ import {
   type ConsoleContext,
 } from './console-commands.ts';
 import { parseAxis, parseConsoleLine, parseConsoleNumber, parseFormId } from './console-parse.ts';
+import { conditionLine } from './console-script-functions.ts';
 import { CONSOLE_COMMANDS, consoleCommand } from './console-table.ts';
 import { ObjectHandle } from '../scripting/values.ts';
 
@@ -17,19 +18,20 @@ const TYPES = new Map([
   [0x1234, 'REFR'],
 ]);
 
-const fakeContext = (extra: Record<string, unknown>, runtime: Record<string, unknown> = {}) =>
-  ({
+const fakeContext = (extra: Record<string, unknown>, runtime: Record<string, unknown> = {}) => {
+  // The runtime given is the one the commands change (the cases read it back); forms and state
+  // it brings stay its own.
+  runtime.forms ??= {
+    record: (formId: number) =>
+      Promise.resolve(TYPES.has(formId) ? { type: TYPES.get(formId) } : undefined),
+  };
+  runtime.state ??= { created: new Map(), actors: new Map() };
+  return {
     db: { scan: () => Promise.resolve() },
     ...extra,
-    // The runtime given is the one the commands change (the cases read it back).
-    runtime: Object.assign(runtime, {
-      forms: {
-        record: (formId: number) =>
-          Promise.resolve(TYPES.has(formId) ? { type: TYPES.get(formId) } : undefined),
-      },
-      state: { created: new Map(), actors: new Map() },
-    }),
-  }) as unknown as ConsoleContext;
+    runtime,
+  } as unknown as ConsoleContext;
+};
 
 describe('ConsoleCommands', () => {
   it('opens the race menu with showracemenu', async () => {
@@ -268,6 +270,118 @@ describe('the game command table', () => {
     expect(await commands.run('menumode 0')).toEqual(['MenuMode >> 0.00']);
     // A reference function needs a reference.
     expect(await commands.run('GetDisabled')).toEqual(['No Reference Selected']);
+  });
+
+  /** A runtime whose natives record their calls. */
+  const nativeSetup = (result: unknown = null, extra: Record<string, unknown> = {}) => {
+    const calls: string[] = [];
+    const show = (value: unknown): string =>
+      value instanceof ObjectHandle ? value.formId.toString(16) : String(value);
+    const runtime = {
+      referenceHandle: (formId: number) => new ObjectHandle(formId, 'objectreference'),
+      formHandle: (formId: number) => new ObjectHandle(formId, 'form'),
+      native:
+        (script: string, fn: string) =>
+        (call: { self: ObjectHandle | null; args: readonly unknown[] }) => {
+          calls.push(`${script}.${fn} ${show(call.self)} ${call.args.map(show).join(' ')}`.trim());
+          return result;
+        },
+      ...extra,
+    };
+    return { calls, commands: new ConsoleCommands(fakeContext({}, runtime)) };
+  };
+
+  it('does a script function through the native the scripts call', async () => {
+    const { calls, commands } = nativeSetup();
+    expect(await commands.run('player.StartCombat 1a2b')).toEqual([]);
+    expect(await commands.run('player.SetGhost 1')).toEqual([]);
+    expect(await commands.run('1a2b.DamageAV health 10')).toEqual([]);
+    expect(calls).toEqual([
+      'actor.startcombat 14 1a2b',
+      'actor.setghost 14 true',
+      'actor.damageactorvalue 1a2b health 10',
+    ]);
+  });
+
+  it('prints the reference a script function gives back, and the math functions', async () => {
+    const { commands } = nativeSetup(new ObjectHandle(0x1234, 'objectreference'));
+    expect(await commands.run('player.GetCombatTarget')).toEqual(['GetCombatTarget >> (00001234)']);
+    expect(await commands.run('1a2b.GetSelf')).toEqual(['GetSelf >> (00001a2b)']);
+    expect(await commands.run('Sqrt 16')).toEqual(['Sqrt >> 4.00']);
+    expect(await commands.run('Sin 30')).toEqual(['Sin >> 0.50']);
+    expect(await commands.run('Sin 0.5 1')).toEqual(['Sin >> 30.00']);
+  });
+
+  it('prints a condition value in the words the game uses for it', () => {
+    expect(conditionLine('IsWeaponMagicOut', 1)).toBe('Is Weapon/Magic Out >> 1.00');
+    expect(conditionLine('GetDisabled', 1)).toBe('GetDisabled >> 1');
+    expect(conditionLine('GetRelativeAngle', 12.5, 2)).toBe('GetRelAng: Z >> 12.50');
+    expect(conditionLine('GetIsID', 0)).toBe('GetIsID >> 0.00');
+  });
+
+  it('reads and sets INI settings, saves and loads by name', async () => {
+    const ini = new Map([['fJumpHeightMin:Movement', 76]]);
+    const saved: string[] = [];
+    const commands = new ConsoleCommands(
+      fakeContext({
+        iniSetting: (name: string) => ini.get(name),
+        setIniSetting: (name: string, value: number) => {
+          if (!ini.has(name)) return false;
+          ini.set(name, value);
+          return true;
+        },
+        saveGame: (name: string) => {
+          saved.push(`save ${name}`);
+          return Promise.resolve();
+        },
+        loadGame: (name: string) => {
+          saved.push(`load ${name}`);
+          return Promise.resolve(true);
+        },
+      }),
+    );
+    expect(await commands.run('GetINI fJumpHeightMin:Movement')).toEqual([
+      'INISetting fJumpHeightMin:Movement >> 76.00',
+    ]);
+    expect(await commands.run('SetINI fJumpHeightMin:Movement 200')).toEqual([]);
+    expect(ini.get('fJumpHeightMin:Movement')).toBe(200);
+    expect(await commands.run('GetINI fNothing:General')).toEqual([
+      'INISetting fNothing:General >> NOT FOUND',
+    ]);
+    expect(await commands.run('save Before')).toEqual([]);
+    expect(await commands.run('load Before')).toEqual([]);
+    expect(saved).toEqual(['save Before', 'load Before']);
+  });
+
+  it('names a quest alias as a reference once the scope quest is set', async () => {
+    const quest = 0x3372b;
+    TYPES.set(quest, 'QUST');
+    const { calls, commands } = nativeSetup(null, {
+      forms: {
+        record: (formId: number) =>
+          Promise.resolve(
+            formId === quest
+              ? { type: 'QUST', editorId: 'MQ101' }
+              : TYPES.has(formId)
+                ? { type: TYPES.get(formId) }
+                : undefined,
+          ),
+        quest: () => Promise.resolve({ aliases: [{ id: 3, name: 'Hadvar', location: false }] }),
+      },
+      state: {
+        created: new Map(),
+        actors: new Map(),
+        quests: new Map([[quest, { aliases: new Map([[3, 0x1a2b]]) }]]),
+      },
+    });
+    expect(await commands.run('Hadvar.SetGhost 1')).toEqual([
+      "Unknown referenced object 'Hadvar'.",
+    ]);
+    expect(await commands.run('ssq 3372b')).toEqual(['Console Scope Quest >> MQ101 (0003372B)']);
+    expect(await commands.run('Hadvar.SetGhost 1')).toEqual([]);
+    expect(calls).toEqual(['actor.setghost 1a2b true']);
+    expect(await commands.run('ssq')).toEqual(['Console Scope Quest >> EMPTY']);
+    TYPES.delete(quest);
   });
 });
 

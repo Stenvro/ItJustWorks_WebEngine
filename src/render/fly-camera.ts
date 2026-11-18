@@ -7,6 +7,9 @@ import { lookAt, multiply, perspectiveReversedZ, type Mat4, type Vec3 } from './
 
 const MAX_PITCH = 1.55;
 
+/** The free camera's speed, units per second (the console's SetUFOCamSpeedMult scales it). */
+export const FREE_CAMERA_SPEED = 260;
+
 export class FlyCamera implements Camera {
   fovY = (65 * Math.PI) / 180;
   /** Compass heading in radians: 0 looks along +Y (north), π/2 along +X (east). */
@@ -14,7 +17,7 @@ export class FlyCamera implements Camera {
   pitch = 0;
   position: [number, number, number] = [0, 0, 0];
   /** Units per second (Skyrim: 1 unit ≈ 1.43 cm, walking ≈ 100 units/s). */
-  speed = 260;
+  speed = FREE_CAMERA_SPEED;
   lensShift = 0;
   /** Near plane (game units). */
   readonly near = 4;

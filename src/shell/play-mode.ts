@@ -6,6 +6,7 @@
 // player (MQ101: the cart to Helgen) and the world there has loaded.
 // In the game the HUD (hud-controller.ts) and the game's menus (game-menus.ts).
 
+import { FREE_CAMERA_SPEED } from '../render/fly-camera.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { Vec3 } from '../render/math.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -108,6 +109,30 @@ function mainMenuProperties(hasSaves: boolean): unknown[] {
 /** The game's menu depths (higher over lower). */
 /** The console's depth: over every other menu. */
 const CONSOLE_DEPTH = 12;
+
+/** The menus the console's ShowMenu opens, by their stack names, as GameMenus names them. */
+const CONSOLE_MENUS: Readonly<Record<string, string>> = {
+  inventorymenu: 'Inventory',
+  magicmenu: 'Magic',
+  'journal menu': 'Journal',
+  tweenmenu: 'Tween',
+  favoritesmenu: 'Favorites',
+  'sleep/wait menu': 'Wait',
+  statsmenu: 'Skills',
+  mapmenu: 'Map',
+};
+
+/** Their names on the menu stack. */
+const CONSOLE_MENU_STACK: Readonly<Record<string, string>> = {
+  Inventory: 'InventoryMenu',
+  Magic: 'MagicMenu',
+  Journal: 'Journal Menu',
+  Tween: 'TweenMenu',
+  Favorites: 'FavoritesMenu',
+  Wait: 'Sleep/Wait Menu',
+  Skills: 'StatsMenu',
+  Map: 'MapMenu',
+};
 /** Ownership read for the activation prompt is read again after this long (ms). */
 const OWNERSHIP_MS = 5000;
 
@@ -1231,6 +1256,34 @@ export class PlayMode {
           },
           controlsChanged: () => runtime.world.controlsChanged?.(),
           quit: () => this.onQuit?.(),
+          saveGame: async (name) => {
+            await this.#saves.save('save', name === '' ? undefined : name);
+          },
+          loadGame: (name) => this.#startLoad(name),
+          // ShowMenu / HideMenu <menu>: a menu of the stack by its name ("InventoryMenu").
+          showMenu: (name, shown) => {
+            const menus = this.#menus;
+            const own = CONSOLE_MENUS[name.toLowerCase()];
+            if (!menus || own === undefined) return false;
+            if (shown) menus.openMenu(own);
+            else if (session.menuStack.isOpen(CONSOLE_MENU_STACK[own] ?? name)) menus.close();
+            return true;
+          },
+          iniSetting: (name) => {
+            const [key = '', section = ''] = name.split(':');
+            return session.ini.lookup(section, key);
+          },
+          // The running value, as SetINISetting changes it (SaveIniFiles would write it).
+          setIniSetting: (name, value) => {
+            const [key = '', section = ''] = name.split(':');
+            if (session.ini.lookup(section, key) === undefined) return false;
+            session.preferences.set(`${section}:${key}`, value);
+            return true;
+          },
+          setFreeCameraSpeed: (multiplier) => {
+            const camera = this.#world.player()?.play.camera;
+            if (camera) camera.speed = FREE_CAMERA_SPEED * multiplier;
+          },
         }),
       };
     }

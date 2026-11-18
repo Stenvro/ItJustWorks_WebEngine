@@ -19,15 +19,24 @@ import { conditionFunctionValue } from '../scripting/runtime/condition-values.ts
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { referenceName } from '../scripting/runtime/quest-text.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
-import { ObjectHandle, type Value } from '../scripting/values.ts';
+import { ObjectHandle, PapyrusArray, type Value } from '../scripting/values.ts';
 import { actorValueIndex } from '../world/actor-values.ts';
 import type { GameSettings } from '../world/game-settings.ts';
 import { ITEM_TYPES } from '../world/item-records.ts';
 import { MapMarkerFlag, readMapMarkers } from '../world/map-markers.ts';
+import type { QuestRecord } from '../world/quest-records.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import { parseSpell, SpellType } from '../world/spell-records.ts';
 import { cellPlacement, gridPlacement } from './cell-placement.ts';
 
+import {
+  conditionLine,
+  mathFunction,
+  NATIVE_FUNCTIONS,
+  referenceLine,
+  type NativeArgument,
+  type NativeFunction,
+} from './console-script-functions.ts';
 import { parseAxis, parseConsoleLine, parseConsoleNumber, parseFormId } from './console-parse.ts';
 import {
   CONSOLE_COMMANDS,
@@ -83,6 +92,18 @@ export interface ConsoleContext {
   freezeWorld?(frozen: boolean): void;
   /** The reference under a point of the frame (see ConsoleRunner.click). */
   pick?(x: number, y: number, aspect: number): number | undefined;
+  /** Saves the game under a name (save <name>). */
+  saveGame?(name: string): Promise<void>;
+  /** Loads a save by its name (load <name>); whether there is one. */
+  loadGame?(name: string): Promise<boolean>;
+  /** Opens or closes a menu by its name (ShowMenu, HideMenu); whether there is one. */
+  showMenu?(name: string, shown: boolean): boolean;
+  /** An INI setting ("fJumpHeightMin:Movement") as the session reads it, if there is one. */
+  iniSetting?(name: string): number | undefined;
+  /** Sets an INI setting for the session; whether there is one. */
+  setIniSetting?(name: string, value: number): boolean;
+  /** The free camera's speed multiplier (sucsm). */
+  setFreeCameraSpeed?(multiplier: number): void;
 }
 
 /** The types help searches, and those a form's editor id is looked up in. */
@@ -200,6 +221,26 @@ const onOff = (on: boolean): string => (on ? 'On' : 'Off');
 const fixed = (value: number): string => value.toFixed(2);
 const hex = (formId: number): string => formId.toString(16).toUpperCase().padStart(8, '0');
 
+/** SetRace's parameter, for its message when the race is not found. */
+const RACE_PARAM: ConsoleParam = { name: 'String', type: { kind: 'string' }, code: 0 };
+
+/** An INI setting's value as GetINISetting prints it, by its name's type letter. */
+function iniValue(name: string, value: number): string {
+  const letter = name.charAt(0).toLowerCase();
+  if (letter === 'i' || letter === 'b') return String(Math.trunc(value));
+  if (letter === 'u') return String(Math.trunc(value) >>> 0);
+  return value.toFixed(2);
+}
+
+/** A script value as the console shows it. */
+function consoleValue(value: Value): string {
+  if (value === null) return 'None';
+  if (value instanceof ObjectHandle) return `[${value.type} < (${hex(value.formId)})>]`;
+  if (value instanceof PapyrusArray) return `[${value.items.map(consoleValue).join(', ')}]`;
+  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(4);
+  return typeof value === 'string' ? value : String(value);
+}
+
 /** A float as the condition's integer parameter holds it (its bits). */
 function floatBits(value: number): number {
   const view = new DataView(new ArrayBuffer(4));
@@ -272,6 +313,8 @@ export class ConsoleCommands {
   #references: Promise<Map<string, number>> | undefined;
   /** The reference selected (prid, a click). */
   #selected: number | undefined;
+  /** The console's scope quest (ssq): its aliases may be named as references. */
+  #scope: number | undefined;
 
   constructor(context: ConsoleContext) {
     this.#context = context;
@@ -395,6 +438,8 @@ export class ConsoleCommands {
   /** A placed reference by "player", hex form id or (a persistent one's) editor id. */
   async #reference(name: string): Promise<number | undefined> {
     if (name.toLowerCase() === 'player') return PLAYER_REF;
+    const aliased = await this.#scopeAlias(name);
+    if (aliased !== undefined) return aliased;
     const formId = parseFormId(name);
     if (formId !== undefined) {
       if (formId === PLAYER_REF) return formId;
@@ -1001,6 +1046,77 @@ export class ConsoleCommands {
       case 'clearconsole':
         context.clear?.();
         return [];
+
+      // --- Scripts and quests ------------------------------------------------------------------
+      case 'showglobalvars':
+        return this.#globals();
+      case 'showvars':
+        return this.#variables(target);
+      case 'showquestvars':
+        return this.#variables(num(0));
+      case 'showquestaliases':
+        return this.#aliases(num(0));
+      // setpqv <quest> <property> <value>, setpv <property> <value>: a script property set.
+      case 'setpapyrusquestvar':
+        await this.#setProperty(new ObjectHandle(num(0), 'quest'), text(1), text(2));
+        return [];
+      case 'setpapyrusvar':
+        await this.#setProperty(new ObjectHandle(target, 'objectreference'), text(0), text(1));
+        return [];
+      case 'startallquests':
+        await this.#everyQuest(async (quest) => {
+          await this.#native('quest.start', quest.formId);
+        });
+        return ['All Quests Enabled.'];
+      case 'completeallqueststages':
+        await this.#everyQuest(async (quest) => {
+          for (const stage of quest.stages)
+            await runtime.quests.setStage(quest.formId, stage.index);
+        });
+        return ['All Quest Stages Completed.'];
+      // ssq [quest]: the quest whose aliases the console's references may name.
+      case 'setconsolescopequest': {
+        this.#scope = typeof args[0] === 'number' ? args[0] : undefined;
+        if (this.#scope === undefined) return ['Console Scope Quest >> EMPTY'];
+        const record = await runtime.forms.record(this.#scope);
+        return [`Console Scope Quest >> ${record?.editorId ?? ''} (${hex(this.#scope)})`];
+      }
+      case 'showquesttargets':
+        return this.#questTargetLines();
+
+      // --- Saves, menus and settings -------------------------------------------------------------
+      case 'savegame':
+        await context.saveGame?.(text(0));
+        return [];
+      case 'loadgame':
+        if (context.loadGame && !(await context.loadGame(text(0)))) return [NOT_SUPPORTED];
+        return [];
+      case 'showmenu':
+      case 'hidemenu':
+        context.showMenu?.(text(0), name === 'showmenu');
+        return [];
+      case 'getinisetting': {
+        const value = context.iniSetting?.(text(0));
+        return [
+          `INISetting ${text(0)} >> ${value === undefined ? 'NOT FOUND' : iniValue(text(0), value)}`,
+        ];
+      }
+      case 'setinisetting': {
+        const value = parseConsoleNumber(text(1));
+        if (value === undefined || !context.setIniSetting?.(text(0), value))
+          return [`INISetting ${text(0)} >> NOT FOUND`];
+        return [];
+      }
+      case 'setufocamspeedmult':
+        context.setFreeCameraSpeed?.(num(0, 1));
+        return [];
+      // SetRace <race>: the player's race (as Actor.SetRace).
+      case 'setrace': {
+        const race = await this.#form(text(0), ['RACE']);
+        if (race === undefined) return this.#notFound(text(0), call.info.params[0] ?? RACE_PARAM);
+        await this.#native('actor.setrace', PLAYER_REF, [this.#formValue(race)]);
+        return [];
+      }
       default:
         return this.#generic(call, target);
     }
@@ -1014,6 +1130,11 @@ export class ConsoleCommands {
   async #generic(call: Invocation, target: number): Promise<string[]> {
     const { info, args } = call;
     if (info.returnsAtOnce) return [];
+    if (info.name === 'GetSelf') return [referenceLine(info.name, target)];
+    const viaNative = NATIVE_FUNCTIONS[info.name.toLowerCase()];
+    if (viaNative) return this.#viaNative(info, viaNative, args, target);
+    const math = mathFunction(info.name, args);
+    if (math !== undefined) return [`${info.name} >> ${fixed(math)}`];
     if (info.condition === undefined || info.noAction) return [NOT_SUPPORTED];
     const value = await conditionFunctionValue(
       this.#context.runtime,
@@ -1021,7 +1142,174 @@ export class ConsoleCommands {
       this.#context.runtime.referenceHandle(target),
     );
     if (value === NOT_VALUED) return [NOT_SUPPORTED];
-    return [`${info.name} >> ${fixed(value ?? 0)}`];
+    const axis = info.params.findIndex((param) => param.type.kind === 'axis');
+    const axisValue = axis < 0 ? undefined : args[axis];
+    return [conditionLine(info.name, value ?? 0, typeof axisValue === 'number' ? axisValue : 0)];
+  }
+
+  /** A script function a Papyrus native does (src/shell/console-script-functions.ts). */
+  async #viaNative(
+    info: ConsoleCommandInfo,
+    spec: NativeFunction,
+    args: readonly Arg[],
+    target: number,
+  ): Promise<string[]> {
+    const value = (argument: NativeArgument): Value => {
+      if ('self' in argument) return this.#ref(target);
+      if ('fixed' in argument) return argument.fixed;
+      if ('form' in argument) {
+        const raw = args[argument.form];
+        return this.#formValue(typeof raw === 'number' ? raw : undefined);
+      }
+      if ('reference' in argument) {
+        const raw = args[argument.reference];
+        return this.#ref(typeof raw === 'number' ? raw : undefined);
+      }
+      if ('text' in argument) {
+        const raw = args[argument.text];
+        return typeof raw === 'string' ? raw : '';
+      }
+      if ('number' in argument) {
+        const raw = args[argument.number];
+        return typeof raw === 'number' ? raw : (argument.fallback ?? 0);
+      }
+      const raw = args[argument.bool];
+      return typeof raw === 'number' ? raw !== 0 : (argument.fallback ?? false);
+    };
+    const on = spec.on ?? 'reference';
+    let self: number | undefined;
+    if (on === 'reference') self = target;
+    else if (on !== 'none') {
+      const raw = args[on.form];
+      self = typeof raw === 'number' ? raw : undefined;
+    }
+    const result = await this.#native(spec.native, self, spec.args.map(value));
+    if (spec.printsReference) {
+      const formId = result instanceof ObjectHandle ? result.formId : undefined;
+      return [referenceLine(info.name, formId)];
+    }
+    if (!spec.prints) return [];
+    const number = typeof result === 'boolean' ? (result ? 1 : 0) : Number(result ?? 0);
+    return [conditionLine(info.name, number)];
+  }
+
+  // --- Scripts and quests ----------------------------------------------------------------------
+
+  /** The reference an alias of the scope quest (ssq) holds, by the alias's name. */
+  async #scopeAlias(name: string): Promise<number | undefined> {
+    if (this.#scope === undefined) return undefined;
+    const runtime = this.#context.runtime;
+    const record = await runtime.forms.quest(this.#scope);
+    const alias = record?.aliases.find(
+      (entry) => !entry.location && entry.name.toLowerCase() === name.toLowerCase(),
+    );
+    if (!alias) return undefined;
+    return runtime.state.quests.get(this.#scope)?.aliases.get(alias.id);
+  }
+
+  /** sglv: every global and its value (a float's with four decimals, a short's or long's whole). */
+  async #globals(): Promise<string[]> {
+    const lines = ['--- Global Variables -----------------------------'];
+    const globals: { formId: number; editorId: string; float: boolean }[] = [];
+    await this.#context.db.scan(
+      ['GLOB'],
+      () => true,
+      (record) => {
+        if (!record.editorId || record.deleted) return;
+        const type = record.fields.first('FNAM')?.[0];
+        globals.push({ formId: record.formId, editorId: record.editorId, float: type === 0x66 });
+      },
+    );
+    for (const global of globals) {
+      const value = await this.#native('globalvariable.getvalue', global.formId);
+      const number = typeof value === 'number' ? value : 0;
+      lines.push(
+        global.float
+          ? `${global.editorId} = ${number.toFixed(4)}`
+          : `${global.editorId} = ${String(Math.trunc(number))}`,
+      );
+    }
+    return lines;
+  }
+
+  /** sv, sqv: the variables of each script on an object, under the script's name. */
+  async #variables(formId: number): Promise<string[]> {
+    const runtime = this.#context.runtime;
+    const lines: string[] = [];
+    for (const instance of await runtime.vm.savedInstances()) {
+      if (instance.formId !== formId || instance.alias >= 0) continue;
+      lines.push(`== ${instance.script} ==`);
+      const vars = instance.vars.flatMap(([, entries]) => entries);
+      if (vars.length === 0) lines.push('No variables');
+      for (const [variable, value] of vars) lines.push(`${variable} = ${consoleValue(value)}`);
+    }
+    if (lines.length === 0) lines.push('No variables');
+    return lines;
+  }
+
+  /** ShowQuestAliases: each alias of a quest, its name and what fills it. */
+  async #aliases(quest: number): Promise<string[]> {
+    const runtime = this.#context.runtime;
+    const record = await runtime.forms.quest(quest);
+    const fills = runtime.state.quests.get(quest)?.aliases;
+    const lines: string[] = [];
+    for (const alias of record?.aliases ?? []) {
+      const filled = fills?.get(alias.id);
+      const what =
+        filled === undefined ? 'EMPTY' : `${await referenceName(runtime, filled)} (${hex(filled)})`;
+      lines.push(`${String(alias.id)} ${alias.name}: ${what}`);
+    }
+    return lines;
+  }
+
+  /** setpqv, setpv: a property set to a number, a bool, None or a form named. */
+  async #setProperty(target: ObjectHandle, property: string, text: string): Promise<void> {
+    const lower = text.toLowerCase();
+    let value: Value;
+    const number = parseConsoleNumber(text);
+    if (lower === 'true' || lower === 'false') value = lower === 'true';
+    else if (lower === 'none') value = null;
+    else if (number !== undefined && !/^[0-9a-f]{8}$/i.test(text)) value = number;
+    else {
+      const reference = await this.#reference(text);
+      const formId = reference ?? (await this.#form(text, []));
+      value =
+        reference !== undefined
+          ? this.#ref(reference)
+          : formId !== undefined
+            ? this.#formValue(formId)
+            : text;
+    }
+    await this.#context.runtime.vm.setProperty(target, property, value);
+  }
+
+  /** Runs work on every quest of the load order. */
+  async #everyQuest(work: (quest: QuestRecord) => Promise<void>): Promise<void> {
+    const runtime = this.#context.runtime;
+    const quests: number[] = [];
+    await this.#context.db.scan(
+      ['QUST'],
+      () => true,
+      (record) => {
+        if (!record.deleted) quests.push(record.formId);
+      },
+    );
+    for (const formId of quests) {
+      const quest = await runtime.forms.quest(formId);
+      if (quest) await work(quest);
+    }
+  }
+
+  /** sqt: the active quests' targets, each by its quest and reference. */
+  async #questTargetLines(): Promise<string[]> {
+    const runtime = this.#context.runtime;
+    const lines: string[] = [];
+    for (const target of (await this.#context.questTargets?.()) ?? []) {
+      const quest = (await runtime.forms.record(target.quest))?.editorId ?? hex(target.quest);
+      const name = await referenceName(runtime, target.reference);
+      lines.push(`${quest}: ${name} (${hex(target.reference)})`);
+    }
+    return lines;
   }
 
   /** showinventory: each item it holds with its count, name and form id. */
