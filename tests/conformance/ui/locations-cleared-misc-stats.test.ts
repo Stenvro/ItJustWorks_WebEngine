@@ -536,16 +536,20 @@ describe.skipIf(!hasGamedata())('the misc stats of a day at an inn (headless sim
     expect(await change(sim, 'Dragon Souls Collected', () => mod(-1))).toBe(0);
   });
 
-  it('Words of Power Learned, Shouts Learned: each word, the shout at its last', async () => {
+  // Observed in the original: the word learned event carries whether the word gave the player a
+  // shout they did not have; Shouts Learned counts that, so a shout counts at its first word.
+  it('Words of Power Learned, Shouts Learned: each word, the shout at its first', async () => {
     const { casting } = sim.runtime;
     const shout = await casting.shout(await sim.formId('SHOU', 'UnrelentingForceShout'));
     const [fus, ro, dah] = shout?.words ?? [];
     if (!fus || !ro || !dah) throw new Error('no words');
+    const shouts = stat(sim, 'Shouts Learned');
     expect(await change(sim, 'Words of Power Learned', () => casting.teachWord(fus.word))).toBe(1);
+    expect(stat(sim, 'Shouts Learned')).toBe(shouts + 1);
     expect(await change(sim, 'Words of Power Learned', () => casting.teachWord(fus.word))).toBe(0);
     expect(await change(sim, 'Shouts Learned', () => casting.teachWord(ro.word))).toBe(0);
-    expect(await change(sim, 'Shouts Learned', () => casting.teachWord(dah.word))).toBe(1);
     expect(await change(sim, 'Shouts Learned', () => casting.teachWord(dah.word))).toBe(0);
+    expect(stat(sim, 'Words of Power Learned')).toBeGreaterThanOrEqual(3);
   });
 
   it('Words of Power Unlocked, Shouts Mastered: a soul each, the shout at its last', async () => {
@@ -665,6 +669,10 @@ describe.skipIf(!hasGamedata())('the misc stats of a day at an inn (headless sim
     expect(await change(sim, 'Skill Books Read', () => sim.read(skillBook))).toBe(0);
     expect(await change(sim, 'Books Read', () => sim.read(tome))).toBe(1);
     expect(await change(sim, 'Books Read', () => sim.read(tome))).toBe(0);
+    // Only the skill book's count is told to scripts (observed in the original).
+    const told = sim.events('trackedStats').map((event) => event.stat);
+    expect(told).toContain('Skill Books Read');
+    expect(told).not.toContain('Books Read');
   });
 
   it('Skill Increases: a skill’s level', async () => {

@@ -1438,6 +1438,9 @@ export class CastingEngine {
    * Game.TeachWord: the player learns a word of power. Observed in the original: every
    * shout with the word whose first word the player now knows becomes theirs (in the magic menu,
    * its words locked until unlocked), and a shout new to them is a New Voice Power story event.
+   * A word new to the player counts in Words Of Power Learned, and in Shouts Learned as well when
+   * it gave them a shout they did not have (once however many it gave; observed in the original:
+   * the word learned event's flag, so a shout counts as its first word is learned).
    */
   async teachWord(word: number): Promise<void> {
     const runtime = this.#runtime;
@@ -1446,17 +1449,18 @@ export class CastingEngine {
       runtime.wordsLearned.set(word, false);
       runtime.events.emit('wordLearned', { word });
     }
+    let shoutGiven = false;
     for (const formId of runtime.forms.db.formIdsOfType('SHOU')) {
       const shout = await this.shout(formId);
       if (!shout?.words.some((entry) => entry.word === word)) continue;
-      // Shouts Learned: this word was the last of the shout's three (UESP "Skyrim:Statistics").
-      if (fresh && shout.words.every((entry) => runtime.wordsLearned.has(entry.word)))
-        runtime.incrementStat('Shouts Learned');
       const first = shout.words[0]?.word;
       if (first === undefined || !runtime.wordsLearned.has(first)) continue;
-      if (await runtime.actors.addSpell(PLAYER_REF, formId))
+      if (await runtime.actors.addSpell(PLAYER_REF, formId)) {
+        shoutGiven = true;
         runtime.detach(runtime.storyEvents.newVoicePower(PLAYER_REF, formId));
+      }
     }
+    if (fresh && shoutGiven) runtime.incrementStat('Shouts Learned');
   }
 
   /**

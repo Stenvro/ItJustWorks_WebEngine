@@ -61,15 +61,15 @@
 //
 // The others this relay counts, each from the hub event that causes it (the stats' names as the
 // journal lists them): the first read of a book by the player (the BooksRead source, told by
-// src/shell/book-reading.ts after TESBookReadEvent: Books Read; one that teaches a
-// skill, Skill Books Read instead: UESP "Skyrim:Statistics", which counts spell tomes and not
-// skill books in the former. TODO(M13): that a re-read counts in neither is inferred from a skill
-// book's teaching once), a shout the player lets out, whatever its words (Times Shouted: the
+// src/shell/book-reading.ts after TESBookReadEvent: Books Read; one whose read raised a skill,
+// Skill Books Read instead, and only that one told to scripts as a tracked stat; observed in
+// the original: the book's read flag sends the event once, a spell tome counts in Books Read),
+// a shout the player lets out, whatever its words (Times Shouted: the
 // ShoutAttack event), a word of power learned (Words of Power Learned), the hours of a sleep (Hours Slept, at its end), food, a potion or an ingredient the
 // player takes (Food Eaten, Potions Used, Ingredients Eaten: an equip of the item), and the most
 // gold the player has had (Most Gold Carried, as gold comes in). Counted where they happen
-// instead: Shouts Learned (CastingEngine.teachWord: the shout's last word, by UESP;
-// TODO(M13): the original's writer is not read), Words of Power Unlocked
+// instead: Shouts Learned (CastingEngine.teachWord: a new word that gives the player a shout,
+// observed in the original), Words of Power Unlocked
 // (CastingEngine.unlockWord), the crimes' (the crime engine).
 //
 // The combat and magic counts (observed in the original: CriticalHitToMiscStatHandler,
@@ -287,8 +287,13 @@ export function relayStatEvents(runtime: ScriptRuntime): () => void {
     runtime.events.on('locationCleared', () => {
       runtime.incrementStat(DUNGEONS_CLEARED);
     }),
+    // Only a skill book's is told to scripts as a tracked stat (observed in the original).
     runtime.events.on('booksRead', (event) => {
-      runtime.incrementStat(event.skillBook ? 'Skill Books Read' : 'Books Read');
+      runtime.incrementStat(
+        event.skillBook ? 'Skill Books Read' : 'Books Read',
+        1,
+        event.skillBook,
+      );
     }),
     runtime.events.on('chestsLooted', () => {
       runtime.incrementStat('Chests Looted');

@@ -918,7 +918,61 @@ every tree, the near TREE references with their shadows and harvested looks as w
 distant tree LOD; their collision and their part in the game stay, a disabled tree stays hidden:
 `src/render/switched-visibility.ts`). coc (`src/shell/cell-placement.ts`) puts the player in an interior cell at
 its entrance, in an exterior cell at its COC marker (COCMarkerHeading), else at its middle on
-the ground. TODO(M13): the rest of the game's commands, selecting references by clicking.
+the ground. A click on the world while the console is open selects the reference under it (as
+prid).
+
+**The game's table** (`src/shell/console-functions.ts`, observed in the original): its 342
+console commands and 737 script functions, each with its name, short name, whether it is a
+reference function, its parameters (the name its messages use and the script parameter type,
+read as `src/shell/console-table.ts` says: the record types each takes are xEdit's for the
+condition parameter of the same type, the two numberings matched function by function) and
+whether its action returns at once. A script function's place among them is its condition
+function index. Every name the game knows is known; how each runs:
+
+- **Returns at once** (124 console commands, 38 script functions; observed in the original: the
+  action's body is a bare return): the tools of the game's makers left without their body in the
+  release (ToggleNavMesh, the memory trackers and checkpoints, the SPU and ESRAM switches,
+  ShowScenegraph, CellInfo, Timing, ToggleMarkers, KillAllProjectiles, IsUndead and the
+  EP... perk functions as typed, ...). Typed, they are accepted and print nothing, as in the game.
+- **A condition function** (397 script functions): the console prints that function's value for
+  the reference (`src/scripting/runtime/condition-values.ts`, the same evaluator the conditions
+  use), in the game's words for it (`src/shell/console-script-functions.ts`: most say
+  "GetIsID >> 1.00", some round ("GetDisabled >> 0") or name it otherwise ("Is Weapon/Magic Out
+  >> 1.00", "GetRelAng: Z >> 12.50"); observed in the original). A function the evaluator does
+  not value prints "This function not supported".
+- **A Papyrus native** (StartCombat, SetGhost, DamageAV, PushActorAway, EquipSpell, imod and
+  rimod, SetPCExpelled, SetEnemy, SetAlly, StartScene, PMS and SMS, PlaySound, AddMusic,
+  CameraShake, Autosave, AddFormToFormList, ... : `NATIVE_FUNCTIONS`): done by the native the
+  scripts call, with the console's parameters; GetObjectiveCompleted / Displayed / Failed print
+  the quest's answer, GetLinkedRef, GetCombatTarget, GetPlayerGrabbedRef and GetSelf the
+  reference ("GetSelf >> (00012345)").
+- **The math functions** Sin, Cos, Tan (degrees; 1 after the value gives the inverse), Sqrt,
+  Log (natural, or to a base given) and Abs. TODO(M13): what they take is inferred from their
+  parameters and the earlier games' script documentation.
+- **Built here**: sglv ("--- Global Variables ---" then each global, a float's value with four
+  decimals, a short's or long's whole: TODO(M13) which of the original's two lines goes with
+  which type is inferred from their order beside the header), sv and sqv (each script's
+  variables under its name; the layout of these lines, and of ShowQuestAliases' and sqt's, is
+  ours), setpqv and setpv (a script property set to a number, a bool, None or a form), saq ("All
+  Quests Enabled."), caqs ("All Quest Stages Completed."), ssq (the scope quest, whose aliases a
+  line may then name as references: "Console Scope Quest >> MQ101 (0003372B)", "... EMPTY"),
+  save and load by name, ShowMenu and HideMenu (the menus by their names on the stack),
+  GetINISetting ("INISetting fJumpHeightMin:Movement >> 76.00", "... NOT FOUND") and
+  SetINISetting (the running value; the player's settings keep it for the session), sucsm (the
+  free camera's speed times the value), SetRace (the player's, as Actor.SetRace).
+- **Cast** takes the casting source the game's table marks as needed (its "(Optional)" name
+  notwithstanding). TODO(M13): the node the spell leaves from by that source.
+
+Still answering "This function not supported", each for the reason given: the debug displays
+of the makers' tools that have a body in the release but draw what our renderer has no part
+for (ToggleWireframe, TCS, TMS, TDETECT's stats, the HDR, tint, cinematic and refraction
+parameter commands, ToggleCellNode, ...), the profiling and memory tools (OutputMemContexts,
+DumpPapyrusStacks, the Papyrus profiles, LTGraph), the file tools (SaveWorld, CopySaves,
+SaveIniFiles, RefreshINI, ReloadScript, HotLoadPlugin, RunConsoleBatch: the browser has no game
+folder to write), and the script functions no evaluator or native does yet (ModCrimeGold,
+SetActorFullName, SetClass, the radio and pip-boy functions of the shared code, ...).
+TODO(M13): build the remaining ones that change the game (FindForm, ShowQuestLog, GetAVInfo,
+SetFog, SetGlobalTimeMultiplier, ToggleScripts, PlayIdle, AddFormToLeveledList, ...).
 
 The console opens at the main menu too, as in the game: there `coc <cell>` starts a new game in
 that cell without the opening (Unbound, MQ101, is not started: `ScriptRuntime.newGame`'s
@@ -991,10 +1045,15 @@ recharging a weapon, not enchanting (UESP "Skyrim:Statistics"); Times Shouted: a
 whatever its words (ShoutAttack, the hub's `shoutAttack`; a shout's word goes out as a spell, so
 OnSpellCast does not tell it); Poisons Used: a poison put on the player's weapon (PoisonedWeapon);
 Diseases Contracted: a disease the player catches (ContractedDisease; Survival's script counts
-its own). By UESP "Skyrim:Statistics", where the original's own rule was not read
-(`TODO(M13)` beside each): Books Read and Skill Books Read count a book's first read, a skill book
-in the latter alone, a spell tome in the former; Shouts Learned counts a shout as its last word
-is learned; Murders counts the player's or a follower's kill of one not hostile, seen or not.
+its own). Observed in the original: the player's first read of a book (its read flag, set
+then) counts in Books Read, or, when that read raised a skill (a skill book's, which teaches
+once), in Skill Books Read instead; a spell tome counts in Books Read; only Skill Books Read is
+told to scripts as a tracked stat. A word of power new to the player counts in Words Of Power
+Learned and, when it gave them a shout they did not have, in Shouts Learned (once however many
+shouts it gave): a shout counts at its first word. By UESP "Skyrim:Statistics", where the
+original's own rule was not read (`TODO(M13)`): Murders counts the player's or a follower's
+kill of one not hostile, seen or not (the crime system's MurderCrime event; the engine counts
+the event).
 
 System: the menu lists Quicksave, Save, Load, Installed Content, Settings, Controls, Help and
 Quit. Quit to the main menu ends the game and opens its main menu; quit to the desktop leaves
