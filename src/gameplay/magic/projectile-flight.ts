@@ -241,6 +241,12 @@ export interface LobberSettings {
   readonly mineAgeMax: number;
   /** fMinesDelayMin: the seconds from a mine's being set off to its burst. */
   readonly minesDelayMin: number;
+  /** fMinesBlinkMax: within these seconds of its burst a mine's light blinks faster. */
+  readonly minesBlinkMax: number;
+  /** fMinesBlinkSlow: the seconds between a mine's blinks further from its burst. */
+  readonly minesBlinkSlow: number;
+  /** fMinesBlinkFast: the seconds between them at its burst. */
+  readonly minesBlinkFast: number;
 }
 
 /** The lobbers' ages alone (lobberAgeMax). */
@@ -255,7 +261,33 @@ export const LOBBER_DEFAULTS: LobberSettings = {
   grenadeAgeMax: 90,
   mineAgeMax: 0,
   minesDelayMin: 0.1,
+  minesBlinkMax: 2,
+  minesBlinkSlow: 0.25,
+  minesBlinkFast: 0.1,
 };
+
+/** A mine's blink settings alone (mineBlinkInterval). */
+export type MineBlink = Pick<LobberSettings, 'minesBlinkMax' | 'minesBlinkSlow' | 'minesBlinkFast'>;
+
+/** The node of a mine's model that blinks as it counts down to its burst. */
+export const MINE_LIGHT_NODE = '##lighton';
+
+/**
+ * The seconds to a set-off mine's next blink (observed in the original): with more than
+ * fMinesBlinkMax left to its burst, fMinesBlinkSlow; within it, from fMinesBlinkSlow down to
+ * fMinesBlinkFast in step with the time left. At each blink its ##LightOn node is shown or hidden
+ * again and its projectile's countdown sound plays.
+ */
+export function mineBlinkInterval(
+  remaining: number,
+  settings: MineBlink = LOBBER_DEFAULTS,
+): number {
+  if (remaining > settings.minesBlinkMax) return settings.minesBlinkSlow;
+  return (
+    (remaining / settings.minesBlinkMax) * (settings.minesBlinkSlow - settings.minesBlinkFast) +
+    settings.minesBlinkFast
+  );
+}
 
 /** Below this speed (units a second) off a surface a lobber stops bouncing and lies still. */
 const LOBBER_REST_SPEED = 20;

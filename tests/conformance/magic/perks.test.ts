@@ -19,6 +19,7 @@ import type { MagicItemRecord } from '../../../src/world/magic-records.ts';
 import {
   isMine,
   MAX_PLAYER_RUNES,
+  mineBlinkInterval,
   mineBursts,
   runesGivingWay,
 } from '../../../src/gameplay/magic/projectile-flight.ts';
@@ -130,6 +131,11 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
       readonly xs?: readonly number[];
       readonly walker?: number;
       readonly frames?: number;
+      /** The seconds of each frame once the walker comes (0.1). */
+      readonly step?: number;
+      /** The rune's countdown sound, and where its plays are told. */
+      readonly countdownSound?: number;
+      readonly played?: number[];
     },
   ): Promise<number[]> {
     const SPELL = 0x2001;
@@ -151,7 +157,7 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
       muzzleFlashDuration: 0,
       fadeDuration: 0,
       impactForce: 0,
-      countdownSound: undefined,
+      countdownSound: mine?.countdownSound,
       disableSound: undefined,
       defaultWeaponSource: undefined,
       coneSpread: 0,
@@ -188,6 +194,10 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
       scriptsReady: runtime,
       settings: () => new Promise(() => undefined),
       model: () => Promise.resolve(undefined),
+      playSound: (sound: number) => {
+        mine?.played?.push(sound);
+        return Promise.resolve(undefined);
+      },
     };
     // The ground at z 0.
     const physics = {
@@ -249,7 +259,7 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
         shape: { feet: [140, 0, 0], height: 128, radius: 30 },
       };
       for (let frame = 0; frame < (mine.frames ?? 3); frame++) {
-        magic.frame(0.1);
+        magic.frame(mine.step ?? 0.1);
         for (let tick = 0; tick < 5; tick++) await new Promise((resolve) => setTimeout(resolve, 0));
       }
     }
@@ -276,6 +286,32 @@ describe('the entry points no vanilla perk uses that the engine asks (mods)', ()
     expect(await placed(1, { chance: 0, xs: [100], frames: 6 })).toEqual([100]);
     // Another actor sets it off without a roll.
     expect(await placed(1, { chance: 0, xs: [100], walker: 0x1234 })).toEqual([]);
+  });
+
+  it('blinks a set-off mine to its burst, its countdown sound at each blink (original)', async () => {
+    // fMinesBlinkMax 2, Slow 0.25, Fast 0.1: within 2 s of the burst the next blink comes after
+    // (left / 2) × (0.25 − 0.1) + 0.1 seconds; further away after 0.25.
+    expect(mineBlinkInterval(3)).toBeCloseTo(0.25);
+    expect(mineBlinkInterval(2)).toBeCloseTo(0.25);
+    expect(mineBlinkInterval(1)).toBeCloseTo(0.175);
+    expect(mineBlinkInterval(0)).toBeCloseTo(0.1);
+    // Set off in the first 0.03 s frame (fMinesDelayMin 0.1 to go): it blinks in the next at
+    // once, then waits 0.105 s, and bursts before blinking again.
+    const played: number[] = [];
+    const left = await placed(1, {
+      chance: 100,
+      xs: [100],
+      frames: 5,
+      step: 0.03,
+      countdownSound: 0x4001,
+      played,
+    });
+    expect(left).toEqual([]);
+    expect(played).toEqual([0x4001]);
+    // Without a countdown sound it is silent.
+    const quiet: number[] = [];
+    await placed(1, { chance: 100, xs: [100], frames: 5, step: 0.03, played: quiet });
+    expect(quiet).toEqual([]);
   });
 });
 

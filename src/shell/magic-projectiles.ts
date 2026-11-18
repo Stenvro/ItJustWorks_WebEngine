@@ -34,7 +34,9 @@ import {
   launchFlight,
   LOBBER_DEFAULTS,
   MAX_PLAYER_RUNES,
+  mineBlinkInterval,
   mineBursts,
+  MINE_LIGHT_NODE,
   withinMineRadius,
   normalize,
   pathHitsActor,
@@ -67,7 +69,13 @@ import type { PhysicsWorld, RayHit } from '../physics/physics-world.ts';
 import { conePush, loadImpulseSettings, projectileKnock } from '../gameplay/impulses.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { RenderPort } from '../render/render-port.ts';
-import type { GpuScene, InstanceMotion, ModelInstance } from '../render/scene-renderer.ts';
+import type {
+  GpuScene,
+  InstanceMotion,
+  InstanceVisibility,
+  ModelInstance,
+} from '../render/scene-renderer.ts';
+import type { ModelPart } from '../render/model-data.ts';
 import type { Delivered } from '../scripting/runtime/casting-engine.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { SoundInstance } from '../audio/sound-instance.ts';
@@ -170,6 +178,9 @@ interface Flying {
    * perks are being asked now.
    */
   mineCountdown?: number;
+  /** A set-off mine: the seconds to its next blink, and its ##LightOn node's parts shown or not. */
+  mineBlink?: number;
+  mineLight?: InstanceVisibility;
   minePassed?: boolean;
   mineAsking?: boolean;
   /** A loaded save's state of its model's graph, put back as its model loads. */
@@ -730,7 +741,19 @@ export class MagicProjectiles {
           ...(graph && { graph }),
         };
         flying.instance = instance;
-        flying.scene = renderer.scene.createScene([instance]);
+        // A mine's ##LightOn node is drawn apart, shown or hidden as it blinks (#blink).
+        const light = (part: ModelPart): boolean =>
+          part.ancestors?.includes(MINE_LIGHT_NODE) === true ||
+          part.name.toLowerCase() === MINE_LIGHT_NODE;
+        const lit = isMine(projectile) && model.parts.some((gpu) => light(gpu.part));
+        if (lit) {
+          const visibility: InstanceVisibility = { hidden: false };
+          flying.mineLight = visibility;
+          flying.scene = renderer.scene.createScene([
+            { ...instance, partShown: (part) => !light(part) },
+            { ...instance, partShown: light, visibility },
+          ]);
+        } else flying.scene = renderer.scene.createScene([instance]);
       })
       .catch((error: unknown) => {
         terminal.log('magic', `${projectile.editorId}: ${describe(error)}`, 'warn');
@@ -1169,6 +1192,9 @@ export class MagicProjectiles {
       grenadeAgeMax: read.number('fGrenadeAgeMax') ?? LOBBER_DEFAULTS.grenadeAgeMax,
       mineAgeMax: read.number('fMineAgeMax') ?? LOBBER_DEFAULTS.mineAgeMax,
       minesDelayMin: read.number('fMinesDelayMin') ?? LOBBER_DEFAULTS.minesDelayMin,
+      minesBlinkMax: read.number('fMinesBlinkMax') ?? LOBBER_DEFAULTS.minesBlinkMax,
+      minesBlinkSlow: read.number('fMinesBlinkSlow') ?? LOBBER_DEFAULTS.minesBlinkSlow,
+      minesBlinkFast: read.number('fMinesBlinkFast') ?? LOBBER_DEFAULTS.minesBlinkFast,
     };
   }
 
@@ -1559,7 +1585,9 @@ export class MagicProjectiles {
     }
     if (flying.mineCountdown !== undefined) {
       flying.mineCountdown -= seconds;
-      return flying.mineCountdown <= 0;
+      if (flying.mineCountdown <= 0) return true;
+      this.#blink(flying, seconds);
+      return false;
     }
     const settings = this.#lobberSettings();
     const exteriorMult = this.#settings?.number('fMineExteriorRadiusMult') ?? 1;
@@ -1593,6 +1621,22 @@ export class MagicProjectiles {
         else flying.minePassed = true;
       });
     return false;
+  }
+
+  /**
+   * A set-off mine counting down to its burst blinks (observed in the original): each time its
+   * blink's seconds run out, its model's ##LightOn node is shown or hidden again, its
+   * projectile's countdown sound plays, and the next blink comes after mineBlinkInterval of the
+   * time left. No vanilla mine model has the node, nor any vanilla mine projectile a countdown
+   * sound. TODO(M13): that the first blink comes at once as the mine is set off is inferred.
+   */
+  #blink(flying: Flying, seconds: number): void {
+    flying.mineBlink = (flying.mineBlink ?? 0) - seconds;
+    if (flying.mineBlink > 0) return;
+    if (flying.mineLight) flying.mineLight.hidden = !flying.mineLight.hidden;
+    const sound = flying.projectile.countdownSound;
+    if (sound !== undefined) void this.#options.session.playSound(sound, flying.flight.position);
+    flying.mineBlink = mineBlinkInterval(flying.mineCountdown ?? 0, this.#lobberSettings());
   }
 
   /**
