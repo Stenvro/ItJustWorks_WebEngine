@@ -938,8 +938,8 @@ function index. Every name the game knows is known; how each runs:
   the reference (`src/scripting/runtime/condition-values.ts`, the same evaluator the conditions
   use), in the game's words for it (`src/shell/console-script-functions.ts`: most say
   "GetIsID >> 1.00", some round ("GetDisabled >> 0") or name it otherwise ("Is Weapon/Magic Out
-  >> 1.00", "GetRelAng: Z >> 12.50"); observed in the original). A function the evaluator does
-  not value prints "This function not supported".
+  > > 1.00", "GetRelAng: Z >> 12.50"); observed in the original). A function the evaluator does
+  > > not value prints "This function not supported".
 - **A Papyrus native** (StartCombat, SetGhost, DamageAV, PushActorAway, EquipSpell, imod and
   rimod, SetPCExpelled, SetEnemy, SetAlly, StartScene, PMS and SMS, PlaySound, AddMusic,
   CameraShake, Autosave, AddFormToFormList, ... : `NATIVE_FUNCTIONS`): done by the native the
