@@ -362,8 +362,16 @@ describe.skipIf(!hasGamedata())('MQ102 Before the Storm (Hadvar’s route)', () 
         topics = await sim.listen(FARENGAR, 0.01);
       }
       expect(sim.stageDone(MQ103, 20)).toBe(true);
-      expect(topics).toContain('The Jarl said you had a project you needed help with.');
-      await sim.choose('project you needed help with');
+      // His force greet's line (MQ103FarengarIntroForcegreetTopic, which asks
+      // GetIsCurrentPackage(MQ103FarengarForcegreetPlayer)): "So the Jarl thinks you can be of use
+      // to me?", going on to "Yes, I could use someone to fetch something for me." and its
+      // choices. The player's own "The Jarl said you had a project..." is for a player who
+      // talks to him first.
+      expect(topics).toEqual([
+        'All right. Where am I going and what am I fetching?',
+        'What does this have to do with dragons?',
+        'Just tell me what you need me to do.',
+      ]);
       await sim.choose('Where am I going and what am I fetching?');
       expect(sim.stageDone(MQ103, 50)).toBe(true);
       await sim.choose('Anything you can tell me about Bleak Falls Barrow?');
