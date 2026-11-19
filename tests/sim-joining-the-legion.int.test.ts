@@ -177,7 +177,13 @@ describe.skipIf(!hasGamedata())('CW01A Joining the Legion', () => {
       await sim.step(1);
       const there = await sim.position(tullius);
       expect(there && (await sim.walkPath(there, 60, 150))).toBe(true);
-      expect(await sim.talk(tullius)).toContain("I'm ready to take the Oath.");
+      // Stage 160 gives him his force greet (CW01ATulliusForcegreet, GetStage CW01A == 160) with
+      // CW01AJoinLegionBranchTopic: he comes to the player and opens with "In joining the Legion,
+      // you'll be taking an oath..." and its two answers. Tried while the player still spoke
+      // with Rikke, it is tried again after fAIForceGreetingTimer (3 s), so the player waits for
+      // him; one who talks to him first gets that blocking topic as their own "I'm ready to take
+      // the oath." instead.
+      expect(await sim.listen(tullius, 10)).toContain("I'm ready to take the Oath.");
       await sim.choose(/ready to take the Oath/);
       await sim.choose(/Upon my honor/);
       await sim.choose(/unwavering obedience/);

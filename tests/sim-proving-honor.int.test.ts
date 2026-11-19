@@ -27,6 +27,8 @@ const FARKAS = 0x1a693;
 const MOLDERING_RUINS = 0x2003cfd;
 const RUINS_WAY_DOWN = 0x2002801;
 const RUINS = 0x200285d;
+/** A roll of the dice that picks the last of what it picks among. */
+const LAST_ROLL = 0.999999;
 const SKJOR = 0x1a691;
 const GOLD = 0xf;
 /** WhiterunMapMarkerREF (in the city: WhiterunWorld), and Jorrvaskr's front door (JorrvaskrDoor1REF). */
@@ -110,6 +112,23 @@ describe.skipIf(!hasGamedata())('C01 Proving Honor', () => {
   it('has Farkas give the player a job (CR05 10)', async () => {
     const sim = await openSim({ interior: JORRVASKR, hour: 14 });
     try {
+      // CR05's Location is a Find Matching Location alias: one of the ten uncleared places of
+      // Whiterun Hold its conditions take, at random (src/scripting/runtime/alias-fill.ts), so
+      // which band Farkas names hangs on every roll of the world's dice before it. The case rolls
+      // the last of them in form order, Dawnguard's Moldering Ruins, whose ruins the segments
+      // after it play through.
+      const quests = sim.runtime.quests;
+      const start = quests.start.bind(quests);
+      quests.start = async (quest, event) => {
+        if (quest !== CR05) return start(quest, event);
+        const random = quests.filler.random;
+        quests.filler.random = () => LAST_ROLL;
+        try {
+          return await start(quest, event);
+        } finally {
+          quests.filler.random = random;
+        }
+      };
       expect(await sim.until(() => sim.stageDone(C00, 1), 90)).toBe(true);
       for (const stage of [10, 20, 30, 40, 50, 100]) {
         void sim.runtime.quests.setStage(C00, stage);

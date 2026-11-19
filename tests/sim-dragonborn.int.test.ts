@@ -65,11 +65,13 @@ describe.skipIf(!hasGamedata())('DLC2MQ01 Dragonborn', () => {
       const note = alias(sim, CULTIST_AMBUSH, NOTE);
       const orders = (await sim.runtime.baseOf(note)) ?? 0;
       const topics = await sim.listen(undefined, 150);
+      // "(Walk away)" (DLC2CultistAmbushA4) is their greeting's Walk Away topic, and the greeting
+      // (DLC2CultistAmbushBeginTopic's info) has Walk Away Invisible In Menu: it is said as the
+      // player walks away, not listed.
       expect(topics).toEqual([
         'Yes, I am Dragonborn.',
         'The Greybeards seem to think so...',
         "I don't know what you're talking about.",
-        '(Walk away)',
       ]);
       expect(sim.stage(CULTIST_AMBUSH)).toBeLessThan(10);
       await sim.choose(/I am Dragonborn/);
