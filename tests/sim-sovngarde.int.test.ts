@@ -35,6 +35,15 @@ const HALL_DOOR = 0x4f7f7;
 const HALL = 0x95c44;
 const HEROES_TRIGGER = 0xec3a7;
 
+/**
+ * The player's health for Tsun's fight: what a played game has by Sovngarde, its level-ups partly
+ * put into health (TODO(M13): a played game's stats). Tsun's battleaxe
+ * (MQ304DraugrBattleAxeTsun01-04: 20 to 27) takes some 31 a blow off a first level's 100 and 62 a
+ * power attack (its attack data's 2), so three blows end the starting player before the fight
+ * this case stands in for is over.
+ */
+const PLAYED_HEALTH = 200;
+
 /** The game at the bridge's end of the valley (stage 130). */
 let atTheBridge: Uint8Array | undefined;
 /** The game in the Hall of Valor (stage 160). */
@@ -135,6 +144,7 @@ describe.skipIf(!hasGamedata())('MQ304 Sovngarde', () => {
     try {
       const lines: string[] = [];
       sim.runtime.scenes.listen((line) => lines.push(line));
+      sim.runtime.actors.setBase(PLAYER_REF, ActorValue.health, PLAYED_HEALTH);
       const tsun = alias(sim, TSUN);
       const near = await sim.position(tsun);
       expect(near && (await walkFighting(sim, near, 30, 400))).toBe(true);
