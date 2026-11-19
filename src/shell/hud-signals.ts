@@ -80,6 +80,14 @@ export interface MenuSink {
    * ForceGreet) instead of its greeting.
    */
   talk(speaker: Speaker, opening?: number): void;
+  /**
+   * Whether the player is in conversation with an actor: its menu is open (without it: the
+   * actor is in dialogue with the player, `dialogueSpeaker`). The dialogue menu keeps its
+   * speaker in dialogue from its first line's pick until it closes, so the two are one; the
+   * headless simulation picks a menu's first line as it opens and hears the conversation only
+   * when a case does, so a pick alone is no conversation there (src/sim/sim-log.ts).
+   */
+  conversing?(reference: number): boolean;
   /** A container's menu (a chest, a corpse searched); `closed` once it has closed. */
   container(reference: number, closed: () => void): void;
   /** A menu a script opens; resolves once it has closed, with what it returns. */

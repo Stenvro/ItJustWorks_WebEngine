@@ -947,7 +947,12 @@ export class ActorAi {
         menus.talk(staged.placed, topic);
         return true;
       },
-      conversing: () => this.#session.scriptsReady?.dialogueSpeaker === staged.reference,
+      conversing: () => {
+        const menus = this.#session.hud.menus;
+        return menus?.conversing
+          ? menus.conversing(staged.reference)
+          : this.#session.scriptsReady?.dialogueSpeaker === staged.reference;
+      },
     };
   }
 

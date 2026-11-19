@@ -250,6 +250,15 @@ export class SimLog {
    * and so does the simulation's conversation (tests/helpers/sim.ts).
    */
   onTalk: ((record: Extract<SimRecord, { readonly kind: 'menu' }>) => void) | undefined;
+  /**
+   * Whether the player is in conversation with an actor (MenuSink.conversing): one a case is
+   * hearing, not one whose first line is only being picked as its menu opened (a force greet's
+   * package stays current until the conversation it opened has been heard and left: MQ106's
+   * Delphine). Unset: in dialogue with the player.
+   */
+  conversing: ((reference: number) => boolean) | undefined;
+  /** The runtime it listens to (attachRuntime). */
+  #runtime: ScriptRuntime | undefined;
 
   /** Every record of a kind. */
   of<K extends SimRecordKind>(kind: K): Extract<SimRecord, { readonly kind: K }>[] {
@@ -279,6 +288,7 @@ export class SimLog {
 
   /** Listens to a runtime: its event hub, the events its VM sends, its story manager. */
   attachRuntime(runtime: ScriptRuntime): void {
+    this.#runtime = runtime;
     for (const type of Object.keys(GAME_EVENT_KINDS) as GameEventKind[])
       this.#listen(runtime, type);
     runtime.vm.onEventSent = (target, event, args) => {
@@ -389,6 +399,8 @@ export class SimLog {
       this.#push(record);
       this.onTalk?.(record);
     },
+    conversing: (reference) =>
+      this.conversing?.(reference) ?? this.#runtime?.dialogueSpeaker === reference,
     container: (reference, closed) => {
       this.#push({ kind: 'menu', at: this.clock(), menu: 'ContainerMenu', reference });
       closed();
