@@ -3367,13 +3367,19 @@ export class BehaviorRuntime {
    * during the blend back to the ready state draws again (it resumed its finished release and
    * waited there for good). Nothing is deactivated: no exit events (the release's attackStop
    * would end the new draw at once).
+   *
+   * What it shares is what the state left plays now (its active nodes), not all that lies below
+   * it: the first-person ready state holds the right hook's clip too, in its magic-and-fist
+   * branch that a bare-handed player never plays (1HM_MLh_Behavior's MLh_H2H_AttackBlend), and a
+   * second punch thrown while the first blended out took that clip for one going on: it stayed
+   * at its end, raised nothing more, and the player's fists hung in the punch for good.
    */
   #restart(state: StateMachineState, left: StateMachineState): void {
     const shared = new Set<object>();
     const mark = (generator: BehaviorGenerator | undefined): void => {
-      if (!generator || shared.has(generator)) return;
+      if (!generator || shared.has(generator) || !this.#active.has(generator)) return;
       shared.add(generator);
-      for (const child of children(generator)) mark(child);
+      for (const child of this.#activeChildren(generator)) mark(child);
     };
     mark(left.generator);
     this.#reset(state.generator, shared, true);

@@ -29,6 +29,8 @@ const SKYFORGE_SWORD = 0x9f25c;
 /** C00VilkasTrainingQuestOverTopic: "How was that?", Vilkas's greeting after the fight. */
 const HOW_WAS_THAT = 0xa3e4b;
 const COMPANIONS_FACTION = 0x48362;
+/** CR04 "Hired Muscle", one of the jobs Farkas gives. */
+const CR04 = 0x25231;
 
 /** The game with the player sent to train with Vilkas (C00 20). */
 let toTrain: Uint8Array | undefined;
@@ -198,8 +200,16 @@ describe.skipIf(!hasGamedata())('C00 Take Up Arms', () => {
       expect(
         await sim.runtime.actors.factionRank(PLAYER_REF, COMPANIONS_FACTION),
       ).toBeGreaterThanOrEqual(0);
-      // A Companion now: Farkas has work for them.
-      expect(await sim.listen(FARKAS, 30)).toContain("I'm looking for work.");
+      // A Companion now: Farkas has work for them. His C00FarkasFGPostTour (while CR04 or CR05
+      // runs) greets them with C00FarkasPostJoinBranchTopic: "By the way, if you're looking for
+      // something to do." Its info for the running job (CR04's 000F7943, CR05's 000F7942) is an
+      // Invisible Continue whose one choice is that job's "I'm looking for work.", taken without
+      // the player choosing; Hired Muscle's answer is one too (CR04DoesntMatterNowDoesIt), and
+      // its offer is what is listed.
+      const offer = sim.runtime.state.quest(CR04).running
+        ? ['I can handle that.', "I'd rather not do that."]
+        : ['What kind of trouble should I expect?'];
+      expect(await sim.listen(FARKAS, 30)).toEqual(expect.arrayContaining(offer));
       sim.goodbye();
     } finally {
       await sim.close();

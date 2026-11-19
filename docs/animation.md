@@ -2005,7 +2005,11 @@ behavior files: `node tools/behavior-run.ts --transitions`):
 - **Back into a state it blends out of** (A to B, then back to A while A still blends out): Havok
   plays a fresh copy of A beside the one blending out; ours share their nodes, so the machine's
   pose as it was is held and A starts over blended in from it (`#restart`, as an instant
-  transition back starts it over).
+  transition back starts it over). What A shares with B and keeps is only what B plays now:
+  the first-person ready state holds the right hook's clip as well, in its magic-and-fist
+  branch (1HM_MLh_Behavior's MLh_H2H_AttackBlend) that bare hands never play, and taken for
+  shared that clip stayed at its end, so a second punch thrown during the first one's blend
+  out hung there for good.
 - **Events while blending.** The project's default event mode (hkbProjectData: 2 in every
   vanilla actor project) keeps events from the states a transition blends out of; an effect may
   say otherwise (1,222 vanilla effects let both sides hear them, 30 say not the state left;
