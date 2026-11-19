@@ -421,6 +421,13 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
       if (user.reference === who && action === 'ActionIdleStop') stops.push(event);
       return event;
     };
+    // When each ambient idle played (the simulation's seconds).
+    const playedAt = new Map<AmbientIdlePlayed, number>();
+    const push = idles.played.push.bind(idles.played);
+    idles.played.push = (...items) => {
+      for (const one of items) playedAt.set(one, sim.time);
+      return push(...items);
+    };
     try {
       const theirs = (): IdleCall[] => watch.calls.filter((call) => call.actor === who);
       const specifics = (): IdleCall[] => theirs().filter((call) => call.kind === 'specific');
@@ -449,11 +456,17 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
       expect(await sim.until(() => !flags.skipping(who), 30)).toBe(true);
       const cleared = picksAfter()[0];
       expect(cleared).toBeDefined();
-      // The skipped PickNewIdle asked for nothing; a later one does, and the actor picks again.
-      const again = await sim.until(
-        () => idles.played.some((one) => one.actor === who && !seen.has(one)),
-        60,
-      );
+      // The skipped PickNewIdle asked for nothing; a later one does, and the actor picks again
+      // after it. An idle it plays before that comes of another request: one whose sandbox walks
+      // it into furniture meanwhile (Saadia to the bar counter) wants one as it settles there
+      // (ActorAmbientIdles #settle), no PickNewIdle's.
+      const again = await sim.until(() => {
+        const asked = picksAfter()[1];
+        return (
+          asked !== undefined &&
+          [...playedAt].some(([one, at]) => one.actor === who && !seen.has(one) && at >= asked.at)
+        );
+      }, 60);
       console.info(
         `[ambient-idles] ${who.toString(16)}: bForceIdleStop path, PickNewIdle ` +
           `${picksAfter()
@@ -465,6 +478,7 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
     } finally {
       watch.restore();
       Reflect.deleteProperty(furniture, 'actionEvent');
+      Reflect.deleteProperty(idles.played, 'push');
     }
   }, 300_000);
 });

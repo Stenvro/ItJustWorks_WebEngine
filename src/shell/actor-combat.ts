@@ -34,6 +34,7 @@ import type { GraphEvent } from '../animation/graph-events.ts';
 import type { ActorGraphSource } from './actor-graph-events.ts';
 import { ActorValue, actorValueIndex } from '../world/actor-values.ts';
 import { BodyPartType, parseBodyPartData, type BodyPart } from '../world/body-part-data.ts';
+import { referenceMatrix } from '../world/cell-loader.ts';
 import { DefaultObjectUse } from '../world/default-objects.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { referenceName } from '../scripting/runtime/quest-text.ts';
@@ -3925,6 +3926,21 @@ export class ActorCombat implements CombatBridge {
         staged.position = position;
         staged.heading = turned;
         this.#options.movers.teleport(staged);
+        // Held by its pair (no controller draws it), it is drawn at its mark from here, and its
+        // ragdoll's bodies follow it there (actor-bodies.ts places them on its drawn world):
+        // left where it stood before, the clip played there, its ragdoll in what stood there.
+        const placed = staged.placed;
+        const instance = placed.instances[0];
+        if (instance?.motion) {
+          instance.world.set(
+            referenceMatrix({
+              position,
+              rotation: [0, 0, turned],
+              scale: placed.actor.scale * placed.look.scale,
+            }),
+          );
+          instance.motion.version++;
+        }
       }
     }
     if (there) fighter.toMark = undefined;
