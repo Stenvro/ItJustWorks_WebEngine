@@ -366,8 +366,13 @@ describe.skipIf(!hasGamedata())("MQ203 Alduin's Wall", () => {
       expect(quiet).toBe(10);
       expect(fallen).toBeGreaterThan(0);
       for (const actor of party) expect(isDead(sim, actor)).toBe(false);
+      // The player waits for the two where the map put them, by the cave's door (some 750 units
+      // off) and out of its reach. Walking up to it first is no wait outside it: its marker
+      // stands off the navmesh, the way to it ends at the navmesh's point nearest it, 140 units
+      // from it, and the way's last corner lies 270 from it, both well within
+      // fAutoDoorActivateDistance (350).
       const door = await sim.position(KARTHSPIRE_DOOR);
-      expect(door && (await sim.walkPath(door, 180, 400))).toBe(true);
+      expect(door).toBeDefined();
       const nearby = async (reach: number): Promise<boolean> => {
         for (const actor of party) {
           const away = await sim.distance(PLAYER_REF, actor);
@@ -381,8 +386,10 @@ describe.skipIf(!hasGamedata())("MQ203 Alduin's Wall", () => {
       expect(sim.package(esbern)?.id).toBe(followPackages[1]);
       expect(await space(sim, PLAYER_REF)).toBe(TAMRIEL);
       expect(sim.stageDone(MQ203, 110)).toBe(false);
-      // Up to the door: it takes them through, the two with them, and the arrival is 110.
-      expect(door && (await sim.walkPath(door, 60, 200))).toBe(true);
+      // Up to the door, into its reach (fAutoDoorActivateDistance, 350; nearer than that it has
+      // taken them before they get there): it takes them through, the two with them, and the
+      // arrival is 110.
+      expect(door && (await sim.walkPath(door, 60, 300))).toBe(true);
       await sim.world.settle();
       await sim.step(1);
       expect(await space(sim, PLAYER_REF)).toBe(KARTHSPIRE_WORLD);
