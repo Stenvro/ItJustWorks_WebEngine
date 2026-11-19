@@ -553,6 +553,26 @@ const SELF_TRANSITION = {
 /** hkbBlendingTransitionEffect end modes. */
 const END_MODE = { none: 0, untilEndOfFrom: 1, capAtEndOfFrom: 2 } as const;
 
+/** A machine started in one of its states (a promoted global wildcard's way down). */
+interface MachineStart {
+  readonly machine: StateMachine;
+  readonly state: number;
+}
+
+/** A global wildcard of a machine below one of another machine's states (#chooseGlobal). */
+interface GlobalWildcard {
+  /** The state of the machine above that holds it. */
+  readonly state: StateMachineState;
+  /** The machine whose wildcard it is. */
+  readonly holder: StateMachine;
+  readonly wildcard: StateTransition;
+  /** The machines it starts, top down, its holder last (in the wildcard's state). */
+  readonly chain: readonly MachineStart[];
+}
+
+/** How many generators down a machine's global wildcards are looked for (a bound on cycles). */
+const GLOBAL_WILDCARD_DEPTH = 64;
+
 interface MachineState {
   current: StateMachineState | undefined;
   previous: StateMachineState | undefined;
@@ -2710,7 +2730,14 @@ export class BehaviorRuntime {
    * this machine's states, whose event it is: Havok makes it a transition of the machines above
    * it too, to the state that holds the nested machine, which starts in the wildcard's state.
    * The opening's cart idles go so (IdleCartPrisonerASway: Master_Behavior's Root to Cart_State,
-   * its Cart machine to CartPrisonerASway); the nearest machine below a state is looked in.
+   * its Cart machine to CartPrisonerASway). A machine nested deeper (under another machine's
+   * state, a blend's child) is looked in too, the machines between going to the states that hold
+   * it: the human graph's toast (MQ201_Toast, in MT_RootBehavior's OffsetActions) is left only
+   * so, by the arm's carry offset its scenes play next ("Harkon lowers his cup":
+   * OffsetCarryMQ201DrinkR, a global wildcard of CarryRightArmBehavior under MT_State's
+   * DefaultOrDrunkBehavior and its ArmsBlend); found only one machine down, it was never left,
+   * and Harkon, animation-driven in it, never walked to his place by the throne. The shallower
+   * of two that match goes first, as a higher priority does.
    */
   #chooseGlobal(
     node: StateMachine,
@@ -2719,40 +2746,98 @@ export class BehaviorRuntime {
   ): { transition: StateTransition; to: StateMachineState } | undefined {
     const current = machine.current;
     let best: { transition: StateTransition; to: StateMachineState } | undefined;
-    for (const state of node.states) {
+    for (const candidate of this.#globalWildcards(node).get(event) ?? []) {
+      const { state, wildcard, chain } = candidate;
       if (state === current || !state.enable) continue;
-      const nested = nestedMachine(state.generator);
-      if (!nested) continue;
-      const scope = this.#scopeOf(nested);
-      for (const wildcard of nested.wildcardTransitions) {
-        const flags = wildcard.flags;
-        if ((flags & TRANSITION_FLAGS.isGlobalWildcard) === 0) continue;
-        if ((flags & TRANSITION_FLAGS.disabled) !== 0) continue;
-        if (this.#globalEvent(wildcard.eventId, scope) !== event) continue;
-        if (
-          (flags & TRANSITION_FLAGS.disableCondition) === 0 &&
-          wildcard.condition !== undefined &&
-          !this.#condition(wildcard.condition)
-        ) {
-          continue;
-        }
-        if (best && wildcard.priority <= best.transition.priority) continue;
-        const local =
-          TRANSITION_FLAGS.useTriggerInterval |
-          TRANSITION_FLAGS.useInitiateInterval |
-          TRANSITION_FLAGS.fromNestedStateIdIsValid;
-        best = {
-          to: state,
-          transition: {
-            ...wildcard,
-            toStateId: state.id,
-            flags: (flags & ~local) | TRANSITION_FLAGS.toNestedStateIdIsValid,
-            toNestedStateId: wildcard.toStateId,
-          },
-        };
+      const flags = wildcard.flags;
+      if (
+        (flags & TRANSITION_FLAGS.disableCondition) === 0 &&
+        wildcard.condition !== undefined &&
+        !this.#condition(wildcard.condition)
+      ) {
+        continue;
       }
+      if (best && wildcard.priority <= best.transition.priority) continue;
+      const local =
+        TRANSITION_FLAGS.useTriggerInterval |
+        TRANSITION_FLAGS.useInitiateInterval |
+        TRANSITION_FLAGS.fromNestedStateIdIsValid;
+      const transition: StateTransition = {
+        ...wildcard,
+        toStateId: state.id,
+        flags: (flags & ~local) | TRANSITION_FLAGS.toNestedStateIdIsValid,
+        toNestedStateId: wildcard.toStateId,
+      };
+      if (chain.length > 1) this.#globalChains.set(transition, chain);
+      best = { to: state, transition };
     }
     return best;
+  }
+
+  /** Each machine's global wildcards of the machines below its states, by event (#chooseGlobal). */
+  readonly #globalWildcardsOf = new WeakMap<
+    StateMachine,
+    ReadonlyMap<number, readonly GlobalWildcard[]>
+  >();
+  /** The machines a promoted global wildcard starts in their states, top down (#change). */
+  readonly #globalChains = new WeakMap<StateTransition, readonly MachineStart[]>();
+
+  /**
+   * The global wildcards of the machines below a machine's states, by their events (the
+   * machines below a state are of its file: their scope is the machine's), shallow ones first:
+   * each with the state of `node` that holds its machine and the machines it starts, top down
+   * (those between in the states that hold the next, its own in the wildcard's state).
+   */
+  #globalWildcards(node: StateMachine): ReadonlyMap<number, readonly GlobalWildcard[]> {
+    const known = this.#globalWildcardsOf.get(node);
+    if (known) return known;
+    const found: GlobalWildcard[] = [];
+    for (const state of node.states) {
+      const level: { holder: StateMachine; path: MachineStart[] }[] = [];
+      const seen = new Set<object>();
+      const collect = (
+        generator: BehaviorGenerator | undefined,
+        path: MachineStart[],
+        depth: number,
+      ): void => {
+        if (!generator || seen.has(generator) || depth > GLOBAL_WILDCARD_DEPTH) return;
+        seen.add(generator);
+        if (generator.kind === 'state-machine') {
+          level.push({ holder: generator, path });
+          for (const inner of generator.states) {
+            collect(inner.generator, [...path, { machine: generator, state: inner.id }], depth + 1);
+          }
+          return;
+        }
+        for (const child of children(generator)) collect(child, path, depth + 1);
+      };
+      collect(state.generator, [], 0);
+      for (const { holder, path } of level) {
+        for (const wildcard of holder.wildcardTransitions) {
+          const flags = wildcard.flags;
+          if ((flags & TRANSITION_FLAGS.isGlobalWildcard) === 0) continue;
+          if ((flags & TRANSITION_FLAGS.disabled) !== 0) continue;
+          found.push({
+            state,
+            holder,
+            wildcard,
+            chain: [...path, { machine: holder, state: wildcard.toStateId }],
+          });
+        }
+      }
+    }
+    // Shallow ones first (fewer machines between: a stable sort keeps the states' order).
+    found.sort((a, b) => a.chain.length - b.chain.length);
+    const byEvent = new Map<number, GlobalWildcard[]>();
+    for (const candidate of found) {
+      const event = this.#globalEvent(candidate.wildcard.eventId, this.#scopeOf(candidate.holder));
+      if (event < 0) continue;
+      const list = byEvent.get(event);
+      if (list) list.push(candidate);
+      else byEvent.set(event, [candidate]);
+    }
+    this.#globalWildcardsOf.set(node, byEvent);
+    return byEvent;
   }
 
   /**
@@ -2926,7 +3011,10 @@ export class BehaviorRuntime {
     machine.received.clear();
     machine.pending = undefined;
     this.#syncState(node, to.id);
-    if ((transition?.flags ?? 0) & TRANSITION_FLAGS.toNestedStateIdIsValid) {
+    const chain = transition && this.#globalChains.get(transition);
+    if (chain) {
+      for (const link of chain) this.#startIn(link.machine, link.state);
+    } else if ((transition?.flags ?? 0) & TRANSITION_FLAGS.toNestedStateIdIsValid) {
       this.#setNestedStart(to.generator, transition?.toNestedStateId ?? -1);
     }
     for (const event of to.enterNotifyEvents ?? []) this.#raise(event, scope);
@@ -3212,28 +3300,33 @@ export class BehaviorRuntime {
     let node = generator;
     for (let depth = 0; node && depth < 16; depth++) {
       if (node.kind === 'state-machine') {
-        const machine = this.#machines.get(node);
-        const state = node.states.find((candidate) => candidate.id === id);
-        if (machine && state) {
-          machine.current = state;
-          machine.timeInState = 0;
-          machine.received.clear();
-          machine.pending = undefined;
-          this.#syncState(node, state.id);
-        } else {
-          this.#machines.set(node, {
-            current: undefined,
-            previous: undefined,
-            timeInState: 0,
-            transition: undefined,
-            startOverride: id,
-            received: new Map(),
-            pending: undefined,
-          });
-        }
+        this.#startIn(node, id);
         return;
       }
       node = 'generator' in node ? node.generator : undefined;
+    }
+  }
+
+  /** Makes a machine start in state `id` (now, if it has a state; else as it is entered). */
+  #startIn(node: StateMachine, id: number): void {
+    const machine = this.#machines.get(node);
+    const state = node.states.find((candidate) => candidate.id === id);
+    if (machine && state) {
+      machine.current = state;
+      machine.timeInState = 0;
+      machine.received.clear();
+      machine.pending = undefined;
+      this.#syncState(node, state.id);
+    } else {
+      this.#machines.set(node, {
+        current: undefined,
+        previous: undefined,
+        timeInState: 0,
+        transition: undefined,
+        startOverride: id,
+        received: new Map(),
+        pending: undefined,
+      });
     }
   }
 
@@ -5164,15 +5257,6 @@ export class BehaviorRuntime {
 }
 
 /** The generators below a generator (all of them, active or not). */
-/** The nearest state machine below a generator, through the nodes that pass one generator on. */
-function nestedMachine(generator: BehaviorGenerator | undefined): StateMachine | undefined {
-  let node = generator;
-  for (let depth = 0; node && depth < 16; depth++) {
-    if (node.kind === 'state-machine') return node;
-    node = 'generator' in node ? node.generator : undefined;
-  }
-  return undefined;
-}
 
 function children(node: BehaviorGenerator): (BehaviorGenerator | undefined)[] {
   switch (node.kind) {

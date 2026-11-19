@@ -1980,8 +1980,10 @@ WerewolfChange player"` (twice: the first cast only ends the Companions' "virgin
   activation (see "Perks": Activate): the victim spell marks it eaten, Feed extends the time
   (FeedExtensionTimeSeconds, more on NPCs and with Gorging), plays SpecialFeeding and shows
   "Bloodlust extended" (a MESG without the Message Box flag is a notification: TNAM seconds).
-- **The vampire lord** (DLC1PlayerVampireQuest): its graph's LevitatePlayerStart (the change's
-  end) lifts the player off (LevitationToggle); Ready Weapon goes up and down instead of drawing
+- **The vampire lord** (DLC1PlayerVampireQuest): the change ends up in the air: its clip's
+  LevitatePlayerStart is a global wildcard of the graph's LevitateCombatBehavior, five machines
+  down, which takes the machines above it into levitation (a LevitationToggle sent as well
+  landed the player at once); Ready Weapon goes up and down instead of drawing
   (LevitationToggleMoving while moving; TODO(M13): the engine's own trigger is not documented):
   up in the air the hands hold their spells at once (LevitateStart: drawn; the script equips
   Vampiric Drain and the left spell), landed (LandStart) it stands out of combat and claws as
