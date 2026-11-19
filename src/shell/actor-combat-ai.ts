@@ -5234,7 +5234,7 @@ export class ActorCombatAi {
       if (this.#spectating.has(reference)) continue;
       this.#spectating.add(reference);
       if (mind.profile?.confidence === Confidence.cowardly) {
-        const fighter = this.#nearestFight(reference);
+        const fighter = this.#watchedFight(reference, senses.spectating(reference));
         if (fighter) {
           mind.scaredFrom = fighter;
           mind.scaredUntil = this.#clock + SCARED_SECONDS;
@@ -5250,13 +5250,20 @@ export class ActorCombatAi {
     }
   }
 
-  /** Where the nearest fight to an actor is (a fighter's feet). */
-  #nearestFight(reference: number): Vec3 | undefined {
+  /**
+   * Where the fight a spectator watches is: the feet of the nearest of its combatants (the
+   * attacker it noticed, or one in combat with it). Only that fight: every actor of the loaded
+   * area is in the high process and may fight far off (src/ai/process-levels.ts), and a fight it
+   * did not notice is none it runs from.
+   */
+  #watchedFight(reference: number, combatant: number | undefined): Vec3 | undefined {
+    if (combatant === undefined) return undefined;
     const feet = this.#options.host.fighter(reference)?.feet;
     if (!feet) return undefined;
     let best: { at: Vec3; distance: number } | undefined;
     for (const view of this.#options.host.fighters()) {
       if (view.target === undefined || !view.feet || view.reference === reference) continue;
+      if (view.reference !== combatant && view.target !== combatant) continue;
       const distance = flat(feet, view.feet);
       if (!best || distance < best.distance) best = { at: view.feet, distance };
     }

@@ -1505,6 +1505,17 @@ export class ActorSenses implements ScriptSenses {
     return this.#reactions.get(actor)?.kind ?? this.#overriding.get(actor)?.kind;
   }
 
+  /**
+   * The combatant whose fight a spectator watches (the attacker of the blow it noticed), if it
+   * is spectating: by the engine's reaction or its spectator override list.
+   */
+  spectating(actor: number): number | undefined {
+    const reaction = this.#reactions.get(actor);
+    if (reaction) return reaction.kind === 'spectator' ? reaction.subject : undefined;
+    const overriding = this.#overriding.get(actor);
+    return overriding?.kind === 'spectator' ? overriding.subject : undefined;
+  }
+
   /** What detection told: the actors that noticed or heard something react. */
   #heard(event: DetectionEvent): void {
     switch (event.kind) {

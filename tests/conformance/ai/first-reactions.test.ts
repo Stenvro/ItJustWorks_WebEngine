@@ -24,8 +24,13 @@
 //   engine's spectating does (within fDetectionStateExpireTime), by the fight it watches.
 // - The data (Skyrim.esm): DB09Noble1 [0005A92D] runs DefaultStayAtEditorLocation [00025BFC],
 //   whose interrupt flags are 0xFEFF (both reactions allowed) and whose general flags lack No
-//   Combat Alert. Brenuin [00013BA7] and a second DB09Noble1 are the fight's two sides. Tamriel
-//   2,-3 is open tundra west of Whiterun. ccBGSSSE025-AdvDSGS.esm (Saints & Seducers, in every
+//   Combat Alert. Two more DB09Noble1 are the fight's two sides: on that package they stay where
+//   they are placed, as fighters stand at their fight (the blows are staged, so no combat holds
+//   their packages). Not Brenuin [00013BA7]: at 10:00 he runs WhiterunBrenuinHeimskrAudience9x5
+//   [0009191A], a Sandbox whose first step travels to its place in Whiterun, so he walks off as
+//   soon as his way is found and the fight he stands for goes with him. Tamriel 2,-3 is open
+//   tundra west of Whiterun; its loaded cells hold fights of their own far off (the observer
+//   runs from none of them: a cowardly spectator runs only from the fight it watches). ccBGSSSE025-AdvDSGS.esm (Saints & Seducers, in every
 //   install's Skyrim.ccc): the alias ElytraMania (3) of ccBGSSSE025_ElytraPetAcquisition_Mania
 //   names the spectator list ccBGSSSE025_CombatOverride.
 
@@ -42,7 +47,6 @@ type Vec3 = [number, number, number];
 const TAMRIEL = 0x3c;
 const CELL: readonly [number, number] = [2, -3];
 const OBSERVER = 0x5a92d;
-const BRENUIN = 0x13ba7;
 const STAY_AT_EDITOR_LOCATION = 0x25bfc;
 /** iSoundLevelLoud's level (SoundLevel.loud). */
 const LOUD = 0;
@@ -102,7 +106,7 @@ async function stageFight(
   const left = along(middle, heading - Math.PI / 2, 50, ground);
   const right = along(middle, heading + Math.PI / 2, 50, ground);
   await sim.moveTo([left[0], left[1], left[2] + 5]);
-  const attacker = await sim.place(BRENUIN, PLAYER_REF);
+  const attacker = await sim.place(OBSERVER, PLAYER_REF);
   await sim.moveTo([right[0], right[1], right[2] + 5]);
   const victim = await sim.place(OBSERVER, PLAYER_REF);
   const behind = along(feet, heading + Math.PI, 1500, ground);

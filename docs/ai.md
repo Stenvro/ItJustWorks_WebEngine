@@ -3751,7 +3751,10 @@ engine's ([Combat movement](#combat-movement)).
 - **Spectators**: those detection has watching a fight (their package's observe combat
   interrupt, [Detection](#detection)) say ObserveCombat as they begin watching, by
   fAISocialchanceForConversation (10 %; inside its Interior twin, 10 %; TODO(M13): one roll per
-  watch is ours); a cowardly one runs from the fight instead (Flee, IsFleeing) for 10 s. Scenes pause or end on an actor's combat and watching
+  watch is ours); a cowardly one runs from the fight instead (Flee, IsFleeing) for 10 s: from the
+  fight it watches, by its combatants (the attacker it noticed and those in combat with it),
+  never from another fight elsewhere in the loaded area, whose actors all fight in the high
+  process however far off. Scenes pause or end on an actor's combat and watching
   (SCEN DNAM).
 - **Horses and followers**: a ridden horse is its rider's to move; others fight or flee by their
   own AI values (horses: cowardly). Mounted combat: a mount whose race has Allow Mounted Combat
