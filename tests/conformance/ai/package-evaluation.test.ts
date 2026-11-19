@@ -471,6 +471,11 @@ describe.skipIf(!hasGamedata())('package flags across the load order (data)', ()
 // The first package whose schedule and conditions hold runs (Creation Kit, AI Packages: the
 // package stack is evaluated top down). At 8:00 that is 4; at 22:00 it is 3. A furniture
 // marker's animation type is 1 for sitting, 2 for sleeping (nif.xml FurniturePosition).
+// Package 4 names its chair with radius 0, so its sandbox searches fSandBoxSearchRadius (6000)
+// round the chair (tests/conformance/ai/sandbox.test.ts: a reference named with no radius),
+// within fSandboxCylinderBottom..Top (-50..150) of its height: the chair is the middle of her
+// place, and she sits in a chair of it picked at random among its spots (the chair's floor of
+// the house has ten pieces of furniture, NobleChair01 [000CB6FA] 142 units off among them).
 
 const BERGRITTE = 0x1a688;
 const HOME_SIT_PACKAGE = 0x914f7;
@@ -478,6 +483,10 @@ const HOME_SIT_CHAIR = 0x914f8;
 const HOME_SLEEP_PACKAGE = 0x2c39a;
 /** The Sleep package's location: near the editor location, this far. */
 const SLEEP_RADIUS = 500;
+/** The sit package's search round its chair (fSandBoxSearchRadius, fSandboxCylinderTop/Bottom). */
+const SANDBOX_RADIUS = 6000;
+const CYLINDER_TOP = 150;
+const CYLINDER_BOTTOM = -50;
 const SIT = 1;
 const SLEEP = 2;
 /** Sitting or sleeping in it (GetSitState / GetSleepState 3). */
@@ -486,7 +495,14 @@ const IN_FURNITURE = 3;
 describe.skipIf(!hasGamedata())('package evaluation by the hour (headless simulation)', () => {
   let sim: Sim;
   /** Where the package had her each hour: its id, and the furniture she went into. */
-  let morning: { package?: number; furniture?: number; animationType?: number } = {};
+  let morning: {
+    package?: number;
+    furniture?: number;
+    animationType?: number;
+    /** Where that furniture is from her package's chair: horizontally, and its rise. */
+    fromChair?: number;
+    rise?: number;
+  } = {};
   let night: {
     package?: number;
     furniture?: number;
@@ -504,9 +520,16 @@ describe.skipIf(!hasGamedata())('package evaluation by the hour (headless simula
     const furniture = sim.world.stage.furniture;
     await sim.until(() => furniture.interaction(BERGRITTE)?.state === IN_FURNITURE, 20);
     const sitting = furniture.interaction(BERGRITTE);
+    const chairAt = await sim.position(HOME_SIT_CHAIR);
+    const seatAt = sitting && (await sim.position(sitting.furniture));
     morning = {
       ...(sim.package(BERGRITTE) && { package: sim.package(BERGRITTE)?.id }),
       ...(sitting && { furniture: sitting.furniture, animationType: sitting.animationType }),
+      ...(chairAt &&
+        seatAt && {
+          fromChair: Math.hypot(seatAt[0] - chairAt[0], seatAt[1] - chairAt[1]),
+          rise: seatAt[2] - chairAt[2],
+        }),
     };
     // The clock jumps to 22:00 (as a script's GameHour.SetValue): her packages are evaluated again.
     sim.setHour(22);
@@ -537,9 +560,12 @@ describe.skipIf(!hasGamedata())('package evaluation by the hour (headless simula
     expect(morning.package).toBe(HOME_SIT_PACKAGE);
   });
 
-  it('goes to the sit package’s place at 8:00 and sits in it', () => {
-    expect(morning.furniture).toBe(HOME_SIT_CHAIR);
+  it('goes to the sit package’s place at 8:00 and sits in a chair of it', () => {
+    expect(morning.furniture).toBeDefined();
     expect(morning.animationType).toBe(SIT);
+    expect(morning.fromChair).toBeLessThanOrEqual(SANDBOX_RADIUS);
+    expect(morning.rise).toBeLessThanOrEqual(CYLINDER_TOP);
+    expect(morning.rise).toBeGreaterThanOrEqual(CYLINDER_BOTTOM);
   });
 
   it('runs the sleep package (20:00 for 10 h) once the clock is at 22:00', () => {
