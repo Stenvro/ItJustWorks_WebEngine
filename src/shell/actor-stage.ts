@@ -2460,6 +2460,8 @@ export class ActorStage {
 
   /** Every cell goes (the view closes). */
   clear(): void {
+    // The low process's run under way stops: the next view's stage asks for what is away.
+    this.away.close();
     const leaving = [...this.#actors.values()].map((staged) => {
       const space = this.#cells.get(staged.cell)?.space;
       const record = this.#leaving(staged, space);

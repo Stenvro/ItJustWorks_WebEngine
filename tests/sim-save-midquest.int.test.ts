@@ -94,6 +94,16 @@ describe.skipIf(!hasGamedata())('A save mid-quest', () => {
         imperials.every((imperial) => sim.world.stage.combat.targetOf(imperial) === PLAYER_REF);
       expect(await sim.until(fighting, 5)).toBe(true);
       await sim.step(1);
+      // The fight's events reach the quest's alias scripts as they come: a blow on the player
+      // runs MQ101PlayerScript's OnHit, which sets 252 (the Left Attack/Block help). A handler
+      // under way as the game is saved goes on as it loads (the save keeps the Papyrus threads
+      // that had not finished, as the original's keeps its suspended stacks), so the quest is
+      // taken and saved at a frame where none of them is under way.
+      const handling = (): boolean =>
+        sim.runtime.vm
+          .pendingThreads()
+          .some((thread) => /MQ101(Player|Enemy)Script\./i.test(thread.where));
+      expect(await sim.until(() => !handling(), 3)).toBe(true);
       saved = questState(sim, [ralof, ...imperials]);
       fights = imperials.map((imperial) => sim.world.stage.combat.targetOf(imperial));
       bytes = await sim.save();
