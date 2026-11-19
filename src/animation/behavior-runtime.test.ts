@@ -1447,6 +1447,30 @@ describe('transitions as Havok runs them', () => {
     expect(runtime.pose[0]).toBeCloseTo(held * 0.5 + 0.5 * 0.5);
   });
 
+  it('starts a clip over that the state it leaves holds only in a branch it does not play', () => {
+    // The first-person ready state holds the right hook's clip in a branch a bare-handed player
+    // never plays: a second punch during the first one's blend out must still start it over.
+    const hook = clip('a', 0);
+    const ready = machine('Ready', [state(0, 'Idle', clip('b')), state(1, 'MagicFist', hook)]);
+    const root = machine('Machine', [
+      state(0, 'Attack', hook, [transition(0, 1, { effect: effect(1) })]),
+      state(1, 'Readied', ready, [transition(1, 0, { effect: effect(1) })]),
+    ]);
+    const runtime = new BehaviorRuntime({
+      root: graph(root, ['toReady', 'toAttack']),
+      host: host({ a: animation(0, 10), b: animation(100, 10) }),
+      skeleton,
+    });
+    runtime.update(0);
+    runtime.update(0.5);
+    runtime.sendEvent('toReady');
+    runtime.update(0.25);
+    expect(runtime.playing().find((p) => p.animation === 'a')?.time).toBeCloseTo(0.75);
+    runtime.sendEvent('toAttack');
+    runtime.update(0);
+    expect(runtime.playing().find((p) => p.animation === 'a')?.time).toBeCloseTo(0);
+  });
+
   it('reads its data channels right before each update', () => {
     const runtime = new BehaviorRuntime({
       root: graph(clip('a'), [], [{ name: 'Speed', initial: 0 }]),
