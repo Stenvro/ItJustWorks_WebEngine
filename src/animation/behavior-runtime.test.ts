@@ -896,6 +896,74 @@ describe('the behavior runtime', () => {
     runtime.update(0.1);
     expect(runtime.states()[1]).toEqual({ machine: 'Cart', state: 'Idle' });
   });
+
+  it('takes a global wildcard of a machine nested deeper, the machines between following', () => {
+    // The human graph's toast: MT_RootBehavior's OffsetActions is left by the arm's carry offset
+    // (OffsetCarryMQ201DrinkR, 0xd00), a wildcard of CarryRightArmBehavior, which lies in a
+    // blend under MT_State's DefaultOrDrunkBehavior (in its NonDrunkState).
+    const state = (id: number, name: string, generator: BehaviorGenerator) => ({
+      id,
+      name,
+      probability: 1,
+      enable: true,
+      generator,
+      transitions: [],
+    });
+    const arm: BehaviorGenerator = {
+      kind: 'state-machine',
+      name: 'CarryRightArm',
+      startStateId: { value: 19 },
+      startStateMode: 0,
+      states: [state(19, 'ArmState', clip('arm')), state(0, 'DrinkR', clip('drink'))],
+      wildcardTransitions: [transition(0, 0, { flags: 0xd00 })],
+    };
+    const blend: BehaviorGenerator = {
+      kind: 'blender',
+      name: 'ArmsBlend',
+      flags: 0,
+      blendParameter: { value: 1 },
+      children: [
+        { weight: { value: 1 }, generator: clip('body') },
+        { weight: { value: 1 }, generator: arm },
+      ],
+    };
+    const drunk: BehaviorGenerator = {
+      kind: 'state-machine',
+      name: 'DefaultOrDrunk',
+      startStateId: { value: 1 },
+      startStateMode: 0,
+      states: [state(0, 'NonDrunk', blend), state(1, 'Drunk', clip('drunk'))],
+      wildcardTransitions: [],
+    };
+    const root: BehaviorGenerator = {
+      kind: 'state-machine',
+      name: 'MTRoot',
+      startStateId: { value: 19 },
+      startStateMode: 0,
+      states: [state(0, 'MT_State', drunk), state(19, 'OffsetActions', clip('toast'))],
+      wildcardTransitions: [],
+    };
+    const runtime = new BehaviorRuntime({
+      root: graph(root, ['OffsetCarryMQ201DrinkR']),
+      host: host({
+        toast: animation(0),
+        body: animation(10),
+        arm: animation(20),
+        drink: animation(30),
+        drunk: animation(40),
+      }),
+      skeleton,
+    });
+    runtime.update(0);
+    expect(runtime.states()).toEqual([{ machine: 'MTRoot', state: 'OffsetActions' }]);
+    runtime.sendEvent('OffsetCarryMQ201DrinkR');
+    runtime.update(0.1);
+    expect(runtime.states()).toEqual([
+      { machine: 'MTRoot', state: 'MT_State' },
+      { machine: 'DefaultOrDrunk', state: 'NonDrunk' },
+      { machine: 'CarryRightArm', state: 'DrinkR' },
+    ]);
+  });
 });
 
 describe("the dragon's flight modifiers", () => {

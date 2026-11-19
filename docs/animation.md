@@ -1858,7 +1858,16 @@ them by name (a variable keeps the first file's initial value). Each frame:
    the attack state is not drawn or releasing). A global wildcard (flag 0x400) of
    a machine nested in another state of a machine is that machine's too: taken, it goes to the
    state holding the nested machine, which starts in the wildcard's state (Master_Behavior has
-   no way into Cart_State but its Cart machine's IdleCartPrisonerASway). Paired animations
+   no way into Cart_State but its Cart machine's IdleCartPrisonerASway). So is one of a machine
+   nested deeper, under other machines' states or a blend's children: the machines between go
+   to the states that hold the next, the shallower of two that match first. The data asks it:
+   the human graph's toast (MQ201_Toast in MT_RootBehavior's OffsetActions) and drink have no
+   way out but the arm's carry offset (OffsetCarryMQ201DrinkR, a global wildcard of
+   CarryRightArmBehavior under MT_State's DefaultOrDrunkBehavior and its ArmsBlend; the drink's
+   clip raises it at its end, Harkon's feast scene plays it as he lowers his cup), and the
+   vampire lord's change ends in the air by its clip's LevitatePlayerStart, a global wildcard
+   of LevitateCombatBehavior five machines under H2HBehavior. TODO(M13): Havok's own walk of
+   the machines below a state is undocumented; ours goes through every generator. Paired animations
    (Paired_Mount.hkx, killmoves) name their tracks: "PairedRoot", the first actor's bones and the
    second's prefixed "2_"; each actor's graph takes its own bones' tracks by name
    (`src/animation/paired-clips.ts`). A machine with a sync variable writes the id

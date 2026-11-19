@@ -2413,9 +2413,10 @@ export class ActorCombat implements CombatBridge {
       this.#setVariable(fighter, 'IsUnequipping', 0);
     }
     if (lower === 'unequip_out') this.#setVariable(fighter, 'IsUnequipping', 0);
-    // The vampire lord: its change ends lifting the player off (the graph's
-    // LevitatePlayerStart), and up in the air its hands hold their spells at once.
-    if (fighter.player && lower === 'levitateplayerstart') this.toggleLevitation(PLAYER_REF);
+    // The vampire lord: its change ends up in the air (the graph's own LevitatePlayerStart, a
+    // global wildcard of its LevitateCombatBehavior, takes the machines above it there: no
+    // LevitationToggle is sent, which landed it again at once), and up in the air its hands
+    // hold their spells at once.
     if (lower === 'levitatestart' && fighter.state.weapon === WeaponState.sheathed)
       void this.draw(fighter.reference);
     // Landing, its hands let go of their spells: on the ground it stands out of combat.
