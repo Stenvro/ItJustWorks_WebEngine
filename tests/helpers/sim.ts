@@ -299,6 +299,11 @@ export class Sim {
       line.catch(() => undefined);
       this.#openings.set(record, line);
     };
+    // In conversation with the speaker a case hears, not with one whose first line is only
+    // picked: a force greet waits for the conversation it opened to be heard and left.
+    world.log.conversing = (reference) =>
+      this.runtime.dialogueSpeaker === reference &&
+      (this.#picking === 0 || this.#heardSincePicking);
   }
 
   /** A conversation's first line (its greeting, or its opening topic's), picked in dialogue. */
