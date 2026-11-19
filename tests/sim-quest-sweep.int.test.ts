@@ -81,6 +81,21 @@ const EVENT_MEMBERS: Readonly<Record<string, readonly string[]>> = {
   CLOC: ['R1', 'L1', 'L2'],
 };
 
+/**
+ * The location member of an event type that is where its actor (R1) is as it raises it: the
+ * location a change of location enters (OnStoryChangeLocation's akNewLocation) and the one a
+ * spell is cast in (OnStoryCastMagic's akLocation, the caster's: src/scripting/runtime/
+ * story-events.ts). The player raising it stands there, so the aliases that look in the loaded
+ * area find who is there (WICastMagic03's guard), not whoever stood by the player before.
+ */
+const PLAYER_PLACE: Readonly<Record<string, string>> = { CLOC: 'L2', CAST: 'L1' };
+/**
+ * The event types the sweep raises only with the player standing in that location: the engine
+ * raises a cast with the caster's own location, so a cast in a location the player could not be
+ * put in (the reference it is put at lies in the town round it) is none the game raises.
+ */
+const RAISED_WHERE_PLAYER_STANDS = new Set(['CAST']);
+
 interface SweptQuest {
   readonly record: QuestRecord;
   readonly plugin: string;
@@ -305,15 +320,15 @@ class Sweep {
 
   /**
    * Where the player is as an event is raised: for a change of location, in its new location
-   * (L2), as the player who walked in raises it; for a path whose conditions ask the player to be
+   * (L2), as the player who walked in raises it; for a spell or shout the player casts, in the
+   * location it is cast in (L1); for a path whose conditions ask the player to be
    * in a location (the tree's and the quests' conditions run on the player: a bounty's hold, a
    * cavern), in that one. Of an OR group only the first condition counts.
    */
   async #placeFor(event: StoryEventData, conditions: readonly Condition[]): Promise<void> {
-    const runtime = this.#runtime;
     const wanted: number[] = [];
-    const entered = event.type === 'CLOC' ? event.forms.get('L2') : undefined;
-    if (entered !== undefined) wanted.push(entered);
+    const at = this.#playerPlace(event);
+    if (at !== undefined) wanted.push(at);
     let inOrGroup = false;
     for (const condition of conditions) {
       const skip = inOrGroup;
@@ -325,10 +340,33 @@ class Sweep {
       if (onPlayer && satisfying(condition.operator, n, 0) !== 0) wanted.push(condition.form);
     }
     for (const location of wanted) {
-      const at = await runtime.locationOf(PLAYER_REF);
-      if (at !== undefined && (await runtime.locationWithin(at, location))) continue;
+      if (await this.#standsIn(location)) continue;
       await this.#placeIn(location);
     }
+  }
+
+  /** The location an event the player raises happens in, the player's own (PLAYER_PLACE). */
+  #playerPlace(event: StoryEventData): number | undefined {
+    const member = PLAYER_PLACE[event.type];
+    if (member === undefined || event.forms.get('R1') !== PLAYER_REF) return undefined;
+    return event.forms.get(member);
+  }
+
+  /** Whether the player is in a location (or one within it). */
+  async #standsIn(location: number): Promise<boolean> {
+    const at = await this.#runtime.locationOf(PLAYER_REF);
+    return at !== undefined && (await this.#runtime.locationWithin(at, location));
+  }
+
+  /**
+   * Whether the game could raise the event as it stands: one of RAISED_WHERE_PLAYER_STANDS only
+   * with the player put in its location. The player is put there for it.
+   */
+  async #raisable(event: StoryEventData): Promise<boolean> {
+    const at = this.#playerPlace(event);
+    if (!RAISED_WHERE_PLAYER_STANDS.has(event.type) || at === undefined) return true;
+    if (!(await this.#standsIn(at))) await this.#placeIn(at);
+    return this.#standsIn(at);
   }
 
   /**
@@ -616,6 +654,12 @@ class Sweep {
         const event = events[i % events.length];
         if (!event) break;
         await this.#placeFor(event, pathOf.get(event) ?? []);
+        if (!(await this.#raisable(event))) {
+          treeWhy.add(
+            `the player cannot be put in ${String(this.#playerPlace(event)?.toString(16))}`,
+          );
+          continue;
+        }
         await this.#drive(runtime.storyManager.idle());
         if (byEngine()) {
           return { how: 'story manager', whyNot: undefined, firstStage: startUp?.index, treeWhy };
@@ -646,6 +690,11 @@ class Sweep {
       const reasons = new Set<string>();
       const tries = async (): Promise<boolean> => {
         for (const event of events) {
+          if (!(await this.#raisable(event))) {
+            const place = this.#playerPlace(event)?.toString(16);
+            reasons.add(`the player cannot be put in ${String(place)}, where it happens`);
+            continue;
+          }
           const wasRunning = runtime.quests.isRunning(id);
           const direct = await this.#drive(runtime.quests.start(id, event));
           if (direct === true && !wasRunning) this.#direct.add(id);
@@ -774,9 +823,17 @@ const WI_PLAYER =
   "TODO(M13): its own conditions want the player's skills or spells (GetActorValue, HasSpell), " +
   "which the new game's player does not have and the sweep does not set (with the node's roll " +
   'passing, the tree stops there)';
+/**
+ * What the bounties wait for. They start as the player enters a hold's town (Change Location:
+ * their Location alias is the event's new location, L2), as BQ01 and BQ03 do when an earlier
+ * case puts the player in Windhelm, Solitude or Dawnstar (the town's jarl, steward, innkeeper
+ * and a bounty of its hold fill their aliases); and before stage 10 one stops as the player
+ * leaves that town (BQScript.PlayerChangedLocation), as the next cases' player does.
+ */
 const BOUNTY =
-  "TODO(M13): the bounty's location is the one the steward's script sends; the sweep's event " +
-  'gives none its aliases accept';
+  "TODO(M13): the town entered is the bounty's Location; the sweep's own event names none whose " +
+  'center marker, innkeeper and bounty its aliases fill, and one an earlier case started stops ' +
+  'as that case moves the player out of its town';
 
 /**
  * The quests the sweep cannot start yet, with the reason (each case is expected to fail, and

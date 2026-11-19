@@ -60,8 +60,15 @@ describe.skipIf(!hasGamedata())('a prey animal bolts from the player', () => {
       const at = sim.actor(reference)?.position;
       return at && [at[0], at[1], at[2]];
     };
+    // The one whose fight is with the player: every actor of the loaded area is in the high
+    // process, so an elk far off may already be in a fight of its own with a wolf (PreyFaction's
+    // reaction to PredatorFaction is enemy; LvlAnimalPlainsPredator 0001E7A1 wanders this
+    // tundra too).
     const bolted = (): number | undefined =>
-      prey().find((reference) => combat.state(reference)?.inCombat === true);
+      prey().find((reference) => {
+        const state = combat.state(reference);
+        return state?.inCombat === true && state.combatTarget === PLAYER_REF;
+      });
     // The player walks up to the nearest of them over the navmeshes, half a second at a time
     // (it wanders meanwhile), until one has them within its aggro radius and its fight begins.
     for (let hop = 0; hop < 120 && bolted() === undefined; hop++) {
