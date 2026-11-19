@@ -150,7 +150,11 @@ describe.skipIf(!hasGamedata())('DB02 With Friends Like These...', () => {
       await sim.choose(/Silence, my brother/);
       expect(await sim.until(() => sim.stageDone(DB02, 50), 20)).toBe(true);
       expect((await sim.runtime.placement(PLAYER_REF))?.cell).toBe(SANCTUARY);
-      expect(objective(sim, DB02, 50).displayed).toBe(true);
+      // The stage is set by DB10EntranceScript's trigger inside the door as the answer's fragment
+      // moves the player there; its own fragment (QF_DB02 Fragment_9) shows the objective a few
+      // frames later, each of its natives handed to the next frame's update (the conversation
+      // goes on as the answer's fragment waits, so these frames come after the choice).
+      expect(await sim.until(() => objective(sim, DB02, 50).displayed, 5)).toBe(true);
       // Astrid, inside: "So what happens now?" "I am honored to be a part of your Family,
       // Astrid." (200; Sanctuary begins: speak with Nazir).
       await sim.step(2);

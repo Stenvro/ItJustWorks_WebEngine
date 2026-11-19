@@ -148,6 +148,39 @@ function wayHeightAt(from: readonly number[], to: readonly number[], x: number, 
   const t = ((x - fx) * dx + (y - fy) * dy) / (dx * dx + dy * dy || 1);
   return fz + (toZ - fz) * Math.min(1, Math.max(0, t));
 }
+/**
+ * A door whose middle lies this near a way (across, units) is one the way runs through; a door
+ * beside the way (a room's in a passage wall) lies farther, past the way's room from the walls.
+ */
+const DOOR_ON_WAY = 40;
+/** ...and no farther above or below the way there than this (a door on another floor is not). */
+const DOOR_ON_WAY_HEIGHT = 128;
+
+/** The point of a way (its corners joined) nearest a place seen from above, and how far it is. */
+function nearestOnWay(
+  points: readonly (readonly number[])[],
+  at: readonly number[],
+): { readonly point: Vec3; readonly away: number } | undefined {
+  let best: { point: Vec3; away: number } | undefined;
+  for (let index = 1; index < points.length; index++) {
+    const from = points[index - 1];
+    const to = points[index];
+    if (!from || !to) continue;
+    const [fx = 0, fy = 0, fz = 0] = from;
+    const [tx = 0, ty = 0, tz = 0] = to;
+    const dx = tx - fx;
+    const dy = ty - fy;
+    const t = Math.min(
+      1,
+      Math.max(0, (((at[0] ?? 0) - fx) * dx + ((at[1] ?? 0) - fy) * dy) / (dx * dx + dy * dy || 1)),
+    );
+    const point: Vec3 = [fx + dx * t, fy + dy * t, fz + (tz - fz) * t];
+    const away = Math.hypot(point[0] - (at[0] ?? 0), point[1] - (at[1] ?? 0));
+    if (!best || away < best.away) best = { point, away };
+  }
+  return best;
+}
+
 /** Held up off the navmesh with the way on this much above the feet, the player jumps. */
 const JUMP_OUT = 16;
 /** What holds the player up is looked for this far ahead, this high above the feet. */
@@ -616,6 +649,53 @@ export class Sim {
   }
 
   /**
+   * The closed doors a way runs through past a drop down a ledge that are locked to the player
+   * (not the walk's own door, within reach of its goal), each with the way's point nearest it. A
+   * player does not jump down into a room whose way on is a door they cannot open: met there, it
+   * leaves them no way back up, where one met on level ground is gone round (#lockedInWay).
+   * Found 2026-11-19: from Esbern's room the shortest way to the Warrens' door drops into the room
+   * behind RiftenRWDoorJail01 (an Apprentice lock, no key), where the player stood for good.
+   */
+  async #lockedOnWay(
+    points: readonly (readonly number[])[],
+    goal: readonly number[],
+  ): Promise<Map<number, Vec3>> {
+    const found = new Map<number, Vec3>();
+    for (const [door, at] of this.#shutOnWay(points, goal)) {
+      if (await this.#lockedToPlayer(door)) found.set(door, at);
+    }
+    return found;
+  }
+
+  /** The shut doors a way runs through past a drop (#lockedOnWay), locked or not, found at once. */
+  #shutOnWay(way: readonly (readonly number[])[], goal: readonly number[]): Map<number, Vec3> {
+    const found = new Map<number, Vec3>();
+    // From the first drop down a ledge on (a step down far more than a stair's: FELL_OFF_THE_WAY).
+    const drop = way.findIndex(
+      (point, index) =>
+        index > 0 && (way[index - 1]?.[2] ?? 0) - (point[2] ?? 0) >= FELL_OFF_THE_WAY,
+    );
+    if (drop < 0) return found;
+    const points = way.slice(drop);
+    for (const placed of this.world.placedObjects()) {
+      const { object } = placed;
+      // A load door is not walked through: it takes them elsewhere.
+      if (object.baseType !== 'DOOR' || object.teleport !== undefined) continue;
+      if (this.#lockedDoors.has(object.reference)) continue;
+      // Shut, or shutting (an open or opening one lets them by).
+      const state = this.openState(object.reference) || (object.openByDefault ? 1 : 3);
+      if (state === 1 || state === 2) continue;
+      const at: Vec3 = [object.world[12] ?? 0, object.world[13] ?? 0, object.world[14] ?? 0];
+      if (Math.hypot(at[0] - (goal[0] ?? 0), at[1] - (goal[1] ?? 0)) < DOOR_REACH) continue;
+      const near = nearestOnWay(points, at);
+      if (!near || near.away > DOOR_ON_WAY || Math.abs(near.point[2] - at[2]) > DOOR_ON_WAY_HEIGHT)
+        continue;
+      found.set(object.reference, near.point);
+    }
+    return found;
+  }
+
+  /**
    * Held up on a way: a door in their way (ahead of them, towards the way's next point) that is
    * locked to them is kept with where they met it (their ways go round it). True if one was.
    */
@@ -721,8 +801,29 @@ export class Sim {
     const feet = this.world.player.feet;
     const from = navmeshes.locate(feet) ? feet : navmeshes.nearest?.(feet, PATH_GOAL_REACH);
     let way = await this.#wayOptions();
-    const path = from && findPath(navmeshes, from, goal, way);
-    if (!path) return false;
+    let path = from && findPath(navmeshes, from, goal, way);
+    // Through a door locked to them: the way round it, where there is one (#lockedOnWay). Its
+    // locks are asked only where the way runs through a shut door: a walk with none goes on as
+    // before, its turns unchanged.
+    const locked =
+      path && this.#shutOnWay(path.points, goal).size > 0
+        ? await this.#lockedOnWay(path.points, goal)
+        : new Map<number, Vec3>();
+    if (from && locked.size > 0) {
+      const round = findPath(navmeshes, from, goal, {
+        ...way,
+        blocked: [
+          ...(way.blocked ?? []),
+          ...[...locked.values()].map((at) => ({ at, radius: LOCKED_DOOR_BLOCKED })),
+        ],
+      });
+      if (round?.complete) {
+        for (const [door, at] of locked) this.#lockedDoors.set(door, at);
+        way = await this.#wayOptions();
+        path = round;
+      }
+    }
+    if (!path || !from) return false;
     const until = this.time + seconds;
     // Blockers whose activate parent was pulled in this walk (not pulled shut again).
     const pulled = new Set<number>();
