@@ -184,6 +184,8 @@ export class ActorsAway {
   #persistent: readonly number[] | undefined;
   #pending: Ask | undefined;
   #lastRun: ScheduleRun | undefined;
+  /** Counts the views closed (close): a run of the schedules begun in an earlier one stops. */
+  #view = 0;
   /**
    * Who came out of each load door's arrival point (by its space and point) and the spot each
    * was put at: one standing there still (or on its way there) holds it (doorArrivalSpot).
@@ -453,6 +455,20 @@ export class ActorsAway {
     return aiSettingsOf(this.#options.session).evaluatePackageTimer;
   }
 
+  /**
+   * The view closes (its stage's cells go): a run of the schedules under way stops where it is,
+   * and one asked meanwhile is dropped. Whether an actor is away is this stage's to say only
+   * while its view is open: the next view's stage (the interior's and the exterior's are not
+   * one) places the actors of its own cells, and a run of this one still going, its slices
+   * spread over the frames, would take one of them for away and put it where its package has it
+   * (a loaded save's cart horse, put back at its patrol's start under the riding player, the
+   * interior stage's run of the load's first frame still going as the exterior's placed it).
+   */
+  close(): void {
+    this.#view++;
+    this.#pending = undefined;
+  }
+
   /** Schedules are asked (one run at a time; a jump outranks a walk, far outranks near). */
   #ask(ask: Ask): void {
     if (this.#scheduling) {
@@ -496,6 +512,7 @@ export class ActorsAway {
     const session = this.#options.session;
     const runtime = session.scriptsReady;
     if (!runtime) return;
+    const view = this.#view;
     const [routes, placer, db] = await Promise.all([
       session.routeMap(),
       session.actors(),
@@ -522,7 +539,9 @@ export class ActorsAway {
     const next = async (): Promise<void> => {
       for (let actor = queue.pop(); actor !== undefined; actor = queue.pop()) {
         since = await scheduler.giveWay(since, this.#slice());
-        if (await this.#scheduleActor(runtime, placer, actor, mode)) run.moved++;
+        // Its view closed meanwhile: the run stops (close).
+        if (this.#view !== view) return;
+        if (await this.#scheduleActor(runtime, placer, actor, mode, false, view)) run.moved++;
       }
     };
     await Promise.all(Array.from({ length: SCHEDULE_PARALLEL }, next));
@@ -538,6 +557,8 @@ export class ActorsAway {
     mode: 'jump' | 'walk',
     /** Asked again for this actor alone: a trip it is on gives way to its new package's. */
     again = false,
+    /** The view it was asked in (close): it is neither sent nor put once that view closed. */
+    view = this.#view,
   ): Promise<boolean> {
     if (this.#options.staged(actor)) return false;
     // A loaded save's actor of the loaded area stands where it stood as its cell loads (src/
@@ -604,13 +625,20 @@ export class ActorsAway {
       if (walk && !this.#options.staged(actor)) this.#options.reached?.(actor, walk);
       return false;
     }
-    // It came onto the stage meanwhile: the high process has it.
-    if (this.#options.staged(actor) || this.#options.session.restoring?.actor(actor)) {
+    // It came onto the stage meanwhile: the high process has it. So does the next view's stage
+    // once this one's view closed (close).
+    if (
+      this.#view !== view ||
+      this.#options.staged(actor) ||
+      this.#options.session.restoring?.actor(actor)
+    ) {
       return false;
     }
     if (mode === 'jump') {
       this.#trips.delete(actor);
-      await this.#moveTo(runtime, actor, destination);
+      if (!(await this.#moveTo(runtime, actor, destination, false, () => this.#view === view))) {
+        return false;
+      }
       if (walk) this.#options.reached?.(actor, walk);
     } else {
       const trip = this.#trips.get(actor);
@@ -945,7 +973,9 @@ export class ActorsAway {
     actor: number,
     place: AwayPlace,
     inAir = false,
-  ): Promise<void> {
+    /** Whether a run's jump still holds as its cell is found: its view open, it not staged. */
+    still?: () => boolean,
+  ): Promise<boolean> {
     const { space, position } = place;
     let cell: number | undefined;
     let world: number | undefined;
@@ -961,9 +991,11 @@ export class ActorsAway {
       // A worldspace's cell no plugin has: the persistent cell holds it.
       cell ??= runtime.forms.db.persistentCell(world);
     }
+    if (still && (!still() || this.#options.staged(actor))) return false;
     runtime.move(actor, [...position], [0, 0, place.heading ?? 0], cell, world);
     // Before the stage takes the move up (it places it a few promise turns later).
     this.#options.aloft?.(actor, inAir);
+    return true;
   }
 }
 
