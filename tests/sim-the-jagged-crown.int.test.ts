@@ -205,8 +205,12 @@ describe.skipIf(!hasGamedata())('CW02A The Jagged Crown', () => {
       for (let second = 0; second < 600 && !sim.stageDone(CW02A, 70); second += 5) {
         const at = await sim.position(rikke);
         const far = ((await sim.distance(rikke, PLAYER_REF)) ?? 0) > 300;
+        const before = sim.time;
         if (at && far) await walkFighting(sim, at, 5, 250);
-        else await sim.step(5);
+        // Within the walk's reach of her across a height (at the head of the stair she went down
+        // towards the gate) the walk is over before it begins: the player waits there instead
+        // (else the clock stood still, and her line in progress was never done).
+        if (sim.time - before < SIM_STEP / 2) await sim.step(5);
         await fendOff(sim);
       }
       for (const stage of [62, 63, 65, 78, 70]) expect(sim.stageDone(CW02A, stage)).toBe(true);
