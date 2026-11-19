@@ -139,10 +139,12 @@ describe.skipIf(!hasGamedata())('DB01 Innocence Lost', () => {
       const aventus = alias(sim, DB01, AVENTUS);
       const at = await sim.position(aventus);
       expect(at && (await sim.walkPath(at, 60, 150))).toBe(true);
-      // His greeting ("Well? Grelod the Kind. Is she... you know?") goes on to his thanks and the
-      // heirloom (the info's fragment: 200).
+      // His greeting ("Well? Grelod the Kind. Is she... you know?": DB01AventusGrelodDeadBranch,
+      // a blocking branch) offers one choice, "Grelod the Kind is dead."; its info (1F6CB) thanks
+      // the player, sets 200 and gives the heirloom from its fragment. The greeting's own info has
+      // no fragment and no Invisible Continue: the player has to say it.
       const since = sim.itemsMoved().length;
-      await sim.converse(aventus);
+      await sim.converse(aventus, [/Grelod the Kind is dead/]);
       expect(await sim.until(() => sim.stageDone(DB01, 200), 20)).toBe(true);
       expect(
         sim
