@@ -556,7 +556,13 @@ export class ProgressionEngine {
     return this.#zonesByLocation;
   }
 
-  /** The cell a reference was placed in (a worldspace's persistent one: the cell at its place). */
+  /**
+   * The cell a reference was placed in (a worldspace's persistent one: the cell at its place).
+   * `live`: the cell it stands in now; in a worldspace, the exterior cell under it wherever it has
+   * gone since the cell it was put in (an actor walks or flies across cells, as the original's
+   * parent cell follows it: MQ206's Alduin, put down at his landing marker, circles the Throat of
+   * the World over cells of another location).
+   */
   async #placedCell(reference: number, live = false): Promise<number | undefined> {
     const runtime = this.#runtime;
     const db = runtime.forms.db;
@@ -564,13 +570,15 @@ export class ProgressionEngine {
     if (!at) return undefined;
     if (
       at.world !== undefined &&
-      (at.cell === undefined || at.cell === db.persistentCell(at.world))
-    )
-      return db.exteriorCell(
+      (live || at.cell === undefined || at.cell === db.persistentCell(at.world))
+    ) {
+      const under = await db.exteriorCell(
         at.world,
         Math.floor(at.position[0] / 4096),
         Math.floor(at.position[1] / 4096),
       );
+      return live ? (under ?? at.cell) : under;
+    }
     return at.cell;
   }
 
