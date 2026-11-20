@@ -13,7 +13,9 @@
 // nothing; only items scoring more than nothing are weighed; the Script caster notes the time
 // and its effect's AI delay as its cast starts (one note for all an actor's Script casts) and
 // casts again once more than that delay has passed and not while the one the spell lands on
-// carries it (docs/ai.md, Shouts and the voice's recovery).
+// carries it (docs/ai.md, Shouts and the voice's recovery). A bound weapon's spell has the
+// Bound Item caster (the Bound Weapon archetype), not a buff's (MQ202's Thalmor archer
+// MQ202FinalAmbush2: Bound Sword, BoundSwordRightHandFFSelf).
 //
 // Ours: src/shell/combat-casting.ts, src/gameplay/combat/spell-score.ts (combatSpellScore,
 // shoutOffered, scriptCasterDelay, scriptCasterReady), src/scripting/runtime/casting-engine.ts
@@ -27,6 +29,7 @@ import { ScriptRuntime } from '../../../src/scripting/runtime/runtime.ts';
 import { ScriptLibrary } from '../../../src/scripting/script-library.ts';
 import { combatCasting, type CombatStage } from '../../../src/shell/combat-casting.ts';
 import type { CombatCasting } from '../../../src/shell/actor-combat-ai.ts';
+import { ActorValue } from '../../../src/world/actor-values.ts';
 import { Delivery } from '../../../src/world/magic-records.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
 import { Vfs } from '../../../src/vfs/vfs.ts';
@@ -39,6 +42,8 @@ const GORMLAITH = 0xcd9f8;
 /** Two more to shout: HousecarlWhiterunRef (Lydia) and IrilethREF. */
 const LYDIA = 0xa2c94;
 const IRILETH = 0x1a67f;
+/** MQ202's FinalAmbush2 reference, a Thalmor archer in the Ratway Warrens. */
+const THALMOR_ARCHER = 0x4bcd3;
 
 describe.skipIf(!hasGamedata())('the combat AI shouts on the local game data', () => {
   let vfs: Vfs;
@@ -243,6 +248,26 @@ describe.skipIf(!hasGamedata())('the combat AI shouts on the local game data', (
       scored.score,
     );
     expect(scored.score).toBeGreaterThan(0);
+  }, 60_000);
+
+  it('no bound weapon cast as a buff: MQ202’s Thalmor archer keeps its dagger', async () => {
+    // MQ202's FinalAmbush2 (an MQ202ThalmorAgentMissile: a bow, arrows and an Iron Dagger) knows
+    // Bound Sword, a lasting Self spell of the Bound Weapon archetype: the combat inventory's
+    // Bound Item caster, not a buff.
+    const boundSword = await spell('BoundSwordRightHand');
+    expect(await runtime.actors.spells(THALMOR_ARCHER)).toContain(boundSword);
+    // It has the magicka for it: only what the spell is keeps it out.
+    const item = await runtime.magic.item(boundSword);
+    expect(item).toBeDefined();
+    if (!item) return;
+    const cost = (await runtime.casting.cost(THALMOR_ARCHER, { item, via: 'spell' })).magicka;
+    const magicka = (await runtime.actors.value(THALMOR_ARCHER, ActorValue.magicka)).current;
+    expect(cost).toBeLessThanOrEqual(magicka);
+    expect(await runtime.casting.chooseSpell(THALMOR_ARCHER, 'buff')).toBeUndefined();
+    // A buff it learns is one: Oakflesh.
+    const oakflesh = await spell('Oakflesh');
+    expect(await runtime.actors.addSpell(THALMOR_ARCHER, oakflesh)).toBe(true);
+    expect((await runtime.casting.chooseSpell(THALMOR_ARCHER, 'buff'))?.formId).toBe(oakflesh);
   }, 60_000);
 
   it('not a self spell whose script effect has no AI score: Clear Skies', async () => {

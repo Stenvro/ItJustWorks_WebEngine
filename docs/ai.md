@@ -3639,8 +3639,9 @@ engine's ([Combat movement](#combat-movement)).
   (15 s) of the last; below its magicka restore share (25 .. 40%) a Magicka potion, not within
   fCombatRestoreMagickaRestrictTime (10 s); no stamina potions (the engine restores no other
   value); a summons when none of its summons stands; a buff (a lasting Self spell: Oakflesh, a
-  cloak) not on it. Its attacks wait 1.5 s after a cast, fCombatMagicDrinkPotionWaitTime (3 s)
-  after a potion.
+  cloak; never a bound weapon, whose spell is the Bound Item caster's, a weapon to fight with:
+  TODO(M13), that caster is not ours yet) not on it. Its attacks wait 1.5 s after a cast,
+  fCombatMagicDrinkPotionWaitTime (3 s) after a potion.
 - **Movement** ([Combat movement](#combat-movement): how it faces and its close movement): more
   than 512 units beyond its reach it chases its target over the navmeshes, running (sprinting
   from beyond fCombatApproachTargetSprintStopRange); nearer, the combat tree's close movement:
