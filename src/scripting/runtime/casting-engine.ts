@@ -2018,13 +2018,20 @@ export class CastingEngine {
       case 'ward':
         return ward;
       case 'buff':
-        // A Self spell that lasts (armour, a cloak, Muffle): cast once, it stays on.
+        // A Self spell that lasts (armour, a cloak, Muffle): cast once, it stays on. Not a bound
+        // weapon: its spell is the combat inventory's Bound Item caster (spell-score.ts 'bound'),
+        // a weapon to fight with, not a buff. Cast as one, the spell went into the hand of the
+        // weapon held, and the weapon was taken up again before the cast was out: MQ202's
+        // Thalmor archers (LvlThalmorMissile's Bound Sword beside its Iron Dagger) traded the two
+        // every few seconds by Esbern and never struck him. TODO(M13): the Bound Item caster
+        // itself (the conjured weapon among the options weighed) is not ours yet.
         return (
           item.delivery === Delivery.self &&
           item.castType === CastType.fireAndForget &&
           !hostile &&
           !summons &&
           !ward &&
+          !archetypes.has(EffectArchetype.boundWeapon) &&
           item.effects.some((entry) => entry.duration > 0)
         );
     }

@@ -73,14 +73,20 @@ let afterDoor: Uint8Array | undefined;
 let afterEsbern: Uint8Array | undefined;
 
 /**
- * Those fighting the player fall to the player's blows (TODO(M13): the player's own blows; the
- * sim has no aimed attacks yet).
+ * Those fighting the player, or a teammate of theirs, fall to the player's blows (TODO(M13): the
+ * player's own blows; the sim has no aimed attacks yet). A player stands by their companion:
+ * from MQ203's stage 10 Esbern is in BladesFaction, which MQ202ThalmorAgentFaction names an
+ * enemy, so the last Thalmor go for him as readily as for the player.
  */
 async function fendOff(sim: Sim): Promise<void> {
+  const combat = sim.world.stage.combat;
   for (const staged of sim.actors()) {
     const actor = staged.reference;
     if (actor === PLAYER_REF || staged.dead) continue;
-    if (sim.world.stage.combat.targetOf(actor) === PLAYER_REF) await sim.kill(actor, PLAYER_REF);
+    const target = combat.targetOf(actor);
+    if (target === undefined) continue;
+    const side = target === PLAYER_REF || sim.runtime.state.actor(target).playerTeammate === true;
+    if (side) await sim.kill(actor, PLAYER_REF);
   }
 }
 
