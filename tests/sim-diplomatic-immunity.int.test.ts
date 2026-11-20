@@ -37,6 +37,11 @@ const GATE_INSIDE = 0x101d9d;
 /** MQ201's ExteriorGuardDay1 alias, the Embassy's front door (ThalmorEmbassyFrontDoor). */
 const EXTERIOR_GUARD = 102;
 const EMBASSY_FRONT_DOOR = 0x361ee;
+/**
+ * The gate guard's post (ThalmorEmbassyGuardPost1): MQ201GuardForcegreetAtParty's NPC Wait
+ * Location, and its Trigger Location within 300 units.
+ */
+const GUARD_POST = 0xa6d64;
 /** The Embassy (ThalmorEmbassy02, the party's floor). */
 const EMBASSY = 0x7c98b;
 /** MQ201PartyIntroScene. */
@@ -329,8 +334,11 @@ describe.skipIf(!hasGamedata())('MQ201 Diplomatic Immunity', () => {
       const quest = sim.runtime.state.quest(MQ201);
       const guard = quest.aliases.get(EXTERIOR_GUARD) ?? 0;
       // Up to the gate, where the guard waits (MQ201GuardForcegreetAtParty: the player within
-      // 300 units of his post, detected).
-      const post = await sim.position(guard);
+      // 300 units of his post, detected). His post, not where he stands: the ride's fade puts
+      // the player down seconds after his package changed, and he comes onto the stage where the
+      // low process had him on his patrol (out of the barracks, some 1,400 units from the post),
+      // walking to it; the loaded save keeps him there.
+      const post = await sim.position(GUARD_POST);
       expect(post && (await sim.walkPath(post, 60, 200))).toBe(true);
       expect(await sim.until(() => greeting(sim, guard) !== undefined, 90)).toBe(true);
       await sim.converse(guard, [/Show invitation/], greeting(sim, guard));
