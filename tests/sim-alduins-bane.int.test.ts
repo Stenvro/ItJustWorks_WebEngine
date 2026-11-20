@@ -34,6 +34,8 @@ const ALDUIN_LANDS = 67;
 /** The middle of the place his force greet asks the player to be in (its package's), its radius. */
 const PAARTHURNAX_GREETS = 0x9c21f;
 const GREET_RADIUS = 1800;
+/** How near the player runs to the grounded Alduin before they swing at him. */
+const CLOSE_ENOUGH = 400;
 
 /** The game with the player at the Time-Wound, the scroll in the pack. */
 let atTheWound: Uint8Array | undefined;
@@ -194,8 +196,9 @@ describe.skipIf(!hasGamedata())("MQ206 Alduin's Bane", () => {
   // player's Dragonrend, once it reaches him (MQ206AlduinScript's OnMagicEffectApply), is 180, and it
   // brings him down on his landing marker. The player shouts it at him as he comes near, their voice
   // ready again, aiming at him while the words are held: aimed once where he was before a two-second
-  // hold, and pressed while the voice still recovered, it reached him only by chance. The player's
-  // fist lands on him there; the rest of a fight a first level's fists do not win stands in as one
+  // hold, and pressed while the voice still recovered, it reached him only by chance. His crash
+  // slides him on from the marker; the player runs after him, shouts him down again where he lies,
+  // and their fist lands on him there; the rest of a fight a first level's fists do not win stands in as one
   // blow of theirs for what is left of his health.
   // Essential, he bleeds out (200); he says his last and is gone (230, and 220: MQ301 begins); his
   // way out over the mountains ends at 240.
@@ -226,6 +229,25 @@ describe.skipIf(!hasGamedata())("MQ206 Alduin's Bane", () => {
       expect(said(8)).toBe(true);
       const before = (await sim.runtime.actors.value(alduin, ActorValue.health)).current;
       await sim.attack(0.1);
+      // His crash slides him on past the marker (MTLand_CrashLong's root motion, some 4,000 units
+      // ahead: the way DragonMarkerCrashStrip's bounds run from its origin): the player runs
+      // after him over the summit's navmesh, round its rocks, aiming anew as he slides.
+      // The run takes most of what his Dragonrend holds him down for: as soon as their voice is
+      // back, the player shouts it at him again where he lies, as at Sovngarde (MQ305).
+      const near = async (): Promise<boolean> =>
+        ((await sim.distance(PLAYER_REF, alduin)) ?? Infinity) < CLOSE_ENOUGH;
+      const grounded = (): boolean => sim.world.stage.flight.state(alduin) === 0;
+      let again = false;
+      const until = sim.time + 20;
+      while (sim.time < until && grounded() && !(again && (await near()))) {
+        if (!again) again = await sim.shoutAt(alduin, 0, () => !grounded());
+        const at = await sim.position(alduin);
+        if (at && !(await near())) await sim.walkPath(at, 2, CLOSE_ENOUGH);
+        else await sim.step(0.2);
+      }
+      expect(again).toBe(true);
+      expect(await near()).toBe(true);
+      expect(grounded()).toBe(true);
       let landed = false;
       for (let swing = 0; swing < 6 && !landed; swing++) {
         ({ landed } = await sim.swingAt(alduin, 150));
